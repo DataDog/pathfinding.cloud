@@ -1,0 +1,81 @@
+id: cloudformation-001
+name: iam:PassRole + cloudformation:CreateStack
+category: service-passrole
+services:
+- iam
+- cloudformation
+description: A principal with `iam:PassRole` and `cloudformation:CreateStack` can launch a CloudFormation template that creates
+  AWS resources. The template executes with the permissions of the passed IAM role. This allows creation of resources controlled
+  by the attacker, such as IAM users, Lambda functions, or EC2 instances. The level of access gained depends on the permissions
+  of the available roles.
+prerequisites:
+  admin:
+  - A role must exist that trusts cloudformation.amazonaws.com to assume it
+  - The role must have administrative permissions (e.g., AdministratorAccess)
+  lateral:
+  - A role must exist that trusts cloudformation.amazonaws.com to assume it
+exploitationSteps:
+  awscli:
+  - step: 1
+    command: aws cloudformation create-stack --stack-name privesc-stack --template-body file://exploit-template.yaml --capabilities
+      CAPABILITY_IAM --role-arn arn:aws:iam::ACCOUNT_ID:role/PRIVILEGED_ROLE
+    description: Create a CloudFormation stack with a template that creates privileged resources
+  - step: 2
+    command: aws cloudformation describe-stacks --stack-name privesc-stack
+    description: Monitor stack creation progress
+  - step: 3
+    command: '# Access the newly created resources (e.g., IAM user, Lambda function)'
+    description: Use the elevated privileges of the created resources
+  pacu:
+  - step: 1
+    command: run cloudformation__create_stack --stack-name privesc-stack --template exploit-template.yaml --role-arn arn:aws:iam::ACCOUNT_ID:role/PRIVILEGED_ROLE
+    description: Use Pacu to create CloudFormation stack with privileged role
+recommendation: |
+  Restrict the `iam:PassRole` permission using the principle of least privilege.
+
+  Use IAM policy conditions to restrict which roles can be passed and to which services:
+
+  ```json
+  {
+    "Effect": "Allow",
+    "Action": "`iam:PassRole`",
+    "Resource": "arn:aws:iam::ACCOUNT_ID:role/SpecificCFNRole",
+    "Condition": {
+      "StringEquals": {
+        "`iam:PassedToService`": "cloudformation.amazonaws.com"
+      }
+    }
+  }
+  ```
+
+  Additional controls:
+  - Restrict `cloudformation:CreateStack` to specific stack name patterns or templates
+  - Use CloudFormation service roles with minimal required permissions
+  - Enable CloudFormation stack policies to prevent unauthorized modifications
+  - Monitor CloudTrail for CloudFormation stack creation and the resources they provision
+discoveredBy:
+  name: Spencer Gietzen
+  organization: Rhino Security Labs
+  date: '2019'
+references:
+- title: AWS Privilege Escalation Methods and Mitigation
+  url: https://rhinosecuritylabs.com/aws/aws-privilege-escalation-methods-mitigation/
+- title: IAM Vulnerable - PassExistingRoleToCloudFormation
+  url: https://github.com/BishopFox/iam-vulnerable/blob/main/modules/free-resources/privesc-paths/privesc20-PassExistingRoleToCloudFormation.tf
+relatedPaths:
+- ec2-001
+- lambda-001
+toolSupport:
+  pmapper: true
+  iamVulnerable: true
+permissions:
+  required:
+  - permission: iam:PassRole
+    resourceConstraints: Target role ARN must be in the Resource section
+  - permission: cloudformation:CreateStack
+    resourceConstraints: Must have permission to create CloudFormation stacks
+  additional:
+  - permission: iam:ListRoles
+    resourceConstraints: Helpful for discovering available roles to pass
+  - permission: iam:GetRole
+    resourceConstraints: Useful for viewing role trust policies and attached permissions

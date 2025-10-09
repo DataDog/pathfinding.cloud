@@ -1,0 +1,82 @@
+id: datapipeline-001
+name: iam:PassRole + datapipeline:CreatePipeline
+category: service-passrole
+services:
+- iam
+- datapipeline
+description: A principal with `iam:PassRole`, `datapipeline:CreatePipeline`, `datapipeline:PutPipelineDefinition`, and `datapipeline:ActivatePipeline`
+  can create a new Data Pipeline that executes arbitrary code with the permissions of a passed IAM role. Data Pipeline can
+  run shell commands on EC2 instances or EMR clusters, allowing privilege escalation. The level of access gained depends on
+  the permissions of the available roles.
+prerequisites:
+  admin:
+  - A role must exist that trusts datapipeline.amazonaws.com or elasticmapreduce.amazonaws.com
+  - The role must have administrative permissions (e.g., AdministratorAccess)
+  lateral:
+  - A role must exist that trusts datapipeline.amazonaws.com or elasticmapreduce.amazonaws.com
+exploitationSteps:
+  awscli:
+  - step: 1
+    command: |
+      aws datapipeline create-pipeline --name privesc-pipeline --unique-id privesc-$(date +%s)
+    description: Create a new Data Pipeline
+  - step: 2
+    command: |
+      aws datapipeline put-pipeline-definition --pipeline-id PIPELINE_ID \
+        --pipeline-definition file://malicious-pipeline.json
+    description: Define a pipeline that runs arbitrary shell commands with the privileged role
+  - step: 3
+    command: aws datapipeline activate-pipeline --pipeline-id PIPELINE_ID
+    description: Activate the pipeline to execute the malicious code
+recommendation: |
+  Restrict the `iam:PassRole` permission using the principle of least privilege.
+
+  Use IAM policy conditions to restrict which roles can be passed:
+
+  ```json
+  {
+    "Effect": "Allow",
+    "Action": "iam:PassRole",
+    "Resource": "arn:aws:iam::ACCOUNT_ID:role/SpecificDataPipelineRole",
+    "Condition": {
+      "StringEquals": {
+        "iam:PassedToService": ["datapipeline.amazonaws.com", "elasticmapreduce.amazonaws.com"]
+      }
+    }
+  }
+  ```
+
+  Additional controls:
+  - Restrict Data Pipeline permissions to specific users
+  - Monitor CloudTrail for Data Pipeline creation and activation
+  - Require pipeline definitions to be stored in approved repositories
+discoveredBy:
+  name: Spencer Gietzen
+  organization: Rhino Security Labs
+  date: '2019'
+references:
+- title: AWS Privilege Escalation Methods and Mitigation
+  url: https://rhinosecuritylabs.com/aws/aws-privilege-escalation-methods-mitigation/
+- title: IAM Vulnerable - DataPipeline PassRole
+  url: https://github.com/BishopFox/iam-vulnerable
+relatedPaths:
+- ec2-001
+- lambda-001
+toolSupport:
+  pmapper: true
+  iamVulnerable: true
+permissions:
+  required:
+  - permission: iam:PassRole
+    resourceConstraints: Target role ARN must be in the Resource section
+  - permission: datapipeline:CreatePipeline
+    resourceConstraints: Must have permission to create Data Pipeline pipelines
+  - permission: datapipeline:PutPipelineDefinition
+    resourceConstraints: Must have permission to define pipeline activities
+  - permission: datapipeline:ActivatePipeline
+    resourceConstraints: Must have permission to activate pipelines
+  additional:
+  - permission: iam:ListRoles
+    resourceConstraints: Helpful for discovering available roles to pass
+  - permission: iam:GetRole
+    resourceConstraints: Useful for viewing role trust policies and attached permissions

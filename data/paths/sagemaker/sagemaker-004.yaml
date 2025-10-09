@@ -1,0 +1,73 @@
+id: sagemaker-004
+name: sagemaker:CreatePresignedNotebookInstanceUrl
+category: access-resource
+services:
+- sagemaker
+description: A principal with `sagemaker:CreatePresignedNotebookInstanceUrl` can generate a presigned URL to access an existing
+  SageMaker notebook instance. If the notebook instance has a privileged execution role attached, the attacker can access
+  the Jupyter environment and execute arbitrary code with the permissions of that role. This does not require creating a new
+  notebook - only accessing an existing one.
+prerequisites:
+  admin:
+  - A SageMaker notebook instance must exist with an administrative execution role
+  - The notebook instance must be in 'InService' status
+  lateral:
+  - A SageMaker notebook instance must exist with a privileged execution role
+  - The notebook instance must be in 'InService' status
+exploitationSteps:
+  awscli:
+  - step: 1
+    command: aws sagemaker list-notebook-instances
+    description: List available notebook instances to find targets with privileged roles
+  - step: 2
+    command: aws sagemaker describe-notebook-instance --notebook-instance-name TARGET_NOTEBOOK
+    description: Check the notebook's execution role ARN to confirm it has elevated permissions
+  - step: 3
+    command: |
+      aws sagemaker create-presigned-notebook-instance-url \
+        --notebook-instance-name TARGET_NOTEBOOK
+    description: Generate a presigned URL to access the notebook
+  - step: 4
+    command: Open the presigned URL in a browser and use the Jupyter terminal to execute privileged commands
+    description: Access the notebook and execute commands with the privileged role's permissions
+recommendation: |
+  Restrict the `sagemaker:CreatePresignedNotebookInstanceUrl` permission using resource-based constraints.
+
+  ```json
+  {
+    "Effect": "Allow",
+    "Action": "sagemaker:CreatePresignedNotebookInstanceUrl",
+    "Resource": "arn:aws:sagemaker:REGION:ACCOUNT_ID:notebook-instance/SpecificNotebook",
+    "Condition": {
+      "StringEquals": {
+        "aws:PrincipalAccount": "ACCOUNT_ID"
+      }
+    }
+  }
+  ```
+
+  Additional controls:
+  - Monitor CloudTrail for `CreatePresignedNotebookInstanceUrl` events on sensitive notebooks
+  - Use notebook lifecycle configurations to restrict capabilities
+  - Implement VPC configuration to isolate notebook instances
+  - Alert on presigned URL creation for notebooks with privileged roles
+  - Regularly audit notebook instance execution roles and remove excessive permissions
+  - Use SCPs to restrict notebook access patterns
+discoveredBy:
+  name: Spencer Gietzen
+  organization: Rhino Security Labs
+  date: '2019'
+references:
+- title: AWS Privilege Escalation Methods and Mitigation
+  url: https://rhinosecuritylabs.com/aws/aws-privilege-escalation-methods-mitigation/
+- title: IAM Vulnerable - SageMaker Presigned URL
+  url: https://github.com/BishopFox/iam-vulnerable
+relatedPaths:
+- sagemaker-001
+toolSupport:
+  pmapper: true
+  iamVulnerable: true
+permissions:
+  required:
+  - permission: sagemaker:CreatePresignedNotebookInstanceUrl
+    resourceConstraints: Must have permission to create presigned URLs for the target notebook instance

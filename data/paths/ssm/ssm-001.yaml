@@ -1,0 +1,56 @@
+id: ssm-001
+name: ssm:StartSession
+category: access-resource
+services:
+- ssm
+- ec2
+description: The `ssm:StartSession` permission allows a principal to remotely access any EC2 instance on which they have this
+  permission. This access is contingent on the EC2 instance having the SSM agent installed and running, possessing the AmazonSSMManagedInstanceCore
+  policy or equivalent permissions, and being in a running state. This permission provides SSH-like access via the AWS API.
+  Consequently, the initiating principal may gain additional IAM permissions associated with the accessed instances. If an
+  instance has a privileged IAM role attached, an attacker can abuse this permission to execute code that steals the credentials
+  for that role, thereby escalating their own permissions.
+prerequisites:
+  admin:
+  - EC2 instance must exist and be running
+  - EC2 instance must have SSM agent installed and running
+  - EC2 instance must have an instance profile attached to an IAM role
+  - IAM role must have AmazonSSMManagedInstanceCore policy or equivalent
+  - Target EC2 instance must have a role with administrative permissions attached
+  lateral:
+  - EC2 instance must exist and be running
+  - EC2 instance must have SSM agent installed and running
+  - EC2 instance must have an instance profile attached to an IAM role
+  - IAM role must have AmazonSSMManagedInstanceCore policy or equivalent
+exploitationSteps:
+  awscli:
+  - step: 1
+    command: aws ssm start-session --target i-XXXXXXXXXXX
+    description: Start an interactive SSM session on the target EC2 instance
+  - step: 2
+    command: curl http://169.254.169.254/latest/meta-data/iam/security-credentials/
+    description: Retrieve the role name from the instance metadata
+  - step: 3
+    command: curl http://169.254.169.254/latest/meta-data/iam/security-credentials/ROLENAME
+    description: Steal the temporary credentials for the instance's IAM role
+recommendation: |
+  Restrict access to `ssm:StartSession` using the principle of least privilege. Use the
+  Resource and Condition elements in IAM policies to limit which instances a principal
+  can start sessions on. Monitor use of this sensitive permission using CloudSIEM detections.
+discoveredBy:
+  name: Unknown
+  organization: Unknown
+references:
+- title: PMapper SSM Edges
+  url: https://github.com/nccgroup/PMapper/blob/master/principalmapper/graphing/ssm_edges.py
+- title: IAM Vulnerable - SSM StartSession
+  url: https://github.com/BishopFox/iam-vulnerable/blob/main/modules/free-resources/privesc-paths/privesc-ssmStartSession.tf
+relatedPaths:
+- ssm-002
+toolSupport:
+  pmapper: true
+  iamVulnerable: true
+permissions:
+  required:
+  - permission: ssm:StartSession
+    resourceConstraints: Target EC2 instance must be in the Resource section

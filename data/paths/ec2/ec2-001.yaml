@@ -1,0 +1,77 @@
+id: ec2-001
+name: iam:PassRole + ec2:RunInstances
+category: service-passrole
+services:
+- iam
+- ec2
+description: A principal with `iam:PassRole` and `ec2:RunInstances` permissions can launch a new EC2 instance and attach an
+  existing IAM Role to it. By accessing this new instance (e.g., via User Data or SSM), the attacker can obtain the credentials
+  of the passed role. The level of access gained depends on the permissions of the available roles.
+prerequisites:
+  admin:
+  - A role must exist that trusts ec2.amazonaws.com to assume it
+  - The role must have an instance profile associated with it
+  - The role must have administrative permissions (e.g., AdministratorAccess)
+  lateral:
+  - A role must exist that trusts ec2.amazonaws.com to assume it
+  - The role must have an instance profile associated with it
+exploitationSteps:
+  awscli:
+  - step: 1
+    command: aws ec2 run-instances --image-id ami-12345678 --instance-type t2.micro --iam-instance-profile Arn="arn:aws:iam::ACCOUNT_ID:instance-profile/PRIVILEGED_ROLE"
+      --user-data file://exploit.sh
+    description: Launch EC2 instance with privileged role and user data script to exfiltrate credentials
+  - step: 2
+    command: '# User data script executes on boot and sends credentials to attacker-controlled server'
+    description: Retrieve the temporary credentials from the attacker's server
+  pacu:
+  - step: 1
+    command: run ec2__startup_shell_script --instance-profile PRIVILEGED_ROLE --script exploit.sh
+    description: Use Pacu to launch EC2 instance with the target role and execute a shell script on startup
+recommendation: |
+  - Tightly control the `iam:PassRole` permission using the principle of least privilege.
+  - Use IAM policy conditions to restrict which roles can be passed and to which services:
+
+  ```json
+  {
+    "Effect": "Allow",
+    "Action": "`iam:PassRole`",
+    "Resource": "arn:aws:iam::ACCOUNT_ID:role/SpecificRole",
+    "Condition": {
+      "StringEquals": {
+        "`iam:PassedToService`": "ec2.amazonaws.com"
+      }
+    }
+  }
+  ```
+
+  - Monitor CloudTrail for suspicious PassRole + RunInstances patterns, especially:
+    - PassRole events followed immediately by RunInstances
+    - Roles being passed to EC2 that haven't been used before
+    - EC2 instances launched with privileged roles by unusual principals
+discoveredBy:
+  name: Spencer Gietzen
+  organization: Rhino Security Labs
+  date: '2019'
+references:
+- title: AWS Privilege Escalation Methods and Mitigation
+  url: https://rhinosecuritylabs.com/aws/aws-privilege-escalation-methods-mitigation/
+- title: IAM Vulnerable - CreateEC2WithExistingIP
+  url: https://github.com/BishopFox/iam-vulnerable/blob/main/modules/free-resources/privesc-paths/privesc3-CreateEC2WithExistingIP.tf
+relatedPaths:
+- lambda-001
+- cloudformation-001
+toolSupport:
+  pmapper: true
+  iamVulnerable: true
+permissions:
+  required:
+  - permission: iam:PassRole
+    resourceConstraints: Target role ARN must be in the Resource section
+  - permission: ec2:RunInstances
+    resourceConstraints: Must have permission to launch EC2 instances
+  additional:
+  - permission: iam:ListRoles
+    resourceConstraints: Helpful for discovering available roles to pass
+  - permission: iam:GetRole
+    resourceConstraints: Useful for viewing role trust policies and attached permissions

