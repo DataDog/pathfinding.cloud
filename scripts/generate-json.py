@@ -32,7 +32,7 @@ def find_all_yaml_files(data_dir='data/paths'):
 
     return sorted(yaml_files)
 
-def convert_yaml_to_json(input_dir='data/paths', output_file='website/paths.json'):
+def convert_yaml_to_json(input_dir='data/paths', output_file='paths.json'):
     """Convert all YAML files to a single JSON file."""
     print("Converting YAML files to JSON...")
 

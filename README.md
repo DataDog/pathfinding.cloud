@@ -58,11 +58,12 @@ pathfinding.cloud/
 │       ├── lambda/
 │       ├── ssm/
 │       └── cloudformation/
-├── website/                # Static website
-│   ├── index.html
-│   ├── css/
-│   ├── js/
-│   └── paths.json         # Generated from YAML files
+├── css/                    # Website styles
+├── js/                     # Website JavaScript
+├── assets/                 # Website assets
+├── index.html              # Main website page
+├── paths.json              # Generated from YAML files
+├── metadata.json           # Generated metadata
 ├── scripts/
 │   ├── validate-schema.py # Schema validation
 │   └── generate-json.py   # YAML to JSON conversion
@@ -140,7 +141,7 @@ python scripts/validate-schema.py data/paths/
 python scripts/generate-json.py
 
 # Open website locally
-open website/index.html
+open index.html
 ```
 
 ### Validation
