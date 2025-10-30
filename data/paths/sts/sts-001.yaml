@@ -105,10 +105,70 @@ toolSupport:
   pmapper: true
   iamVulnerable: true
   pacu: true
-attackVisualization: |
-  graph LR
-      A[starting-user] -->|sts:AssumeRole| B[privileged-role]
-      B --> C[Effective Administrator]
+attackVisualization:
+  nodes:
+    - id: start
+      label: starting-principal
+      type: principal
+      description: |
+        The principal initiating the attack. Can be an IAM user or role with sts:AssumeRole permission on the target role.
+
+    - id: target_role
+      label: target-role
+      type: resource
+      description: |
+        The privileged role being assumed. Must have a trust policy that allows the starting principal to assume it.
+
+    - id: admin
+      label: Effective Administrator
+      type: outcome
+      description: |
+        Full administrative access to the AWS account when the target role has AdministratorAccess or equivalent permissions.
+
+    - id: no_access
+      label: No Additional Access
+      type: outcome
+      color: '#cccccc'
+      description: |
+        The assumed role has no interesting permissions beyond what the starting principal already had.
+
+    - id: some_perms
+      label: Check for Additional Access
+      type: outcome
+      color: '#ffeb99'
+      description: |
+        The assumed role has some permissions. Check for data access (S3, RDS, DynamoDB) or additional privilege escalation paths.
+
+  edges:
+    - from: start
+      to: target_role
+      label: sts:AssumeRole
+      description: |
+        Use sts:AssumeRole to assume the target role. Requires both the permission and a matching trust policy on the role.
+
+    - from: target_role
+      to: admin
+      label: If role has admin permissions
+      branch: A
+      condition: admin
+      description: |
+        If the target role has AdministratorAccess or equivalent permissions, the attacker gains full administrative access to the account.
+
+    - from: target_role
+      to: no_access
+      label: If role has no interesting permissions
+      branch: B
+      condition: no_permissions
+      description: |
+        If the role only has minimal permissions (like logs:PutLogEvents), there may be no additional access gained.
+
+    - from: target_role
+      to: some_perms
+      label: If role has some permissions
+      branch: C
+      condition: some_permissions
+      description: |
+        If the role has permissions to access data or enable other escalation paths, further exploration is needed.
 permissions:
   required:
   - permission: sts:AssumeRole

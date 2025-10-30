@@ -8,8 +8,10 @@ description: Anyone with access to `iam:CreatePolicyVersion` can create a new ve
   a new policy version with elevated permissions and setting it as the default version. A principal can also leverage this
   to escalate the permissions of another principal they can access.
 prerequisites:
-- condition: Policy must already be attached to the actor's user, role, or group
-  type: resource-state
+  admin:
+  - Policy must already be attached to the actor's user, role, or group
+  lateral:
+  - Policy must already be attached to the actor's user, role, or group
 exploitationSteps:
   awscli:
   - step: 1
@@ -40,6 +42,43 @@ detectionRules:
 toolSupport:
   pmapper: true
   iamVulnerable: true
+attackVisualization:
+  nodes:
+    - id: start
+      label: starting-principal
+      type: principal
+      description: |
+        The principal initiating the attack. Can be an IAM user or role that has an IAM policy already attached to them (directly, via group, or inline). Must have iam:CreatePolicyVersion permission on that policy.
+
+    - id: attached_policy
+      label: attached-policy
+      type: resource
+      description: |
+        An IAM customer managed policy that is already attached to the starting principal (directly, via group, or inline). The principal must have iam:CreatePolicyVersion permission for this specific policy ARN.
+
+    - id: admin
+      label: Effective Administrator
+      type: outcome
+      description: |
+        The new policy version is now the default and automatically takes effect. The starting principal immediately gains all permissions specified in the new policy version, including full administrative access if that was included.
+
+  edges:
+    - from: start
+      to: attached_policy
+      label: Has policy attached
+      description: |
+        The starting principal must already have a customer managed policy attached to them (directly, via their role, or via a group they belong to). This is a prerequisite for the attack.
+
+    - from: attached_policy
+      to: admin
+      label: iam:CreatePolicyVersion
+      description: |
+        Execute the iam:CreatePolicyVersion API call to create a new version of the attached policy. Include a policy document with administrative permissions and use --set-as-default to make it active immediately.
+
+        Example command:
+        aws iam create-policy-version --policy-arn @arn --policy-document file://admin_policy.json --set-as-default
+
+        The new policy version becomes the default and takes effect immediately. All principals with this policy attached (including the attacker) now have the permissions specified in the new version.
 permissions:
   required:
   - permission: iam:CreatePolicyVersion

@@ -75,3 +75,121 @@ permissions:
     resourceConstraints: Helpful for discovering available roles to pass
   - permission: iam:GetRole
     resourceConstraints: Useful for viewing role trust policies and attached permissions
+attackVisualization:
+  nodes:
+    - id: start
+      label: starting-principal
+      type: principal
+      description: |
+        The principal with iam:PassRole and glue:CreateDevEndpoint permissions. Can be an IAM user or role.
+
+    - id: dev_endpoint
+      label: Glue Dev Endpoint
+      type: resource
+      description: |
+        New Glue development endpoint created with a privileged IAM role attached. Dev endpoints provide SSH access and Zeppelin notebook environments where arbitrary code can be executed. The endpoint runs on EC2 instances managed by AWS Glue, and the attached role's credentials are available to code running in the environment.
+
+    - id: target_role
+      label: target-role
+      type: resource
+      description: |
+        IAM role passed to the Glue dev endpoint during creation. The role must trust glue.amazonaws.com to assume it. When the endpoint is active, code executed via SSH or Zeppelin notebooks runs with this role's permissions.
+
+    - id: execute_code
+      label: Execute Code with Target Role Permissions
+      type: action
+      color: '#99ccff'
+      description: |
+        SSH into the dev endpoint or use the Zeppelin notebook interface to execute arbitrary code (Python, Scala, SQL) with the target role's credentials. The code can:
+        - Use boto3 to make AWS API calls with the role's permissions
+        - Modify IAM policies or create access keys for privilege escalation
+        - Access data in S3, RDS, DynamoDB, or other AWS services
+        - Query the instance metadata service for role credentials
+        - Install additional tools or backdoors in the environment
+
+    - id: admin
+      label: Effective Administrator
+      type: outcome
+      description: |
+        The target role has AdministratorAccess or equivalent permissions. The attacker gains full administrative access to the AWS account by executing code in the dev endpoint environment with the role's credentials.
+
+    - id: some_perms
+      label: Check for Additional Access
+      type: outcome
+      color: '#ffeb99'
+      description: |
+        The target role has some elevated permissions but not full admin. This could provide access to sensitive data (S3 buckets, RDS databases, DynamoDB tables) or enable additional privilege escalation paths through IAM modification permissions.
+
+    - id: no_access
+      label: Minimal Additional Access
+      type: outcome
+      color: '#cccccc'
+      description: |
+        The target role only has minimal permissions (like logs:PutLogEvents or basic S3 read access). Limited usefulness for privilege escalation, though may still be valuable for reconnaissance.
+
+  edges:
+    - from: start
+      to: dev_endpoint
+      label: iam:PassRole + glue:CreateDevEndpoint
+      description: |
+        Create a new Glue development endpoint and pass the target role to it. The endpoint requires a public SSH key for authentication and takes several minutes to become available.
+
+        Command:
+        ```bash
+        aws glue create-dev-endpoint \
+          --endpoint-name privesc-endpoint \
+          --role-arn arn:aws:iam::ACCOUNT_ID:role/PRIVILEGED_ROLE \
+          --public-key "$(cat ~/.ssh/id_rsa.pub)"
+        ```
+
+        Wait for the endpoint to reach the READY state before connecting.
+
+    - from: dev_endpoint
+      to: target_role
+      label: Endpoint assumes role
+      description: |
+        The Glue dev endpoint automatically assumes the passed IAM role. The role's credentials become available to any code executed in the SSH session or Zeppelin notebook environment. The endpoint runs on EC2 instances in AWS-managed infrastructure.
+
+    - from: target_role
+      to: execute_code
+      label: SSH access + code execution
+      description: |
+        Connect to the dev endpoint via SSH and execute arbitrary Python, Scala, or shell commands with the target role's permissions.
+
+        Commands:
+        ```bash
+        # Wait for endpoint to be ready and get address
+        aws glue get-dev-endpoint --endpoint-name privesc-endpoint
+
+        # SSH into the endpoint
+        ssh glue@ENDPOINT_ADDRESS
+
+        # Execute Python code with boto3 to use role permissions
+        python3 -c "import boto3; sts = boto3.client('sts'); print(sts.get_caller_identity())"
+        ```
+
+        Alternatively, access the Zeppelin notebook interface to run code interactively.
+
+    - from: execute_code
+      to: admin
+      label: If target role has admin permissions
+      branch: A
+      condition: admin
+      description: |
+        If the target role has AdministratorAccess or equivalent permissions, the attacker gains full administrative access by executing code in the dev endpoint. They can modify IAM policies, create access keys, or perform any AWS action.
+
+    - from: execute_code
+      to: some_perms
+      label: If target role has some elevated permissions
+      branch: B
+      condition: some_permissions
+      description: |
+        If the target role has some elevated permissions (data access, IAM read/write, etc.), the attacker can leverage these through the dev endpoint. This might include accessing sensitive data stores or pursuing additional privilege escalation techniques.
+
+    - from: execute_code
+      to: no_access
+      label: If target role has minimal permissions
+      branch: C
+      condition: no_permissions
+      description: |
+        If the target role only has minimal permissions (like logs:PutLogEvents or basic read access), the privilege escalation provides limited value. However, even minimal access could be useful for reconnaissance or as part of a multi-step attack chain.

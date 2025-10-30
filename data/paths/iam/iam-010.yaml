@@ -40,6 +40,47 @@ detectionRules:
 toolSupport:
   pmapper: true
   iamVulnerable: true
+attackVisualization:
+  nodes:
+    - id: start
+      label: starting-user
+      type: principal
+      description: |
+        The IAM user initiating the attack. Must be a member of the target group and have iam:AttachGroupPolicy permission on that group. This attack path requires a user (not a role) because group membership only applies to IAM users.
+
+    - id: target_group
+      label: target-group
+      type: resource
+      description: |
+        The IAM group that the starting user is a member of. The user must have iam:AttachGroupPolicy permission on this specific group resource. Once an admin policy is attached to this group, all members of the group (including the attacker) inherit those permissions.
+
+    - id: admin
+      label: Effective Administrator
+      type: outcome
+      description: |
+        After attaching an administrative managed policy (such as AdministratorAccess) to the group, the starting user immediately gains full administrative access to the AWS account. All group members inherit the attached policy's permissions.
+
+  edges:
+    - from: start
+      to: target_group
+      label: Member of group
+      description: |
+        The starting user must be a member of the target group. This is a prerequisite for the attack to work, as IAM permissions granted to groups are automatically inherited by all member users.
+
+    - from: target_group
+      to: admin
+      label: iam:AttachGroupPolicy
+      description: |
+        Execute the iam:AttachGroupPolicy API call to attach an administrative managed policy to the group. The AdministratorAccess policy is the most common choice, but any managed policy with elevated privileges can be used.
+
+        Command:
+        ```bash
+        aws iam attach-group-policy \
+          --group-name @groupname \
+          --policy-arn arn:aws:iam::aws:policy/AdministratorAccess
+        ```
+
+        The policy attachment takes effect immediately. All users in the group (including the attacker) now have the permissions granted by the attached policy. Verify with: `aws sts get-caller-identity` followed by testing an admin action.
 permissions:
   required:
   - permission: iam:AttachGroupPolicy

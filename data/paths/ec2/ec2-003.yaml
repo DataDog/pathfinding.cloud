@@ -101,3 +101,106 @@ permissions:
     resourceConstraints: Target EC2 instance must be in the Resource section
   - permission: ec2:DescribeInstances
     resourceConstraints: None - typically required to discover instance details
+attackVisualization:
+  nodes:
+  - id: start
+    label: starting-principal
+    type: principal
+    description: |
+      The starting principal (user or role) with `ec2-instance-connect:SendSSHPublicKey` permission. This principal can push a temporary SSH public key to an EC2 instance that has EC2 Instance Connect enabled. The SSH key is valid for 60 seconds after being pushed.
+  - id: ec2_instance
+    label: EC2 Instance
+    type: resource
+    description: |
+      The target EC2 instance with EC2 Instance Connect enabled (requires Amazon Linux 2 or Ubuntu 16.04+). The instance must be running and have an IAM role attached via an instance profile. Network security groups must allow SSH access (port 22) from the attacker's location.
+  - id: instance_role
+    label: instance-role
+    type: resource
+    description: |
+      The IAM role attached to the EC2 instance via instance profile. This role's temporary credentials are available through the Instance Metadata Service (IMDS) at http://169.254.169.254/latest/meta-data/iam/security-credentials/. Once the attacker gains SSH access to the instance, they can retrieve these credentials and use them from any location.
+  - id: exfiltrate_creds
+    label: Exfiltrate credentials via IMDS
+    type: action
+    color: '#99ccff'
+    description: |
+      Once SSH access is established, the attacker can access the Instance Metadata Service (IMDS) to retrieve the temporary security credentials for the instance role. These credentials include AccessKeyId, SecretAccessKey, and SessionToken, which can be exported to environment variables and used with the AWS CLI or SDK from any location.
+  - id: admin_outcome
+    label: Effective Administrator
+    type: outcome
+    description: |
+      If the instance role has AdministratorAccess or equivalent administrative permissions, the attacker gains full administrative access to the AWS account using the exfiltrated credentials. They can perform any action in the account including creating new admin users, modifying resources, or accessing sensitive data.
+  - id: partial_outcome
+    label: Check for Additional Access
+    type: outcome
+    color: '#ffeb99'
+    description: |
+      If the instance role has some elevated permissions but not full admin access, the attacker gains partial privilege escalation. This could include access to sensitive data stores (S3 buckets, RDS databases, DynamoDB tables), ability to modify certain resources, or permissions that enable additional privilege escalation paths.
+  - id: minimal_outcome
+    label: No Additional Access
+    type: outcome
+    color: '#cccccc'
+    description: |
+      If the instance role only has minimal permissions (such as CloudWatch logs access or basic EC2 describe permissions), the credential exfiltration may not provide meaningful additional access beyond what the starting principal already had. However, even limited access could be useful for reconnaissance.
+  edges:
+  - from: start
+    to: ec2_instance
+    label: ec2-instance-connect:SendSSHPublicKey
+    description: |
+      Generate a temporary SSH key pair and push the public key to the target EC2 instance using ec2-instance-connect:SendSSHPublicKey. The public key is valid for 60 seconds, during which the attacker must establish an SSH connection.
+
+      Commands:
+      ```bash
+      ssh-keygen -t rsa -f /tmp/temp_key -N ""
+
+      aws ec2-instance-connect send-ssh-public-key \
+        --instance-id i-1234567890abcdef0 \
+        --instance-os-user ec2-user \
+        --ssh-public-key file:///tmp/temp_key.pub
+      ```
+
+      After pushing the key, immediately establish SSH connection within the 60-second window.
+  - from: ec2_instance
+    to: instance_role
+    label: SSH access to instance
+    description: |
+      Use the temporary private key to establish an SSH connection to the EC2 instance. The instance automatically provides access to the attached IAM role's credentials through the Instance Metadata Service.
+
+      Command:
+      ```bash
+      ssh -i /tmp/temp_key ec2-user@INSTANCE_PUBLIC_IP
+      ```
+
+      Once connected, the attacker has shell access to the instance and can interact with IMDS.
+  - from: instance_role
+    to: exfiltrate_creds
+    label: Access IMDS for credentials
+    description: |
+      From the SSH session on the EC2 instance, query the Instance Metadata Service (IMDS) to retrieve the temporary security credentials for the instance role. The credentials are available at a predictable URL and include AccessKeyId, SecretAccessKey, and SessionToken.
+
+      Command:
+      ```bash
+      curl http://169.254.169.254/latest/meta-data/iam/security-credentials/ROLE_NAME
+      ```
+
+      The response contains JSON with the temporary credentials that can be used from any location.
+  - from: exfiltrate_creds
+    to: admin_outcome
+    label: If instance role has admin permissions
+    branch: A
+    condition: admin
+    description: |
+      If the instance role has AdministratorAccess or equivalent administrative permissions, the attacker can use the exfiltrated credentials to gain full control over the AWS account. They can create new admin users, access all resources, modify security configurations, and perform any privileged action.
+  - from: exfiltrate_creds
+    to: partial_outcome
+    label: If instance role has some permissions
+    branch: B
+    condition: some_permissions
+    description: |
+      If the instance role has elevated but non-administrative permissions, the attacker gains partial privilege escalation. Common scenarios include access to S3 buckets, RDS databases, DynamoDB tables, or permissions to modify specific resources. The attacker should enumerate the role's permissions to identify data access or additional escalation paths.
+  - from: exfiltrate_creds
+    to: minimal_outcome
+    label: If instance role has minimal permissions
+    branch: C
+    condition: no_permissions
+    description: |
+      If the instance role only has minimal permissions such as CloudWatch logs write access or basic EC2 describe permissions, the exfiltrated credentials may not provide significant additional access. However, even limited permissions could reveal information about the environment or be useful as part of a multi-step attack chain.

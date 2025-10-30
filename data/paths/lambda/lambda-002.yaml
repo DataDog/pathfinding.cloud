@@ -80,4 +80,113 @@ permissions:
   - permission: iam:GetRole
     resourceConstraints: Useful for viewing role trust policies and attached permissions
   - permission: dynamodb:PutItem
-    resourceConstraints: Depending on what event source you configured, you might need permission to trigger it. We're using dynamodb:PutItem here only as an example. Ideally you will create an event source for something that is already happening so that you don't have to do anything manually. 
+    resourceConstraints: Depending on what event source you configured, you might need permission to trigger it. We're using dynamodb:PutItem here only as an example. Ideally you will create an event source for something that is already happening so that you don't have to do anything manually.
+attackVisualization:
+  nodes:
+  - id: start
+    label: starting-principal
+    type: principal
+    description: |
+      The starting principal (user or role) with `iam:PassRole`, `lambda:CreateFunction`, and `lambda:CreateEventSourceMapping` permissions. This principal will create a Lambda function with a privileged role attached and configure it to be automatically triggered by an event source.
+  - id: lambda_function
+    label: Lambda Function
+    type: resource
+    description: |
+      The newly created Lambda function with malicious code. The function is created with `lambda:CreateFunction` and configured to use a privileged IAM role via `iam:PassRole`. Unlike lambda-001, this function does not require manual invocation - it will be automatically triggered by configured event sources.
+  - id: event_source
+    label: Event Source Mapping
+    type: resource
+    description: |
+      An event source mapping configured with `lambda:CreateEventSourceMapping` that automatically triggers the Lambda function. Common event sources include DynamoDB streams, Kinesis streams, or SQS queues. When events occur in the source, the Lambda function is automatically invoked with the target role's permissions.
+  - id: target_role
+    label: target-role
+    type: resource
+    description: |
+      The privileged IAM role that is passed to the Lambda function during creation. This role must trust lambda.amazonaws.com as a principal in its trust policy. When the Lambda function is automatically triggered by events, it executes with this role's permissions without requiring manual invocation.
+  - id: exfiltrate
+    label: Exfiltrate credentials
+    type: action
+    color: '#99ccff'
+    description: |
+      When the event source triggers the Lambda function, the function code executes with the target role's permissions. The function can exfiltrate the temporary credentials to an attacker-controlled server, or directly perform privileged API calls using the role's permissions. The automatic triggering nature means the attacker doesn't need lambda:InvokeFunction permission.
+  - id: admin_outcome
+    label: Effective Administrator
+    type: outcome
+    description: |
+      If the target role has administrative permissions (AdministratorAccess or equivalent), the attacker gains full administrative access to the AWS account when the function is automatically triggered. The credentials or privileged actions can be captured through the function's output or external exfiltration.
+  - id: partial_outcome
+    label: Check for Additional Access
+    type: outcome
+    color: '#ffeb99'
+    description: |
+      If the target role has some elevated permissions but not full admin, the attacker gains partial privilege escalation when the function triggers. This could include access to sensitive data (S3, RDS, DynamoDB) or the ability to pursue additional escalation paths.
+  - id: minimal_outcome
+    label: No Additional Access
+    type: outcome
+    color: '#cccccc'
+    description: |
+      If the target role only has minimal permissions or no interesting permissions, the automatic function execution may not provide meaningful additional access to the attacker, even when triggered by events.
+  edges:
+  - from: start
+    to: lambda_function
+    label: iam:PassRole + lambda:CreateFunction
+    description: |
+      The attacker creates a new Lambda function and passes a privileged role to it. The function is created with malicious code (typically in a ZIP file) that will execute when automatically triggered by events.
+
+      Command:
+      ```bash
+      aws lambda create-function \
+        --function-name privesc-triggered \
+        --runtime python3.9 \
+        --role "arn:aws:iam::ACCOUNT_ID:role/PRIVILEGED_ROLE" \
+        --handler index.handler \
+        --zip-file fileb://exploit.zip
+      ```
+
+      The exploit.zip contains code to exfiltrate credentials or perform privileged actions when triggered.
+  - from: lambda_function
+    to: event_source
+    label: lambda:CreateEventSourceMapping
+    description: |
+      The attacker configures an event source mapping to automatically trigger the Lambda function. This connects the function to an existing event source like a DynamoDB stream, Kinesis stream, or SQS queue.
+
+      Command:
+      ```bash
+      aws lambda create-event-source-mapping \
+        --function-name privesc-triggered \
+        --event-source-arn arn:aws:dynamodb:REGION:ACCOUNT_ID:table/TABLE_NAME/stream/STREAM_ID \
+        --starting-position LATEST
+      ```
+
+      This eliminates the need for lambda:InvokeFunction permission - the function executes automatically when events occur.
+  - from: event_source
+    to: target_role
+    label: Event triggers function
+    description: |
+      When events occur in the configured source (e.g., items added to DynamoDB, messages in SQS, records in Kinesis), the Lambda service automatically invokes the function. The function executes with all the permissions granted to the target role, without requiring manual invocation by the attacker.
+  - from: target_role
+    to: exfiltrate
+    label: Function executes with role permissions
+    description: |
+      The Lambda function code executes automatically with the target role's permissions when triggered by events. The malicious code can retrieve its own credentials via the AWS SDK or IMDSv2, send them to an attacker-controlled server, or directly perform privileged API calls using the role's permissions.
+  - from: exfiltrate
+    to: admin_outcome
+    label: If role has admin permissions
+    branch: A
+    condition: admin
+    description: |
+      If the target role has AdministratorAccess or equivalent administrative permissions, the attacker gains full control over the AWS account when the function triggers. They can use the exfiltrated credentials or the results of privileged operations to compromise the entire account.
+  - from: exfiltrate
+    to: partial_outcome
+    label: If role has some permissions
+    branch: B
+    condition: some_permissions
+    description: |
+      If the target role has elevated but non-administrative permissions, the attacker gains partial privilege escalation when the function triggers. This might include access to sensitive data stores (S3 buckets, RDS databases, DynamoDB tables) or permissions that enable additional privilege escalation techniques.
+  - from: exfiltrate
+    to: minimal_outcome
+    label: If role has minimal permissions
+    branch: C
+    condition: no_permissions
+    description: |
+      If the target role only has minimal or non-sensitive permissions, the automatic function execution may not yield meaningful additional access. However, even limited access could be useful for reconnaissance or as part of a multi-step attack chain. 

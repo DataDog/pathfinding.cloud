@@ -80,3 +80,101 @@ permissions:
     resourceConstraints: Helpful for discovering available roles to pass
   - permission: iam:GetRole
     resourceConstraints: Useful for viewing role trust policies and attached permissions
+attackVisualization:
+  nodes:
+  - id: start
+    label: starting-principal
+    type: principal
+    description: |
+      The starting principal (user or role) with `iam:PassRole`, `lambda:CreateFunction`, and `lambda:InvokeFunction` permissions. This principal will create a Lambda function with a privileged role attached and invoke it to gain elevated privileges.
+  - id: lambda_function
+    label: Lambda Function
+    type: resource
+    description: |
+      The newly created Lambda function with malicious code. The function is created with `lambda:CreateFunction` and configured to use a privileged IAM role via `iam:PassRole`. The function code is designed to exfiltrate credentials or perform privileged actions.
+  - id: target_role
+    label: target-role
+    type: resource
+    description: |
+      The privileged IAM role that is passed to the Lambda function during creation. This role must trust lambda.amazonaws.com as a principal in its trust policy. When the Lambda function is invoked, it executes with this role's permissions.
+  - id: exfiltrate
+    label: Exfiltrate credentials
+    type: action
+    color: '#99ccff'
+    description: |
+      The Lambda function code executes with the target role's permissions. The function can either return the temporary credentials directly in the response, or use the role's permissions to perform privileged API calls (create access keys, modify policies, etc.).
+  - id: admin_outcome
+    label: Effective Administrator
+    type: outcome
+    description: |
+      If the target role has administrative permissions (AdministratorAccess or equivalent), the attacker gains full administrative access to the AWS account by using the credentials or results from the Lambda function execution.
+  - id: partial_outcome
+    label: Check for Additional Access
+    type: outcome
+    color: '#ffeb99'
+    description: |
+      If the target role has some elevated permissions but not full admin, the attacker gains partial privilege escalation. This could include access to sensitive data (S3, RDS, DynamoDB) or the ability to pursue additional escalation paths.
+  - id: minimal_outcome
+    label: No Additional Access
+    type: outcome
+    color: '#cccccc'
+    description: |
+      If the target role only has minimal permissions or no interesting permissions, the privilege escalation may not provide meaningful additional access to the attacker.
+  edges:
+  - from: start
+    to: lambda_function
+    label: iam:PassRole + lambda:CreateFunction
+    description: |
+      The attacker creates a new Lambda function and passes a privileged role to it. The function is created with malicious code (typically in a ZIP file) that will execute when invoked.
+
+      Command:
+      ```bash
+      aws lambda create-function \
+        --function-name privesc-function \
+        --runtime python3.9 \
+        --role "arn:aws:iam::ACCOUNT_ID:role/PRIVILEGED_ROLE" \
+        --handler index.handler \
+        --zip-file fileb://exploit.zip
+      ```
+
+      The exploit.zip contains code to exfiltrate credentials or perform privileged actions.
+  - from: lambda_function
+    to: target_role
+    label: Function assumes role
+    description: |
+      When the Lambda function is invoked, the Lambda service automatically assumes the target role on behalf of the function. The function code then executes with all the permissions granted to this role.
+  - from: target_role
+    to: exfiltrate
+    label: lambda:InvokeFunction
+    description: |
+      The attacker invokes the Lambda function, which executes the malicious code with the target role's permissions. The function can retrieve its own credentials via the AWS SDK or IMDSv2, or directly perform privileged API calls.
+
+      Command:
+      ```bash
+      aws lambda invoke \
+        --function-name privesc-function \
+        output.txt
+      ```
+
+      The output.txt file contains the function's response, which may include credentials or results of privileged operations.
+  - from: exfiltrate
+    to: admin_outcome
+    label: If role has admin permissions
+    branch: A
+    condition: admin
+    description: |
+      If the target role has AdministratorAccess or equivalent administrative permissions, the attacker gains full control over the AWS account. They can use the exfiltrated credentials to perform any action in the account.
+  - from: exfiltrate
+    to: partial_outcome
+    label: If role has some permissions
+    branch: B
+    condition: some_permissions
+    description: |
+      If the target role has elevated but non-administrative permissions, the attacker gains partial privilege escalation. This might include access to sensitive data stores (S3 buckets, RDS databases, DynamoDB tables) or permissions that enable additional privilege escalation techniques.
+  - from: exfiltrate
+    to: minimal_outcome
+    label: If role has minimal permissions
+    branch: C
+    condition: no_permissions
+    description: |
+      If the target role only has minimal or non-sensitive permissions, the privilege escalation may not yield meaningful additional access. However, even limited access could be useful for reconnaissance or as part of a multi-step attack chain.

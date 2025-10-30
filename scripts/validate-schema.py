@@ -39,7 +39,7 @@ OPTIONAL_FIELDS = {
     'relatedPaths': list,
     'detectionRules': list,
     'toolSupport': dict,
-    'attackVisualization': str,  # Mermaid diagram of the attack path
+    'attackVisualization': (dict, str),  # dict (new structured format) or str (legacy Mermaid)
 }
 
 ALLOWED_CATEGORIES = [
@@ -355,6 +355,169 @@ def validate_tool_support(tool_support: Dict) -> None:
             raise ValidationError(f"Tool support value for '{tool}' must be boolean")
 
 
+def has_artificial_line_breaks(text: str) -> bool:
+    """
+    Check if a description has artificial line breaks (~80 chars).
+
+    Returns True if the text likely has artificial line breaks that should be removed.
+    Ignores intentional multi-line structures like code blocks, lists, and paragraph breaks.
+    """
+    if not text or '\n' not in text:
+        return False
+
+    lines = text.split('\n')
+
+    # Filter out empty lines and lines that are part of intentional structures
+    text_lines = []
+    in_code_block = False
+
+    for i, line in enumerate(lines):
+        stripped = line.strip()
+
+        # Track code blocks
+        if stripped.startswith('```'):
+            in_code_block = not in_code_block
+            continue
+
+        # Skip lines in code blocks
+        if in_code_block:
+            continue
+
+        # Skip empty lines (intentional paragraph breaks)
+        if not stripped:
+            continue
+
+        # Skip list items (intentional line breaks)
+        if stripped.startswith('-') or stripped.startswith('*') or \
+           (len(stripped) > 2 and stripped[0].isdigit() and stripped[1] in '.):'):
+            continue
+
+        # Skip lines that are clearly part of multi-line formatting
+        # (like "Command:", "Example:", etc.)
+        if stripped.endswith(':') and len(stripped) < 20:
+            continue
+
+        text_lines.append(line)
+
+    # Check if we have multiple text lines that look like they should be combined
+    if len(text_lines) <= 1:
+        return False
+
+    # Look for lines that end mid-sentence (not at sentence boundaries)
+    # and are around 70-90 characters (typical artificial wrap point)
+    suspicious_breaks = 0
+    for i, line in enumerate(text_lines[:-1]):  # Don't check last line
+        stripped = line.strip()
+        length = len(stripped)
+
+        # Check if line is around typical wrap length
+        if 60 <= length <= 95:
+            # Check if it ends mid-sentence (doesn't end with . ! ? : or ,)
+            if stripped and stripped[-1] not in '.!?:,':
+                # Check if next line continues the sentence (starts with lowercase or common continuations)
+                if i + 1 < len(text_lines):
+                    next_line = text_lines[i + 1].strip()
+                    if next_line and (next_line[0].islower() or next_line.startswith('(')):
+                        suspicious_breaks += 1
+
+    # If we find multiple suspicious breaks, it's likely artificial wrapping
+    return suspicious_breaks >= 2
+
+
+def validate_attack_visualization(attack_viz) -> None:
+    """Validate the attackVisualization field (supports both old string and new dict format)."""
+    # Legacy format: string (Mermaid)
+    if isinstance(attack_viz, str):
+        return  # String format is valid (legacy Mermaid)
+
+    # New format: structured dict
+    if not isinstance(attack_viz, dict):
+        raise ValidationError("AttackVisualization must be either a string (Mermaid) or dict (structured)")
+
+    # Validate nodes
+    if 'nodes' not in attack_viz:
+        raise ValidationError("AttackVisualization dict must have 'nodes' field")
+
+    if not isinstance(attack_viz['nodes'], list):
+        raise ValidationError("AttackVisualization 'nodes' must be a list")
+
+    if not attack_viz['nodes']:
+        raise ValidationError("AttackVisualization 'nodes' list cannot be empty")
+
+    node_ids = set()
+    allowed_node_types = ['principal', 'resource', 'action', 'outcome']
+
+    for node in attack_viz['nodes']:
+        if not isinstance(node, dict):
+            raise ValidationError("Each node must be a dictionary")
+
+        # Validate required node fields
+        if 'id' not in node:
+            raise ValidationError("Each node must have an 'id' field")
+        if 'label' not in node:
+            raise ValidationError("Each node must have a 'label' field")
+        if 'type' not in node:
+            raise ValidationError("Each node must have a 'type' field")
+
+        # Check for duplicate IDs
+        if node['id'] in node_ids:
+            raise ValidationError(f"Duplicate node ID: {node['id']}")
+        node_ids.add(node['id'])
+
+        # Validate node type
+        if node['type'] not in allowed_node_types:
+            raise ValidationError(
+                f"Node type '{node['type']}' is not valid. "
+                f"Allowed: {', '.join(allowed_node_types)}"
+            )
+
+        # Check for artificial line breaks in node descriptions
+        if 'description' in node and node['description']:
+            if has_artificial_line_breaks(node['description']):
+                raise ValidationError(
+                    f"Node '{node['id']}' has artificial line breaks in description. "
+                    f"Text should flow as single-line paragraphs without ~80 character wraps. "
+                    f"See SCHEMA.md Description Formatting Guidelines."
+                )
+
+    # Validate edges
+    if 'edges' not in attack_viz:
+        raise ValidationError("AttackVisualization dict must have 'edges' field")
+
+    if not isinstance(attack_viz['edges'], list):
+        raise ValidationError("AttackVisualization 'edges' must be a list")
+
+    if not attack_viz['edges']:
+        raise ValidationError("AttackVisualization 'edges' list cannot be empty")
+
+    for edge in attack_viz['edges']:
+        if not isinstance(edge, dict):
+            raise ValidationError("Each edge must be a dictionary")
+
+        # Validate required edge fields
+        if 'from' not in edge:
+            raise ValidationError("Each edge must have a 'from' field")
+        if 'to' not in edge:
+            raise ValidationError("Each edge must have a 'to' field")
+        if 'label' not in edge:
+            raise ValidationError("Each edge must have a 'label' field")
+
+        # Validate edge references existing nodes
+        if edge['from'] not in node_ids:
+            raise ValidationError(f"Edge references non-existent node: {edge['from']}")
+        if edge['to'] not in node_ids:
+            raise ValidationError(f"Edge references non-existent node: {edge['to']}")
+
+        # Check for artificial line breaks in edge descriptions
+        if 'description' in edge and edge['description']:
+            if has_artificial_line_breaks(edge['description']):
+                raise ValidationError(
+                    f"Edge from '{edge['from']}' to '{edge['to']}' has artificial line breaks in description. "
+                    f"Text should flow as single-line paragraphs without ~80 character wraps. "
+                    f"See SCHEMA.md Description Formatting Guidelines."
+                )
+
+
 def validate_file(file_path: str) -> Tuple[bool, List[str]]:
     """
     Validate a single YAML file against the schema.
@@ -464,6 +627,12 @@ def validate_file(file_path: str) -> Tuple[bool, List[str]]:
         if 'toolSupport' in data:
             try:
                 validate_tool_support(data['toolSupport'])
+            except ValidationError as e:
+                errors.append(str(e))
+
+        if 'attackVisualization' in data:
+            try:
+                validate_attack_visualization(data['attackVisualization'])
             except ValidationError as e:
                 errors.append(str(e))
 

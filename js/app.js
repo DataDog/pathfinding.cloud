@@ -399,7 +399,14 @@ function showPathDetails(path) {
 
         ${path.attackVisualization ? `
             <div class="modal-section">
-                <h3>Attack Visualization</h3>
+                <h3>
+                    Attack Visualization
+                    <button class="fullscreen-viz-btn" onclick="openFullscreenVisualization('${path.id}')" title="Open in fullscreen">
+                        <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor">
+                            <path d="M1.5 1a.5.5 0 0 0-.5.5v4a.5.5 0 0 1-1 0v-4A1.5 1.5 0 0 1 1.5 0h4a.5.5 0 0 1 0 1h-4zM10 .5a.5.5 0 0 1 .5-.5h4A1.5 1.5 0 0 1 16 1.5v4a.5.5 0 0 1-1 0v-4a.5.5 0 0 0-.5-.5h-4a.5.5 0 0 1-.5-.5zM.5 10a.5.5 0 0 1 .5.5v4a.5.5 0 0 0 .5.5h4a.5.5 0 0 1 0 1h-4A1.5 1.5 0 0 1 0 14.5v-4a.5.5 0 0 1 .5-.5zm15 0a.5.5 0 0 1 .5.5v4a1.5 1.5 0 0 1-1.5 1.5h-4a.5.5 0 0 1 0-1h4a.5.5 0 0 0 .5-.5v-4a.5.5 0 0 1 .5-.5z"/>
+                        </svg>
+                    </button>
+                </h3>
                 <div class="attack-viz-container" id="attack-viz-${path.id}"></div>
             </div>
         ` : ''}
@@ -485,23 +492,44 @@ function showPathDetails(path) {
     }
 }
 
-// Parse Mermaid graph LR syntax and render with vis.js
-function renderAttackVisualization(pathId, mermaidCode) {
+// Render attack visualization (supports both structured and legacy Mermaid format)
+function renderAttackVisualization(pathId, visualization) {
     const container = document.getElementById(`attack-viz-${pathId}`);
-    if (!container) return;
+    if (!container) {
+        console.error(`Container not found: attack-viz-${pathId}`);
+        return;
+    }
+
+    console.log(`Rendering visualization in container: attack-viz-${pathId}`, container);
 
     try {
-        const { nodes, edges } = parseMermaidGraph(mermaidCode);
+        let nodes, edges;
+
+        // Check if it's the new structured format or legacy Mermaid string
+        if (typeof visualization === 'string') {
+            // Legacy Mermaid format
+            const parsed = parseMermaidGraph(visualization);
+            nodes = parsed.nodes;
+            edges = parsed.edges;
+        } else if (typeof visualization === 'object' && visualization.nodes && visualization.edges) {
+            // New structured format
+            const converted = convertStructuredToVisData(visualization);
+            nodes = converted.nodes;
+            edges = converted.edges;
+        } else {
+            throw new Error('Invalid visualization format');
+        }
 
         // Create vis.js network
         const data = { nodes, edges };
         const options = {
             layout: {
                 hierarchical: {
-                    direction: 'LR',
+                    direction: 'UD',
                     sortMethod: 'directed',
-                    nodeSpacing: 200,
-                    levelSeparation: 250
+                    nodeSpacing: 250,
+                    levelSeparation: 120,
+                    shakeTowards: 'leaves'
                 }
             },
             nodes: {
@@ -529,21 +557,21 @@ function renderAttackVisualization(pathId, mermaidCode) {
                 },
                 font: {
                     size: 12,
-                    align: 'top',
+                    align: 'horizontal',
                     color: '#666',
                     strokeWidth: 0,
-                    background: 'rgba(255,255,255,0.8)',
-                    vadjust: -10
+                    background: 'rgba(255,255,255,0.9)',
+                    multi: true
                 },
                 color: {
                     color: '#848484',
                     highlight: '#ff9900'
                 },
                 width: 2,
-                length: 250,
+                length: 180,
                 smooth: {
                     type: 'cubicBezier',
-                    forceDirection: 'horizontal',
+                    forceDirection: 'vertical',
                     roundness: 0.5
                 }
             },
@@ -558,11 +586,168 @@ function renderAttackVisualization(pathId, mermaidCode) {
             }
         };
 
-        new vis.Network(container, data, options);
+        const network = new vis.Network(container, data, options);
+
+        // Add click event handlers for nodes and edges
+        network.on('click', function(params) {
+            if (params.nodes.length > 0) {
+                // Node clicked
+                const nodeId = params.nodes[0];
+                const node = nodes.find(n => n.id === nodeId);
+                if (node && node.description) {
+                    showVisualizationTooltip(node.label, node.description, container);
+                }
+            } else if (params.edges.length > 0) {
+                // Edge clicked
+                const edgeId = params.edges[0];
+                const edge = edges.find(e => e.id === edgeId);
+                if (edge && edge.description) {
+                    // Use originalLabel (which has the label from YAML) for tooltip title
+                    const title = edge.originalLabel || edge.label || 'Edge Details';
+                    showVisualizationTooltip(title, edge.description, container);
+                }
+            }
+        });
+
+        // Add legend after network is created (so it appears above the canvas)
+        const legend = document.createElement('div');
+        legend.className = 'viz-legend';
+        legend.innerHTML = `
+            <div class="viz-legend-title">Legend</div>
+            <div class="viz-legend-item">
+                <svg width="40" height="2" style="margin-right: 8px;">
+                    <line x1="0" y1="1" x2="40" y2="1" stroke="#848484" stroke-width="2"/>
+                </svg>
+                <span>Transitive Actions</span>
+            </div>
+            <div class="viz-legend-item">
+                <svg width="40" height="2" style="margin-right: 8px;">
+                    <line x1="0" y1="1" x2="40" y2="1" stroke="#999" stroke-width="2" stroke-dasharray="5,5"/>
+                </svg>
+                <span>Potential Outcomes</span>
+            </div>
+        `;
+        container.appendChild(legend);
+
+        // Store network instance for potential cleanup
+        container._visNetwork = network;
+
     } catch (error) {
         console.error('Error rendering attack visualization:', error);
         container.innerHTML = '<p style="color: #d13212;">Error rendering visualization</p>';
     }
+}
+
+// Convert structured format to vis.js data
+function convertStructuredToVisData(structured) {
+    const nodes = structured.nodes.map(node => {
+        // Default colors by type
+        const colorDefaults = {
+            'principal': '#ff9999',
+            'resource': '#ffcc99',
+            'action': '#99ccff',
+            'outcome': '#99ff99'
+        };
+
+        // Override with special outcome colors
+        if (node.type === 'outcome' && !node.color) {
+            if (node.label.includes('No ') || node.label.includes('Dead')) {
+                node.color = '#cccccc'; // gray for dead ends
+            } else if (node.label.includes('Check') || node.label.includes('Some')) {
+                node.color = '#ffeb99'; // yellow for partial
+            }
+        }
+
+        const color = node.color || colorDefaults[node.type] || '#e8f4f8';
+
+        return {
+            id: node.id,
+            label: node.label,
+            color: {
+                background: color,
+                border: getDarkerColor(color),
+                highlight: {
+                    background: color,
+                    border: '#ff9900'
+                }
+            },
+            description: node.description || '',
+            font: {
+                size: 14,
+                face: 'Arial',
+                color: '#232f3e'
+            }
+        };
+    });
+
+    const edges = structured.edges.map((edge, index) => {
+        const edgeStyle = {
+            id: `edge-${index}`,
+            from: edge.from,
+            to: edge.to,
+            description: edge.description || '',
+            originalLabel: edge.label // Store original label for tooltips
+        };
+
+        // Style conditional branches differently
+        if (edge.branch || edge.condition) {
+            edgeStyle.dashes = [5, 5]; // Dashed line for conditions
+            edgeStyle.color = {
+                color: '#999',
+                highlight: '#ff9900'
+            };
+            // No label displayed on conditional edges
+        } else {
+            // Add label for non-conditional edges
+            edgeStyle.label = edge.label;
+        }
+
+        return edgeStyle;
+    });
+
+    return { nodes, edges };
+}
+
+// Show tooltip for node/edge descriptions
+function showVisualizationTooltip(title, description, vizContainer) {
+    // Remove existing tooltip
+    const existingTooltip = document.querySelector('.viz-tooltip');
+    if (existingTooltip) {
+        existingTooltip.remove();
+    }
+
+    // Create tooltip
+    const tooltip = document.createElement('div');
+    tooltip.className = 'viz-tooltip';
+    tooltip.innerHTML = `
+        <div class="viz-tooltip-header">${escapeHtml(title)}</div>
+        <div class="viz-tooltip-body">${renderMarkdown(description)}</div>
+        <div class="viz-tooltip-close">&times;</div>
+    `;
+
+    // Append to the visualization container instead of body
+    vizContainer.appendChild(tooltip);
+
+    // Position tooltip at bottom left of the container
+    tooltip.style.position = 'absolute';
+    tooltip.style.left = '10px';
+    tooltip.style.bottom = '10px';
+    tooltip.style.top = 'auto';
+
+    // Add close handler
+    tooltip.querySelector('.viz-tooltip-close').addEventListener('click', () => {
+        tooltip.remove();
+    });
+
+    // Close on outside click
+    setTimeout(() => {
+        document.addEventListener('click', function closeTooltip(e) {
+            if (!tooltip.contains(e.target)) {
+                tooltip.remove();
+                document.removeEventListener('click', closeTooltip);
+            }
+        });
+    }, 100);
 }
 
 // Parse Mermaid "graph LR" format into vis.js nodes/edges
@@ -712,8 +897,58 @@ function escapeHtml(text) {
     return div.innerHTML;
 }
 
+// Open attack visualization in fullscreen modal
+function openFullscreenVisualization(pathId) {
+    const path = allPaths.find(p => p.id === pathId);
+    if (!path || !path.attackVisualization) return;
+
+    // Create fullscreen modal
+    const fullscreenModal = document.createElement('div');
+    fullscreenModal.className = 'fullscreen-viz-modal';
+    fullscreenModal.innerHTML = `
+        <div class="fullscreen-viz-content">
+            <div class="fullscreen-viz-header">
+                <h2>${escapeHtml(path.name)} - Attack Visualization</h2>
+                <button class="fullscreen-viz-close" onclick="closeFullscreenVisualization()">&times;</button>
+            </div>
+            <div class="fullscreen-viz-container" id="attack-viz-fullscreen-${pathId}"></div>
+        </div>
+    `;
+
+    document.body.appendChild(fullscreenModal);
+
+    // Render visualization in fullscreen container
+    setTimeout(() => {
+        renderAttackVisualization('fullscreen-' + pathId, path.attackVisualization);
+    }, 10);
+
+    // Close on background click
+    fullscreenModal.addEventListener('click', (e) => {
+        if (e.target === fullscreenModal) {
+            closeFullscreenVisualization();
+        }
+    });
+
+    // Close on ESC key
+    const escHandler = (e) => {
+        if (e.key === 'Escape') {
+            closeFullscreenVisualization();
+            document.removeEventListener('keydown', escHandler);
+        }
+    };
+    document.addEventListener('keydown', escHandler);
+}
+
+// Close fullscreen visualization modal
+function closeFullscreenVisualization() {
+    const modal = document.querySelector('.fullscreen-viz-modal');
+    if (modal) {
+        modal.remove();
+    }
+}
+
 function renderMarkdown(text) {
-    // Simple markdown renderer for code blocks
+    // Simple markdown renderer for code blocks and lists
     let html = escapeHtml(text);
 
     // Convert ```language\ncode\n``` to <pre><code>code</code></pre>
@@ -724,8 +959,48 @@ function renderMarkdown(text) {
     // Convert inline `code` to <code>code</code>
     html = html.replace(/`([^`]+)`/g, '<code>$1</code>');
 
-    // Preserve line breaks
-    html = html.replace(/\n/g, '<br>');
+    // Convert **bold** to <strong>bold</strong>
+    html = html.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
+
+    // Convert markdown lists to HTML lists
+    // Match lines that start with "- " (with optional leading whitespace)
+    const lines = html.split('\n');
+    let inList = false;
+    let result = [];
+
+    for (let i = 0; i < lines.length; i++) {
+        const line = lines[i];
+        const listMatch = line.match(/^(\s*)- (.+)$/);
+
+        if (listMatch) {
+            if (!inList) {
+                result.push('<ul>');
+                inList = true;
+            }
+            result.push(`<li>${listMatch[2]}</li>`);
+        } else {
+            if (inList) {
+                result.push('</ul>');
+                inList = false;
+            }
+            result.push(line);
+        }
+    }
+
+    // Close list if still open
+    if (inList) {
+        result.push('</ul>');
+    }
+
+    html = result.join('\n');
+
+    // Preserve line breaks (but not inside lists)
+    html = html.replace(/\n(?![<])/g, '<br>');
+    // Clean up extra breaks around list tags
+    html = html.replace(/<br>\s*<ul>/g, '<ul>');
+    html = html.replace(/<\/ul>\s*<br>/g, '</ul>');
+    html = html.replace(/<br>\s*<li>/g, '<li>');
+    html = html.replace(/<\/li>\s*<br>/g, '</li>');
 
     return html;
 }

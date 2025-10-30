@@ -127,6 +127,128 @@ relatedPaths:
 toolSupport:
   pmapper: false
   iamVulnerable: false
+attackVisualization:
+  nodes:
+    - id: start
+      label: starting-principal
+      type: principal
+      description: |
+        The principal with iam:PassRole and apprunner:CreateService permissions. Can be an IAM user or role.
+
+    - id: apprunner_service
+      label: App Runner Service
+      type: resource
+      description: |
+        New App Runner service created with a malicious container image and a privileged IAM role. The service runs on AWS-managed infrastructure and automatically assumes the attached role. The container image contains a web shell that allows command execution with the target role's credentials.
+
+    - id: target_role
+      label: target-role
+      type: resource
+      description: |
+        IAM role passed to the App Runner service as the instance role. The role must trust apprunner.amazonaws.com to assume it. Credentials are available via the AWS Container Credentials Relative URI environment variable within the running container.
+
+    - id: exfiltrate_creds
+      label: Exfiltrate Credentials
+      type: action
+      color: '#99ccff'
+      description: |
+        Use the web shell endpoint to execute commands within the running container. The container has access to the target role's temporary credentials via the AWS_CONTAINER_CREDENTIALS_RELATIVE_URI environment variable, which points to the container metadata service at 169.254.170.2. The web shell can query this endpoint to retrieve the AccessKeyId, SecretAccessKey, and SessionToken.
+
+        Example commands the web shell could execute:
+        - Query metadata service for credentials
+        - Use AWS SDK with the role's credentials to perform privileged actions
+        - Exfiltrate credentials to attacker-controlled infrastructure
+
+    - id: admin
+      label: Effective Administrator
+      type: outcome
+      description: |
+        The attacker successfully exfiltrated credentials from the App Runner service and the target role has AdministratorAccess or equivalent permissions. The attacker now has full administrative access to the AWS account.
+
+    - id: some_perms
+      label: Check for Additional Access
+      type: outcome
+      color: '#ffeb99'
+      description: |
+        The attacker successfully exfiltrated credentials from the App Runner service and the target role has some elevated permissions (but not full admin). This could provide data access (S3, RDS, DynamoDB) or enable additional privilege escalation paths.
+
+    - id: no_access
+      label: Minimal Additional Access
+      type: outcome
+      color: '#cccccc'
+      description: |
+        The attacker successfully exfiltrated credentials from the App Runner service, but the target role only has minimal permissions. Limited usefulness for privilege escalation.
+
+  edges:
+    - from: start
+      to: apprunner_service
+      label: iam:PassRole + apprunner:CreateService
+      description: |
+        Create a new App Runner service with a malicious container image (containing a web shell) and pass the target role to it as the instance role. The container image must be accessible from a container registry (ECR or public registry).
+
+        Command:
+        ```bash
+        aws apprunner create-service \
+          --service-name privesc-service \
+          --source-configuration '{
+            "ImageRepository": {
+              "ImageIdentifier": "PUBLIC_ECR_URI:latest",
+              "ImageRepositoryType": "ECR_PUBLIC",
+              "ImageConfiguration": {
+                "Port": "8080"
+              }
+            },
+            "AutoDeploymentsEnabled": false
+          }' \
+          --instance-configuration '{
+            "InstanceRoleArn": "arn:aws:iam::ACCOUNT_ID:role/PRIVILEGED_ROLE"
+          }'
+        ```
+
+        Wait for the service to reach RUNNING status and retrieve the service URL.
+
+    - from: apprunner_service
+      to: target_role
+      label: Service assumes role
+      description: |
+        The App Runner service automatically assumes the passed instance role. Credentials become available within the running container via the AWS_CONTAINER_CREDENTIALS_RELATIVE_URI environment variable, which points to 169.254.170.2$AWS_CONTAINER_CREDENTIALS_RELATIVE_URI.
+
+    - from: target_role
+      to: exfiltrate_creds
+      label: Access web shell
+      description: |
+        Access the deployed web shell via the App Runner service URL to execute commands within the container. The web shell can query the container metadata service to retrieve the target role's temporary credentials.
+
+        Command:
+        ```bash
+        curl "https://SERVICE_URL/?cmd=curl%20169.254.170.2$AWS_CONTAINER_CREDENTIALS_RELATIVE_URI"
+        ```
+
+        This returns a JSON response containing AccessKeyId, SecretAccessKey, and Token that can be used to authenticate as the target role.
+
+    - from: exfiltrate_creds
+      to: admin
+      label: If target role has admin permissions
+      branch: A
+      condition: admin
+      description: |
+        If the target role has AdministratorAccess or equivalent permissions, the attacker gains full administrative access by using the exfiltrated credentials.
+
+    - from: exfiltrate_creds
+      to: some_perms
+      label: If target role has some elevated permissions
+      branch: B
+      condition: some_permissions
+      description: |
+        If the target role has some elevated permissions (data access, further escalation paths), the attacker can leverage the exfiltrated credentials for lateral movement or additional attacks.
+
+    - from: exfiltrate_creds
+      to: no_access
+      label: If target role has minimal permissions
+      branch: C
+      condition: no_permissions
+      description: |
+        If the target role only has minimal permissions (like logs:PutLogEvents), the exfiltrated credentials provide limited value for privilege escalation.
 permissions:
   required:
   - permission: iam:PassRole

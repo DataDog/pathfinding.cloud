@@ -71,3 +71,100 @@ permissions:
   required:
   - permission: sagemaker:CreatePresignedNotebookInstanceUrl
     resourceConstraints: Must have permission to create presigned URLs for the target notebook instance
+attackVisualization:
+  nodes:
+  - id: start
+    label: starting-principal
+    type: principal
+    description: |
+      The starting principal (user or role) with `sagemaker:CreatePresignedNotebookInstanceUrl` permission. This principal can generate presigned URLs to access existing SageMaker notebook instances without creating new resources.
+  - id: notebook_instance
+    label: SageMaker Notebook Instance
+    type: resource
+    description: |
+      An existing SageMaker notebook instance in 'InService' status with a privileged execution role attached. The notebook provides a Jupyter environment where code can be executed. The execution role is used by the notebook to make AWS API calls, and any code executed in the notebook inherits these permissions.
+  - id: execution_role
+    label: notebook-execution-role
+    type: resource
+    description: |
+      The IAM role attached to the notebook instance as its execution role. This role must trust sagemaker.amazonaws.com in its trust policy. When code is executed in the Jupyter notebook, it runs with the permissions of this execution role. The role's credentials are available through the AWS SDK or instance metadata service.
+  - id: exfiltrate
+    label: Execute code in Jupyter
+    type: action
+    color: '#99ccff'
+    description: |
+      Once the attacker accesses the notebook via the presigned URL, they can use the Jupyter terminal or notebook cells to execute arbitrary code. The code runs with the execution role's permissions and can access AWS credentials through the AWS SDK. Common actions include creating access keys, modifying IAM policies, or accessing sensitive data in S3/RDS/DynamoDB.
+  - id: admin_outcome
+    label: Effective Administrator
+    type: outcome
+    description: |
+      If the notebook's execution role has administrative permissions (AdministratorAccess or equivalent), the attacker gains full administrative access to the AWS account by executing code in the Jupyter environment with those permissions.
+  - id: partial_outcome
+    label: Check for Additional Access
+    type: outcome
+    color: '#ffeb99'
+    description: |
+      If the notebook's execution role has some elevated permissions but not full admin, the attacker gains partial privilege escalation. This could include access to sensitive data stores (S3, RDS, DynamoDB), ability to modify specific resources, or permissions that enable additional privilege escalation paths.
+  - id: minimal_outcome
+    label: No Additional Access
+    type: outcome
+    color: '#cccccc'
+    description: |
+      If the notebook's execution role only has minimal permissions (e.g., only CloudWatch Logs write access), the privilege escalation may not provide meaningful additional access to the attacker.
+  edges:
+  - from: start
+    to: notebook_instance
+    label: sagemaker:CreatePresignedNotebookInstanceUrl
+    description: |
+      The attacker generates a presigned URL to access an existing notebook instance. This does not require creating any new resources, only accessing an existing one.
+
+      Command:
+      ```bash
+      aws sagemaker create-presigned-notebook-instance-url \
+        --notebook-instance-name TARGET_NOTEBOOK
+      ```
+
+      The command returns a presigned URL that provides authenticated access to the Jupyter notebook interface for a limited time (typically 12 hours by default).
+  - from: notebook_instance
+    to: execution_role
+    label: Notebook uses execution role
+    description: |
+      The notebook instance is configured with an execution role that is automatically assumed when code runs in the Jupyter environment. The attacker doesn't need to explicitly assume the role - any code executed in the notebook automatically runs with the execution role's permissions through the notebook's IAM credentials.
+  - from: execution_role
+    to: exfiltrate
+    label: Access Jupyter environment
+    description: |
+      The attacker opens the presigned URL in a browser to access the Jupyter notebook interface. They can then use the Jupyter terminal or create notebook cells to execute arbitrary Python or shell commands with the execution role's permissions.
+
+      Example actions in Jupyter terminal:
+      ```bash
+      # View the execution role credentials
+      aws sts get-caller-identity
+
+      # Create access keys for starting principal
+      aws iam create-access-key --user-name STARTING_USER
+
+      # Access sensitive data
+      aws s3 ls s3://sensitive-bucket
+      ```
+  - from: exfiltrate
+    to: admin_outcome
+    label: If execution role has admin permissions
+    branch: A
+    condition: admin
+    description: |
+      If the notebook's execution role has AdministratorAccess or equivalent administrative permissions, the attacker gains full control over the AWS account. They can execute any AWS API call through the Jupyter environment or exfiltrate the execution role's credentials for later use.
+  - from: exfiltrate
+    to: partial_outcome
+    label: If execution role has some permissions
+    branch: B
+    condition: some_permissions
+    description: |
+      If the notebook's execution role has elevated but non-administrative permissions, the attacker gains partial privilege escalation. Common scenarios include access to sensitive data stores, ability to modify specific resources like Lambda functions or EC2 instances, or permissions that enable chaining to other privilege escalation techniques.
+  - from: exfiltrate
+    to: minimal_outcome
+    label: If execution role has minimal permissions
+    branch: C
+    condition: no_permissions
+    description: |
+      If the notebook's execution role only has minimal permissions typically needed for notebook operation (such as CloudWatch Logs write access and basic SageMaker permissions), the privilege escalation may not yield meaningful additional access beyond what the starting principal already had.

@@ -35,6 +35,100 @@ detectionRules:
 toolSupport:
   pmapper: true
   iamVulnerable: true
+attackVisualization:
+  nodes:
+    - id: start
+      label: starting-principal
+      type: principal
+      description: |
+        The principal with iam:UpdateAssumeRolePolicy permission on the target role. Can be an IAM user or role with permission to modify trust policies.
+
+    - id: target_role
+      label: target-role
+      type: resource
+      description: |
+        The target IAM role whose trust policy will be modified. The attacker modifies this role's trust policy to allow themselves to assume it, thereby gaining access to all permissions attached to the role.
+
+    - id: assumed_role
+      label: target-role (assumed)
+      type: resource
+      description: |
+        The target role after being assumed by the attacker. The attacker now has temporary credentials with all the permissions of this role.
+
+    - id: admin
+      label: Effective Administrator
+      type: outcome
+      description: |
+        Full administrative access to the AWS account when the target role has AdministratorAccess or equivalent permissions.
+
+    - id: some_perms
+      label: Check for Additional Access
+      type: outcome
+      color: '#ffeb99'
+      description: |
+        The target role has some elevated permissions. Check for data access (S3, RDS, DynamoDB) or additional privilege escalation paths.
+
+    - id: no_access
+      label: No Additional Access
+      type: outcome
+      color: '#cccccc'
+      description: |
+        The target role has no interesting permissions beyond what the starting principal already had.
+
+  edges:
+    - from: start
+      to: target_role
+      label: iam:UpdateAssumeRolePolicy
+      description: |
+        Execute iam:UpdateAssumeRolePolicy to modify the target role's trust policy to allow the starting principal to assume it. This adds the starting principal's ARN to the role's trust policy.
+
+        Command:
+        ```bash
+        aws iam update-assume-role-policy \
+          --role-name @rolename \
+          --policy-document file://trust_policy.json
+        ```
+
+        The trust_policy.json file should contain the starting principal's ARN in the Principal section.
+
+    - from: target_role
+      to: assumed_role
+      label: sts:AssumeRole
+      description: |
+        After modifying the trust policy, assume the target role using sts:AssumeRole. This returns temporary credentials with all the permissions of the target role.
+
+        Command:
+        ```bash
+        aws sts assume-role \
+          --role-arn arn:aws:iam::123456789012:role/@rolename \
+          --role-session-name exploit
+        ```
+
+        Configure the AWS CLI with the temporary credentials from the assume-role response.
+
+    - from: assumed_role
+      to: admin
+      label: If role has admin permissions
+      branch: A
+      condition: admin
+      description: |
+        If the target role has AdministratorAccess or equivalent permissions, the attacker gains full administrative access to the account.
+
+    - from: assumed_role
+      to: some_perms
+      label: If role has some permissions
+      branch: B
+      condition: some_permissions
+      description: |
+        If the target role has some elevated permissions, check for data access (S3, RDS, DynamoDB) or additional privilege escalation paths.
+
+    - from: assumed_role
+      to: no_access
+      label: If role has no interesting permissions
+      branch: C
+      condition: no_permissions
+      description: |
+        If the target role only has minimal permissions, there may be no meaningful privilege escalation achieved.
 permissions:
   required:
   - permission: iam:UpdateAssumeRolePolicy

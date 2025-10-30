@@ -79,3 +79,99 @@ permissions:
     resourceConstraints: Helpful for discovering available roles to pass
   - permission: iam:GetRole
     resourceConstraints: Useful for viewing role trust policies and attached permissions
+attackVisualization:
+  nodes:
+  - id: start
+    label: starting-principal
+    type: principal
+    description: |
+      The starting principal (user or role) with `iam:PassRole` and `cloudformation:CreateStack` permissions. This principal will create a CloudFormation stack that executes with a privileged role's permissions.
+  - id: cfn_stack
+    label: CloudFormation Stack
+    type: resource
+    description: |
+      The newly created CloudFormation stack with a malicious template. The stack is created with `cloudformation:CreateStack` and configured to use a privileged IAM role via `iam:PassRole`. The template defines AWS resources to be created with the target role's permissions.
+  - id: target_role
+    label: target-role
+    type: resource
+    description: |
+      The privileged IAM role that is passed to the CloudFormation stack during creation. This role must trust cloudformation.amazonaws.com as a principal in its trust policy. When CloudFormation creates resources, it uses this role's permissions.
+  - id: execute_template
+    label: Execute Template Resources
+    type: action
+    color: '#99ccff'
+    description: |
+      The CloudFormation template executes with the target role's permissions, creating AWS resources defined in the template. Common resources for privilege escalation include IAM users with access keys, Lambda functions, EC2 instances with User Data scripts, or IAM policies/roles that grant the starting principal elevated access.
+  - id: admin_outcome
+    label: Effective Administrator
+    type: outcome
+    description: |
+      If the target role has administrative permissions (AdministratorAccess or equivalent), the CloudFormation template can create resources that grant the attacker full administrative access to the AWS account. For example, the template could create an IAM user with AdministratorAccess and access keys for the attacker.
+  - id: partial_outcome
+    label: Check for Additional Access
+    type: outcome
+    color: '#ffeb99'
+    description: |
+      If the target role has some elevated permissions but not full admin, the CloudFormation template can create resources that grant partial privilege escalation. This could include access to sensitive data (S3, RDS, DynamoDB) or resources that enable additional privilege escalation techniques.
+  - id: minimal_outcome
+    label: No Additional Access
+    type: outcome
+    color: '#cccccc'
+    description: |
+      If the target role only has minimal permissions or no interesting permissions, the CloudFormation template cannot create resources that provide meaningful additional access to the attacker. Limited usefulness for privilege escalation.
+  edges:
+  - from: start
+    to: cfn_stack
+    label: iam:PassRole + cloudformation:CreateStack
+    description: |
+      The attacker creates a new CloudFormation stack and passes a privileged role to it. The stack is created with a malicious template (YAML or JSON) that defines AWS resources to be provisioned.
+
+      Command:
+      ```bash
+      aws cloudformation create-stack \
+        --stack-name privesc-stack \
+        --template-body file://exploit-template.yaml \
+        --capabilities CAPABILITY_IAM \
+        --role-arn arn:aws:iam::ACCOUNT_ID:role/PRIVILEGED_ROLE
+      ```
+
+      The exploit-template.yaml contains resource definitions that will execute with the target role's permissions. Note the `--capabilities CAPABILITY_IAM` flag is required when the template creates IAM resources.
+  - from: cfn_stack
+    to: target_role
+    label: Stack assumes role
+    description: |
+      When the CloudFormation stack is created, the CloudFormation service automatically assumes the target role. All resource creation operations in the template execute with the permissions granted to this role.
+  - from: target_role
+    to: execute_template
+    label: CloudFormation provisions resources
+    description: |
+      CloudFormation provisions the resources defined in the template using the target role's permissions. The template can create any AWS resources the role has permissions for, such as IAM users with access keys, Lambda functions, EC2 instances, S3 buckets, or IAM policies and roles.
+
+      Monitor stack progress:
+      ```bash
+      aws cloudformation describe-stacks \
+        --stack-name privesc-stack
+      ```
+
+      The created resources can then be accessed by the attacker to gain elevated privileges.
+  - from: execute_template
+    to: admin_outcome
+    label: If role has admin permissions
+    branch: A
+    condition: admin
+    description: |
+      If the target role has AdministratorAccess or equivalent administrative permissions, the CloudFormation template can create resources that grant the attacker full control over the AWS account. For example, the template could create an IAM user with AdministratorAccess policy attached and generate access keys that are output in the stack outputs or stored in an S3 bucket the attacker can access.
+  - from: execute_template
+    to: partial_outcome
+    label: If role has some permissions
+    branch: B
+    condition: some_permissions
+    description: |
+      If the target role has elevated but non-administrative permissions, the CloudFormation template can create resources that grant partial privilege escalation. This might include Lambda functions with data access, EC2 instances with privileged instance profiles, or IAM policies that enable additional privilege escalation techniques. The attacker gains access through the newly created resources.
+  - from: execute_template
+    to: minimal_outcome
+    label: If role has minimal permissions
+    branch: C
+    condition: no_permissions
+    description: |
+      If the target role only has minimal or non-sensitive permissions, the CloudFormation template cannot create resources that provide meaningful additional access. The privilege escalation attempt may not yield significant results, though even limited access could be useful for reconnaissance or as part of a multi-step attack chain.

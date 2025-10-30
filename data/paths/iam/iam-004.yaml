@@ -39,6 +39,72 @@ relatedPaths:
 toolSupport:
   pmapper: true
   iamVulnerable: true
+attackVisualization:
+  nodes:
+    - id: start
+      label: starting-principal
+      type: principal
+      description: |
+        The principal with iam:CreateLoginProfile permission on the target user. Can be an IAM user or role with permission to create console login profiles for other users.
+
+    - id: target_user
+      label: target-user
+      type: resource
+      description: |
+        The target IAM user for whom the console login profile is created. Must NOT currently have a login profile (AWS does not allow multiple profiles per user). Once the profile is created, the attacker can login to the AWS Console as this user with the password they set.
+
+    - id: admin
+      label: Effective Administrator
+      type: outcome
+      description: |
+        Full administrative access to the AWS account when the target user has AdministratorAccess or equivalent permissions.
+
+    - id: some_perms
+      label: Check for Additional Access
+      type: outcome
+      color: '#ffeb99'
+      description: |
+        The target user has some elevated permissions. Check for data access (S3, RDS, DynamoDB) or additional privilege escalation paths.
+
+    - id: no_access
+      label: No Additional Access
+      type: outcome
+      color: '#cccccc'
+      description: |
+        The target user has no interesting permissions beyond what the starting principal already had.
+
+  edges:
+    - from: start
+      to: target_user
+      label: iam:CreateLoginProfile
+      description: |
+        Execute iam:CreateLoginProfile to create a console login profile with a password of your choosing for the target user. The target user must not currently have a login profile. Once created, login to the AWS Console using the target user's username and your chosen password to authenticate as the target user.
+
+        Command: `aws iam create-login-profile --user-name @username --password @password`
+
+    - from: target_user
+      to: admin
+      label: If user has admin permissions
+      branch: A
+      condition: admin
+      description: |
+        If the target user has AdministratorAccess or equivalent permissions, the attacker gains full administrative access to the account via the AWS Console.
+
+    - from: target_user
+      to: some_perms
+      label: If user has some permissions
+      branch: B
+      condition: some_permissions
+      description: |
+        If the target user has some elevated permissions, check for data access (S3, RDS, DynamoDB) or additional privilege escalation paths.
+
+    - from: target_user
+      to: no_access
+      label: If user has no interesting permissions
+      branch: C
+      condition: no_permissions
+      description: |
+        If the target user only has minimal permissions, there may be no meaningful privilege escalation achieved.
 permissions:
   required:
   - permission: iam:CreateLoginProfile

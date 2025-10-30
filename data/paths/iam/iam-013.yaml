@@ -51,6 +51,72 @@ relatedPaths:
 toolSupport:
   pmapper: true
   iamVulnerable: true
+attackVisualization:
+  nodes:
+    - id: start
+      label: starting-principal
+      type: principal
+      description: |
+        The principal with iam:AddUserToGroup permission on the target group. Can be an IAM user or role with permission to add users to groups with elevated permissions.
+
+    - id: target_group
+      label: target-group
+      type: resource
+      description: |
+        The target IAM group with elevated permissions. The attacker adds a user (themselves or another user) to this group to gain access to all policies attached to the group.
+
+    - id: admin
+      label: Effective Administrator
+      type: outcome
+      description: |
+        Full administrative access to the AWS account when the target group has AdministratorAccess or equivalent permissions attached.
+
+    - id: some_perms
+      label: Check for Additional Access
+      type: outcome
+      color: '#ffeb99'
+      description: |
+        The target group has some elevated permissions. Check for data access (S3, RDS, DynamoDB) or additional privilege escalation paths.
+
+    - id: no_access
+      label: No Additional Access
+      type: outcome
+      color: '#cccccc'
+      description: |
+        The target group has no interesting permissions beyond what the starting principal already had.
+
+  edges:
+    - from: start
+      to: target_group
+      label: iam:AddUserToGroup
+      description: |
+        Execute iam:AddUserToGroup to add a user to the target group. The user immediately gains access to all policies attached to that group. You can add yourself (if you're a user) or add another user and then create access keys for them.
+
+        Command: `aws iam add-user-to-group --user-name @username --group-name @privileged-group`
+
+    - from: target_group
+      to: admin
+      label: If group has admin permissions
+      branch: A
+      condition: admin
+      description: |
+        If the target group has AdministratorAccess or equivalent permissions attached, the attacker gains full administrative access to the account.
+
+    - from: target_group
+      to: some_perms
+      label: If group has some permissions
+      branch: B
+      condition: some_permissions
+      description: |
+        If the target group has some elevated permissions, check for data access (S3, RDS, DynamoDB) or additional privilege escalation paths.
+
+    - from: target_group
+      to: no_access
+      label: If group has no interesting permissions
+      branch: C
+      condition: no_permissions
+      description: |
+        If the target group only has minimal permissions, there may be no meaningful privilege escalation achieved.
 permissions:
   required:
   - permission: iam:AddUserToGroup

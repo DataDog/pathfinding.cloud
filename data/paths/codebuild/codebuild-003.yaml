@@ -115,3 +115,89 @@ permissions:
     resourceConstraints: Useful for viewing project details including service role ARN and permissions
   - permission: codebuild:BatchGetBuildBatches
     resourceConstraints: Helpful for monitoring build batch execution status and verifying successful exploitation
+attackVisualization:
+  nodes:
+  - id: start
+    label: starting-principal
+    type: principal
+    description: |
+      The principal with `codebuild:StartBuildBatch` permission on an existing CodeBuild project. Can be an IAM user or role. This principal exploits the existing project's service role by overriding the buildspec with malicious batch build commands.
+  - id: codebuild_project
+    label: Existing CodeBuild Project
+    type: resource
+    description: |
+      An existing CodeBuild project configured for batch builds with a service role attached. The project must allow buildspec overrides (default behavior unless explicitly disabled). The attacker leverages this project to execute arbitrary commands with the project's service role permissions.
+  - id: batch_build
+    label: Execute Malicious Batch Build
+    type: action
+    color: '#99ccff'
+    description: |
+      The attacker starts a build batch with a malicious buildspec override that contains commands to escalate privileges. The buildspec executes with the CodeBuild project's service role permissions.
+
+      Command:
+      ```bash
+      aws codebuild start-build-batch \
+        --project-name EXISTING_PROJECT_NAME \
+        --region us-east-1 \
+        --buildspec-override file:///tmp/malicious-buildspec.yml
+      ```
+
+      The malicious buildspec typically attaches AdministratorAccess policy to the attacker's user or creates new access keys.
+  - id: admin
+    label: Effective Administrator
+    type: outcome
+    description: |
+      If the CodeBuild project's service role has administrative permissions (e.g., AdministratorAccess or equivalent custom policy), the attacker gains full administrative access to the AWS account by executing IAM modification commands within the batch build.
+  - id: some_perms
+    label: Check for Additional Access
+    type: outcome
+    color: '#ffeb99'
+    description: |
+      If the CodeBuild project's service role has some elevated permissions but not full admin, the attacker gains access limited to those permissions. Check for data access (S3, RDS, DynamoDB) or additional privilege escalation paths that could be chained for further compromise.
+  - id: no_access
+    label: No Additional Access
+    type: outcome
+    color: '#cccccc'
+    description: |
+      If the CodeBuild project's service role only has minimal permissions (e.g., CloudWatch Logs write access), there may be no meaningful privilege escalation achieved. The attacker would need to find a different project with a more privileged service role.
+  edges:
+  - from: start
+    to: codebuild_project
+    label: codebuild:StartBuildBatch with buildspec-override
+    description: |
+      Execute `codebuild:StartBuildBatch` on the existing CodeBuild project with a malicious buildspec override. The buildspec override replaces the project's original buildspec with attacker-controlled commands that execute in batch build format.
+
+      Command:
+      ```bash
+      aws codebuild start-build-batch \
+        --project-name EXISTING_PROJECT_NAME \
+        --buildspec-override file:///tmp/malicious-buildspec.yml
+      ```
+
+      The malicious buildspec uses batch build syntax to execute privilege escalation commands.
+  - from: codebuild_project
+    to: batch_build
+    label: Batch build assumes service role
+    description: |
+      The CodeBuild batch build automatically assumes the project's service role via the instance profile. This happens without requiring `iam:PassRole` permission. The batch build inherits all permissions from the service role and can execute any AWS API calls that the role allows.
+  - from: batch_build
+    to: admin
+    label: If service role has admin permissions
+    branch: A
+    condition: admin
+    description: |
+      If the CodeBuild project's service role has AdministratorAccess or equivalent permissions, the malicious buildspec commands can modify IAM policies and principals to grant the attacker full administrative access. Common techniques include attaching AdministratorAccess policy to the attacker's user account or creating new admin access keys.
+  - from: batch_build
+    to: some_perms
+    label: If service role has some permissions
+    branch: B
+    condition: some_permissions
+    description: |
+      If the service role has elevated but non-administrative permissions, the attacker gains access to whatever resources the role can access. This could include sensitive data in S3 buckets, RDS databases, DynamoDB tables, or other privilege escalation opportunities that can be chained together.
+  - from: batch_build
+    to: no_access
+    label: If service role has minimal permissions
+    branch: C
+    condition: no_permissions
+    description: |
+      If the service role only has minimal permissions (e.g., CloudWatch Logs write access for build logs), there may be no meaningful privilege escalation. The attacker would need to identify other CodeBuild projects with more privileged service roles using `codebuild:ListProjects` and `codebuild:BatchGetProjects`.

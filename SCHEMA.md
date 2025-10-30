@@ -4,9 +4,17 @@ This document defines the YAML schema used for documenting AWS IAM privilege esc
 
 ## Schema Version
 
-Current version: `1.1.0`
+Current version: `1.2.0`
 
 ### Version History
+
+#### Version 1.2.0 (2025-01-30)
+- **Breaking change**: `attackVisualization` changed from string (Mermaid) to structured object
+- Added support for interactive visualizations with nodes and edges
+- Added support for conditional branching paths (multiple outcomes)
+- Added support for click-to-view descriptions on nodes and edges
+- Added node types: `principal`, `resource`, `action`, `outcome`
+- Added optional branch identifiers and conditions for edges
 
 #### Version 1.1.0 (2025-01-30)
 - Added `attackVisualization` optional field for Mermaid diagrams of attack paths
@@ -298,41 +306,239 @@ toolSupport:
   prowler: true
 ```
 
-#### `attackVisualization` (string)
-A Mermaid diagram that visually represents the attack path from the starting principal to the target outcome.
+#### `attackVisualization` (object)
+A structured representation of the attack path that creates an interactive visualization showing the flow from starting principal to target outcomes, including conditional branches.
 
-The visualization should:
-- Use `graph LR` (left-to-right) layout for clarity
-- Show each principal/resource as a node (labeled A, B, C, etc.)
-- Show the actions/permissions as edge labels using `-->|permission/action|` syntax
-- Use descriptive node text (e.g., `[starting-user]`, `[admin-role]`, `[Effective Administrator]`)
-- Optionally include styling for visual clarity:
-  - Starting principal: `style A fill:#ff9999,stroke:#333,stroke-width:2px` (red)
-  - Intermediate resources: `style B fill:#ffcc99,stroke:#333,stroke-width:2px` (orange)
-  - Target/outcome: `style E fill:#99ff99,stroke:#333,stroke-width:2px` (green)
+**Structure:**
+- `nodes` (array, required): List of nodes in the attack graph
+- `edges` (array, required): List of edges connecting nodes
 
-Example (simple):
+**Node Fields:**
+- `id` (string, required): Unique identifier for the node
+- `label` (string, required): Display text for the node
+- `type` (string, required): Node type - one of:
+  - `principal`: Starting principal (user/role initiating attack)
+  - `resource`: AWS resource involved in attack
+  - `action`: Action or intermediate step
+  - `outcome`: Final outcome/result
+- `color` (string, optional): Hex color code (e.g., `#ff9999`). Defaults based on type if not specified
+- `description` (string, optional): Markdown description shown when node is clicked
+
+**Description Formatting Guidelines:**
+
+All description fields (for both nodes and edges) should follow these formatting rules to ensure consistent display in the frontend:
+
+1. **Single-line paragraphs**: Text should flow as single-line paragraphs without artificial line breaks at ~80 characters
+   - ✅ GOOD: `The principal with iam:PassRole and ec2:RunInstances permissions. Can be an IAM user or role.`
+   - ❌ BAD: `The principal with iam:PassRole and ec2:RunInstances permissions.\nCan be an IAM user or role.` (artificial break)
+
+2. **Multi-line structure**: Use line breaks only for intentional separation:
+   - Separate paragraphs (different thoughts or topics)
+   - Code blocks with bash/python commands
+   - Bulleted or numbered lists
+   - Example commands followed by explanations
+
+3. **Code blocks**: Always preserve multi-line structure for commands
+   ```yaml
+   description: |
+     Execute the command to create a Lambda function.
+
+     Command:
+     ```bash
+     aws lambda create-function \
+       --function-name privesc-function \
+       --runtime python3.9 \
+       --role "arn:aws:iam::ACCOUNT_ID:role/PRIVILEGED_ROLE"
+     ```
+
+     This creates the function with the privileged role attached.
+   ```
+
+4. **Lists**: Keep list items on separate lines
+   ```yaml
+   description: |
+     The script could perform several actions:
+     - Attach AdministratorAccess policy to starting principal
+     - Create new admin access keys for starting principal
+     - Add starting principal to admin group
+   ```
+
+**Edge Fields:**
+- `from` (string, required): Source node id
+- `to` (string, required): Target node id
+- `label` (string, required): Edge label describing the action/transition
+- `branch` (string, optional): Branch identifier (e.g., `A`, `B`, `C`, `A1`, `B1`) for conditional paths
+- `condition` (string, optional): Condition type (e.g., `admin`, `no_permissions`, `some_permissions`, `iam_write_permissions`)
+- `description` (string, optional): Markdown description shown when edge is clicked
+
+**Important Edge Rendering Rules:**
+- **Conditional edges** (those with `branch` or `condition` fields) are rendered as **dashed lines with NO visible label** on the graph
+- **Transitive edges** (those without `branch` or `condition`) are rendered as **solid lines WITH visible labels** on the graph
+- All edges (both conditional and transitive) show their label in the tooltip when clicked
+- Edge labels should describe the action or condition clearly, as they will be shown in tooltips
+
+**Node Label Conventions:**
+- Use `starting-principal` when the attack works from either a user or role
+- Use `starting-user` or `starting-role` only when the attack is specific to one type
+- Use descriptive, specific labels for resources (e.g., `target-role`, `EC2 Instance`)
+- Use clear outcome labels (e.g., `Effective Administrator`, `No Additional Access`)
+
+**Color Conventions (defaults):**
+- `principal` (starting point): `#ff9999` (red)
+- `resource` (intermediate): `#ffcc99` (orange)
+- `action` (intermediate): `#99ccff` (blue)
+- `outcome` (success): `#99ff99` (green)
+- `outcome` (partial): `#ffeb99` (yellow)
+- `outcome` (dead end): `#cccccc` (gray)
+
+**When to Use Conditional Branching:**
+
+Use conditional branching when the outcome of an attack path depends on environmental factors that vary:
+
+1. **Permission-dependent outcomes**: The privileges gained depend on the permissions of a resource (e.g., assumed role, passed role)
+   - Example: sts:AssumeRole gains admin only if the target role has admin permissions
+
+2. **Multiple attack approaches**: Different techniques to exploit the same vulnerability
+   - Example: EC2 PassRole can use User Data script OR reverse shell
+
+3. **Resource-dependent outcomes**: Success depends on what resources exist in the environment
+   - Example: AttachUserPolicy gains admin only if an admin policy exists to attach
+
+**Branch Naming Convention:**
+- Use single letters (`A`, `B`, `C`) for major branches (different attack approaches)
+- Use numbered variants (`A1`, `A2`, `A3`) for conditional outcomes within a branch
+- Example: Branch `A` = User Data approach, `A1` = admin outcome, `A2` = partial outcome, `A3` = minimal outcome
+
+**Common Conditional Patterns:**
+
+For PassRole-based attacks, use this three-outcome pattern:
+- **admin outcome** (green): Target resource has administrative permissions
+- **some_permissions outcome** (yellow): Target resource has elevated but non-admin permissions
+- **no_permissions outcome** (gray): Target resource has minimal permissions
+
+Example (simple with branching):
 ```yaml
-attackVisualization: |
-  graph LR
-      A[starting-user] -->|sts:AssumeRole| B[admin-role]
-      B -->|AdministratorAccess Policy| C[Effective Administrator]
+attackVisualization:
+  nodes:
+    - id: start
+      label: starting-principal
+      type: principal
+      description: |
+        The principal initiating the attack. Can be an IAM user or role
+        with sts:AssumeRole permission on the target role.
+
+    - id: target_role
+      label: target-role
+      type: resource
+      description: |
+        The privileged role being assumed. Must have a trust policy that
+        allows the starting principal to assume it.
+
+    - id: admin
+      label: Effective Administrator
+      type: outcome
+      description: Full administrative access to the AWS account.
+
+    - id: no_access
+      label: No Additional Access
+      type: outcome
+      color: '#cccccc'
+      description: |
+        The assumed role has no interesting permissions beyond what
+        the starting principal already had.
+
+    - id: some_perms
+      label: Check for Additional Access
+      type: outcome
+      color: '#ffeb99'
+      description: |
+        The assumed role has some permissions. Check for data access
+        or additional privilege escalation paths.
+
+  edges:
+    - from: start
+      to: target_role
+      label: sts:AssumeRole
+      description: |
+        Use sts:AssumeRole to assume the target role. Requires both
+        the permission and a matching trust policy.
+
+    - from: target_role
+      to: admin
+      label: If role has admin permissions
+      branch: A
+      condition: admin
+      description: |
+        If the target role has AdministratorAccess or equivalent,
+        attacker gains full administrative access.
+
+    - from: target_role
+      to: no_access
+      label: If role has no interesting permissions
+      branch: B
+      condition: no_permissions
+      description: |
+        If the role only has minimal permissions, there may be
+        no additional access gained.
+
+    - from: target_role
+      to: some_perms
+      label: If role has some permissions
+      branch: C
+      condition: some_permissions
+      description: |
+        If the role has permissions to access data or other escalation
+        paths, further exploration is needed.
 ```
 
-Example (complex with styling):
+Example (complex multi-step attack):
 ```yaml
-attackVisualization: |
-  graph LR
-      A[starting-user] -->|codebuild:StartBuild with buildspec-override| B[existing-project]
-      B -->|Executes with| C[privileged-service-role]
-      C -->|iam:AttachUserPolicy in buildspec| D[AdministratorAccess attached to starting user]
-      D -->|Administrator Access| E[Effective Administrator]
+attackVisualization:
+  nodes:
+    - id: start
+      label: starting-principal
+      type: principal
 
-      style A fill:#ff9999,stroke:#333,stroke-width:2px
-      style B fill:#ffcc99,stroke:#333,stroke-width:2px
-      style C fill:#ffcc99,stroke:#333,stroke-width:2px
-      style D fill:#ffcc99,stroke:#333,stroke-width:2px
-      style E fill:#99ff99,stroke:#333,stroke-width:2px
+    - id: ec2_instance
+      label: EC2 Instance
+      type: resource
+      description: New EC2 instance created with privileged instance profile
+
+    - id: priv_role
+      label: privileged-role
+      type: resource
+      description: IAM role assumed by the EC2 instance
+
+    - id: exfil
+      label: Exfiltrate credentials
+      type: action
+      color: '#99ccff'
+      description: Access instance via User Data or SSM to steal credentials
+
+    - id: admin
+      label: Effective Administrator
+      type: outcome
+
+  edges:
+    - from: start
+      to: ec2_instance
+      label: iam:PassRole + ec2:RunInstances
+      description: Launch EC2 instance and pass privileged role to it
+
+    - from: ec2_instance
+      to: priv_role
+      label: Instance assumes role
+      description: EC2 instance automatically assumes the passed role
+
+    - from: priv_role
+      to: exfil
+      label: User Data / SSM access
+      description: Access the instance to retrieve temporary credentials
+
+    - from: exfil
+      to: admin
+      label: Use stolen credentials
+      description: Use the exfiltrated credentials to gain admin access
 ```
 
 ## Complete Example

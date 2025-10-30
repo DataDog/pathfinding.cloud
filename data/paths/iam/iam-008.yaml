@@ -40,6 +40,77 @@ detectionRules:
 toolSupport:
   pmapper: true
   iamVulnerable: true
+attackVisualization:
+  nodes:
+    - id: start
+      label: starting-user
+      type: principal
+      description: |
+        The IAM user with iam:AttachUserPolicy permission on themselves. Can attach any existing managed policy in the account to themselves, including AWS managed policies like AdministratorAccess.
+
+    - id: managed_policy
+      label: managed-policy
+      type: resource
+      description: |
+        An existing IAM managed policy in the account. This could be an AWS managed policy (like AdministratorAccess, PowerUserAccess, etc.) or a customer managed policy with elevated permissions. The policy must already exist in the account.
+
+    - id: admin
+      label: Effective Administrator
+      type: outcome
+      description: |
+        If an administrative managed policy exists (e.g., AdministratorAccess or equivalent custom policy), the user gains full administrative access to the account. The policy takes effect immediately after being attached.
+
+    - id: some_perms
+      label: Some Additional Access
+      type: outcome
+      color: '#ffeb99'
+      description: |
+        If the attached managed policy has elevated but non-administrative permissions (e.g., PowerUserAccess, SecurityAudit, custom policies with specific permissions), the user gains those permissions. Check for data access paths or additional privilege escalation opportunities.
+
+    - id: no_access
+      label: No Additional Access
+      type: outcome
+      color: '#cccccc'
+      description: |
+        If only minimal or restrictive managed policies exist in the account, there may be no meaningful privilege escalation achieved. The user would still gain the permissions from the attached policy, but they may not provide additional access beyond what the user already had.
+
+  edges:
+    - from: start
+      to: managed_policy
+      label: iam:AttachUserPolicy
+      description: |
+        Execute iam:AttachUserPolicy to attach an existing managed policy to the user. The attacker must identify a managed policy with elevated permissions to attach.
+
+        Command:
+        ```bash
+        aws iam attach-user-policy --user-name @username --policy-arn arn:aws:iam::aws:policy/AdministratorAccess
+        ```
+
+        The policy takes effect immediately after being attached. The user gains all permissions specified in the managed policy.
+
+    - from: managed_policy
+      to: admin
+      label: If policy has admin permissions
+      branch: A
+      condition: admin
+      description: |
+        If the attached managed policy is AdministratorAccess or an equivalent custom policy with administrative permissions, the user gains full administrative access to the AWS account. This is the most common and severe outcome.
+
+    - from: managed_policy
+      to: some_perms
+      label: If policy has elevated permissions
+      branch: B
+      condition: some_permissions
+      description: |
+        If the attached managed policy has elevated but non-administrative permissions, the user gains those specific permissions. Examples include PowerUserAccess (excludes IAM), ReadOnlyAccess, SecurityAudit, or custom policies with permissions to specific services. Check for data access or additional escalation paths.
+
+    - from: managed_policy
+      to: no_access
+      label: If only minimal policies exist
+      branch: C
+      condition: no_permissions
+      description: |
+        If the account only has managed policies with minimal or restrictive permissions (e.g., policies that only grant read access to non-sensitive resources), the escalation may not provide meaningful additional access. However, this is rare since AWS managed policies like AdministratorAccess exist in all accounts.
 permissions:
   required:
   - permission: iam:AttachUserPolicy
