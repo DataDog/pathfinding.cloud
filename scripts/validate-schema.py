@@ -39,6 +39,7 @@ OPTIONAL_FIELDS = {
     'relatedPaths': list,
     'detectionRules': list,
     'toolSupport': dict,
+    'attackVisualization': str,  # Mermaid diagram of the attack path
 }
 
 ALLOWED_CATEGORIES = [

@@ -1100,6 +1100,7 @@
       "pmapper": true,
       "iamVulnerable": true
     },
+    "attackVisualization": "graph LR\n    A[starting-user] -->|iam:PassRole + ec2:RunInstances| B[EC2 Instance]\n    B -->|Instance assumes| C[privileged-role]\n    C -->|User Data / SSM access| D[Exfiltrate credentials]\n    D -->|Use stolen credentials| E[Effective Administrator]\n\n    style A fill:#ff9999,stroke:#333,stroke-width:2px\n    style B fill:#ffcc99,stroke:#333,stroke-width:2px\n    style C fill:#ffcc99,stroke:#333,stroke-width:2px\n    style D fill:#ffcc99,stroke:#333,stroke-width:2px\n    style E fill:#99ff99,stroke:#333,stroke-width:2px\n",
     "permissions": {
       "required": [
         {
@@ -3128,28 +3129,38 @@
       "awscli": [
         {
           "step": 1,
-          "command": "aws iam list-roles",
-          "description": "List available roles to find targets with elevated permissions"
+          "command": "aws sts get-caller-identity",
+          "description": "Verify current identity before privilege escalation"
         },
         {
           "step": 2,
-          "command": "aws iam get-role --role-name TARGET_ROLE",
-          "description": "Check the role's trust policy to confirm the attacker can assume it"
+          "command": "aws iam list-roles --query 'Roles[*].[RoleName,Arn]' --output table",
+          "description": "List available roles to find targets with elevated permissions (optional but helpful for discovery)"
         },
         {
           "step": 3,
-          "command": "aws sts assume-role \\\n  --role-arn arn:aws:iam::ACCOUNT_ID:role/TARGET_ROLE \\\n  --role-session-name privesc-session\n",
-          "description": "Assume the privileged role to obtain temporary credentials"
+          "command": "aws iam get-role --role-name TARGET_ROLE",
+          "description": "Check the role's trust policy to confirm the attacker can assume it, and view attached policies (optional)"
         },
         {
           "step": 4,
-          "command": "export AWS_ACCESS_KEY_ID=<AccessKeyId from step 3>\nexport AWS_SECRET_ACCESS_KEY=<SecretAccessKey from step 3>\nexport AWS_SESSION_TOKEN=<SessionToken from step 3>\n",
-          "description": "Configure the AWS CLI to use the assumed role credentials"
+          "command": "aws sts assume-role \\\n  --role-arn arn:aws:iam::ACCOUNT_ID:role/TARGET_ROLE \\\n  --role-session-name privesc-session\n",
+          "description": "Assume the privileged role to obtain temporary credentials with elevated permissions"
         },
         {
           "step": 5,
+          "command": "export AWS_ACCESS_KEY_ID=<AccessKeyId from step 4>\nexport AWS_SECRET_ACCESS_KEY=<SecretAccessKey from step 4>\nexport AWS_SESSION_TOKEN=<SessionToken from step 4>\n",
+          "description": "Configure the AWS CLI to use the assumed role credentials"
+        },
+        {
+          "step": 6,
           "command": "aws sts get-caller-identity",
-          "description": "Verify the assumed role identity and elevated permissions"
+          "description": "Verify the assumed role identity"
+        },
+        {
+          "step": 7,
+          "command": "aws iam list-users --max-items 3",
+          "description": "Verify administrative access was successfully obtained"
         }
       ],
       "pacu": [
@@ -3165,7 +3176,7 @@
         }
       ]
     },
-    "recommendation": "Carefully audit IAM role trust policies to ensure they follow the principle of least privilege.\nOnly allow trusted principals to assume sensitive roles.\n\nExample restrictive trust policy:\n```json\n{\n  \"Version\": \"2012-10-17\",\n  \"Statement\": [\n    {\n      \"Effect\": \"Allow\",\n      \"Principal\": {\n        \"AWS\": \"arn:aws:iam::ACCOUNT_ID:role/SpecificTrustedRole\"\n      },\n      \"Action\": \"sts:AssumeRole\",\n      \"Condition\": {\n        \"StringEquals\": {\n          \"sts:ExternalId\": \"unique-external-id\"\n        },\n        \"IpAddress\": {\n          \"aws:SourceIp\": \"203.0.113.0/24\"\n        }\n      }\n    }\n  ]\n}\n```\n\nAdditional controls:\n- Use external IDs for cross-account role assumptions\n- Implement IP address restrictions in trust policies\n- Require MFA for sensitive role assumptions\n- Monitor CloudTrail for `AssumeRole` events on privileged roles\n- Regularly audit role trust policies with AWS IAM Access Analyzer\n- Alert on unusual assume-role patterns\n- Use SCPs to restrict which roles can be assumed\n",
+    "recommendation": "Carefully audit IAM role trust policies to ensure they follow the principle of least privilege.\nOnly allow trusted principals to assume sensitive roles.\n\nExample restrictive trust policy:\n```json\n{\n  \"Version\": \"2012-10-17\",\n  \"Statement\": [\n    {\n      \"Effect\": \"Allow\",\n      \"Principal\": {\n        \"AWS\": \"arn:aws:iam::ACCOUNT_ID:role/SpecificTrustedRole\"\n      },\n      \"Action\": \"sts:AssumeRole\",\n      \"Condition\": {\n        \"StringEquals\": {\n          \"sts:ExternalId\": \"unique-external-id\"\n        },\n        \"IpAddress\": {\n          \"aws:SourceIp\": \"203.0.113.0/24\"\n        }\n      }\n    }\n  ]\n}\n```\n\nAdditional controls:\n- **Require MFA**: Require MFA for sensitive role assumptions using `aws:MultiFactorAuthPresent` condition\n- **Use External IDs**: Use external IDs for cross-account role assumptions to prevent confused deputy attacks\n- **IP Address Restrictions**: Implement IP address restrictions in trust policies using `aws:SourceIp` condition\n- **Session Policies**: Implement session policies to limit permissions even when assuming privileged roles, providing an additional layer of defense\n- **Monitor CloudTrail**: Alert on `AssumeRole` events on privileged roles, especially from unexpected principals\n- **IAM Access Analyzer**: Regularly audit role trust policies with AWS IAM Access Analyzer to identify overly permissive trust relationships\n- **Alert on Patterns**: Alert on unusual assume-role patterns or assumptions from unexpected IP addresses\n- **Service Control Policies**: Use SCPs to restrict which roles can be assumed at the organizational level\n- **AWS Config Rules**: Use AWS Config rules to detect roles with administrative permissions that can be assumed by users or have overly permissive trust policies\n",
     "discoveredBy": {
       "name": "Spencer Gietzen",
       "organization": "Rhino Security Labs",
@@ -3191,6 +3202,7 @@
       "iamVulnerable": true,
       "pacu": true
     },
+    "attackVisualization": "graph LR\n    A[starting-user] -->|sts:AssumeRole| B[privileged-role]\n    B --> C[Effective Administrator]\n",
     "permissions": {
       "required": [
         {
@@ -3200,12 +3212,12 @@
       ],
       "additional": [
         {
-          "permission": "iam:ListUsers",
-          "resourceConstraints": "Helpful for discovering target users"
+          "permission": "iam:ListRoles",
+          "resourceConstraints": "Helpful for discovering available roles to assume"
         },
         {
-          "permission": "iam:GetUser",
-          "resourceConstraints": "Useful for viewing user details"
+          "permission": "iam:GetRole",
+          "resourceConstraints": "Useful for viewing role trust policies and attached permissions"
         }
       ]
     }

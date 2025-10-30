@@ -4,7 +4,19 @@ This document defines the YAML schema used for documenting AWS IAM privilege esc
 
 ## Schema Version
 
-Current version: `1.0.0`
+Current version: `1.1.0`
+
+### Version History
+
+#### Version 1.1.0 (2025-01-30)
+- Added `attackVisualization` optional field for Mermaid diagrams of attack paths
+- Provides visual representation of privilege escalation flows
+- Supports simple and complex diagrams with optional styling
+
+#### Version 1.0.0 (2024-10-07)
+- Initial schema release
+- Core required and optional fields
+- Support for both new and legacy formats (permissions, prerequisites, exploitationSteps)
 
 ## File Naming Convention
 
@@ -286,6 +298,43 @@ toolSupport:
   prowler: true
 ```
 
+#### `attackVisualization` (string)
+A Mermaid diagram that visually represents the attack path from the starting principal to the target outcome.
+
+The visualization should:
+- Use `graph LR` (left-to-right) layout for clarity
+- Show each principal/resource as a node (labeled A, B, C, etc.)
+- Show the actions/permissions as edge labels using `-->|permission/action|` syntax
+- Use descriptive node text (e.g., `[starting-user]`, `[admin-role]`, `[Effective Administrator]`)
+- Optionally include styling for visual clarity:
+  - Starting principal: `style A fill:#ff9999,stroke:#333,stroke-width:2px` (red)
+  - Intermediate resources: `style B fill:#ffcc99,stroke:#333,stroke-width:2px` (orange)
+  - Target/outcome: `style E fill:#99ff99,stroke:#333,stroke-width:2px` (green)
+
+Example (simple):
+```yaml
+attackVisualization: |
+  graph LR
+      A[starting-user] -->|sts:AssumeRole| B[admin-role]
+      B -->|AdministratorAccess Policy| C[Effective Administrator]
+```
+
+Example (complex with styling):
+```yaml
+attackVisualization: |
+  graph LR
+      A[starting-user] -->|codebuild:StartBuild with buildspec-override| B[existing-project]
+      B -->|Executes with| C[privileged-service-role]
+      C -->|iam:AttachUserPolicy in buildspec| D[AdministratorAccess attached to starting user]
+      D -->|Administrator Access| E[Effective Administrator]
+
+      style A fill:#ff9999,stroke:#333,stroke-width:2px
+      style B fill:#ffcc99,stroke:#333,stroke-width:2px
+      style C fill:#ffcc99,stroke:#333,stroke-width:2px
+      style D fill:#ffcc99,stroke:#333,stroke-width:2px
+      style E fill:#99ff99,stroke:#333,stroke-width:2px
+```
+
 ## Complete Example
 
 ```yaml
@@ -348,6 +397,17 @@ toolSupport:
   iamVulnerable: true
   pacu: true
   prowler: true
+
+attackVisualization: |
+  graph LR
+      A[user-with-policy] -->|iam:CreatePolicyVersion| B[Modify attached policy]
+      B -->|Set as default| C[Policy with admin permissions]
+      C -->|Automatic effect| D[Effective Administrator]
+
+      style A fill:#ff9999,stroke:#333,stroke-width:2px
+      style B fill:#ffcc99,stroke:#333,stroke-width:2px
+      style C fill:#ffcc99,stroke:#333,stroke-width:2px
+      style D fill:#99ff99,stroke:#333,stroke-width:2px
 ```
 
 ## Validation

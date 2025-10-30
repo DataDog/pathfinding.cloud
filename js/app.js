@@ -397,6 +397,13 @@ function showPathDetails(path) {
             <div>${renderMarkdown(path.description)}</div>
         </div>
 
+        ${path.attackVisualization ? `
+            <div class="modal-section">
+                <h3>Attack Visualization</h3>
+                <div class="attack-viz-container" id="attack-viz-${path.id}"></div>
+            </div>
+        ` : ''}
+
         ${path.discoveredBy ? `
             <div class="modal-section">
                 <h3>Discovered By</h3>
@@ -469,6 +476,227 @@ function showPathDetails(path) {
 
     modalBody.innerHTML = html;
     modal.style.display = 'block';
+
+    // Render attack visualization if present
+    if (path.attackVisualization && window.vis) {
+        setTimeout(() => {
+            renderAttackVisualization(path.id, path.attackVisualization);
+        }, 10);
+    }
+}
+
+// Parse Mermaid graph LR syntax and render with vis.js
+function renderAttackVisualization(pathId, mermaidCode) {
+    const container = document.getElementById(`attack-viz-${pathId}`);
+    if (!container) return;
+
+    try {
+        const { nodes, edges } = parseMermaidGraph(mermaidCode);
+
+        // Create vis.js network
+        const data = { nodes, edges };
+        const options = {
+            layout: {
+                hierarchical: {
+                    direction: 'LR',
+                    sortMethod: 'directed',
+                    nodeSpacing: 200,
+                    levelSeparation: 250
+                }
+            },
+            nodes: {
+                shape: 'box',
+                margin: 10,
+                widthConstraint: {
+                    minimum: 120,
+                    maximum: 200
+                },
+                font: {
+                    size: 14,
+                    face: 'Arial',
+                    color: '#232f3e'
+                },
+                borderWidth: 2,
+                shadow: true
+            },
+            edges: {
+                arrows: {
+                    to: {
+                        enabled: true,
+                        scaleFactor: 1.2,
+                        type: 'arrow'
+                    }
+                },
+                font: {
+                    size: 12,
+                    align: 'top',
+                    color: '#666',
+                    strokeWidth: 0,
+                    background: 'rgba(255,255,255,0.8)',
+                    vadjust: -10
+                },
+                color: {
+                    color: '#848484',
+                    highlight: '#ff9900'
+                },
+                width: 2,
+                length: 250,
+                smooth: {
+                    type: 'cubicBezier',
+                    forceDirection: 'horizontal',
+                    roundness: 0.5
+                }
+            },
+            physics: {
+                enabled: false
+            },
+            interaction: {
+                dragNodes: true,
+                dragView: true,
+                zoomView: true,
+                hover: true
+            }
+        };
+
+        new vis.Network(container, data, options);
+    } catch (error) {
+        console.error('Error rendering attack visualization:', error);
+        container.innerHTML = '<p style="color: #d13212;">Error rendering visualization</p>';
+    }
+}
+
+// Parse Mermaid "graph LR" format into vis.js nodes/edges
+function parseMermaidGraph(mermaidCode) {
+    const nodes = [];
+    const edges = [];
+    const nodeMap = new Map();
+
+    // Split into lines and filter out empty/comment lines
+    const lines = mermaidCode.split('\n').map(l => l.trim()).filter(l => l && !l.startsWith('%%'));
+
+    // Track node colors from style declarations
+    const nodeStyles = new Map();
+
+    lines.forEach(line => {
+        // Skip graph declaration
+        if (line.startsWith('graph ')) return;
+
+        // Parse style declarations: style A fill:#ff9999,stroke:#333,stroke-width:2px
+        if (line.startsWith('style ')) {
+            const styleMatch = line.match(/style\s+(\w+)\s+fill:(#[0-9a-fA-F]+)/);
+            if (styleMatch) {
+                nodeStyles.set(styleMatch[1], styleMatch[2]);
+            }
+            return;
+        }
+
+        // Parse edge with label: A[label] -->|edge label| B[label]
+        let edgeMatch = line.match(/(\w+)\[([^\]]+)\]\s*-->(?:\|([^|]+)\|)?\s*(\w+)\[([^\]]+)\]/);
+
+        // Also try to parse edge without explicit nodes (references existing nodes): B --> C[label]
+        if (!edgeMatch) {
+            edgeMatch = line.match(/(\w+)\s*-->(?:\|([^|]+)\|)?\s*(\w+)\[([^\]]+)\]/);
+            if (edgeMatch) {
+                const [, fromId, edgeLabel, toId, toLabel] = edgeMatch;
+                // From node already exists (no label on this line)
+                const fromLabel = null;
+
+                // Add to node if not exists
+                if (!nodeMap.has(toId)) {
+                    const color = nodeStyles.get(toId) || '#e8f4f8';
+                    nodes.push({
+                        id: toId,
+                        label: toLabel,
+                        color: {
+                            background: color,
+                            border: getDarkerColor(color),
+                            highlight: {
+                                background: color,
+                                border: '#ff9900'
+                            }
+                        }
+                    });
+                    nodeMap.set(toId, true);
+                }
+
+                // Add edge
+                edges.push({
+                    from: fromId,
+                    to: toId,
+                    label: edgeLabel || ''
+                });
+                return;
+            }
+        }
+
+        if (edgeMatch) {
+            const [, fromId, fromLabel, edgeLabel, toId, toLabel] = edgeMatch;
+
+            // Add from node if not exists
+            if (!nodeMap.has(fromId)) {
+                const color = nodeStyles.get(fromId) || '#e8f4f8';
+                nodes.push({
+                    id: fromId,
+                    label: fromLabel,
+                    color: {
+                        background: color,
+                        border: getDarkerColor(color),
+                        highlight: {
+                            background: color,
+                            border: '#ff9900'
+                        }
+                    }
+                });
+                nodeMap.set(fromId, true);
+            }
+
+            // Add to node if not exists
+            if (!nodeMap.has(toId)) {
+                const color = nodeStyles.get(toId) || '#e8f4f8';
+                nodes.push({
+                    id: toId,
+                    label: toLabel,
+                    color: {
+                        background: color,
+                        border: getDarkerColor(color),
+                        highlight: {
+                            background: color,
+                            border: '#ff9900'
+                        }
+                    }
+                });
+                nodeMap.set(toId, true);
+            }
+
+            // Add edge
+            edges.push({
+                from: fromId,
+                to: toId,
+                label: edgeLabel || ''
+            });
+        }
+    });
+
+    return { nodes, edges };
+}
+
+// Helper function to get a darker version of a color for borders
+function getDarkerColor(hex) {
+    // Remove # if present
+    hex = hex.replace('#', '');
+
+    // Parse RGB
+    const r = parseInt(hex.substring(0, 2), 16);
+    const g = parseInt(hex.substring(2, 4), 16);
+    const b = parseInt(hex.substring(4, 6), 16);
+
+    // Darken by 30%
+    const darkerR = Math.floor(r * 0.7);
+    const darkerG = Math.floor(g * 0.7);
+    const darkerB = Math.floor(b * 0.7);
+
+    // Convert back to hex
+    return `#${darkerR.toString(16).padStart(2, '0')}${darkerG.toString(16).padStart(2, '0')}${darkerB.toString(16).padStart(2, '0')}`;
 }
 
 // Utility functions
