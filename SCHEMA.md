@@ -48,7 +48,7 @@ Allowed values:
 - `self-escalation` - Modify own permissions directly
 - `lateral-movement` - Gain access to other principals
 - `service-passrole` - Escalate via service + PassRole combination
-- `credential-access` - Create or steal credentials for other principals
+- `credential-access` - Access to hardcoded credentials, not through IAM
 - `access-resource` - Modify resources to gain elevated access
 
 #### `services` (array of strings)

