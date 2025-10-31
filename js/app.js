@@ -17,9 +17,26 @@ const headerTotalPathsEl = document.getElementById('header-total-paths');
 const modal = document.getElementById('path-modal');
 const modalBody = document.getElementById('modal-body');
 const closeModal = document.querySelector('.close');
+const themeToggle = document.getElementById('theme-toggle');
+
+// Theme management
+function initTheme() {
+    // Check localStorage for saved theme, default to dark
+    const savedTheme = localStorage.getItem('theme') || 'dark';
+    if (savedTheme === 'light') {
+        document.body.classList.add('light-theme');
+    }
+}
+
+function toggleTheme() {
+    document.body.classList.toggle('light-theme');
+    const currentTheme = document.body.classList.contains('light-theme') ? 'light' : 'dark';
+    localStorage.setItem('theme', currentTheme);
+}
 
 // Load data on page load
 document.addEventListener('DOMContentLoaded', () => {
+    initTheme();
     loadPaths();
     setupEventListeners();
     setupTabListeners();
@@ -33,6 +50,7 @@ function setupEventListeners() {
     resetButton.addEventListener('click', resetFilters);
     viewCardsBtn.addEventListener('click', () => switchView('cards'));
     viewTableBtn.addEventListener('click', () => switchView('table'));
+    themeToggle.addEventListener('click', toggleTheme);
     closeModal.addEventListener('click', () => {
         modal.style.display = 'none';
         window.location.hash = '';
@@ -520,6 +538,12 @@ function renderAttackVisualization(pathId, visualization) {
             throw new Error('Invalid visualization format');
         }
 
+        // Get theme-aware colors
+        const isLightTheme = document.body.classList.contains('light-theme');
+        const nodeFontColor = '#232f3e'; // Always dark for contrast with bright node colors
+        const edgeFontColor = isLightTheme ? '#666' : '#FFFFFF';
+        const edgeLabelBg = isLightTheme ? 'rgba(255,255,255,0.9)' : 'rgba(26,26,36,0.9)';
+
         // Create vis.js network
         const data = { nodes, edges };
         const options = {
@@ -542,7 +566,7 @@ function renderAttackVisualization(pathId, visualization) {
                 font: {
                     size: 14,
                     face: 'Arial',
-                    color: '#232f3e'
+                    color: nodeFontColor
                 },
                 borderWidth: 2,
                 shadow: true
@@ -558,9 +582,9 @@ function renderAttackVisualization(pathId, visualization) {
                 font: {
                     size: 12,
                     align: 'horizontal',
-                    color: '#666',
+                    color: edgeFontColor,
                     strokeWidth: 0,
-                    background: 'rgba(255,255,255,0.9)',
+                    background: edgeLabelBg,
                     multi: true
                 },
                 color: {
@@ -640,6 +664,9 @@ function renderAttackVisualization(pathId, visualization) {
 
 // Convert structured format to vis.js data
 function convertStructuredToVisData(structured) {
+    // Use dark font color for all nodes (bright backgrounds)
+    const nodeFontColor = '#232f3e';
+
     const nodes = structured.nodes.map(node => {
         // Default colors by type
         const colorDefaults = {
@@ -675,7 +702,7 @@ function convertStructuredToVisData(structured) {
             font: {
                 size: 14,
                 face: 'Arial',
-                color: '#232f3e'
+                color: nodeFontColor
             }
         };
     });
@@ -756,6 +783,9 @@ function parseMermaidGraph(mermaidCode) {
     const edges = [];
     const nodeMap = new Map();
 
+    // Use dark font color for all nodes (bright backgrounds)
+    const nodeFontColor = '#232f3e';
+
     // Split into lines and filter out empty/comment lines
     const lines = mermaidCode.split('\n').map(l => l.trim()).filter(l => l && !l.startsWith('%%'));
 
@@ -799,6 +829,11 @@ function parseMermaidGraph(mermaidCode) {
                                 background: color,
                                 border: '#ff9900'
                             }
+                        },
+                        font: {
+                            size: 14,
+                            face: 'Arial',
+                            color: nodeFontColor
                         }
                     });
                     nodeMap.set(toId, true);
@@ -830,6 +865,11 @@ function parseMermaidGraph(mermaidCode) {
                             background: color,
                             border: '#ff9900'
                         }
+                    },
+                    font: {
+                        size: 14,
+                        face: 'Arial',
+                        color: nodeFontColor
                     }
                 });
                 nodeMap.set(fromId, true);
@@ -848,6 +888,11 @@ function parseMermaidGraph(mermaidCode) {
                             background: color,
                             border: '#ff9900'
                         }
+                    },
+                    font: {
+                        size: 14,
+                        face: 'Arial',
+                        color: nodeFontColor
                     }
                 });
                 nodeMap.set(toId, true);
