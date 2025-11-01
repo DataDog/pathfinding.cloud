@@ -605,12 +605,35 @@ function renderAttackVisualization(pathId, visualization) {
             interaction: {
                 dragNodes: true,
                 dragView: true,
-                zoomView: true,
+                zoomView: false,  // Disable mouse wheel zoom
                 hover: true
             }
         };
 
         const network = new vis.Network(container, data, options);
+
+        // Add zoom controls
+        const zoomControls = document.createElement('div');
+        zoomControls.className = 'viz-zoom-controls';
+        zoomControls.innerHTML = `
+            <button class="viz-zoom-btn viz-zoom-in" title="Zoom In">+</button>
+            <button class="viz-zoom-btn viz-zoom-out" title="Zoom Out">−</button>
+            <button class="viz-zoom-btn viz-zoom-reset" title="Reset Zoom">⊙</button>
+        `;
+        container.appendChild(zoomControls);
+
+        // Add zoom button handlers
+        zoomControls.querySelector('.viz-zoom-in').addEventListener('click', () => {
+            const scale = network.getScale();
+            network.moveTo({ scale: scale * 1.2 });
+        });
+        zoomControls.querySelector('.viz-zoom-out').addEventListener('click', () => {
+            const scale = network.getScale();
+            network.moveTo({ scale: scale * 0.8 });
+        });
+        zoomControls.querySelector('.viz-zoom-reset').addEventListener('click', () => {
+            network.fit();
+        });
 
         // Add click event handlers for nodes and edges
         network.on('click', function(params) {
