@@ -1,7 +1,8 @@
 // Main application state
 let allPaths = [];
 let filteredPaths = [];
-let currentView = 'table'; // 'cards' or 'table' - default to table
+// Default to cards on mobile (<=768px), table on desktop
+let currentView = window.innerWidth <= 768 ? 'cards' : 'table';
 let sortColumn = null;
 let sortDirection = 'asc'; // 'asc' or 'desc'
 
@@ -101,6 +102,10 @@ async function loadPaths() {
             viewTableBtn.classList.add('active');
             viewCardsBtn.classList.remove('active');
             pathsContainer.className = 'paths-table-container';
+        } else {
+            viewCardsBtn.classList.add('active');
+            viewTableBtn.classList.remove('active');
+            pathsContainer.className = 'paths-grid';
         }
 
         renderPaths();
