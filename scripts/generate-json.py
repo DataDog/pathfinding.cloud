@@ -9,12 +9,185 @@ Usage:
 import json
 import yaml
 import os
+import subprocess
+import requests
+from datetime import datetime
 from pathlib import Path
 
 def load_yaml_file(file_path):
     """Load and parse a YAML file."""
     with open(file_path, 'r') as f:
         return yaml.safe_load(f)
+
+def get_git_metadata_from_github(file_path, github_token=None):
+    """Extract git metadata using GitHub API."""
+    try:
+        # GitHub repository details
+        owner = 'DataDog'
+        repo = 'pathfinding.cloud'
+
+        # Convert local file path to repository path
+        # file_path could be a Path object or string, convert to relative path string
+        repo_path = str(file_path).replace('\\', '/')
+
+        # If it's an absolute path, make it relative to the current directory
+        if os.path.isabs(repo_path):
+            # Get the current working directory
+            cwd = os.getcwd()
+            # Make the path relative to cwd
+            repo_path = os.path.relpath(file_path, cwd).replace('\\', '/')
+
+        # Prepare headers
+        headers = {
+            'Accept': 'application/vnd.github.v3+json',
+        }
+        if github_token:
+            headers['Authorization'] = f'token {github_token}'
+
+        # Get commits for this file
+        url = f'https://api.github.com/repos/{owner}/{repo}/commits'
+        params = {'path': repo_path}
+
+        # Debug: print the exact API call
+        print(f"    → Querying GitHub API: {url}?path={repo_path}")
+
+        response = requests.get(url, headers=headers, params=params, timeout=10)
+
+        if response.status_code != 200:
+            print(f"  ⚠️  GitHub API returned status {response.status_code} for {repo_path}")
+            if response.status_code == 404:
+                print(f"      File may not exist in the repository yet or path is incorrect")
+            return None
+
+        commits = response.json()
+
+        if not commits:
+            return None
+
+        # Get creation date (last commit in the list)
+        creation_date = commits[-1]['commit']['author']['date']
+
+        # Get last update date (first commit in the list)
+        last_update = commits[0]['commit']['author']['date']
+
+        # Get unique contributors
+        contributors = []
+        seen_logins = set()
+        seen_emails = set()
+
+        for commit in commits:
+            author = commit.get('author')  # GitHub user object
+            commit_author = commit['commit']['author']  # Git author object
+
+            # Prefer GitHub user info if available
+            if author and author.get('login'):
+                login = author['login']
+                if login not in seen_logins:
+                    seen_logins.add(login)
+                    contributors.append({
+                        'name': commit_author['name'],
+                        'email': commit_author['email'],
+                        'githubUsername': login
+                    })
+            else:
+                # Fall back to email if GitHub user is not available
+                email = commit_author['email']
+                if email not in seen_emails:
+                    seen_emails.add(email)
+                    contributors.append({
+                        'name': commit_author['name'],
+                        'email': email,
+                        'githubUsername': None
+                    })
+
+        return {
+            'created': creation_date,
+            'lastUpdated': last_update,
+            'contributors': contributors
+        }
+    except Exception as e:
+        print(f"  ⚠️  GitHub API error for {file_path}: {e}")
+        return None
+
+def get_git_metadata_from_git(file_path):
+    """Extract git metadata using git log (fallback method)."""
+    try:
+        # Get creation date (first commit)
+        creation_result = subprocess.run(
+            ['git', 'log', '--diff-filter=A', '--format=%aI', '--', str(file_path)],
+            capture_output=True,
+            text=True,
+            check=False
+        )
+        creation_date = None
+        if creation_result.returncode == 0 and creation_result.stdout.strip():
+            creation_date = creation_result.stdout.strip().split('\n')[-1]
+
+        # Get last update date (most recent commit)
+        update_result = subprocess.run(
+            ['git', 'log', '-1', '--format=%aI', '--', str(file_path)],
+            capture_output=True,
+            text=True,
+            check=False
+        )
+        last_update = None
+        if update_result.returncode == 0 and update_result.stdout.strip():
+            last_update = update_result.stdout.strip()
+
+        # Get contributors (unique authors)
+        contributors_result = subprocess.run(
+            ['git', 'log', '--format=%aN|%aE', '--', str(file_path)],
+            capture_output=True,
+            text=True,
+            check=False
+        )
+        contributors = []
+        if contributors_result.returncode == 0 and contributors_result.stdout.strip():
+            seen = set()
+            for line in contributors_result.stdout.strip().split('\n'):
+                if '|' in line:
+                    name, email = line.split('|', 1)
+                    if email not in seen:
+                        seen.add(email)
+                        # Extract GitHub username from email if possible
+                        github_username = None
+                        if '@users.noreply.github.com' in email:
+                            username_part = email.split('@')[0]
+                            if '+' in username_part:
+                                github_username = username_part.split('+')[1]
+                            else:
+                                github_username = username_part
+
+                        contributors.append({
+                            'name': name,
+                            'email': email,
+                            'githubUsername': github_username
+                        })
+
+        return {
+            'created': creation_date,
+            'lastUpdated': last_update,
+            'contributors': contributors
+        }
+    except Exception as e:
+        print(f"  ⚠️  Git log error for {file_path}: {e}")
+        return {
+            'created': None,
+            'lastUpdated': None,
+            'contributors': []
+        }
+
+def get_git_metadata(file_path, github_token=None):
+    """Extract git metadata for a file, trying GitHub API first, then falling back to git log."""
+    # Try GitHub API first if token is available
+    if github_token:
+        metadata = get_git_metadata_from_github(file_path, github_token)
+        if metadata:
+            return metadata
+        print(f"  ⚠️  Falling back to git log for {file_path}")
+
+    # Fall back to git log
+    return get_git_metadata_from_git(file_path)
 
 def find_all_yaml_files(data_dir='data/paths'):
     """Find all YAML files in the data directory."""
@@ -32,9 +205,37 @@ def find_all_yaml_files(data_dir='data/paths'):
 
     return sorted(yaml_files)
 
+def check_git_sync():
+    """Check if local branch is synced with remote."""
+    try:
+        # Check if we're ahead of origin
+        result = subprocess.run(
+            ['git', 'rev-list', '--count', 'origin/main..HEAD'],
+            capture_output=True,
+            text=True,
+            check=False
+        )
+        if result.returncode == 0:
+            commits_ahead = int(result.stdout.strip())
+            if commits_ahead > 0:
+                print(f"  ⚠️  Warning: Your branch is {commits_ahead} commit(s) ahead of origin/main")
+                print(f"      Some files may not be available via GitHub API yet")
+                print(f"      Consider pushing your changes or the script will use git log fallback")
+    except Exception:
+        pass  # Silently ignore if we can't check
+
 def convert_yaml_to_json(input_dir='data/paths', output_file='paths.json'):
     """Convert all YAML files to a single JSON file."""
     print("Converting YAML files to JSON...")
+
+    # Get GitHub token from environment variable
+    github_token = os.environ.get('GITHUB_TOKEN')
+    if github_token:
+        print("  ✓ Using GitHub API with provided token")
+        check_git_sync()
+    else:
+        print("  ⚠️  No GITHUB_TOKEN found, falling back to git log")
+        print("     Set GITHUB_TOKEN environment variable to use GitHub API")
 
     yaml_files = find_all_yaml_files(input_dir)
 
@@ -51,6 +252,15 @@ def convert_yaml_to_json(input_dir='data/paths', output_file='paths.json'):
         try:
             print(f"  Processing: {yaml_file}")
             data = load_yaml_file(yaml_file)
+
+            # Add git metadata
+            git_metadata = get_git_metadata(yaml_file, github_token)
+            data['gitMetadata'] = git_metadata
+
+            # Add relative file path for GitHub links
+            relative_path = str(yaml_file).replace('\\', '/')
+            data['filePath'] = relative_path
+
             paths.append(data)
         except Exception as e:
             error_msg = f"Error processing {yaml_file}: {e}"

