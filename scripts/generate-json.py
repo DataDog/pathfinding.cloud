@@ -39,10 +39,11 @@ def get_git_metadata_from_github(file_path, github_token=None):
 
         # Prepare headers
         headers = {
-            'Accept': 'application/vnd.github.v3+json',
+            'Accept': 'application/vnd.github+json',
+            'X-GitHub-Api-Version': '2022-11-28',
         }
         if github_token:
-            headers['Authorization'] = f'token {github_token}'
+            headers['Authorization'] = f'Bearer {github_token}'
 
         # Get commits for this file
         url = f'https://api.github.com/repos/{owner}/{repo}/commits'
@@ -205,6 +206,37 @@ def find_all_yaml_files(data_dir='data/paths'):
 
     return sorted(yaml_files)
 
+def check_github_access(github_token):
+    """Check if we can access the repository via GitHub API."""
+    try:
+        owner = 'DataDog'
+        repo = 'pathfinding.cloud'
+        url = f'https://api.github.com/repos/{owner}/{repo}'
+
+        headers = {
+            'Accept': 'application/vnd.github+json',
+            'X-GitHub-Api-Version': '2022-11-28',
+        }
+        if github_token:
+            headers['Authorization'] = f'Bearer {github_token}'
+
+        response = requests.get(url, headers=headers, timeout=10)
+
+        if response.status_code == 404:
+            print(f"  ⚠️  Warning: Cannot access repository {owner}/{repo}")
+            print(f"      Repository may be private. Ensure your token has 'repo' scope")
+            print(f"      Falling back to git log for all files")
+            return False
+        elif response.status_code != 200:
+            print(f"  ⚠️  GitHub API returned status {response.status_code}")
+            print(f"      Falling back to git log for all files")
+            return False
+
+        return True
+    except Exception as e:
+        print(f"  ⚠️  Error checking GitHub access: {e}")
+        return False
+
 def check_git_sync():
     """Check if local branch is synced with remote."""
     try:
@@ -220,7 +252,6 @@ def check_git_sync():
             if commits_ahead > 0:
                 print(f"  ⚠️  Warning: Your branch is {commits_ahead} commit(s) ahead of origin/main")
                 print(f"      Some files may not be available via GitHub API yet")
-                print(f"      Consider pushing your changes or the script will use git log fallback")
     except Exception:
         pass  # Silently ignore if we can't check
 
@@ -230,11 +261,19 @@ def convert_yaml_to_json(input_dir='data/paths', output_file='paths.json'):
 
     # Get GitHub token from environment variable
     github_token = os.environ.get('GITHUB_TOKEN')
+    use_github_api = False
+
     if github_token:
-        print("  ✓ Using GitHub API with provided token")
-        check_git_sync()
+        print("  ✓ GitHub token found, checking repository access...")
+        if check_github_access(github_token):
+            print("  ✓ GitHub API access confirmed")
+            use_github_api = True
+            check_git_sync()
+        else:
+            # Access check failed, will use git log fallback
+            github_token = None
     else:
-        print("  ⚠️  No GITHUB_TOKEN found, falling back to git log")
+        print("  ⚠️  No GITHUB_TOKEN found, using git log")
         print("     Set GITHUB_TOKEN environment variable to use GitHub API")
 
     yaml_files = find_all_yaml_files(input_dir)
