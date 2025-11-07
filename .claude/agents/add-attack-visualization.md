@@ -1,7 +1,7 @@
 ---
 name: add-vis
 description: Adds an attack visualization to an existing attack path. 
-tools: Read, Edit, Grep, Glob, Bash
+tools: Read, Edit, Grep, Glob, Bash, Edit, Write
 model: inherit
 color: green
 ---

