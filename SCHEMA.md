@@ -4,9 +4,15 @@ This document defines the YAML schema used for documenting AWS IAM privilege esc
 
 ## Schema Version
 
-Current version: `1.3.0`
+Current version: `1.4.0`
 
 ### Version History
+
+#### Version 1.4.0 (2025-01-11)
+- Added `detectionTools` optional field for documenting open source detection tool coverage
+- Tool metadata (names, descriptions, GitHub links) stored in `metadata.json`
+- YAML files only need to specify the detection source code URL for each tool
+- Frontend always displays "Detection Coverage" section with placeholder message if no tools listed
 
 #### Version 1.3.0 (2025-11-10)
 - **Breaking change**: `toolSupport` field is deprecated and replaced with `learningEnvironments`
@@ -359,6 +365,37 @@ toolSupport:
   prowler: true
 ```
 
+#### `detectionTools` (object)
+Documents which open source security assessment tools can detect this privilege escalation path and links to their detection source code.
+
+This field is an object where each key is the tool name (e.g., `pmapper`, `cloudsplaining`, `pacu`, `prowler`, `scoutsuite`) and the value is a URL string pointing to the specific source code file or line where this path's detection logic is implemented.
+
+**Supported tool names:**
+- `pmapper`: Principal Mapper by NCC Group
+- `cloudsplaining`: Cloudsplaining by Salesforce
+- `pacu`: Pacu AWS exploitation framework by Rhino Security Labs
+- `prowler`: Prowler multi-cloud security tool
+- `scoutsuite`: ScoutSuite by NCC Group
+
+**Note:** The frontend loads tool metadata (display names, GitHub repository links, descriptions) from `metadata.json`. Only the `detectionSource` URL needs to be specified in each path's YAML file.
+
+Example:
+```yaml
+detectionTools:
+  pmapper: https://github.com/nccgroup/PMapper/blob/master/principalmapper/graphing/iam_edges.py#L123
+  cloudsplaining: https://github.com/salesforce/cloudsplaining/blob/master/cloudsplaining/shared/constants.py#L45
+  pacu: https://github.com/RhinoSecurityLabs/pacu/blob/master/pacu/modules/iam__privesc_scan/main.py#L234
+```
+
+**Frontend Behavior:**
+- If this field is present with tool entries, the "Detection Coverage" section displays tabs for each tool with:
+  - Tool name (from metadata)
+  - Link to GitHub repository (from metadata)
+  - Link to detection source code (from YAML)
+  - Tool description with pros/cons (from metadata)
+- If this field is absent or empty, the section displays: "This path is not currently supported by any open source detection tools."
+- The section is **always visible** on the frontend regardless of whether tools are listed
+
 #### `attackVisualization` (object)
 A structured representation of the attack path that creates an interactive visualization showing the flow from starting principal to target outcomes, including conditional branches.
 
@@ -474,14 +511,14 @@ Example (simple with branching):
 attackVisualization:
   nodes:
     - id: start
-      label: starting-principal
+      label: Starting Principal
       type: principal
       description: |
         The principal initiating the attack. Can be an IAM user or role
         with sts:AssumeRole permission on the target role.
 
     - id: target_role
-      label: target-role
+      label: Target Role
       type: resource
       description: |
         The privileged role being assumed. Must have a trust policy that
@@ -549,7 +586,7 @@ Example (complex multi-step attack):
 attackVisualization:
   nodes:
     - id: start
-      label: starting-principal
+      label: Starting Principal
       type: principal
 
     - id: ec2_instance
@@ -650,6 +687,10 @@ detectionRules:
   - platform: "CloudSIEM"
     ruleId: "7b6-2a8-df9"
     url: "https://docs.datadoghq.com/security/default_rules/7b6-2a8-df9/"
+
+detectionTools:
+  pmapper: https://github.com/nccgroup/PMapper/blob/master/principalmapper/graphing/iam_edges.py#L123
+  cloudsplaining: https://github.com/salesforce/cloudsplaining/blob/master/cloudsplaining/shared/constants.py#L45
 
 learningEnvironments:
   iam-vulnerable:

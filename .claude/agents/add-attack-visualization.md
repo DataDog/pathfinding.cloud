@@ -32,12 +32,13 @@ Before creating any visualization:
 
 **Starting Node:**
 - ALWAYS use `id: start` for the first node
-- Use `label: starting-principal` when the attack works from either user or role
-- Only use `starting-user` or `starting-role` when the attack is specific to one type
+- Use the label `Starting Principal` when the attack works from either user or role
+- Only use the label `Starting User` or `Starting Role` when the attack is specific to one type
 - Type must be `principal`
 
 **Resource Nodes:**
-- Use descriptive labels like `target-role`, `EC2 Instance`, `Lambda Function`
+- Use descriptive labels that indicate if a new resource is created of if an existing resource is being attacked. 
+- Examples: `Existing EC2 Instance`, `New EC2 Instance`, `Existing Role that trusts the Lambda Service`, `Existing Role that trusts the CodeBuild Service`, `Existing Role`, `EC2 Instance`, `Lambda Function`
 - Type must be `resource`
 - Include detailed description explaining the resource's role in the attack
 
@@ -256,7 +257,7 @@ Edges:
 ```yaml
 nodes:
   - id: start
-    label: starting-principal
+    label: Starting Principal
     type: principal
   - id: target_user
     label: target-user
@@ -418,16 +419,15 @@ After creating the visualization:
 5. Determine if conditional branching is needed:
    - Does the outcome vary based on target resource permissions?
    - Are there multiple attack approaches?
-6. Present your view of the attack path to the user for review in a simple format, like this: `  summary: "starting_principal → (codebuild:CreateProject + iam:PassRole) → CodeBuild project → (assumes) → target_role → (codebuild:StartBuild) → Exfiltrate credentials → (condition1:admin) → Administrator access| (condition 2: additional perms) → Check for additional access | (condition3: no additional perms) → No additional Access"`
-7. Iterate with the user
-8. Once the user is happy with the path, create the path. 
-9. Create nodes following the structure rules
-10. Create edges following the structure rules
-11. Add detailed descriptions to all nodes and edges
+6. Create nodes following the structure rules
+7. Create edges following the structure rules
+8. Add detailed descriptions to all nodes and edges
    - Include relevant AWS CLI commands from `exploitationSteps` in edge descriptions
-12. Validate the YAML syntax and schema
-13. Present the complete `attackVisualization` section to the user
-14. Run the json generator script at @scripts/generate-json.py
+9. Validate the YAML syntax and schema
+10. **Use the Edit tool to add the complete `attackVisualization` section to the YAML file**
+    - Add it after the `learningEnvironments` section (or after `relatedPaths` if no learningEnvironments exists)
+    - Ensure proper YAML indentation (no leading spaces before `attackVisualization:`)
+11. Validate the modified file: `python3 scripts/validate-schema.py data/paths/{service}/{file}.yaml`
 
 
 ## Example Reference

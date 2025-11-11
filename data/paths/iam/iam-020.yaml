@@ -207,28 +207,18 @@ detectionRules:
     ruleId: "TBD"
     url: "https://docs.datadoghq.com/security/default_rules/"
 
-toolSupport:
-  pmapper: false
-  iamVulnerable: false
-  pacu: false
-  prowler: false
 attackVisualization:
   nodes:
   - id: start
-    label: starting-principal
+    label: Starting Principal
     type: principal
     description: |
       The principal with iam:CreatePolicyVersion and iam:UpdateAssumeRolePolicy permissions. Can be an IAM user or role.
-  - id: customer_policy
-    label: customer-managed-policy
-    type: resource
-    description: |
-      An existing customer-managed IAM policy that is attached to the target role. The attacker will create a new version of this policy with administrative permissions.
   - id: target_role
-    label: target-role
+    label: Existing Target Role
     type: resource
     description: |
-      An IAM role that has the customer-managed policy attached. The attacker will update its trust policy to allow assumption.
+      An IAM role with a customer-managed policy attached. The attacker will create a new version of that policy with administrative permissions and update the role's trust policy to allow assumption.
   - id: admin_outcome
     label: Effective Administrator
     type: outcome
@@ -248,34 +238,28 @@ attackVisualization:
       If the new policy version only grants minimal permissions, the privilege escalation may not provide meaningful additional access.
   edges:
   - from: start
-    to: customer_policy
-    label: iam:CreatePolicyVersion
+    to: target_role
+    label: iam:CreatePolicyVersion + iam:UpdateAssumeRolePolicy + sts:AssumeRole
     description: |
-      The attacker creates a new version of the customer-managed policy with administrative permissions and sets it as default.
+      The attacker first creates a new version of the customer-managed policy (attached to the target role) with administrative permissions, then updates the role's trust policy to allow their principal to assume it, and finally assumes the role. No prior sts:AssumeRole permission is needed - the trust policy grants this capability.
 
-      Command:
+      Commands:
       ```bash
+      # Step 1: Create new policy version with admin permissions
       aws iam create-policy-version \
         --policy-arn arn:aws:iam::ACCOUNT_ID:policy/target-policy \
         --policy-document file://admin_policy.json \
         --set-as-default
-      ```
-  - from: customer_policy
-    to: target_role
-    label: Policy attached to role
-    description: |
-      The customer-managed policy is already attached to the target role. When the new version becomes default, the role automatically gains the new permissions.
-  - from: start
-    to: target_role
-    label: iam:UpdateAssumeRolePolicy
-    description: |
-      The attacker updates the role's trust policy to allow their principal to assume it. No prior sts:AssumeRole permission is needed.
 
-      Command:
-      ```bash
+      # Step 2: Update trust policy
       aws iam update-assume-role-policy \
         --role-name target-role \
         --policy-document file://trust_policy.json
+
+      # Step 3: Assume the role
+      aws sts assume-role \
+        --role-arn arn:aws:iam::ACCOUNT_ID:role/target-role \
+        --role-session-name privesc-session
       ```
   - from: target_role
     to: admin_outcome
@@ -283,18 +267,18 @@ attackVisualization:
     branch: A
     condition: admin
     description: |
-      After assuming the role with sts:AssumeRole, the attacker gains full administrative access from the policy version with admin permissions.
+      If the policy version grants administrative permissions, the attacker gains full administrative access.
   - from: target_role
     to: partial_outcome
     label: If elevated policy version created
     branch: B
     condition: some_permissions
     description: |
-      After assuming the role, the attacker gains partial privilege escalation from the policy version with elevated permissions.
+      If the policy version grants elevated but non-administrative permissions, the attacker gains partial privilege escalation.
   - from: target_role
     to: minimal_outcome
     label: If limited policy version created
     branch: C
     condition: no_permissions
     description: |
-      After assuming the role, the attacker may not gain meaningful additional access if the policy version only grants minimal permissions.
+      If the policy version only grants minimal permissions, the attacker may not gain meaningful additional access.

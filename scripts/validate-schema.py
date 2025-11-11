@@ -38,6 +38,7 @@ OPTIONAL_FIELDS = {
     'references': list,
     'relatedPaths': list,
     'detectionRules': list,
+    'detectionTools': dict,  # New field for open source detection tool coverage (v1.4.0)
     'learningEnvironments': dict,  # New field for learning labs and CTF environments
     'toolSupport': dict,  # DEPRECATED in v1.3.0, kept for backward compatibility
     'attackVisualization': (dict, str),  # dict (new structured format) or str (legacy Mermaid)

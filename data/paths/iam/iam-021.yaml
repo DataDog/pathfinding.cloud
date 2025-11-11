@@ -218,6 +218,11 @@ relatedPaths:
   - "iam-015"
   - "iam-018"
 
+detectionTools:
+  cloudsplaining: https://github.com/salesforce/cloudsplaining/blob/master/cloudsplaining/shared/constants.py#L111-L115
+  pacu: https://github.com/RhinoSecurityLabs/pacu/blob/master/pacu/modules/iam__privesc_scan/main.py#L345-L360
+  prowler: https://github.com/prowler-cloud/prowler/blob/master/prowler/providers/aws/services/iam/lib/privilege_escalation.py#L87-L92
+
 detectionRules:
   - platform: "CloudSIEM"
     ruleId: "TBD"
@@ -231,12 +236,12 @@ toolSupport:
 attackVisualization:
   nodes:
   - id: start
-    label: starting-principal
+    label: Starting Principal
     type: principal
     description: |
       The principal with iam:PutRolePolicy and iam:UpdateAssumeRolePolicy permissions on a target role. Can be an IAM user or role.
   - id: target_role
-    label: target-role
+    label: Existing Target Role
     type: resource
     description: |
       An existing IAM role that will be modified. The attacker will add an inline policy with administrative permissions and update its trust policy.
@@ -260,28 +265,27 @@ attackVisualization:
   edges:
   - from: start
     to: target_role
-    label: iam:PutRolePolicy
+    label: iam:PutRolePolicy + iam:UpdateAssumeRolePolicy + sts:AssumeRole
     description: |
-      The attacker adds an inline policy with administrative permissions to the target role.
+      The attacker first adds an inline policy with administrative permissions to the target role, then updates the role's trust policy to allow their principal to assume it, and finally assumes the role. No prior sts:AssumeRole permission is needed - the trust policy grants this capability.
 
-      Command:
+      Commands:
       ```bash
+      # Step 1: Add inline policy
       aws iam put-role-policy \
         --role-name target-role \
         --policy-name AdminEscalation \
         --policy-document file://admin-policy.json
-      ```
-  - from: target_role
-    to: target_role
-    label: iam:UpdateAssumeRolePolicy
-    description: |
-      The attacker updates the role's trust policy to allow their principal to assume it. No prior sts:AssumeRole permission is needed - the trust policy grants this capability.
 
-      Command:
-      ```bash
+      # Step 2: Update trust policy
       aws iam update-assume-role-policy \
         --role-name target-role \
         --policy-document file://trust-policy.json
+
+      # Step 3: Assume the role
+      aws sts assume-role \
+        --role-arn arn:aws:iam::ACCOUNT_ID:role/target-role \
+        --role-session-name privesc-session
       ```
   - from: target_role
     to: admin_outcome
@@ -289,18 +293,18 @@ attackVisualization:
     branch: A
     condition: admin
     description: |
-      After assuming the role with sts:AssumeRole, the attacker gains full administrative access from the inline policy with admin permissions.
+      If the inline policy grants administrative permissions, the attacker gains full administrative access.
   - from: target_role
     to: partial_outcome
     label: If elevated inline policy added
     branch: B
     condition: some_permissions
     description: |
-      After assuming the role, the attacker gains partial privilege escalation from the inline policy with elevated permissions.
+      If the inline policy grants elevated but non-administrative permissions, the attacker gains partial privilege escalation.
   - from: target_role
     to: minimal_outcome
     label: If limited inline policy added
     branch: C
     condition: no_permissions
     description: |
-      After assuming the role, the attacker may not gain meaningful additional access if the inline policy only grants minimal permissions.
+      If the inline policy only grants minimal permissions, the attacker may not gain meaningful additional access.

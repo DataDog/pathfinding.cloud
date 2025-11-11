@@ -18,11 +18,16 @@ One thing to keep in mind is that the pathfinder-labs scenarios are very specifi
 
 ## High level steps
 
-1. You accept the information from the orchestrator
-2. You create the scenario file and fill all sections except for:
-  - attackVisualization
-  - discoveredBy, 
-  - references
-3. You then task the other agents concurrently: 
-  - add-vis agent: will create the attack path visualizations for you. Provide the exploitaiton steps that you came up with to the attack-vis agent so that the vis uses the same exploitation steps when applicable. 
-  - attribution agent: will do some research to find references to include, and also try to identity who discovered/created the attack path. You need to pass  the required permissions so that the attribution agent knows what to search for. 
+1. Accept the information from the orchestrator
+2. Determine the next available ID number for this service (e.g., if ecs-003 exists, create ecs-004)
+3. Create the YAML file at `data/paths/{service}/{service}-{number}.yaml` and fill all sections EXCEPT:
+   - `attackVisualization` (will be added by add-vis agent)
+   - `discoveredBy` (will be added by attribution agent)
+   - `references` (will be added by attribution agent)
+   - `learningEnvironments` (will be added by learning-environments agent, optional field)
+   - `detectionTools` (will be added by detection-tools agent, optional field)
+4. Use the Write tool to save the file
+5. Validate the file: `python3 scripts/validate-schema.py data/paths/{service}/{service}-{number}.yaml`
+6. Report back to the orchestrator with the file path and validation results
+
+**Note:** The orchestrator will task the specialized agents (add-vis, attribution, learning-environments, detection-tools) after you complete. You do NOT need to task them yourself. 

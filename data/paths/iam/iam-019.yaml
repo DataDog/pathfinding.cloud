@@ -179,12 +179,12 @@ discoveredBy:
 attackVisualization:
   nodes:
   - id: start
-    label: starting-principal
+    label: Starting Principal
     type: principal
     description: |
       The principal with iam:AttachRolePolicy and iam:UpdateAssumeRolePolicy permissions on a target role. Can be an IAM user or role.
   - id: target_role
-    label: target-role
+    label: Existing Target Role
     type: resource
     description: |
       An existing IAM role that will be modified. The attacker will attach an administrative policy to it and update its trust policy to allow assumption.
@@ -208,27 +208,26 @@ attackVisualization:
   edges:
   - from: start
     to: target_role
-    label: iam:AttachRolePolicy
+    label: iam:AttachRolePolicy + iam:UpdateAssumeRolePolicy & then sts:AssumeRole 
     description: |
-      The attacker attaches an administrative managed policy (e.g., AdministratorAccess) to the target role.
+      The attacker first attaches an administrative managed policy (e.g., AdministratorAccess) to the target role, then updates the role's trust policy to allow their principal to assume it, and finally assumes the role. No prior sts:AssumeRole permission is needed - the trust policy grants this capability.
 
-      Command:
+      Commands:
       ```bash
+      # Step 1: Attach administrative policy
       aws iam attach-role-policy \
         --role-name target-role \
         --policy-arn arn:aws:iam::aws:policy/AdministratorAccess
-      ```
-  - from: target_role
-    to: target_role
-    label: iam:UpdateAssumeRolePolicy
-    description: |
-      The attacker updates the role's trust policy to allow their principal to assume it. No prior sts:AssumeRole permission is needed - the trust policy grants this capability.
 
-      Command:
-      ```bash
+      # Step 2: Update trust policy
       aws iam update-assume-role-policy \
         --role-name target-role \
         --policy-document file://trust-policy.json
+
+      # Step 3: Assume the role
+      aws sts assume-role \
+        --role-arn arn:aws:iam::ACCOUNT_ID:role/target-role \
+        --role-session-name privesc-session
       ```
   - from: target_role
     to: admin_outcome
@@ -236,18 +235,18 @@ attackVisualization:
     branch: A
     condition: admin
     description: |
-      After assuming the role with sts:AssumeRole, the attacker gains full administrative access if AdministratorAccess or equivalent was attached.
+      If AdministratorAccess or equivalent was attached to the role, the attacker gains full administrative access.
   - from: target_role
     to: partial_outcome
     label: If elevated policy attached
     branch: B
     condition: some_permissions
     description: |
-      After assuming the role, the attacker gains partial privilege escalation if a policy with elevated but non-administrative permissions was attached.
+      If a policy with elevated but non-administrative permissions was attached, the attacker gains partial privilege escalation.
   - from: target_role
     to: minimal_outcome
     label: If limited policy attached
     branch: C
     condition: no_permissions
     description: |
-      After assuming the role, the attacker may not gain meaningful additional access if only limited managed policies were available to attach.
+      If only limited managed policies were available to attach, the attacker may not gain meaningful additional access.

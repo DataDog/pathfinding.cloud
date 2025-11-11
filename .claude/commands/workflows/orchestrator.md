@@ -20,11 +20,20 @@ If you have not been given a pathfinder-labs directory, you are to ask the user 
 
 # High level plan
 
-1. Once you are comfortable with the input you will pass that input to the sub-agents concurrently.
-  - builder agent: The builder will create most of the yaml but some parts will be delegated to other agents and then appended to the yaml
-  - add-vis agent: will create the attack path visualizations for you.
-  - attribution agent: will do some research to find references to include, and also try to identity who discovered/created the attack path
-2. Once the agents all return their sections, you will craft a single SERVICE-XXX.yaml document in the right location.
-3. Include learningEnvironments field when available (e.g., iam-vulnerable, pathfinder-labs scenarios)
-4. you will run the validate-schema.py to confirm the path passes validation
+1. Once you are comfortable with the input, task the **builder agent** to create the base YAML file
+   - The builder will create the YAML file with most sections filled in
+   - The builder will leave these sections empty: `attackVisualization`, `discoveredBy`, `references`, `learningEnvironments`, `detectionTools`
+   - The builder will save the file to `data/paths/{service}/{service}-{number}.yaml`
+
+2. Once the builder completes, task these specialized agents concurrently to enhance the file:
+   - **add-vis agent**: Will read the YAML file and use the Edit tool to add the `attackVisualization` section
+   - **attribution agent**: Will research and use the Edit tool to add `discoveredBy` and `references` sections
+   - **learning-environments agent**: Will research and use the Edit tool to add the `learningEnvironments` section (optional)
+   - **detection-tools agent**: Will research and use the Edit tool to add the `detectionTools` section (optional)
+   - All agents will directly modify the YAML file created by the builder
+
+3. After all agents complete, validate the final file:
+   - Run `python3 scripts/validate-schema.py data/paths/{service}/{service}-{number}.yaml`
+
+4. Report completion to the user with a summary of what was created
 

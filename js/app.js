@@ -1,6 +1,7 @@
 // Main application state
 let allPaths = [];
 let filteredPaths = [];
+let toolMetadata = {}; // Detection tool metadata from metadata.json
 // Default to cards on mobile (<=768px), table on desktop
 let currentView = window.innerWidth <= 768 ? 'cards' : 'table';
 let sortColumn = null;
@@ -27,12 +28,22 @@ function initTheme() {
     if (savedTheme === 'light') {
         document.body.classList.add('light-theme');
     }
+    updateThemeText();
 }
 
 function toggleTheme() {
     document.body.classList.toggle('light-theme');
     const currentTheme = document.body.classList.contains('light-theme') ? 'light' : 'dark';
     localStorage.setItem('theme', currentTheme);
+    updateThemeText();
+}
+
+function updateThemeText() {
+    const themeText = document.querySelector('.theme-text');
+    if (themeText) {
+        const isLight = document.body.classList.contains('light-theme');
+        themeText.textContent = isLight ? 'Light Mode' : 'Dark Mode';
+    }
 }
 
 // Load data on page load
@@ -88,11 +99,14 @@ function switchView(view) {
 // Load paths from data files
 async function loadPaths() {
     try {
-        // In production, this will load from a generated JSON file
-        // For now, we'll use the data directory structure
-        const paths = await fetchAllPaths();
+        // Load both paths and tool metadata
+        const [paths, metadata] = await Promise.all([
+            fetchAllPaths(),
+            fetchMetadata()
+        ]);
         allPaths = paths;
         filteredPaths = paths;
+        toolMetadata = metadata.detectionTools || {};
 
         populateServiceFilter();
         updateStats();
@@ -139,6 +153,19 @@ async function fetchAllPaths() {
         // Fallback to demo data if paths.json is not available
         console.warn('Falling back to demo data');
         return getDemoData();
+    }
+}
+
+async function fetchMetadata() {
+    try {
+        const response = await fetch('metadata.json');
+        if (!response.ok) {
+            throw new Error(`Failed to load metadata.json: ${response.status}`);
+        }
+        return await response.json();
+    } catch (error) {
+        console.error('Error loading metadata:', error);
+        return { detectionTools: {} };
     }
 }
 
@@ -281,14 +308,28 @@ function renderPaths() {
 
         // Add click event listeners
         document.querySelectorAll('.path-card').forEach((card, index) => {
-            card.addEventListener('click', () => showPathDetails(filteredPaths[index]));
+            card.addEventListener('click', (e) => handlePathClick(e, filteredPaths[index]));
+            card.addEventListener('mousedown', (e) => {
+                // Handle middle-click
+                if (e.button === 1) {
+                    e.preventDefault();
+                    openPathInNewTab(filteredPaths[index]);
+                }
+            });
         });
     } else {
         pathsContainer.innerHTML = createPathTable(filteredPaths);
 
         // Add click event listeners for rows
         document.querySelectorAll('.paths-table tbody tr').forEach((row, index) => {
-            row.addEventListener('click', () => showPathDetails(filteredPaths[index]));
+            row.addEventListener('click', (e) => handlePathClick(e, filteredPaths[index]));
+            row.addEventListener('mousedown', (e) => {
+                // Handle middle-click
+                if (e.button === 1) {
+                    e.preventDefault();
+                    openPathInNewTab(filteredPaths[index]);
+                }
+            });
         });
 
         // Add click event listeners for sortable headers
@@ -404,6 +445,23 @@ function createPathTable(paths) {
     `;
 }
 
+// Handle path click with modifier keys
+function handlePathClick(event, path) {
+    // Check if Ctrl (Windows/Linux) or Cmd (Mac) is pressed, or if it's a middle-click
+    if (event.ctrlKey || event.metaKey) {
+        event.preventDefault();
+        openPathInNewTab(path);
+    } else {
+        showPathDetails(path);
+    }
+}
+
+// Open path in a new tab
+function openPathInNewTab(path) {
+    const url = window.location.origin + window.location.pathname + '#' + path.id;
+    window.open(url, '_blank');
+}
+
 // Show path details in modal
 function showPathDetails(path) {
     // Update URL with path ID
@@ -411,9 +469,21 @@ function showPathDetails(path) {
 
     const html = `
         <h2>${escapeHtml(path.name)}</h2>
-        <p><strong>ID:</strong> ${path.id.toUpperCase()}</p>
-        <p><strong>Category:</strong> ${formatCategory(path.category)}</p>
-        <p><strong>Services:</strong> ${path.services.map(s => `<code>${s}</code>`).join(', ')}</p>
+
+        <div class="modal-top-metadata">
+            <div class="metadata-item metadata-left">
+                <span class="metadata-label">ID:</span>
+                <span class="metadata-value metadata-id">${path.id.toUpperCase()}</span>
+            </div>
+            <div class="metadata-item metadata-center">
+                <span class="metadata-label">Services:</span>
+                <span class="metadata-value">${path.services.map(s => `<span class="service-tag">${s}</span>`).join('')}</span>
+            </div>
+            <div class="metadata-item metadata-right">
+                <span class="metadata-label">Category:</span>
+                <span class="path-category category-${path.category}">${formatCategory(path.category)}</span>
+            </div>
+        </div>
 
         <div class="modal-section">
             <h3>Description</h3>
@@ -469,7 +539,14 @@ function showPathDetails(path) {
 
         <div class="modal-section">
             <h3>Recommended Remediation</h3>
-            <div>${renderMarkdown(path.recommendation)}</div>
+            <div class="boxed-section">
+                ${renderMarkdown(path.recommendation)}
+            </div>
+        </div>
+
+        <div class="modal-section">
+            <h3>Detection Coverage (Open Source Tools)</h3>
+            ${renderDetectionTools(path.detectionTools)}
         </div>
 
         ${path.learningEnvironments ? `
@@ -482,18 +559,13 @@ function showPathDetails(path) {
         ${path.references ? `
             <div class="modal-section">
                 <h3>References</h3>
-                <ul>
-                    ${path.references.map(ref => `
-                        <li><a href="${escapeHtml(ref.url)}" target="_blank">${escapeHtml(ref.title)}</a></li>
-                    `).join('')}
-                </ul>
-            </div>
-        ` : ''}
-
-        ${path.relatedPaths ? `
-            <div class="modal-section">
-                <h3>Related Paths</h3>
-                <p>${path.relatedPaths.map(id => `<code>${id}</code>`).join(', ')}</p>
+                <div class="boxed-section">
+                    <ul>
+                        ${path.references.map(ref => `
+                            <li><a href="${escapeHtml(ref.url)}" target="_blank">${escapeHtml(ref.title)}</a></li>
+                        `).join('')}
+                    </ul>
+                </div>
             </div>
         ` : ''}
 
@@ -1029,6 +1101,7 @@ function renderGitMetadata(path) {
     const githubFileUrl = path.filePath
         ? `https://github.com/${repoOwner}/${repoName}/blob/${branch}/${path.filePath}`
         : null;
+    const contributingUrl = `https://github.com/${repoOwner}/${repoName}/blob/${branch}/CONTRIBUTING.md`;
 
     // Format dates
     const formatDate = (isoDate) => {
@@ -1076,29 +1149,36 @@ function renderGitMetadata(path) {
     };
 
     return `
-        <div class="modal-section git-metadata-section">
-            <div class="git-metadata-header">
-                <div class="git-metadata-dates">
-                    ${metadata.created ? `<div class="git-metadata-date"><strong>Created</strong> ${createdDate}</div>` : ''}
-                    ${metadata.lastUpdated ? `<div class="git-metadata-date"><strong>Last Updated</strong> ${updatedDate}</div>` : ''}
+        <div class="modal-section">
+            <div class="boxed-section git-metadata-section">
+                <div class="git-metadata-contributing">
+                    See an issue? Want to make a change? Want to add your blog as a reference? See our <a href="${contributingUrl}" target="_blank">contributing guide</a>!
                 </div>
-                ${githubFileUrl ? `
-                    <a href="${githubFileUrl}" target="_blank" class="edit-github-link">
-                        <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor">
-                            <path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/>
-                        </svg>
-                        Edit on GitHub
-                    </a>
-                ` : ''}
-            </div>
-            ${metadata.contributors && metadata.contributors.length > 0 ? `
-                <div class="git-metadata-contributors">
-                    <strong>Contributors</strong>
-                    <div class="contributors-list">
-                        ${renderContributors()}
+                <div class="git-metadata-content">
+                    <div class="git-metadata-row">
+                        <div class="git-metadata-dates">
+                            ${metadata.created ? `<span><strong>Created:</strong> ${createdDate}</span>` : ''}
+                            ${metadata.lastUpdated ? `<span><strong>Last Updated:</strong> ${updatedDate}</span>` : ''}
+                        </div>
+                        ${githubFileUrl ? `
+                            <a href="${githubFileUrl}" target="_blank" class="edit-github-link">
+                                <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor">
+                                    <path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/>
+                                </svg>
+                                Edit on GitHub
+                            </a>
+                        ` : ''}
                     </div>
+                    ${metadata.contributors && metadata.contributors.length > 0 ? `
+                        <div class="git-metadata-contributors">
+                            <strong>Contributors:</strong>
+                            <div class="contributors-list">
+                                ${renderContributors()}
+                            </div>
+                        </div>
+                    ` : ''}
                 </div>
-            ` : ''}
+            </div>
         </div>
     `;
 }
@@ -1255,11 +1335,11 @@ function renderLearningEnvironments(environments) {
                 <div id="${uniqueId}-${envName}" class="tab-content ${index === 0 ? 'active' : ''}" data-tab-group="${uniqueId}">
                     <div class="learning-env-content">
                         <div class="env-meta">
-                            <a href="${escapeHtml(envData.githubLink)}" target="_blank" class="github-badge">
-                                <svg height="16" width="16" viewBox="0 0 16 16" fill="currentColor">
+                            <a href="${escapeHtml(envData.githubLink)}" target="_blank" class="unified-action-button">
+                                <svg height="14" width="14" viewBox="0 0 16 16" fill="currentColor">
                                     <path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"></path>
                                 </svg>
-                                View on GitHub
+                                View Repository
                             </a>
                             ${envData.scenario ? `<span class="env-scenario-name"><strong>Scenario:</strong> <code>${escapeHtml(envData.scenario)}</code></span>` : ''}
                         </div>
@@ -1283,6 +1363,84 @@ function renderLearningEnvironments(environments) {
             `;
         }
         return '';
+    }).join('');
+
+    return `
+        <div class="tabs-container">
+            <div class="tabs">
+                ${tabsHtml}
+            </div>
+            <div class="tabs-content">
+                ${contentHtml}
+            </div>
+        </div>
+    `;
+}
+
+// Render detection tools coverage
+function renderDetectionTools(detectionTools) {
+    // Always show this section, even if no tools detect this path
+    if (!detectionTools || Object.keys(detectionTools).length === 0) {
+        return `
+            <div class="boxed-section">
+                <p style="color: var(--text-secondary); font-style: italic;">
+                    This path is not currently supported by any open source detection tools.
+                </p>
+            </div>
+        `;
+    }
+
+    const toolNames = Object.keys(detectionTools);
+    const uniqueId = `detection-tabs-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+
+    const tabsHtml = toolNames.map((toolName, index) => {
+        const toolInfo = toolMetadata[toolName];
+        const displayName = toolInfo ? toolInfo.name : toolName;
+        return `
+            <button class="tab-button ${index === 0 ? 'active' : ''}"
+                    data-tab-target="${uniqueId}-${toolName}"
+                    data-tab-group="${uniqueId}">
+                ${escapeHtml(displayName)}
+            </button>
+        `;
+    }).join('');
+
+    const contentHtml = toolNames.map((toolName, index) => {
+        const detectionSource = detectionTools[toolName];
+        const toolInfo = toolMetadata[toolName];
+
+        return `
+            <div id="${uniqueId}-${toolName}" class="tab-content ${index === 0 ? 'active' : ''}" data-tab-group="${uniqueId}">
+                <div class="detection-tool-content">
+                    ${toolInfo ? `
+                        <div class="tool-meta">
+                            <a href="${escapeHtml(toolInfo.githubLink)}" target="_blank" class="unified-action-button">
+                                <svg height="14" width="14" viewBox="0 0 16 16" fill="currentColor">
+                                    <path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"></path>
+                                </svg>
+                                Tool Repository
+                            </a>
+                            <a href="${escapeHtml(detectionSource)}" target="_blank" class="unified-action-button">
+                                <svg height="14" width="14" viewBox="0 0 16 16" fill="currentColor">
+                                    <path d="M4.72 3.22a.75.75 0 011.06 1.06L2.06 8l3.72 3.72a.75.75 0 11-1.06 1.06L.47 8.53a.75.75 0 010-1.06l4.25-4.25zm6.56 0a.75.75 0 10-1.06 1.06L13.94 8l-3.72 3.72a.75.75 0 101.06 1.06l4.25-4.25a.75.75 0 000-1.06l-4.25-4.25z"></path>
+                                </svg>
+                                Detection Source
+                            </a>
+                        </div>
+                        <p class="tool-description">${escapeHtml(toolInfo.description)}</p>
+                    ` : `
+                        <div class="tool-meta">
+                            <a href="${escapeHtml(detectionSource)}" target="_blank" class="unified-action-button">
+                                <svg height="14" width="14" viewBox="0 0 16 16" fill="currentColor">
+                                    <path d="M4.72 3.22a.75.75 0 011.06 1.06L2.06 8l3.72 3.72a.75.75 0 11-1.06 1.06L.47 8.53a.75.75 0 010-1.06l4.25-4.25zm6.56 0a.75.75 0 10-1.06 1.06L13.94 8l-3.72 3.72a.75.75 0 101.06 1.06l4.25-4.25a.75.75 0 000-1.06l-4.25-4.25z"></path>
+                                </svg>
+                                Detection Source
+                            </a>
+                        </div>
+                    `}
+                </div>
+            </div>
+        `;
     }).join('');
 
     return `
@@ -1405,7 +1563,7 @@ function renderPermissions(permissions) {
     // If only required permissions, show without tabs
     if (hasRequired && !hasAdditional) {
         return `
-            <p style="margin-bottom: 15px; color: #666;">These are the only permissions needed by the principal that is exploiting this path. Additional get/list type permissions might be needed to exploit this in practice, but these could come from an additional principal that has more read level access.</p>
+            <p style="margin-bottom: 15px; color: #666;">These are the only permissions needed by the principal that is exploiting this path. Additional get/list type permissions might be needed to exploit this in practice, but sometimes the attacker has already gained that read level access through other means (e.g, read-only access, knowledge base systems).</p>
             <table class="permissions-table">
                 <thead>
                     <tr>
@@ -1445,7 +1603,7 @@ function renderPermissions(permissions) {
 
     const contentHtml = `
         <div id="${uniqueId}-required" class="tab-content active" data-tab-group="${uniqueId}">
-            <p style="margin-bottom: 15px; color: #666;">These are the only permissions needed by the principal that is exploiting this path. Additional get/list type permissions might be needed to exploit this in practice, but these could come from an additional principal that has more read level access. Those additional permissions are shown in the next tab.</p>
+            <p style="margin-bottom: 15px; color: #666;">These are the only permissions needed by the principal that is exploiting this path. Additional get/list type permissions might be needed to exploit this in practice, but sometimes the attacker has already gained that read level access through other means (e.g, read-only access, knowledge base systems). Those additional permissions are shown in the next tab.</p>
             <table class="permissions-table">
                 <thead>
                     <tr>
