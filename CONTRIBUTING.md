@@ -30,31 +30,38 @@ Use the template below as a starting point:
 
 ```yaml
 id: "service-001"
-name: "iam:Permission" # or "iam:Permission1+service:Permission2"
+name: "iam:Permission" # or "iam:Permission1 + service:Permission2" (note spaces around +)
 category: "self-escalation" # or lateral-movement, service-passrole, credential-access, access-resource
 services:
   - iam
   - service
 
-requiredPermissions:
-  - permission: "iam:Permission"
-    resourceConstraints: "Description of resource requirements"
+permissions:
+  required:
+    - permission: "iam:Permission"
+      resourceConstraints: "Description of resource requirements"
+  additional:
+    - permission: "iam:ListPermissions"
+      resourceConstraints: "Helpful for discovering resources"
 
-description: |
-  Clear explanation of how this privilege escalation works, what it accomplishes,
-  and the end result for the attacker.
+description: Clear explanation of how this privilege escalation works, what it accomplishes, and the end result for the attacker.
 
 prerequisites:
-  - condition: "Description of required condition"
-    type: "resource-state" # or trust-relationship, service-config
+  admin:
+    - "Description of condition needed for administrative access"
+  lateral:
+    - "Description of condition needed for lateral movement"
 
 exploitationSteps:
-  - step: 1
-    command: "aws service action --parameters"
-    description: "What this step does"
-  - step: 2
-    command: "aws service action --parameters"
-    description: "What this step does"
+  awscli:
+    - step: 1
+      command: |
+        aws service action --parameters
+      description: "What this step does"
+    - step: 2
+      command: |
+        aws service action --parameters
+      description: "What this step does"
 
 recommendation: |
   Security recommendations for preventing and detecting this escalation path.
@@ -77,11 +84,12 @@ detectionRules:
   - platform: "CloudSIEM"
     url: "https://docs.example.com/rules/rule-id"
 
-toolSupport:
-  pmapper: false
-  iamVulnerable: false
-  pacu: false
-  prowler: false
+learningEnvironments:
+  iam-vulnerable:
+    type: open-source
+    githubLink: https://github.com/BishopFox/iam-vulnerable
+    scenario: IAM-SomeScenario
+    description: "Deploy Terraform into your own AWS account and practice exploitation"
 ```
 
 ### Step 3: Validate Your File
@@ -145,9 +153,10 @@ Must be one of:
 - List all AWS services involved
 - Use lowercase service names (e.g., `iam`, `ec2`, `lambda`)
 
-#### `requiredPermissions`
-- List ALL permissions needed for the escalation
-- Include `resourceConstraints` to describe requirements
+#### `permissions`
+- **required**: List minimum permissions needed by the exploiting principal
+- **additional**: List helpful get/list permissions that aid exploitation
+- Include `resourceConstraints` to describe requirements for each permission
 - Be specific about what resources must be accessible
 
 #### `description`
@@ -157,13 +166,15 @@ Must be one of:
 
 #### `prerequisites`
 - Document all conditions that must be met
-- Each prerequisite has a `condition` and `type`
-- Types: `resource-state`, `trust-relationship`, `service-config`
+- **New format (recommended)**: Use tabs (`admin` and `lateral`) for different scenarios
+- **Legacy format**: Simple list of conditions (still supported)
+- Be specific about environment requirements
 
 #### `exploitationSteps`
-- Number steps sequentially starting from 1
-- Include actual AWS CLI commands
-- Use placeholders like `@username`, `@rolename` for variables
+- Organized by tool (awscli, pacu, pmapper, stratus, leonidas, nebula, pathfinder)
+- Number steps sequentially starting from 1 for each tool
+- Include actual commands with multi-line syntax using `|`
+- Use placeholders like `<value>` for variables
 - Explain what each step accomplishes
 
 #### `recommendation`
@@ -188,9 +199,11 @@ Must be one of:
 - Link to detection rules in security platforms
 - Include platform name and URL
 
-#### `toolSupport` (optional)
-- Indicate which security tools support this path
-- Boolean values for: `pmapper`, `iamVulnerable`, `pacu`, `prowler`
+#### `learningEnvironments` (optional)
+- Documents learning labs and CTF environments where this path can be practiced
+- **Open-source environments**: Include `type: open-source`, `githubLink`, `description`, optional `scenario`
+- **Closed-source environments**: Include `type: closed-source`, `description`, `scenario`, and `scenarioPricingModel` (paid/free)
+- Replaces the deprecated `toolSupport` field
 
 ## Examples
 
@@ -203,68 +216,96 @@ category: "self-escalation"
 services:
   - iam
 
-requiredPermissions:
-  - permission: "iam:CreatePolicyVersion"
-    resourceConstraints: "Policy must be attached to the actor"
+permissions:
+  required:
+    - permission: "iam:CreatePolicyVersion"
+      resourceConstraints: "Policy must be attached to the actor"
+  additional:
+    - permission: "iam:ListPolicies"
+      resourceConstraints: "Helpful for discovering attached policies"
 
-description: |
-  Allows creating a new version of an IAM policy with elevated permissions.
+description: A principal with `iam:CreatePolicyVersion` can create a new version of an IAM policy that is already attached to them, granting themselves administrative privileges by setting the new version as default.
 
 prerequisites:
-  - condition: "Policy must already be attached to the actor"
-    type: "resource-state"
+  - "Policy must already be attached to the actor's user, role, or group"
 
 exploitationSteps:
-  - step: 1
-    command: "aws iam create-policy-version --policy-arn @arn --policy-document file://admin.json --set-as-default"
-    description: "Create new policy version with admin permissions"
+  awscli:
+    - step: 1
+      command: |
+        aws iam create-policy-version --policy-arn <policy-arn> --policy-document file://admin.json --set-as-default
+      description: "Create new policy version with admin permissions and set as default"
 
 recommendation: |
   Restrict iam:CreatePolicyVersion to only necessary principals.
-  Monitor usage with CloudTrail.
+  Monitor usage with CloudTrail and CloudSIEM detections.
 
-toolSupport:
-  pmapper: true
-  iamVulnerable: true
+discoveredBy:
+  name: "Spencer Gietzen"
+  organization: "Rhino Security Labs"
+  date: "2019"
+
+learningEnvironments:
+  iam-vulnerable:
+    type: open-source
+    githubLink: https://github.com/BishopFox/iam-vulnerable
+    scenario: IAM-CreatePolicyVersion
+    description: "Deploy Terraform into your own AWS account and practice exploitation"
 ```
 
 ### Example 2: Multi-Permission Path with PassRole
 
 ```yaml
 id: "lambda-001"
-name: "iam:PassRole+lambda:CreateFunction+lambda:InvokeFunction"
+name: "iam:PassRole + lambda:CreateFunction + lambda:InvokeFunction"
 category: "service-passrole"
 services:
   - iam
   - lambda
 
-requiredPermissions:
-  - permission: "iam:PassRole"
-    resourceConstraints: "Must be able to pass a privileged role"
-  - permission: "lambda:CreateFunction"
-  - permission: "lambda:InvokeFunction"
+permissions:
+  required:
+    - permission: "iam:PassRole"
+      resourceConstraints: "Must be able to pass a privileged role to Lambda service"
+    - permission: "lambda:CreateFunction"
+      resourceConstraints: "Must be able to create Lambda functions"
+    - permission: "lambda:InvokeFunction"
+      resourceConstraints: "Must be able to invoke the created function"
+  additional:
+    - permission: "iam:ListRoles"
+      resourceConstraints: "Helpful for discovering available privileged roles"
+    - permission: "iam:GetRole"
+      resourceConstraints: "Useful for viewing role permissions and trust policies"
 
-description: |
-  Create a Lambda function with a privileged role and invoke it to execute code
-  with elevated permissions.
+description: A principal with `iam:PassRole`, `lambda:CreateFunction`, and `lambda:InvokeFunction` can create a Lambda function with a privileged role and invoke it to execute code with elevated permissions.
 
 prerequisites:
-  - condition: "Privileged role must exist"
-    type: "resource-state"
-  - condition: "Role must trust lambda.amazonaws.com"
-    type: "trust-relationship"
+  admin:
+    - "A role must exist that trusts lambda.amazonaws.com to assume it"
+    - "The role must have administrative permissions (e.g., AdministratorAccess or an equivalent custom policy)"
+  lateral:
+    - "A role must exist that trusts lambda.amazonaws.com to assume it"
+    - "The role can have any level of permissions for lateral movement"
 
 exploitationSteps:
-  - step: 1
-    command: "aws lambda create-function --function-name exploit --runtime python3.9 --role arn:aws:iam::123456789012:role/PrivRole --handler index.handler --zip-file fileb://code.zip"
-    description: "Create Lambda function with privileged role"
-  - step: 2
-    command: "aws lambda invoke --function-name exploit output.txt"
-    description: "Invoke function to execute with elevated permissions"
+  awscli:
+    - step: 1
+      command: |
+        aws lambda create-function \
+          --function-name exploit \
+          --runtime python3.9 \
+          --role arn:aws:iam::123456789012:role/PrivRole \
+          --handler index.handler \
+          --zip-file fileb://code.zip
+      description: "Create Lambda function with privileged role"
+    - step: 2
+      command: |
+        aws lambda invoke --function-name exploit output.txt
+      description: "Invoke function to execute with elevated permissions"
 
 recommendation: |
   Restrict iam:PassRole with condition keys to limit which roles can be passed
-  to Lambda.
+  to Lambda. Monitor Lambda function creation and invocation in CloudTrail.
 
 discoveredBy:
   name: "Spencer Gietzen"
@@ -279,9 +320,17 @@ relatedPaths:
   - "ec2-001"
   - "cloudformation-001"
 
-toolSupport:
-  pmapper: true
-  iamVulnerable: true
+learningEnvironments:
+  iam-vulnerable:
+    type: open-source
+    githubLink: https://github.com/BishopFox/iam-vulnerable
+    scenario: IAM-PassRole-Lambda-CreateFunction
+    description: "Deploy Terraform into your own AWS account and practice exploitation"
+  pathfinder-labs:
+    type: open-source
+    githubLink: https://github.com/DataDog/pathfinder-labs
+    scenario: lambda-createfunction
+    description: "Deploy scenarios with attack and cleanup scripts"
 ```
 
 ## Pull Request Guidelines

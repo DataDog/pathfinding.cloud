@@ -38,7 +38,8 @@ OPTIONAL_FIELDS = {
     'references': list,
     'relatedPaths': list,
     'detectionRules': list,
-    'toolSupport': dict,
+    'learningEnvironments': dict,  # New field for learning labs and CTF environments
+    'toolSupport': dict,  # DEPRECATED in v1.3.0, kept for backward compatibility
     'attackVisualization': (dict, str),  # dict (new structured format) or str (legacy Mermaid)
 }
 
@@ -338,8 +339,69 @@ def validate_detection_rules(detection_rules: List[Dict]) -> None:
             raise ValidationError("Each detection rule must have a 'platform' field")
 
 
+def validate_learning_environments(learning_envs: Dict) -> None:
+    """Validate the learningEnvironments field."""
+    if not isinstance(learning_envs, dict):
+        raise ValidationError("LearningEnvironments must be a dictionary")
+
+    if not learning_envs:
+        raise ValidationError("LearningEnvironments dict cannot be empty")
+
+    allowed_types = ['open-source', 'closed-source']
+    allowed_pricing_models = ['paid', 'free']
+
+    for env_name, env_data in learning_envs.items():
+        if not isinstance(env_data, dict):
+            raise ValidationError(f"Learning environment '{env_name}' must be a dictionary")
+
+        # Validate required common fields
+        if 'type' not in env_data:
+            raise ValidationError(f"Learning environment '{env_name}' must have a 'type' field")
+
+        if env_data['type'] not in allowed_types:
+            raise ValidationError(
+                f"Learning environment '{env_name}' has invalid type '{env_data['type']}'. "
+                f"Allowed: {', '.join(allowed_types)}"
+            )
+
+        if 'description' not in env_data:
+            raise ValidationError(f"Learning environment '{env_name}' must have a 'description' field")
+
+        if not isinstance(env_data['description'], str):
+            raise ValidationError(f"Learning environment '{env_name}' description must be a string")
+
+        # Validate type-specific fields
+        if env_data['type'] == 'open-source':
+            # Open-source environments require githubLink
+            if 'githubLink' not in env_data:
+                raise ValidationError(
+                    f"Open-source learning environment '{env_name}' must have a 'githubLink' field"
+                )
+
+            if not isinstance(env_data['githubLink'], str):
+                raise ValidationError(f"Learning environment '{env_name}' githubLink must be a string")
+
+        elif env_data['type'] == 'closed-source':
+            # Closed-source environments require scenarioPricingModel
+            if 'scenarioPricingModel' not in env_data:
+                raise ValidationError(
+                    f"Closed-source learning environment '{env_name}' must have a 'scenarioPricingModel' field"
+                )
+
+            if env_data['scenarioPricingModel'] not in allowed_pricing_models:
+                raise ValidationError(
+                    f"Learning environment '{env_name}' has invalid scenarioPricingModel "
+                    f"'{env_data['scenarioPricingModel']}'. Allowed: {', '.join(allowed_pricing_models)}"
+                )
+
+            # scenario field is recommended for closed-source
+            if 'scenario' not in env_data:
+                # Warning, not error - scenario is optional but recommended
+                pass
+
+
 def validate_tool_support(tool_support: Dict) -> None:
-    """Validate the toolSupport field."""
+    """Validate the toolSupport field. [DEPRECATED in v1.3.0]"""
     if not isinstance(tool_support, dict):
         raise ValidationError("ToolSupport must be a dictionary")
 
@@ -621,6 +683,12 @@ def validate_file(file_path: str) -> Tuple[bool, List[str]]:
         if 'detectionRules' in data:
             try:
                 validate_detection_rules(data['detectionRules'])
+            except ValidationError as e:
+                errors.append(str(e))
+
+        if 'learningEnvironments' in data:
+            try:
+                validate_learning_environments(data['learningEnvironments'])
             except ValidationError as e:
                 errors.append(str(e))
 

