@@ -6,6 +6,7 @@ let toolMetadata = {}; // Detection tool metadata from metadata.json
 let currentView = window.innerWidth <= 768 ? 'cards' : 'table';
 let sortColumn = null;
 let sortDirection = 'asc'; // 'asc' or 'desc'
+let currentRoute = { view: 'list', pathId: null }; // Track current route
 
 // DOM elements
 const pathsContainer = document.getElementById('paths-container');
@@ -16,15 +17,12 @@ const resetButton = document.getElementById('reset-filters');
 const viewCardsBtn = document.getElementById('view-cards');
 const viewTableBtn = document.getElementById('view-table');
 const headerTotalPathsEl = document.getElementById('header-total-paths');
-const modal = document.getElementById('path-modal');
-const modalBody = document.getElementById('modal-body');
-const closeModal = document.querySelector('.close');
 const themeToggle = document.getElementById('theme-toggle');
 
 // Theme management
 function initTheme() {
-    // Check localStorage for saved theme, default to dark
-    const savedTheme = localStorage.getItem('theme') || 'dark';
+    // Check localStorage for saved theme, default to light
+    const savedTheme = localStorage.getItem('theme') || 'light';
     if (savedTheme === 'light') {
         document.body.classList.add('light-theme');
     }
@@ -49,9 +47,9 @@ function updateThemeText() {
 // Load data on page load
 document.addEventListener('DOMContentLoaded', () => {
     initTheme();
-    loadPaths();
     setupEventListeners();
     setupTabListeners();
+    loadPaths(); // This will call initRouter() when data is loaded
 });
 
 // Setup event listeners
@@ -63,19 +61,12 @@ function setupEventListeners() {
     viewCardsBtn.addEventListener('click', () => switchView('cards'));
     viewTableBtn.addEventListener('click', () => switchView('table'));
     themeToggle.addEventListener('click', toggleTheme);
-    closeModal.addEventListener('click', () => {
-        modal.style.display = 'none';
-        window.location.hash = '';
-    });
-    window.addEventListener('click', (e) => {
-        if (e.target === modal) {
-            modal.style.display = 'none';
-            window.location.hash = '';
-        }
-    });
 
-    // Handle back/forward navigation
-    window.addEventListener('hashchange', handleHashChange);
+    // Handle browser back/forward navigation
+    window.addEventListener('popstate', handlePopState);
+
+    // Handle backward compatibility: redirect old hash URLs to new format
+    window.addEventListener('hashchange', handleLegacyHashRedirect);
 }
 
 // Switch between card and table view
@@ -124,10 +115,8 @@ async function loadPaths() {
 
         renderPaths();
 
-        // Check if there's a path ID in the URL hash
-        if (window.location.hash) {
-            handleHashChange();
-        }
+        // Initialize router AFTER paths are loaded
+        initRouter();
     } catch (error) {
         console.error('Error loading paths:', error);
         pathsContainer.innerHTML = `
@@ -139,11 +128,182 @@ async function loadPaths() {
     }
 }
 
+// Router functions
+function initRouter() {
+    // Check if we were redirected from 404.html (GitHub Pages SPA hack)
+    const redirectPath = sessionStorage.getItem('redirectPath');
+    if (redirectPath) {
+        sessionStorage.removeItem('redirectPath');
+        history.replaceState(null, '', redirectPath);
+    }
+
+    // Check for legacy hash URLs and redirect
+    if (window.location.hash) {
+        const pathId = window.location.hash.substring(1);
+        if (pathId) {
+            // Redirect to new URL format
+            history.replaceState(null, '', `/paths/${pathId}`);
+        }
+    }
+
+    // Route to the current URL
+    routeFromURL();
+}
+
+function routeFromURL() {
+    const pathname = window.location.pathname;
+
+    // Check if it's a path detail URL: /paths/{id}
+    // Match format: /paths/{service}-{number} where service can have letters/numbers/hyphens
+    const pathMatch = pathname.match(/^\/paths\/([a-z0-9-]+)$/);
+
+    if (pathMatch) {
+        const pathId = pathMatch[1];
+        console.log('Routing to path:', pathId);
+        const path = allPaths.find(p => p.id === pathId);
+
+        if (path) {
+            console.log('Path found:', path.name);
+            currentRoute = { view: 'detail', pathId };
+            showPathDetails(path);
+        } else {
+            console.log('Path not found, available paths:', allPaths.length);
+            // Invalid path ID, redirect to home
+            navigateToList();
+        }
+    } else {
+        // Home/list view
+        console.log('Routing to list view');
+        currentRoute = { view: 'list', pathId: null };
+        showListView();
+    }
+}
+
+function handlePopState(event) {
+    // Handle browser back/forward buttons
+    routeFromURL();
+}
+
+function handleLegacyHashRedirect() {
+    // Redirect old hash-based URLs (#iam-001) to new format (/paths/iam-001)
+    const hash = window.location.hash.substring(1);
+    if (hash) {
+        history.replaceState(null, '', `/paths/${hash}`);
+        routeFromURL();
+    }
+}
+
+function navigateToPath(pathId) {
+    const path = allPaths.find(p => p.id === pathId);
+    if (!path) return;
+
+    // Update URL
+    history.pushState(null, '', `/paths/${pathId}`);
+
+    // Update route state
+    currentRoute = { view: 'detail', pathId };
+
+    // Show detail view
+    showPathDetails(path);
+
+    // Track pageview for analytics
+    trackPageView(`/paths/${pathId}`, `${path.name} - pathfinding.cloud`);
+}
+
+function navigateToList() {
+    // Update URL
+    history.pushState(null, '', '/');
+
+    // Update route state
+    currentRoute = { view: 'list', pathId: null };
+
+    // Show list view
+    showListView();
+
+    // Track pageview for analytics
+    trackPageView('/', 'pathfinding.cloud - AWS IAM Privilege Escalation Paths');
+}
+
+function showListView() {
+    // Hide detail view, show list view
+    const listView = document.getElementById('list-view');
+    const detailView = document.getElementById('detail-view');
+    const nav = document.querySelector('nav');
+
+    if (listView) listView.style.display = 'block';
+    if (detailView) detailView.style.display = 'none';
+    if (nav) nav.style.display = 'block';
+
+    // Update page title
+    document.title = 'pathfinding.cloud - AWS IAM Privilege Escalation Paths';
+
+    // Update meta description
+    updateMetaTag('description', 'Comprehensive library of AWS IAM privilege escalation paths, techniques, and mitigations');
+}
+
+function trackPageView(path, title) {
+    // Update page title
+    document.title = title;
+
+    // Track with Google Analytics if available
+    if (typeof gtag === 'function') {
+        gtag('config', 'G-XXXXXXXXXX', {
+            page_path: path,
+            page_title: title
+        });
+    }
+
+    // Track with Plausible if available
+    if (typeof plausible === 'function') {
+        plausible('pageview', { props: { path, title } });
+    }
+
+    // Log for development
+    console.log('Pageview:', path, title);
+}
+
+function updateMetaTag(name, content) {
+    let meta = document.querySelector(`meta[name="${name}"]`);
+    if (!meta) {
+        meta = document.createElement('meta');
+        meta.setAttribute('name', name);
+        document.head.appendChild(meta);
+    }
+    meta.setAttribute('content', content);
+}
+
+function updateOpenGraphTags(path) {
+    // Update Open Graph tags for social sharing
+    const tags = {
+        'og:title': `${path.name} - pathfinding.cloud`,
+        'og:description': path.description.substring(0, 200) + '...',
+        'og:url': `${window.location.origin}/paths/${path.id}`,
+        'twitter:card': 'summary_large_image',
+        'twitter:title': `${path.name} - pathfinding.cloud`,
+        'twitter:description': path.description.substring(0, 200) + '...'
+    };
+
+    Object.entries(tags).forEach(([property, content]) => {
+        let meta = document.querySelector(`meta[property="${property}"]`) ||
+                   document.querySelector(`meta[name="${property}"]`);
+        if (!meta) {
+            meta = document.createElement('meta');
+            if (property.startsWith('og:')) {
+                meta.setAttribute('property', property);
+            } else {
+                meta.setAttribute('name', property);
+            }
+            document.head.appendChild(meta);
+        }
+        meta.setAttribute('content', content);
+    });
+}
+
 // Fetch all path files
 async function fetchAllPaths() {
     try {
         // Load paths from the generated JSON file
-        const response = await fetch('paths.json');
+        const response = await fetch('/paths.json');
         if (!response.ok) {
             throw new Error(`Failed to load paths.json: ${response.status}`);
         }
@@ -158,7 +318,7 @@ async function fetchAllPaths() {
 
 async function fetchMetadata() {
     try {
-        const response = await fetch('metadata.json');
+        const response = await fetch('/metadata.json');
         if (!response.ok) {
             throw new Error(`Failed to load metadata.json: ${response.status}`);
         }
@@ -452,113 +612,138 @@ function handlePathClick(event, path) {
         event.preventDefault();
         openPathInNewTab(path);
     } else {
-        showPathDetails(path);
+        event.preventDefault();
+        navigateToPath(path.id);
     }
 }
 
 // Open path in a new tab
 function openPathInNewTab(path) {
-    const url = window.location.origin + window.location.pathname + '#' + path.id;
+    const url = `${window.location.origin}/paths/${path.id}`;
     window.open(url, '_blank');
 }
 
-// Show path details in modal
+// Show path details in full-page view
 function showPathDetails(path) {
-    // Update URL with path ID
-    window.location.hash = path.id;
+    // Hide list view and nav, show detail view
+    const listView = document.getElementById('list-view');
+    const detailView = document.getElementById('detail-view');
+    const detailContent = document.getElementById('detail-content');
+    const nav = document.querySelector('nav');
 
+    if (listView) listView.style.display = 'none';
+    if (detailView) detailView.style.display = 'block';
+    if (nav) nav.style.display = 'none';
+
+    // Update page title and meta tags
+    document.title = `${path.name} - pathfinding.cloud`;
+    updateMetaTag('description', path.description.substring(0, 160));
+    updateOpenGraphTags(path);
+
+    // Render breadcrumb
+    const breadcrumbHtml = `
+        <nav class="breadcrumb">
+            <a href="/" onclick="event.preventDefault(); navigateToList();">All Paths</a>
+            <span class="breadcrumb-separator">></span>
+            <span class="breadcrumb-current">${escapeHtml(path.name)}</span>
+        </nav>
+    `;
+
+    // Render path details
     const html = `
-        <h2>${escapeHtml(path.name)}</h2>
+        ${breadcrumbHtml}
 
-        <div class="modal-top-metadata">
-            <div class="metadata-item metadata-left">
+        <h1 class="detail-title">${escapeHtml(path.name)}</h1>
+
+        <div class="detail-top-metadata">
+            <div class="metadata-item">
                 <span class="metadata-label">ID:</span>
                 <span class="metadata-value metadata-id">${path.id.toUpperCase()}</span>
             </div>
-            <div class="metadata-item metadata-center">
+            <div class="metadata-item">
                 <span class="metadata-label">Services:</span>
                 <span class="metadata-value">${path.services.map(s => `<span class="service-tag">${s}</span>`).join('')}</span>
             </div>
-            <div class="metadata-item metadata-right">
+            <div class="metadata-item">
                 <span class="metadata-label">Category:</span>
                 <span class="path-category category-${path.category}">${formatCategory(path.category)}</span>
             </div>
         </div>
 
-        <div class="modal-section">
-            <h3>Description</h3>
+        <div class="detail-section">
+            <h2>Description</h2>
             <div>${renderMarkdown(path.description)}</div>
         </div>
 
         ${path.attackVisualization ? `
-            <div class="modal-section">
-                <h3>
+            <div class="detail-section">
+                <h2>
                     Attack Visualization
                     <button class="fullscreen-viz-btn" onclick="openFullscreenVisualization('${path.id}')" title="Open in fullscreen">
                         <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor">
                             <path d="M1.5 1a.5.5 0 0 0-.5.5v4a.5.5 0 0 1-1 0v-4A1.5 1.5 0 0 1 1.5 0h4a.5.5 0 0 1 0 1h-4zM10 .5a.5.5 0 0 1 .5-.5h4A1.5 1.5 0 0 1 16 1.5v4a.5.5 0 0 1-1 0v-4a.5.5 0 0 0-.5-.5h-4a.5.5 0 0 1-.5-.5zM.5 10a.5.5 0 0 1 .5.5v4a.5.5 0 0 0 .5.5h4a.5.5 0 0 1 0 1h-4A1.5 1.5 0 0 1 0 14.5v-4a.5.5 0 0 1 .5-.5zm15 0a.5.5 0 0 1 .5.5v4a1.5 1.5 0 0 1-1.5 1.5h-4a.5.5 0 0 1 0-1h4a.5.5 0 0 0 .5-.5v-4a.5.5 0 0 1 .5-.5z"/>
                         </svg>
                     </button>
-                </h3>
+                </h2>
                 <div class="attack-viz-container" id="attack-viz-${path.id}"></div>
             </div>
         ` : ''}
 
         ${path.discoveredBy ? `
-            <div class="modal-section">
-                <h3>Discovered By</h3>
+            <div class="detail-section">
+                <h2>Discovered By</h2>
                 <p>
                     ${escapeHtml(path.discoveredBy.name)}${path.discoveredBy.organization ? ` (${escapeHtml(path.discoveredBy.organization)})` : ''}${path.discoveredBy.date ? `, ${escapeHtml(path.discoveredBy.date)}` : ''}
                 </p>
             </div>
         ` : ''}
 
-        <div class="modal-section">
-            <h3>Permissions</h3>
+        <div class="detail-section">
+            <h2>Permissions</h2>
             ${renderPermissions(path.permissions || (path.requiredPermissions ? { required: path.requiredPermissions } : null))}
         </div>
 
         ${path.prerequisites ? `
-            <div class="modal-section">
-                <h3>Prerequisites</h3>
+            <div class="detail-section">
+                <h2>Prerequisites</h2>
                 ${renderPrerequisites(path.prerequisites)}
             </div>
         ` : ''}
 
         ${path.limitations ? `
-            <div class="modal-section">
-                <h3>⚠️ Limitations</h3>
+            <div class="detail-section">
+                <h2>⚠️ Limitations</h2>
                 <p style="white-space: pre-wrap;">${escapeHtml(path.limitations)}</p>
             </div>
         ` : ''}
 
-        <div class="modal-section">
-            <h3>Exploitation Steps</h3>
+        <div class="detail-section">
+            <h2>Exploitation Steps</h2>
             ${renderExploitationSteps(path.exploitationSteps)}
         </div>
 
-        <div class="modal-section">
-            <h3>Recommended Remediation</h3>
+        <div class="detail-section">
+            <h2>Recommended Remediation</h2>
             <div class="boxed-section">
                 ${renderMarkdown(path.recommendation)}
             </div>
         </div>
 
-        <div class="modal-section">
-            <h3>Detection Coverage (Open Source Tools)</h3>
+        <div class="detail-section">
+            <h2>Detection Coverage (Open Source Tools)</h2>
             ${renderDetectionTools(path.detectionTools)}
         </div>
 
         ${path.learningEnvironments ? `
-            <div class="modal-section">
-                <h3>Learning Environment Options</h3>
+            <div class="detail-section">
+                <h2>Learning Environment Options</h2>
                 ${renderLearningEnvironments(path.learningEnvironments)}
             </div>
         ` : ''}
 
         ${path.references ? `
-            <div class="modal-section">
-                <h3>References</h3>
+            <div class="detail-section">
+                <h2>References</h2>
                 <div class="boxed-section">
                     <ul>
                         ${path.references.map(ref => `
@@ -572,8 +757,10 @@ function showPathDetails(path) {
         ${renderGitMetadata(path)}
     `;
 
-    modalBody.innerHTML = html;
-    modal.style.display = 'block';
+    detailContent.innerHTML = html;
+
+    // Scroll to top
+    window.scrollTo(0, 0);
 
     // Render attack visualization if present
     if (path.attackVisualization && window.vis) {
@@ -1692,26 +1879,7 @@ function handleTabClick(event) {
     tabButton.classList.add('active');
 }
 
-// Handle URL hash changes (for direct links and back/forward navigation)
-function handleHashChange() {
-    const pathId = window.location.hash.substring(1); // Remove the '#'
-
-    if (!pathId) {
-        // No hash, close modal if open
-        modal.style.display = 'none';
-        return;
-    }
-
-    // Find the path with this ID
-    const path = allPaths.find(p => p.id === pathId);
-
-    if (path) {
-        showPathDetails(path);
-    } else {
-        // Invalid path ID, clear hash
-        window.location.hash = '';
-    }
-}
+// Removed old handleHashChange function - now using proper routing with History API
 
 function debounce(func, wait) {
     let timeout;
