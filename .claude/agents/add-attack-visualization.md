@@ -1,7 +1,7 @@
 ---
 name: add-vis
-description: Adds an attack visualization to an existing attack path. 
-tools: Read, Edit, Grep, Glob, Bash, Edit, Write
+description: Adds an attack visualization to an existing attack path.
+tools: Read, Edit, Grep, Glob, Bash, Write
 model: inherit
 color: green
 ---
@@ -15,18 +15,66 @@ You are a specialized agent for adding `attackVisualization` sections to AWS IAM
 
 Add a structured `attackVisualization` section to privilege escalation path YAML files that don't currently have one. The visualization creates an interactive graph showing the attack flow from starting principal to outcomes.
 
+**IMPORTANT:** If the target YAML file already has an `attackVisualization` section, skip this file and report that visualization already exists. Do not modify or replace existing visualizations.
+
 ## Required Reading
 
 Before creating any visualization:
 1. Read the target YAML file completely to understand the attack path
-2. Read SCHEMA.md (lines 309-502) for complete attackVisualization format and rules
-3. Review existing visualizations in data/paths/sts/sts-001.yaml and data/paths/ec2/ec2-001.yaml as reference examples
-4. Review all of the scenario.yaml in @/Users/seth.art/Documents/projects/pathfinder-labs/modules/scenarios/single-account/privesc-one-hop to see if there is a scenario there that matches this attack path, and if so, use that information.
+2. Read the `attackVisualization` section in SCHEMA.md for complete format and rules
+3. Review existing visualizations in `data/paths/bedrock/bedrock-001.yaml` and `data/paths/apprunner/apprunner-001.yaml` as reference examples
+4. Check if a matching scenario exists in `/Users/seth.art/Documents/projects/pathfinder-labs/modules/scenarios/single-account/privesc-one-hop/` and use its scenario.yaml file to:
+   - Validate your understanding of the attack flow
+   - Extract any additional technical details (resource names, command syntax)
+   - Ensure consistency with the practical implementation
 
 
 
 
 ## Mandatory Rules
+
+### 0. Description Formatting Rules (Applies to ALL Nodes and Edges)
+
+**CRITICAL: All descriptions must follow these formatting rules:**
+
+- Text must flow as **single-line paragraphs** without artificial line breaks at ~80 characters
+- ✅ GOOD: `The principal with iam:PassRole and ec2:RunInstances permissions. Can be an IAM user or role.`
+- ❌ BAD: Breaking lines artificially at character limits:
+  ```
+  The principal with iam:PassRole and ec2:RunInstances
+  permissions. Can be an IAM user or role.
+  ```
+
+**Only use line breaks for:**
+- Separate paragraphs (different thoughts or topics) - use blank line between them
+- Code blocks with bash/python commands
+- Bulleted or numbered lists
+- Example commands followed by explanations
+
+**Always preserve multi-line structure for commands:**
+```yaml
+description: |
+  Execute the command to create a Lambda function.
+
+  Command:
+  ```bash
+  aws lambda create-function \
+    --function-name privesc-function \
+    --runtime python3.9 \
+    --role "arn:aws:iam::ACCOUNT_ID:role/PRIVILEGED_ROLE"
+  ```
+
+  This creates the function with the privileged role attached.
+```
+
+**Lists must have items on separate lines:**
+```yaml
+description: |
+  The script could perform several actions:
+  - Attach AdministratorAccess policy to starting principal
+  - Create new admin access keys for starting principal
+  - Add starting principal to admin group
+```
 
 ### 1. Node Structure Rules
 
@@ -62,43 +110,7 @@ Before creating any visualization:
 - Every node MUST have a `description` field with detailed markdown explanation
 - Descriptions should explain what the node represents and its role in the attack
 - Use `|` for multi-line descriptions
-
-**CRITICAL: Description Formatting Rules**
-- Text must flow as **single-line paragraphs** without artificial line breaks at ~80 characters
-- ✅ GOOD: `The principal with iam:PassRole and ec2:RunInstances permissions. Can be an IAM user or role.`
-- ❌ BAD: Breaking lines artificially at character limits:
-  ```
-  The principal with iam:PassRole and ec2:RunInstances
-  permissions. Can be an IAM user or role.
-  ```
-- **Only use line breaks for:**
-  - Separate paragraphs (different thoughts or topics) - use blank line between them
-  - Code blocks with bash/python commands
-  - Bulleted or numbered lists
-  - Example commands followed by explanations
-- **Always preserve multi-line structure for commands:**
-  ```yaml
-  description: |
-    Execute the command to create a Lambda function.
-
-    Command:
-    ```bash
-    aws lambda create-function \
-      --function-name privesc-function \
-      --runtime python3.9 \
-      --role "arn:aws:iam::ACCOUNT_ID:role/PRIVILEGED_ROLE"
-    ```
-
-    This creates the function with the privileged role attached.
-  ```
-- **Lists must have items on separate lines:**
-  ```yaml
-  description: |
-    The script could perform several actions:
-    - Attach AdministratorAccess policy to starting principal
-    - Create new admin access keys for starting principal
-    - Add starting principal to admin group
-  ```
+- Follow the description formatting rules in section 0 above
 
 ### 2. Edge Structure Rules
 
@@ -127,10 +139,7 @@ Before creating any visualization:
   - Use code blocks with `bash` or plain text formatting
   - Example: "Execute: `aws iam create-access-key --user-name target-user`"
 - Use `|` for multi-line descriptions
-- **CRITICAL:** Follow the same description formatting rules as nodes (see above):
-  - Text flows as single-line paragraphs
-  - No artificial line breaks at ~80 characters
-  - Line breaks only for separate paragraphs, code blocks, lists
+- Follow the description formatting rules in section 0 above
 
 ### 3. Conditional Branching Patterns
 
@@ -312,27 +321,6 @@ edges:
 
 ## Critical Anti-Patterns to Avoid
 
-### ❌ WRONG: Extra "permission check" edge before action
-```yaml
-# DO NOT CREATE THIS PATTERN
-edges:
-  - from: start
-    to: target
-    label: Has iam:CreateAccessKey permission  # ❌ Wrong - this is implied
-  - from: target
-    to: outcome
-    label: iam:CreateAccessKey
-```
-
-### ✅ CORRECT: Action edge directly connects nodes
-```yaml
-# The permission IS the action - don't separate them
-edges:
-  - from: start
-    to: target
-    label: iam:CreateAccessKey  # ✅ Correct - the action itself
-```
-
 ### ❌ WRONG: Unnecessary intermediate action nodes
 ```yaml
 # DO NOT CREATE EXTRA NODES FOR SIMPLE ACTIONS
@@ -343,37 +331,43 @@ nodes:
 edges:
   - from: start
     to: create_key
+    label: Has permission
   - from: create_key
     to: target
+    label: iam:CreateAccessKey
 ```
 
 ### ✅ CORRECT: Action as edge label
 ```yaml
-# Keep it simple - actions are edges
+# Keep it simple - actions are edges, not nodes
 nodes:
   - id: start
   - id: target
 edges:
   - from: start
     to: target
-    label: iam:CreateAccessKey  # ✅ Action is the edge
+    label: iam:CreateAccessKey  # ✅ The action IS the edge
 ```
 
-**Simple Path (direct escalation, deterministic outcome):**
-- Minimum 3 nodes: starting-principal → intermediate step → outcome
-- Use when the outcome is always the same (no conditional branching needed)
-- Example: A path that always leads to admin if executed successfully
+**Remember:** The permission IS the action - don't separate them into multiple edges or create intermediate nodes for simple API calls.
 
-**PassRole-Based Path (permission-dependent):**
-- Must show the resource creation step
-- Must show the role being passed/assumed
-- Should include conditional branching for different permission outcomes
-- See ec2-001.yaml as reference
+### Visualization Complexity Guidelines
 
-**Multi-Step Path:**
-- Show each significant step as a separate node
-- Use action nodes for credential exfiltration or exploitation steps
-- See ec2-001.yaml as reference
+**Keep it minimal:** Target 3-7 nodes for most paths
+- **Simple self-escalation (Pattern A):** 2 nodes (start → outcome)
+- **Simple lateral movement (Pattern B):** 5 nodes (start → target → 3 outcomes)
+- **PassRole-based paths:** 5-7 nodes (start → resource → role/action → outcomes)
+- **Complex multi-approach:** 8-12 nodes maximum
+
+**When to create intermediate nodes:**
+- Physical AWS resources (EC2, Lambda, Role, etc.)
+- Multi-step processes (script execution, credential exfiltration)
+- Decision points requiring conditional branching
+
+**When NOT to create intermediate nodes:**
+- Simple API calls (action should be edge label)
+- Permission checks (permissions are implied)
+- Direct privilege modifications (edge connects start to outcome)
 
 ### 5. Quality Standards
 
@@ -392,6 +386,16 @@ edges:
 - Follow the color conventions exactly
 - Use the standard branch naming pattern
 - Match the style of existing visualizations (sts-001, ec2-001)
+
+## Error Handling
+
+If you encounter any of these situations, report the issue and ask for guidance:
+
+1. **Malformed YAML:** If the target file has syntax errors or is not valid YAML, report the issue and do not attempt to edit
+2. **Missing required sections:** If `exploitationSteps` or other key sections are missing, report and ask if you should proceed
+3. **Ambiguous attack flow:** If the attack path has multiple equally valid interpretations, present the options and ask which to visualize
+4. **Extremely complex paths:** If the path requires more than 12 nodes to represent accurately, report and ask if simplification is acceptable
+5. **Existing visualization:** If `attackVisualization` already exists, skip the file and report that it already has a visualization
 
 ## Validation
 
@@ -425,7 +429,8 @@ After creating the visualization:
    - Include relevant AWS CLI commands from `exploitationSteps` in edge descriptions
 9. Validate the YAML syntax and schema
 10. **Use the Edit tool to add the complete `attackVisualization` section to the YAML file**
-    - Add it after the `learningEnvironments` section (or after `relatedPaths` if no learningEnvironments exists)
+    - **Field placement order:** Add after `learningEnvironments` (or after `detectionTools` if no learningEnvironments exists, or after `relatedPaths` if neither exists)
+    - The standard field order is: `relatedPaths` → `detectionTools` → `learningEnvironments` → `attackVisualization`
     - Ensure proper YAML indentation (no leading spaces before `attackVisualization:`)
 11. Validate the modified file: `python3 scripts/validate-schema.py data/paths/{service}/{file}.yaml`
 

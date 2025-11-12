@@ -21,7 +21,7 @@ Check these platforms systematically:
 
 ### 1. **Pathfinder Labs** (Open Source)
 - **Type**: open-source
-- **Repository**: https://github.com/DataDog/pathfinder-labs (IMPORTANT: This repo is still private for now. )
+- **Repository**: https://github.com/DataDog/pathfinder-labs (IMPORTANT: This repo is still private for now. So you won't be able to do a websearch of the private repo. You should instead read /Users/seth.art/Documents/projects/pathfinder-labs/modules/scenarios/single-account and find the scenario there, but then create a link that will work when the project goes live.)
 - **What to look for**: Check `modules/scenarios/` directory for matching attack paths
 - **Key patterns**: Look for scenario.yaml files that match the required permissions
 - **Search strategy**: Use WebFetch or WebSearch to find scenarios with the specific permissions
