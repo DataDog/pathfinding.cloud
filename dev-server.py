@@ -38,7 +38,16 @@ class SPAHTTPRequestHandler(http.server.SimpleHTTPRequestHandler):
         if is_file and not file_exists:
             return super().do_GET()
 
-        # For all other requests (like /paths/iam-001), serve index.html
+        # Check if it's a directory request (like /paths/)
+        if url_path.endswith('/'):
+            # Try to serve index.html from that directory
+            index_path = url_path + 'index.html'
+            index_file_path = self.translate_path(index_path)
+            if os.path.isfile(index_file_path):
+                self.path = index_path
+                return super().do_GET()
+
+        # For all other requests (like /paths/iam-001), serve root index.html for SPA routing
         if not is_file:
             # Rewrite the path to index.html
             self.path = '/index.html'

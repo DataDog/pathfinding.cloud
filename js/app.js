@@ -13,6 +13,7 @@ const pathsContainer = document.getElementById('paths-container');
 const searchInput = document.getElementById('search');
 const categoryFilter = document.getElementById('category-filter');
 const serviceFilter = document.getElementById('service-filter');
+const detectionFilter = document.getElementById('detection-filter');
 const resetButton = document.getElementById('reset-filters');
 const viewCardsBtn = document.getElementById('view-cards');
 const viewTableBtn = document.getElementById('view-table');
@@ -57,6 +58,7 @@ function setupEventListeners() {
     searchInput.addEventListener('input', debounce(applyFilters, 300));
     categoryFilter.addEventListener('change', applyFilters);
     serviceFilter.addEventListener('change', applyFilters);
+    detectionFilter.addEventListener('change', applyFilters);
     resetButton.addEventListener('click', resetFilters);
     viewCardsBtn.addEventListener('click', () => switchView('cards'));
     viewTableBtn.addEventListener('click', () => switchView('table'));
@@ -416,6 +418,7 @@ function applyFilters() {
     const searchTerm = searchInput.value.toLowerCase();
     const selectedCategory = categoryFilter.value;
     const selectedService = serviceFilter.value;
+    const selectedDetection = detectionFilter.value;
 
     filteredPaths = allPaths.filter(path => {
         // Search filter
@@ -431,7 +434,19 @@ function applyFilters() {
         // Service filter
         const matchesService = !selectedService || path.services.includes(selectedService);
 
-        return matchesSearch && matchesCategory && matchesService;
+        // Detection filter
+        let matchesDetection = true;
+        if (selectedDetection) {
+            if (selectedDetection === 'none') {
+                // Show paths with no detection tools
+                matchesDetection = !path.detectionTools || Object.keys(path.detectionTools).length === 0;
+            } else {
+                // Show paths that have the selected detection tool
+                matchesDetection = path.detectionTools && path.detectionTools[selectedDetection];
+            }
+        }
+
+        return matchesSearch && matchesCategory && matchesService && matchesDetection;
     });
 
     updateStats();
@@ -443,6 +458,7 @@ function resetFilters() {
     searchInput.value = '';
     categoryFilter.value = '';
     serviceFilter.value = '';
+    detectionFilter.value = '';
     applyFilters();
 }
 
@@ -578,24 +594,37 @@ function createPathTable(paths) {
                     <th class="sortable ${getSortClass('name')}" data-sort="name">
                         Path Name <span class="sort-icon">${getSortIcon('name')}</span>
                     </th>
-                    <th>Services</th>
                     <th class="sortable ${getSortClass('category')}" data-sort="category">
                         Category <span class="sort-icon">${getSortIcon('category')}</span>
                     </th>
+                    <th>OSS Detection</th>
                 </tr>
             </thead>
             <tbody>
                 ${paths.map(path => {
                     const categoryClass = `category-${path.category}`;
+                    // Get detection tools for this path
+                    const detectionTools = path.detectionTools ? Object.keys(path.detectionTools) : [];
+
                     return `
                         <tr>
-                            <td class="table-id">${path.id.toUpperCase()}</td>
-                            <td class="table-name">${escapeHtml(path.name)}</td>
-                            <td class="table-services">
-                                ${path.services.map(s => `<span class="service-tag">${s}</span>`).join('')}
+                            <td class="table-id-cell">
+                                <div class="table-id">${path.id.toUpperCase()}</div>
+                                <div class="table-services">
+                                    ${path.services.map(s => `<span class="service-tag">${s}</span>`).join('')}
+                                </div>
                             </td>
-                            <td>
+                            <td class="table-name">${escapeHtml(path.name)}</td>
+                            <td class="table-category">
                                 <span class="path-category ${categoryClass}">${formatCategory(path.category)}</span>
+                            </td>
+                            <td class="table-detection">
+                                ${detectionTools.length > 0 ?
+                                    detectionTools.map(tool => {
+                                        const toolInfo = toolMetadata[tool] || { name: tool };
+                                        return `<span class="detection-tool-circle" title="${toolInfo.name || tool}" data-tool="${tool}">${getToolInitials(tool)}</span>`;
+                                    }).join('')
+                                    : '<span class="no-detection">—</span>'}
                             </td>
                         </tr>
                     `;
@@ -1223,6 +1252,18 @@ function escapeHtml(text) {
     const div = document.createElement('div');
     div.textContent = text;
     return div.innerHTML;
+}
+
+// Get initials for detection tool circles
+function getToolInitials(toolName) {
+    const toolMap = {
+        'pmapper': 'PM',
+        'cloudsplaining': 'CS',
+        'pacu': 'PA',
+        'prowler': 'PR',
+        'scoutsuite': 'SS'
+    };
+    return toolMap[toolName.toLowerCase()] || toolName.substring(0, 2).toUpperCase();
 }
 
 // Open attack visualization in fullscreen modal

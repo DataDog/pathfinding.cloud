@@ -9,7 +9,7 @@
 
 ## Overview
 
-pathfinding.cloud is a comprehensive, human-curated libraryßdocumenting all known AWS IAM privilege escalation paths. This project builds upon the foundational research by Spencer Gietzen at Rhino Security Labs and subsequent contributions by many others. 
+pathfinding.cloud is a comprehensive library documenting all known AWS IAM privilege escalation paths. This project builds upon the foundational research by Spencer Gietzen at Rhino Security Labs and subsequent contributions by many others. 
 
 This site providing detailed documentation of:
 
