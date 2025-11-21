@@ -950,17 +950,39 @@ function renderAttackVisualization(pathId, visualization) {
         legend.className = 'viz-legend';
         legend.innerHTML = `
             <div class="viz-legend-title">Legend</div>
-            <div class="viz-legend-item">
-                <svg width="40" height="2" style="margin-right: 8px;">
-                    <line x1="0" y1="1" x2="40" y2="1" stroke="#848484" stroke-width="2"/>
-                </svg>
-                <span>Transitive Actions</span>
+            <div class="viz-legend-section">
+                <div class="viz-legend-subtitle">Node Types</div>
+                <div class="viz-legend-item">
+                    <div class="viz-legend-box" style="background-color: #ff9999;"></div>
+                    <span>Principal (Users/Roles)</span>
+                </div>
+                <div class="viz-legend-item">
+                    <div class="viz-legend-box" style="background-color: #ffcc99;"></div>
+                    <span>Resource</span>
+                </div>
+                <div class="viz-legend-item">
+                    <div class="viz-legend-box" style="background-color: #99ccff;"></div>
+                    <span>Action</span>
+                </div>
+                <div class="viz-legend-item">
+                    <div class="viz-legend-box" style="background-color: #99ff99;"></div>
+                    <span>Outcome (Success)</span>
+                </div>
             </div>
-            <div class="viz-legend-item">
-                <svg width="40" height="2" style="margin-right: 8px;">
-                    <line x1="0" y1="1" x2="40" y2="1" stroke="#999" stroke-width="2" stroke-dasharray="5,5"/>
-                </svg>
-                <span>Potential Outcomes</span>
+            <div class="viz-legend-section">
+                <div class="viz-legend-subtitle">Edge Types</div>
+                <div class="viz-legend-item">
+                    <svg width="40" height="2" style="margin-right: 8px;">
+                        <line x1="0" y1="1" x2="40" y2="1" stroke="#848484" stroke-width="2"/>
+                    </svg>
+                    <span>Transitive Actions</span>
+                </div>
+                <div class="viz-legend-item">
+                    <svg width="40" height="2" style="margin-right: 8px;">
+                        <line x1="0" y1="1" x2="40" y2="1" stroke="#999" stroke-width="2" stroke-dasharray="5,5"/>
+                    </svg>
+                    <span>Potential Outcomes</span>
+                </div>
             </div>
         `;
         container.appendChild(legend);

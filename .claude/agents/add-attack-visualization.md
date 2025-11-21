@@ -87,10 +87,24 @@ description: |
 - Only use the label `Starting User` or `Starting Role` when the attack is specific to one type
 - Type must be `principal`
 
+**CRITICAL RULE - IAM Principals:**
+- **ALL IAM users and IAM roles MUST be typed as `principal`, NEVER as `resource`**
+- This applies to:
+  - Starting nodes (starting principal)
+  - Target users (e.g., `target_user`, `target-user`)
+  - Target roles (e.g., `target_role`, `assumed_role`, `execution_role`, `instance_role`, `stack_role`)
+  - Any node with "user" or "role" in the ID
+- Example node IDs that must be `type: principal`:
+  - `target_role`, `target_user`, `assumed_role`, `execution_role`
+  - `instance_role`, `stack_role`, `new_admin_role`, `attached_role`
+  - `service_role`, `notebook_execution_role`
+- **This is a common mistake - always check your node types before submitting!**
+
 **Resource Nodes:**
-- Use descriptive labels that indicate if a new resource is created of if an existing resource is being attacked. 
-- Examples: `Existing EC2 Instance`, `New EC2 Instance`, `Existing Role that trusts the Lambda Service`, `Existing Role that trusts the CodeBuild Service`, `Existing Role`, `EC2 Instance`, `Lambda Function`
+- Use descriptive labels that indicate if a new resource is created of if an existing resource is being attacked.
+- Examples: `Existing EC2 Instance`, `New EC2 Instance`, `New Lambda Function`, `EC2 Instance`, `Lambda Function`, `CloudFormation Stack`
 - Type must be `resource`
+- **IMPORTANT:** IAM roles and users are NOT resources - they are principals (see rule above)
 - Include detailed description explaining the resource's role in the attack
 
 **Action Nodes:**
@@ -244,12 +258,12 @@ edges:
     label: iam:PutUserPolicy
 ```
 
-**Pattern B - Lateral movement to another resource (permission-dependent outcomes):**
+**Pattern B - Lateral movement to another principal (permission-dependent outcomes):**
 ```
-starting-principal → (iam:Permission) → target-resource → [conditional outcomes]
+starting-principal → (iam:Permission) → target-principal → [conditional outcomes]
 ```
 - Node 1: `starting-principal` (type: principal)
-- Node 2: The target resource being accessed (e.g., `target-user`, `target-role`) (type: resource)
+- Node 2: The target principal being accessed (e.g., `target-user`, `target-role`) (type: **principal** - NOT resource!)
 - Nodes 3-5: Three conditional outcome nodes based on target resource's permissions:
   - Admin outcome: "Effective administrator" (type: outcome, green/default)
   - Partial outcome: "Some additional access" (type: outcome, yellow `#ffeb99`)
@@ -273,7 +287,7 @@ nodes:
     type: principal
   - id: target_user
     label: target-user
-    type: resource
+    type: principal
   - id: admin
     label: Effective Administrator
     type: outcome
@@ -379,7 +393,7 @@ nodes:
 
   - id: target_role
     label: Existing Role That Trusts the EC2 Service
-    type: resource
+    type: principal
     description: |
       IAM role attached to the EC2 instance via instance profile. The role must trust ec2.amazonaws.com and have an instance profile associated. The role's temporary credentials are accessible via the instance metadata service at http://169.254.169.254/latest/meta-data/iam/security-credentials/.
 
