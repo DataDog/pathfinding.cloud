@@ -28,9 +28,12 @@ exploitationSteps:
     command: ssh glue@ENDPOINT_ADDRESS
     description: SSH into the dev endpoint and execute code with elevated privileges
 recommendation: |
-  Restrict the `iam:PassRole` permission using the principle of least privilege.
+  High powered service roles + overly permissive `iam:PassRole` is what makes this privilege escalation path exploitable and impactful.
 
-  Use IAM policy conditions to restrict which roles can be passed:
+  - **Avoid administrative service roles** - Very rarely does a Glue dev endpoint need administrative access. Use the principle of least privilege.
+  - **Avoid granting `iam:PassRole` on all resources** - Whenever possible, restrict `iam:PassRole` to specific roles or specific services.
+
+  Use IAM policy conditions to restrict which roles can be passed and to which services:
 
   ```json
   {
@@ -45,14 +48,22 @@ recommendation: |
   }
   ```
 
-  Additional controls:
-  - Restrict `glue:CreateDevEndpoint` to authorized users only
-  - Require dev endpoints to be created in private subnets with VPC endpoints
-  - Monitor CloudTrail for Glue dev endpoint creation
-  - Implement automated scanning for exposed dev endpoints
+  - Monitor CloudTrail for unusual Glue dev endpoint creation followed by immediate access
+  - Monitor CloudTrail for dev endpoint creation by principals who do not usually create endpoints
+  - Monitor CloudTrail for roles being passed to Glue that haven't been used before
+  - Monitor and alert on Glue dev endpoint creation with privileged roles
+  - Regularly audit Glue dev endpoints for excessive IAM permissions
+  - Regularly audit all IAM roles that trust the Glue service and down-scope any roles with administrative access
 discoveredBy:
-  name: Bishop Fox
-  organization: Bishop Fox
+  name: Spencer Gietzen
+  organization: Rhino Security Labs
+  date: "2018"
+discoveryAttribution:
+  firstDocumented:
+    author: Spencer Gietzen
+    organization: Rhino Security Labs
+    date: 2018
+    link: https://rhinosecuritylabs.com/aws/aws-privilege-escalation-methods-mitigation/
 references:
 - title: 'Well, That Escalated Quickly: How Abusing AWS API Can Lead to Admin Access'
   url: https://know.bishopfox.com/research/privilege-escalation-in-aws
@@ -114,7 +125,7 @@ attackVisualization:
 
     - id: execute_code
       label: Execute Code with Target Role Permissions
-      type: action
+      type: payload
       color: '#99ccff'
       description: |
         SSH into the dev endpoint or use the Zeppelin notebook interface to execute arbitrary code (Python, Scala, SQL) with the target role's credentials. The code can:

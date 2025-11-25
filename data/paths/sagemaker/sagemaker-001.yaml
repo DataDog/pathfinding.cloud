@@ -4,10 +4,7 @@ category: service-passrole
 services:
 - iam
 - sagemaker
-description: A principal with `iam:PassRole` and `sagemaker:CreateNotebookInstance` can create a SageMaker notebook instance
-  with a privileged execution role. SageMaker notebooks run Jupyter environments that provide shell access and can execute
-  arbitrary code with the permissions of the attached IAM role. The attacker can then access the notebook and run commands
-  with elevated privileges.
+description: A principal with `iam:PassRole` and `sagemaker:CreateNotebookInstance` can create a SageMaker notebook instance with a privileged execution role. SageMaker notebooks run Jupyter environments that provide shell access and can execute arbitrary code with the permissions of the attached IAM role. The attacker can then access the notebook and run commands with elevated privileges. 
 prerequisites:
   admin:
   - A role must exist that trusts sagemaker.amazonaws.com to assume it
@@ -33,7 +30,12 @@ exploitationSteps:
     command: Open the presigned URL in a browser and use the Jupyter terminal to execute privileged commands
     description: Access the notebook and execute commands with the privileged role's permissions
 recommendation: |
-  Restrict the `iam:PassRole` permission using the principle of least privilege.
+  High powered service roles + overly permissive `iam:PassRole` is what makes this privilege escalation path exploitable and impactful.
+
+  - **Avoid administrative service roles** - Very rarely does a SageMaker notebook instance need administrative access. Use the principle of least privilege.
+  - **Avoid granting `iam:PassRole` on all resources** - Whenever possible, restrict `iam:PassRole` to specific roles or specific services.
+
+  Use IAM policy conditions to restrict which roles can be passed and to which services:
 
   ```json
   {
@@ -48,16 +50,22 @@ recommendation: |
   }
   ```
 
-  Additional controls:
-  - Restrict `sagemaker:CreateNotebookInstance` permissions
-  - Monitor CloudTrail for SageMaker notebook creation with privileged roles
-  - Use VPC configuration to isolate notebook instances
-  - Implement lifecycle configurations to restrict notebook capabilities
-  - Alert on notebook instances with administrative roles being created
+  - Monitor CloudTrail for unusual SageMaker notebook creation followed by immediate access
+  - Monitor CloudTrail for notebook instance creation by principals who do not usually create notebooks
+  - Monitor CloudTrail for roles being passed to SageMaker that haven't been used before
+  - Monitor and alert on SageMaker notebook creation with privileged roles
+  - Regularly audit SageMaker notebook instances for excessive IAM permissions
+  - Regularly audit all IAM roles that trust the SageMaker service and down-scope any roles with administrative access
 discoveredBy:
   name: Spencer Gietzen
   organization: Rhino Security Labs
   date: '2019'
+discoveryAttribution:
+  firstDocumented:
+    author: Spencer Gietzen
+    organization: Rhino Security Labs
+    date: 2019
+    link: https://rhinosecuritylabs.com/aws/aws-privilege-escalation-methods-mitigation-part-2/
 references:
 - title: AWS Privilege Escalation Methods and Mitigation
   url: https://rhinosecuritylabs.com/aws/aws-privilege-escalation-methods-mitigation/
@@ -109,7 +117,7 @@ attackVisualization:
       The privileged IAM role that is passed to the SageMaker notebook instance during creation. This role must trust sagemaker.amazonaws.com as a principal in its trust policy. When the notebook instance runs, all code and commands execute with this role's permissions.
   - id: access_notebook
     label: Access Jupyter Terminal
-    type: action
+    type: payload
     color: '#99ccff'
     description: |
       The attacker generates a presigned URL to access the notebook instance and opens the Jupyter terminal. The terminal provides full shell access with the target role's credentials available via the AWS SDK or instance metadata.

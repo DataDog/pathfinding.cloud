@@ -138,34 +138,51 @@ limitations: |
   This technique is functionally identical to the standard `ec2:RunInstances` privilege escalation - the only difference is the use of Spot Instances instead of On-Demand instances. Both must be restricted to prevent this attack vector.
 
 recommendation: |
-  Restrict `iam:PassRole` using the principle of least privilege. Use IAM policy conditions to limit which roles can be passed and to which services:
+  High powered service roles + overly permissive `iam:PassRole` is what makes this privilege escalation path exploitable and impactful.
 
+  - **Avoid administrative service roles** - Very rarely does an EC2 Spot Instance need administrative access. Use the principle of least privilege.
+  - **Avoid granting `iam:PassRole` on all resources** - Whenever possible, restrict `iam:PassRole` to specific roles or specific services.
+
+  Use IAM policy conditions to restrict which roles can be passed and to which services:
+
+  ```json
   {
     "Effect": "Allow",
     "Action": "iam:PassRole",
-    "Resource": "arn:aws:iam::ACCOUNT:role/SpecificRole",
+    "Resource": "arn:aws:iam::ACCOUNT_ID:role/SpecificEC2Role",
     "Condition": {
       "StringEquals": {
         "iam:PassedToService": "ec2.amazonaws.com"
       }
     }
   }
+  ```
 
-  Apply the same security controls to `ec2:RequestSpotInstances` as you would to `ec2:RunInstances`. Both provide equivalent privilege escalation paths and must be restricted together.
-
-  Implement Service Control Policies (SCPs) preventing EC2 Spot Instances from being launched with administrative IAM roles.
-
-  Monitor CloudTrail for `PassRole` API calls combined with `RequestSpotInstances` events targeting privileged roles. Alert on `AttachUserPolicy` and `PutUserPolicy` API calls, especially when invoked from EC2 instances.
-
-  Regularly audit EC2 instances (including Spot Instances) for excessive IAM permissions using IAM Access Analyzer.
-
-  Use resource tagging and condition keys to enforce separation of duties between role creation and role assignment.
-
-  Implement IAM permission boundaries on users to limit the maximum permissions that can be attached.
+  - Apply the same security controls to `ec2:RequestSpotInstances` as you would to `ec2:RunInstances` - both provide equivalent privilege escalation paths
+  - Monitor CloudTrail for unusual EC2 Spot Instance requests followed by immediate access
+  - Monitor CloudTrail for Spot Instance launches by principals who do not usually create instances
+  - Monitor CloudTrail for roles being passed to EC2 Spot Instances that haven't been used before
+  - Monitor and alert on EC2 Spot Instance creation with privileged roles
+  - Regularly audit EC2 instances (including Spot Instances) for excessive IAM permissions
+  - Regularly audit all IAM roles that trust the EC2 service and down-scope any roles with administrative access
 
 discoveredBy:
-  name: "Carlos Polop"
-  organization: "HackTricks"
+  name: Spencer Gietzen
+  organization: Rhino Security Labs
+  date: '2018'
+discoveryAttribution:
+  firstDocumented:
+    source: HackTricks
+    link: https://cloud.hacktricks.wiki/en/pentesting-cloud/aws-security/aws-privilege-escalation/aws-ec2-privesc/index.html#ec2requestspotinstancesiampassrole
+  derivativeOf:
+    pathId: ec2-001
+    modification: "Uses ec2:RequestSpotInstances instead of ec2:RunInstances to launch instances at discounted spot pricing"
+  ultimateOrigin:
+    pathId: ec2-001
+    author: Spencer Gietzen
+    organization: Rhino Security Labs
+    date: 2018
+    link: https://rhinosecuritylabs.com/aws/aws-privilege-escalation-methods-mitigation/
 
 references:
   - title: "AWS Privilege Escalation Methods - Rhino Security Labs"
@@ -218,7 +235,7 @@ attackVisualization:
 
     - id: userdata_action
       label: User-data script executes
-      type: action
+      type: payload
       color: '#99ccff'
       description: |
         The user-data script runs automatically when the Spot Instance boots, executing with the target-role's credentials. The script attempts to attach the AdministratorAccess policy to the starting principal.

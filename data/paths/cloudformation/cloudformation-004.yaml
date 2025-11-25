@@ -102,23 +102,18 @@ exploitationSteps:
       description: Leverage the newly created resources to escalate privileges, such as assuming a newly created IAM role with elevated permissions
 
 recommendation: |
-  Restrict access to `cloudformation:UpdateStackSet` using the principle of least privilege. Use resource-based conditions to limit which StackSets can be updated:
+  High powered service roles + overly permissive `iam:PassRole` is what makes this privilege escalation path exploitable and impactful.
 
-  ```json
-  {
-    "Effect": "Allow",
-    "Action": "cloudformation:UpdateStackSet",
-    "Resource": "arn:aws:cloudformation:*:ACCOUNT_ID:stackset/approved-stacksets/*"
-  }
-  ```
+  - **Avoid administrative service roles** - Very rarely does a CloudFormation StackSet need administrative access. Use the principle of least privilege.
+  - **Avoid granting `iam:PassRole` on all resources** - Whenever possible, restrict `iam:PassRole` to specific roles or specific services.
 
-  Restrict `iam:PassRole` permissions to limit which administration roles can be passed to CloudFormation:
+  Use IAM policy conditions to restrict which roles can be passed and to which services:
 
   ```json
   {
     "Effect": "Allow",
     "Action": "iam:PassRole",
-    "Resource": "arn:aws:iam::ACCOUNT_ID:role/approved-stackset-admin-roles/*",
+    "Resource": "arn:aws:iam::ACCOUNT_ID:role/SpecificCloudFormationRole",
     "Condition": {
       "StringEquals": {
         "iam:PassedToService": "cloudformation.amazonaws.com"
@@ -127,41 +122,33 @@ recommendation: |
   }
   ```
 
-  Implement least privilege for StackSet execution roles - avoid granting AdministratorAccess unless absolutely necessary. Apply IAM permission boundaries to execution roles to limit what resources they can create:
-
-  ```json
-  {
-    "Version": "2012-10-17",
-    "Statement": [{
-      "Effect": "Deny",
-      "Action": [
-        "iam:CreateRole",
-        "iam:AttachRolePolicy",
-        "iam:PutRolePolicy",
-        "iam:CreateUser",
-        "iam:CreateAccessKey"
-      ],
-      "Resource": "*"
-    }]
-  }
-  ```
-
-  Use Service Control Policies (SCPs) to prevent StackSet execution roles from creating sensitive resources. Monitor CloudTrail for `UpdateStackSet` and `PassRole` API calls, especially when templates contain IAM resources.
-
-  Enable CloudFormation drift detection to identify unauthorized StackSet modifications. Implement change approval workflows for StackSet updates that modify IAM resources or other sensitive resources.
-
-  Consider using CloudFormation service-managed StackSets with AWS Organizations, which provide more controlled permission models. Enable MFA requirements for sensitive CloudFormation operations using IAM condition keys like `aws:MultiFactorAuthPresent`.
-
-  Regularly audit StackSet execution roles and their permission boundaries to ensure they follow least privilege principles. Use AWS IAM Access Analyzer to identify privilege escalation paths involving CloudFormation StackSets.
+  - Monitor CloudTrail for unusual CloudFormation StackSet updates followed by immediate resource creation
+  - Monitor CloudTrail for StackSet updates by principals who do not usually update StackSets
+  - Monitor CloudTrail for roles being passed to CloudFormation that haven't been used before
+  - Monitor and alert on CloudFormation StackSet updates with privileged roles
+  - Regularly audit CloudFormation StackSets for excessive IAM permissions
+  - Regularly audit all IAM roles that trust the CloudFormation service and down-scope any roles with administrative access
 
 limitations: |
   This path provides administrative access only if the StackSet's execution role has administrative permissions (e.g., AdministratorAccess policy). If the execution role has limited permissions, you gain access limited to whatever resources that role can create. The StackSet must have stack instances deployed (or you must have permission to deploy them) for the updated template to create resources. StackSet operation preferences and stack policies may also limit what modifications can be made.
 
 discoveredBy:
-  name: Spencer Gietzen
-  organization: Rhino Security Labs
-  date: "2019"
-
+  name: Unknown
+  organization: Unknown
+  date: Unknown
+discoveryAttribution:
+  firstDocumented:
+    author: Hacktricks.cloud
+    date: Unknown
+  derivativeOf:
+    pathId: cloudformation-003
+    modification: "Uses cloudformation:UpdateStackSet instead of cloudformation:CreateStackSet to modify an existing StackSet"
+  ultimateOrigin:
+    pathId: cloudformation-001
+    author: Spencer Gietzen
+    organization: Rhino Security Labs
+    date: 2018
+    link: https://rhinosecuritylabs.com/aws/aws-privilege-escalation-methods-mitigation/
 references:
   - title: AWS IAM Privilege Escalation - Methods and Mitigation (Rhino Security Labs)
     url: https://rhinosecuritylabs.com/aws/aws-privilege-escalation-methods-mitigation/
@@ -210,7 +197,7 @@ attackVisualization:
 
     - id: execute_template
       label: Execute Updated Template
-      type: action
+      type: payload
       color: '#99ccff'
       description: |
         CloudFormation StackSets execute the updated template using the execution role's permissions in each target account. The malicious template creates AWS resources that grant the attacker elevated privileges. Common escalation resources include IAM roles with trust policies allowing the starting principal to assume them, IAM users with access keys, Lambda functions that modify IAM, or EC2 instances with User Data scripts.

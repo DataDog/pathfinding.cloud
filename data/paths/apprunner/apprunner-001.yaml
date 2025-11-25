@@ -47,7 +47,12 @@ exploitationSteps:
     command: aws iam list-users --max-items 3
     description: Verify administrator access by listing IAM users (should now succeed)
 recommendation: |
-  Restrict the `iam:PassRole` permission using the principle of least privilege.
+  High powered service roles + overly permissive `iam:PassRole` is what makes this privilege escalation path exploitable and impactful.
+
+  - **Avoid administrative service roles** - Very rarely does an App Runner service need administrative access. Use the principle of least privilege.
+  - **Avoid granting `iam:PassRole` on all resources** - Whenever possible, restrict `iam:PassRole` to specific roles or specific services.
+
+  Use IAM policy conditions to restrict which roles can be passed and to which services:
 
   ```json
   {
@@ -62,19 +67,22 @@ recommendation: |
   }
   ```
 
-  Additional controls:
-  - Restrict `apprunner:CreateService` permissions to specific users/roles
-  - Monitor CloudTrail for App Runner service creation with privileged roles
-  - Alert on services using StartCommand to execute IAM, STS, or security-related commands
-  - Use VPC configuration to isolate App Runner services
-  - Implement container image scanning and signing
-  - Only allow images from trusted ECR repositories (consider blocking public ECR if not needed)
-  - Alert on App Runner services created with administrative roles
-  - Use AWS Config to detect services with overly permissive roles
+  - Monitor CloudTrail for unusual App Runner service creation followed by immediate execution
+  - Monitor CloudTrail for service creation by principals who do not usually create services
+  - Monitor CloudTrail for roles being passed to App Runner that haven't been used before
+  - Monitor and alert on App Runner service creation with privileged roles
+  - Regularly audit App Runner services for excessive IAM permissions
+  - Regularly audit all IAM roles that trust the App Runner service and down-scope any roles with administrative access
 discoveredBy:
   name: Bollina Bhagavan
   organization: Appsecco
   date: '2021'
+discoveryAttribution:
+  firstDocumented:
+    author: Bollina Bhagavan
+    organization: Appsecco
+    date: 2021
+    link: https://blog.appsecco.com/getting-shell-and-data-access-in-aws-app-runner-3632e844bc77
 references:
 - title: Getting Shell and Data Access in AWS App Runner
   url: https://blog.appsecco.com/getting-shell-and-data-access-in-aws-app-runner-3632e844bc77
@@ -115,7 +123,7 @@ attackVisualization:
 
     - id: method_startcommand
       label: "Method 1: StartCommand"
-      type: action
+      type: payload
       color: '#99ccff'
       description: |
         Configure a StartCommand that executes when the service starts, running AWS CLI commands with the target role's credentials. The StartCommand can perform privileged actions such as:
@@ -129,7 +137,7 @@ attackVisualization:
 
     - id: method_webshell
       label: "Method 2: ECR Image with Web Shell"
-      type: action
+      type: payload
       color: '#99ccff'
       description: |
         Deploy a container image (from ECR or public registry) containing a web shell or reverse shell. The container runs with the target role's permissions and can access the role's temporary credentials via the container metadata service at 169.254.170.2$AWS_CONTAINER_CREDENTIALS_RELATIVE_URI.
@@ -141,7 +149,7 @@ attackVisualization:
 
     - id: method_apprunner_yaml
       label: "Method 3: Repository with apprunner.yaml"
-      type: action
+      type: payload
       color: '#99ccff'
       description: |
         Point the App Runner service to a source code repository containing a malicious apprunner.yaml configuration file. The apprunner.yaml file can specify build and run commands that execute during the service deployment and startup, running with the target role's permissions.

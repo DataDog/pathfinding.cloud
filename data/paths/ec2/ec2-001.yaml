@@ -29,30 +29,42 @@ exploitationSteps:
     command: run ec2__startup_shell_script --instance-profile PRIVILEGED_ROLE --script exploit.sh
     description: Use Pacu to launch EC2 instance with the target role and execute a shell script on startup
 recommendation: |
-  - Tightly control the `iam:PassRole` permission using the principle of least privilege.
-  - Use IAM policy conditions to restrict which roles can be passed and to which services:
+  High powered service roles + overly permissive `iam:PassRole` is what makes this privilege escalation path exploitable and impactful.
+
+  - **Avoid administrative service roles** - Very rarely does an EC2 instance need administrative access. Use the principle of least privilege.
+  - **Avoid granting `iam:PassRole` on all resources** - Whenever possible, restrict `iam:PassRole` to specific roles or specific services.
+
+  Use IAM policy conditions to restrict which roles can be passed and to which services:
 
   ```json
   {
     "Effect": "Allow",
-    "Action": "`iam:PassRole`",
-    "Resource": "arn:aws:iam::ACCOUNT_ID:role/SpecificRole",
+    "Action": "iam:PassRole",
+    "Resource": "arn:aws:iam::ACCOUNT_ID:role/SpecificEC2Role",
     "Condition": {
       "StringEquals": {
-        "`iam:PassedToService`": "ec2.amazonaws.com"
+        "iam:PassedToService": "ec2.amazonaws.com"
       }
     }
   }
   ```
 
-  - Monitor CloudTrail for suspicious PassRole + RunInstances patterns, especially:
-    - PassRole events followed immediately by RunInstances
-    - Roles being passed to EC2 that haven't been used before
-    - EC2 instances launched with privileged roles by unusual principals
+  - Monitor CloudTrail for unusual EC2 instance creation followed by immediate access
+  - Monitor CloudTrail for EC2 instance launches by principals who do not usually create instances
+  - Monitor CloudTrail for roles being passed to EC2 that haven't been used before
+  - Monitor and alert on EC2 instance creation with privileged roles
+  - Regularly audit EC2 instances for excessive IAM permissions
+  - Regularly audit all IAM roles that trust the EC2 service and down-scope any roles with administrative access
 discoveredBy:
   name: Spencer Gietzen
   organization: Rhino Security Labs
   date: '2019'
+discoveryAttribution:
+  firstDocumented:
+    author: Spencer Gietzen
+    organization: Rhino Security Labs
+    date: 2018
+    link: https://rhinosecuritylabs.com/aws/aws-privilege-escalation-methods-mitigation/
 references:
 - title: AWS Privilege Escalation Methods and Mitigation
   url: https://rhinosecuritylabs.com/aws/aws-privilege-escalation-methods-mitigation/
@@ -115,7 +127,7 @@ attackVisualization:
 
     - id: method_userdata_direct
       label: "Method 1: User Data Script (Direct Elevation)"
-      type: action
+      type: payload
       color: '#99ccff'
       description: |
         Configure a User Data script that executes when the instance boots and directly elevates the starting principal by modifying IAM permissions. The script runs with the target role's credentials and can perform privileged IAM actions such as:
@@ -136,7 +148,7 @@ attackVisualization:
 
     - id: method_reverse_shell
       label: "Method 2: User Data Script (Reverse Shell)"
-      type: action
+      type: payload
       color: '#99ccff'
       description: |
         Configure a User Data script that establishes a reverse shell connection back to an attacker-controlled listener. The reverse shell provides interactive access to the EC2 instance, allowing the attacker to manually retrieve the target role's temporary credentials from the instance metadata service.
@@ -157,7 +169,7 @@ attackVisualization:
 
     - id: method_credential_exfil
       label: "Method 3: User Data Script (Credential Exfiltration)"
-      type: action
+      type: payload
       color: '#99ccff'
       description: |
         Configure a User Data script that queries the instance metadata service for the target role's temporary credentials and exfiltrates them to an attacker-controlled webhook or remote listener. Unlike the reverse shell approach (which provides interactive access), this method is fire-and-forget - the script automatically retrieves and sends credentials without requiring ongoing attacker interaction.

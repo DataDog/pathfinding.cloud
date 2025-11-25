@@ -176,34 +176,77 @@ limitations: |
 #### `recommendation` (string)
 Security recommendations for preventing and detecting this escalation path.
 
+**Format requirement:** All recommendations MUST use multi-line YAML format with the `|` pipe operator (never use quoted strings with `\n`).
+
 Should include:
 - How to restrict the permissions using least privilege
 - Monitoring and detection strategies
 - IAM policy conditions and constraints
 - Best practices
 
-Example:
+**For iam:PassRole privilege escalation paths**, use this standardized template adapted for the specific service:
+
 ```yaml
 recommendation: |
-  Restrict iam:PassRole using the principle of least privilege. Use IAM policy
-  conditions to limit which roles can be passed and to which services:
+  High powered service roles + overly permissive `iam:PassRole` is what makes this privilege escalation path exploitable and impactful.
 
+  - **Avoid administrative service roles** - Very rarely does a [SERVICE_RESOURCE] need administrative access. Use the principle of least privilege.
+  - **Avoid granting `iam:PassRole` on all resources** - Whenever possible, restrict `iam:PassRole` to specific roles or specific services.
+  Use IAM policy conditions to restrict which roles can be passed and to which services:
+
+  ```json
   {
     "Effect": "Allow",
     "Action": "iam:PassRole",
-    "Resource": "arn:aws:iam::ACCOUNT:role/SpecificRole",
+    "Resource": "arn:aws:iam::ACCOUNT_ID:role/Specific[ServiceRole]",
     "Condition": {
       "StringEquals": {
-        "iam:PassedToService": "ec2.amazonaws.com"
+        "iam:PassedToService": "[service].amazonaws.com"
       }
     }
   }
+  ```
 
-  Monitor for unusual PassRole + RunInstances activity in CloudTrail.
+
+  - Monitor CloudTrail for unusual [SERVICE_RESOURCE] creation followed by immediate [execution/invocation]
+  - Monitor CloudTrail for [SERVICE_RESOURCE] creation by principals who do not usually create [resources]
+  - Monitor CloudTrail for roles being passed to [SERVICE] that haven't been used before
+  - Monitor and alert on [SERVICE_RESOURCE] creation with privileged roles
+  - Regularly audit [SERVICE_RESOURCES] for excessive IAM permissions
+  - Regularly audit all IAM roles that trust the [SERVICE] service and down-scope any roles with administrative access
+```
+
+**Template placeholders to adapt:**
+- `[SERVICE_RESOURCE]` - The AWS resource type (e.g., "Lambda function", "EC2 instance", "SageMaker notebook")
+- `[ServiceRole]` - The role name pattern (e.g., "LambdaRole", "EC2Role", "SageMakerRole")
+- `[service]` - The service name (e.g., "lambda", "ec2", "sagemaker")
+- `[SERVICE]` - The capitalized service name (e.g., "Lambda", "EC2", "SageMaker")
+- `[execution/invocation]` - Service-specific action (e.g., "invocation", "execution", "startup")
+- `[resources]` - Plural resource name (e.g., "functions", "instances", "notebooks")
+- `[SERVICE_RESOURCES]` - Plural capitalized (e.g., "Lambda functions", "EC2 instances")
+
+**Examples of adapted recommendations:**
+- **Lambda**: "Lambda function", "lambda.amazonaws.com", "invocation", "functions"
+- **EC2**: "EC2 instance", "ec2.amazonaws.com", "execution", "instances"
+- **SageMaker**: "SageMaker notebook", "sagemaker.amazonaws.com", "startup", "notebooks"
+- **CloudFormation**: "CloudFormation stack", "cloudformation.amazonaws.com", "resource creation", "stacks"
+
+**For non-PassRole paths**, use multi-line format with service-specific prevention and monitoring guidance.
+
+Example (non-PassRole):
+```yaml
+recommendation: |
+  Restrict access to `iam:CreatePolicyVersion` using the principle of least privilege.
+  Very few principals need this permission, so it should be restricted to only the
+  few principals that need it.
+
+  Monitor use of this sensitive permission using CloudSIEM detections, and look for usage anomalies.
 ```
 
 #### `discoveredBy` (object)
 Information about who discovered this escalation path. **This field is required.**
+
+**Note:** This field is being superseded by `discoveryAttribution` for richer attribution support. Both fields are currently supported for backward compatibility.
 
 Fields:
 - `name` (string, required): Researcher's name (use "Unknown" if not known)
@@ -223,6 +266,110 @@ If attribution is unknown:
 discoveredBy:
   name: "Unknown"
   organization: "Unknown"
+```
+
+#### `discoveryAttribution` (object, optional)
+Rich attribution information supporting primary discovery, derivative relationships, and original source tracking. This field allows documenting complex attribution scenarios including derivative work and multi-level attribution chains.
+
+**Note:** When `discoveryAttribution` is present, it will be displayed on the website instead of `discoveredBy`. The `discoveredBy` field is still required for backward compatibility.
+
+The `discoveryAttribution` object contains up to three sub-objects:
+
+##### `firstDocumented` (object, required if discoveryAttribution present)
+Information about who first documented this specific attack path variation.
+
+Fields:
+- `author` (string, optional): Researcher's name (use for individual contributors)
+- `source` (string, optional): Source name (use for organizations/websites like "HackTricks" or "pathfinding.cloud")
+- `organization` (string, optional): Organization name (if author is specified)
+- `date` (string, optional): Year or date documented (YYYY format)
+- `link` (string, optional): URL to the source documentation
+
+**Note:** Use either `author` OR `source`, not both. Use `author` for individual researchers and `source` for organizations/websites.
+
+##### `derivativeOf` (object, optional)
+Information about what this path is derived from. Only include if this path is a variation of another existing path.
+
+Fields:
+- `pathId` (string, required): The path ID this is derived from (e.g., `ecs-004`)
+- `modification` (string, required): Description of what was modified or added compared to the original path
+
+##### `ultimateOrigin` (object, optional)
+Information about the ultimate origin if there's a multi-level derivative chain. Only include if this path is a derivative of a derivative and you want to trace back to the original discovery.
+
+**Note:** Skip `ultimateOrigin` if it would be the same as `derivativeOf.pathId` - only use it for multi-level chains.
+
+Fields:
+- `pathId` (string, required): The original path ID (e.g., `ecs-004`)
+- `author` (string, required): Original discoverer's name
+- `organization` (string, optional): Organization name
+- `date` (string, optional): Year discovered (YYYY format)
+- `link` (string, required): URL to original research/documentation
+
+---
+
+**Example 1 (Original discovery by researcher):**
+```yaml
+discoveryAttribution:
+  firstDocumented:
+    author: Spencer Gietzen
+    organization: Rhino Security Labs
+    date: 2018
+    link: https://rhinosecuritylabs.com/aws/weaponizing-ecs-task-definitions-steal-credentials-running-containers/
+```
+
+**Example 2 (Derivative documented by another source):**
+```yaml
+discoveryAttribution:
+  firstDocumented:
+    source: HackTricks
+    link: https://cloud.hacktricks.wiki/en/pentesting-cloud/aws-security/aws-privilege-escalation/aws-ecs-privesc/
+
+  derivativeOf:
+    pathId: ecs-004
+    modification: "Uses ecs:CreateService instead of ecs:RunTask to execute the malicious task definition"
+
+  ultimateOrigin:
+    pathId: ecs-004
+    author: Spencer Gietzen
+    organization: Rhino Security Labs
+    date: 2018
+    link: https://rhinosecuritylabs.com/aws/weaponizing-ecs-task-definitions-steal-credentials-running-containers/
+```
+
+**Example 3 (New path created on pathfinding.cloud):**
+```yaml
+discoveryAttribution:
+  firstDocumented:
+    author: Seth Art
+    organization: Datadog
+    date: 2025
+
+  derivativeOf:
+    pathId: ecs-003
+    modification: "Adds ecs:CreateCluster permission for scenarios where no ECS cluster exists"
+
+  ultimateOrigin:
+    pathId: ecs-004
+    author: Spencer Gietzen
+    organization: Rhino Security Labs
+    date: 2018
+    link: https://rhinosecuritylabs.com/aws/weaponizing-ecs-task-definitions-steal-credentials-running-containers/
+```
+
+**Example 4 (Direct derivative, no multi-level chain):**
+```yaml
+discoveryAttribution:
+  firstDocumented:
+    author: Seth Art
+    organization: Datadog
+    date: 2025
+
+  derivativeOf:
+    pathId: ecs-004
+    modification: "Adds ecs:CreateCluster permission for scenarios where no ECS cluster exists"
+
+  # Note: ultimateOrigin omitted because it would be the same as derivativeOf.pathId
 ```
 
 ### Optional Fields
@@ -407,12 +554,18 @@ A structured representation of the attack path that creates an interactive visua
 - `id` (string, required): Unique identifier for the node
 - `label` (string, required): Display text for the node
 - `type` (string, required): Node type - one of:
-  - `principal`: Starting principal (user/role initiating attack)
-  - `resource`: AWS resource involved in attack
-  - `action`: Action or intermediate step
+  - `principal`: IAM users, roles, or starting principal (any entity with IAM identity)
+  - `resource`: AWS resources involved in attack (EC2, Lambda, S3, etc.) - **NOT IAM users/roles**
+  - `payload`: Attacker exploitation choice, malicious code/commands being executed
+  - `action`: (Deprecated - use `payload` instead) Action or intermediate step
   - `outcome`: Final outcome/result
 - `color` (string, optional): Hex color code (e.g., `#ff9999`). Defaults based on type if not specified
 - `description` (string, optional): Markdown description shown when node is clicked
+
+**Important Type Distinctions:**
+- **`principal` vs `resource`**: ALL IAM users and roles must be typed as `principal`, never as `resource`. This includes starting principals, target users/roles, assumed roles, execution roles, etc.
+- **`payload` vs edges**: IAM actions (like `iam:CreateAccessKey`) should be represented as edge labels, NOT as payload nodes. Payload nodes represent what the attacker DOES with acquired permissions (e.g., "Execute malicious script", "Exfiltrate credentials")
+- **When to use `payload`**: Use for attacker exploitation choices like: User Data scripts, Lambda function code, buildspec commands, reverse shells, credential exfiltration methods
 
 **Description Formatting Guidelines:**
 
@@ -461,6 +614,14 @@ All description fields (for both nodes and edges) should follow these formatting
 - `condition` (string, optional): Condition type (e.g., `admin`, `no_permissions`, `some_permissions`, `iam_write_permissions`)
 - `description` (string, optional): Markdown description shown when edge is clicked
 
+**Critical Edge Labeling Rules:**
+- **Edge labels should ONLY include permissions from `permissions.required`**
+- Reconnaissance permissions (describe/list/get) from `permissions.additional` should NOT be edge labels
+- Optional reconnaissance permissions can be mentioned in node descriptions instead
+- Edges represent the required attack path flow, not helpful optional reconnaissance steps
+- Example: ❌ WRONG - Edge labeled "ec2:DescribeLaunchTemplates" when this is in additional permissions
+- Example: ✅ CORRECT - Edge labeled "ec2:CreateLaunchTemplateVersion + ec2:ModifyLaunchTemplate" (only required permissions)
+
 **Important Edge Rendering Rules:**
 - **Conditional edges** (those with `branch` or `condition` fields) are rendered as **dashed lines with NO visible label** on the graph
 - **Transitive edges** (those without `branch` or `condition`) are rendered as **solid lines WITH visible labels** on the graph
@@ -474,9 +635,10 @@ All description fields (for both nodes and edges) should follow these formatting
 - Use clear outcome labels (e.g., `Effective Administrator`, `No Additional Access`)
 
 **Color Conventions (defaults):**
-- `principal` (starting point): `#ff9999` (red)
-- `resource` (intermediate): `#ffcc99` (orange)
-- `action` (intermediate): `#99ccff` (blue)
+- `principal` (users/roles): `#ff9999` (red)
+- `resource` (AWS resources): `#ffcc99` (orange)
+- `payload` (attacker actions): `#99ccff` (blue)
+- `action` (deprecated): `#99ccff` (blue) - use `payload` instead
 - `outcome` (success): `#99ff99` (green)
 - `outcome` (partial): `#ffeb99` (yellow)
 - `outcome` (dead end): `#cccccc` (gray)

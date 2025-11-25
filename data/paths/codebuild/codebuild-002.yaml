@@ -66,8 +66,18 @@ recommendation: |
   - **Regular Audits**: Review CodeBuild projects to identify those with privileged service roles and restrict access accordingly
   - **Separation of Concerns**: Avoid attaching administrative roles to CodeBuild projects; use least-privilege roles specific to build requirements
 discoveredBy:
-  name: Unknown
-  organization: Unknown
+  name: Erik Steringer
+  organization: NCC Group
+  date: '2019'
+discoveryAttribution:
+  firstDocumented:
+    author: Erik Steringer
+    organization: NCC Group
+    date: 2019
+    link: https://github.com/nccgroup/PMapper
+  derivativeOf:
+    pathId: codebuild-001
+    modification: "Uses buildspec-override on existing CodeBuild project instead of creating a new project with PassRole"
 references:
 - title: HackTricks - AWS - Codebuild Privesc
   url: https://cloud.hacktricks.wiki/en/pentesting-cloud/aws-security/aws-privilege-escalation/aws-codebuild-privesc/index.html#codebuildstartbuild--codebuildstartbuildbatch
@@ -111,9 +121,14 @@ attackVisualization:
     type: resource
     description: |
       An existing CodeBuild project with a privileged service role. The project must allow buildspec overrides (default behavior unless explicitly disabled). When a build is started with `--buildspec-override`, the project executes the attacker's malicious buildspec commands with the permissions of the project's service role.
+  - id: service_role
+    label: CodeBuild Service Role
+    type: principal
+    description: |
+      The IAM role attached to the CodeBuild project as its service role. When the build executes, CodeBuild automatically assumes this role and makes its credentials available to the build environment. The build commands execute with all permissions granted to this service role. This role must trust codebuild.amazonaws.com in its trust policy.
   - id: execute_buildspec
     label: Execute malicious buildspec
-    type: action
+    type: payload
     color: '#99ccff'
     description: |
       The CodeBuild project executes the attacker's malicious buildspec commands during the build phase. The buildspec can contain arbitrary shell commands that execute with the project's service role permissions. Common privilege escalation techniques include attaching administrator policies to the starting principal, creating new access keys, or modifying IAM policies.
@@ -157,10 +172,15 @@ attackVisualization:
 
       The malicious buildspec is now queued for execution with the project's service role permissions.
   - from: codebuild_project
-    to: execute_buildspec
-    label: Build starts and executes commands
+    to: service_role
+    label: Build assumes service role
     description: |
-      CodeBuild automatically starts the build execution and runs the commands defined in the malicious buildspec. These commands execute in the build environment with the project's service role credentials available via the AWS SDK and CLI.
+      When the CodeBuild build starts, the CodeBuild service automatically assumes the project's service role. The role's temporary credentials are made available to the build environment through the AWS SDK and CLI, allowing any commands in the buildspec to execute with the service role's permissions.
+  - from: service_role
+    to: execute_buildspec
+    label: Execute buildspec commands
+    description: |
+      The build environment executes the commands defined in the malicious buildspec with the service role's credentials. These commands can perform any AWS API calls that the service role has permission to execute, including IAM modifications if the role has sufficient privileges.
 
       The attacker can monitor build progress:
       ```bash

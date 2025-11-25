@@ -119,13 +119,18 @@ exploitationSteps:
       description: "After the job completes and IAM changes propagate, verify that you now have administrative permissions. Note that the trigger will continue to run every minute, re-granting access even if it's removed, establishing persistent administrative access."
 
 recommendation: |
-  **Restrict PassRole permissions:** Never grant `iam:PassRole` with wildcards. Use resource-based conditions to limit which roles can be passed and to which services:
+  High powered service roles + overly permissive `iam:PassRole` is what makes this privilege escalation path exploitable and impactful.
+
+  - **Avoid administrative service roles** - Very rarely does a Glue job need administrative access. Use the principle of least privilege.
+  - **Avoid granting `iam:PassRole` on all resources** - Whenever possible, restrict `iam:PassRole` to specific roles or specific services.
+
+  Use IAM policy conditions to restrict which roles can be passed and to which services:
 
   ```json
   {
     "Effect": "Allow",
     "Action": "iam:PassRole",
-    "Resource": "arn:aws:iam::*:role/approved-glue-roles-*",
+    "Resource": "arn:aws:iam::ACCOUNT_ID:role/SpecificGlueRole",
     "Condition": {
       "StringEquals": {
         "iam:PassedToService": "glue.amazonaws.com"
@@ -134,53 +139,30 @@ recommendation: |
   }
   ```
 
-  **Implement SCPs to prevent privilege escalation:** Use Service Control Policies to deny PassRole on administrative roles to Glue services:
-
-  ```json
-  {
-    "Effect": "Deny",
-    "Action": "iam:PassRole",
-    "Resource": [
-      "arn:aws:iam::*:role/*admin*",
-      "arn:aws:iam::*:role/*Admin*"
-    ],
-    "Condition": {
-      "StringEquals": {
-        "iam:PassedToService": "glue.amazonaws.com"
-      }
-    }
-  }
-  ```
-
-  **Monitor CloudTrail for Glue job updates and trigger creation:** Alert on `UpdateJob` and `CreateTrigger` API calls, especially when:
-  - The execution role is changed to a more privileged role
-  - Script location is modified to point to external or suspicious buckets
-  - Combined with PassRole on privileged roles
-  - Triggers are created with `StartOnCreation=true` immediately after job updates
-  - Execution intervals are suspiciously frequent (every minute)
-  - Jobs are updated by users who don't typically work with Glue
-
-  **Restrict glue:UpdateJob and glue:CreateTrigger permissions:** Only grant these permissions to users who legitimately need to modify ETL workflows (data engineers, DevOps). Consider these actions more sensitive than read-only Glue permissions.
-
-  **Separate CreateJob and UpdateJob permissions:** Grant `glue:CreateJob` and `glue:UpdateJob` to different personas when possible. Implement approval workflows for job configuration changes.
-
-  **Implement configuration baselines:** Use AWS Config rules to track approved configurations for each Glue job and alert on role ARN changes, script location changes, or jobs running with administrative policies.
-
-  **Limit trigger scheduling frequencies:** Implement organizational policies or SCPs that prevent creation of triggers with very frequent schedules (e.g., every minute), as these are often indicators of abuse rather than legitimate ETL workflows.
-
-  **Monitor IAM policy changes from Glue service principal:** Set up CloudWatch alarms for IAM policy modifications (`AttachUserPolicy`, `AttachRolePolicy`, `PutUserPolicy`, `PutRolePolicy`) where the source is the Glue service principal.
-
-  **Implement change detection:** Use AWS Config or third-party tools to detect when Glue job configurations change and alert when job role ARN or script location changes.
-
-  **Use IAM Access Analyzer:** Enable IAM Access Analyzer to automatically detect privilege escalation paths involving PassRole and Glue services. Review findings regularly and remediate identified risks.
-
-  **Implement least privilege for Glue roles:** When creating IAM roles for Glue services, grant only the minimum permissions required for the specific ETL tasks. Avoid using administrative policies like `AdministratorAccess`. Typical Glue jobs need S3, Glue Data Catalog, and CloudWatch Logs access—not IAM permissions.
+  - Monitor CloudTrail for unusual Glue job updates followed by immediate trigger creation
+  - Monitor CloudTrail for Glue job and trigger updates by principals who do not usually update jobs
+  - Monitor CloudTrail for roles being passed to Glue that haven't been used before
+  - Monitor and alert on Glue job updates with privileged roles
+  - Regularly audit Glue jobs for excessive IAM permissions
+  - Regularly audit all IAM roles that trust the Glue service and down-scope any roles with administrative access
 
 discoveredBy:
-  name: "Carlos Polop"
-  organization: "HackTricks"
+  name: "Unknown"
+  organization: "Unknown"
   date: "Unknown"
-
+discoveryAttribution:
+  firstDocumented:
+    source: HackTricks
+    link: https://cloud.hacktricks.wiki/en/pentesting-cloud/aws-security/aws-privilege-escalation/aws-glue-privesc/
+  derivativeOf:
+    pathId: glue-005
+    modification: "Combines glue:UpdateJob with glue:CreateTrigger for both stealth (modifying existing infrastructure) and persistence (automated recurring execution)"
+  ultimateOrigin:
+    pathId: glue-001
+    author: Spencer Gietzen
+    organization: Rhino Security Labs
+    date: 2018
+    link: https://rhinosecuritylabs.com/aws/aws-privilege-escalation-methods-mitigation/
 references:
   - title: "HackTricks - AWS - Glue Privesc"
     url: "https://cloud.hacktricks.wiki/en/pentesting-cloud/aws-security/aws-privilege-escalation/aws-glue-privesc/index.html#iampassrole-gluecreatejob--glueupdatejob-gluestartjobrun--gluecreatetrigger"
@@ -258,7 +240,7 @@ attackVisualization:
 
     - id: execute_code
       label: Execute Code with Target Role Permissions
-      type: action
+      type: payload
       description: |
         The scheduled trigger fires automatically (every minute) and starts the modified job. No manual `glue:StartJobRun` is needed.
 

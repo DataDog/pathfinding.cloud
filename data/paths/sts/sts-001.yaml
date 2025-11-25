@@ -3,17 +3,17 @@ name: sts:AssumeRole
 category: lateral-movement
 services:
 - sts
-description: A principal with `sts:AssumeRole` permission can assume IAM roles that trust them in their trust policy. If a
-  role with elevated permissions has a trust policy that allows the attacker's principal to assume it, they can gain those
-  elevated permissions by assuming the role. This is one of the most straightforward privilege escalation paths when misconfigured
-  trust relationships exist.
+description: A principal with `sts:AssumeRole` permission can assume IAM roles that trust them in their trust policy. We refer to this as two-way trust, or bidirectional trust. Direction 1 is the forward trust - the starting principal that has `sts:AssumeRole` permission on one or more roles. Direction 2 is the reverse trust - the target role must trust the starting principal to assume it. It's important to remember that if the target role trusts the account `root`, like this `arn:aws:iam::012345678901:root`, this trust extends to all principals in the account and satisfies direction 2. If this bidirectional trust is in place, the starting principal can assume the target role gain access to any elevated permissions by assuming the target role. However there is an edge case, noted in the prerequisites below. If the target role's trust policy trusts the starting principal explicitly, e.g, `arn:aws:iam::012345678901:user/startUser`, and that principal is in the same account as the target role, that principal does not need `sts:AssumeRole` permission. They just can assume the  role without any permissions.  
 prerequisites:
   admin:
   - A role must exist with administrative permissions (e.g., AdministratorAccess)
   - The role's trust policy must allow the attacker's principal (user/role) to assume it
+  -  If the role trusts the account root, e.g., `arn:aws:iam::012345678901:root`, any principal with `sts:AssumeRole` permission on the target role can assume it
+  - If the role trusts the starting principal explicitly, e.g, `arn:aws:iam::012345678901:user/startUser`, and that principal is in the same account as the target role, that principal does not need `sts:AssumeRole` permission. They just can assume the  role without any permissions.t as the target role, that principal does not need `sts:AssumeRole` permission. They just can assume the  role without any permissions.  
   lateral:
-  - A role must exist with elevated permissions
   - The role's trust policy must allow the attacker's principal (user/role) to assume it
+  - If the role trusts the account root, e.g., `arn:aws:iam::012345678901:root`, any principal with `sts:AssumeRole` permission on the target role can assume it
+  - If the role trusts the starting principal explicitly, e.g, `arn:aws:iam::012345678901:user/startUser`, and that principal is in the same account as the target role, that principal does not need `sts:AssumeRole` permission. They just can assume the  role without any permissions.
 exploitationSteps:
   awscli:
   - step: 1
@@ -34,8 +34,8 @@ exploitationSteps:
   - step: 5
     command: |
       export AWS_ACCESS_KEY_ID=<AccessKeyId from step 4>
-      export AWS_SECRET_ACCESS_KEY=<SecretAccessKey from step 4>
-      export AWS_SESSION_TOKEN=<SessionToken from step 4>
+       export AWS_SECRET_ACCESS_KEY=<SecretAccessKey from step 4>
+       export AWS_SESSION_TOKEN=<SessionToken from step 4>
     description: Configure the AWS CLI to use the assumed role credentials
   - step: 6
     command: aws sts get-caller-identity
@@ -43,16 +43,9 @@ exploitationSteps:
   - step: 7
     command: aws iam list-users --max-items 3
     description: Verify administrative access was successfully obtained
-  pacu:
-  - step: 1
-    command: run iam__enum_permissions
-    description: Enumerate IAM permissions and identify assumable roles
-  - step: 2
-    command: run iam__assume_role --role-arn arn:aws:iam::ACCOUNT_ID:role/TARGET_ROLE
-    description: Assume the privileged role using Pacu
 recommendation: |
-  Carefully audit IAM role trust policies to ensure they follow the principle of least privilege.
-  Only allow trusted principals to assume sensitive roles.
+  - Avoiding using the account root notation (`arn:aws:iam::012345678901:root`) for internal accounts. This is fine to use with external accounts along with the externalID field, but is almost always overly permissive when used for internal AWS accounts. 
+  - Only allow trusted principals to assume sensitive roles. Use conditions when possible.  
 
   Example restrictive trust policy:
   ```json
@@ -65,12 +58,9 @@ recommendation: |
           "AWS": "arn:aws:iam::ACCOUNT_ID:role/SpecificTrustedRole"
         },
         "Action": "sts:AssumeRole",
-        "Condition": {
-          "StringEquals": {
-            "sts:ExternalId": "unique-external-id"
-          },
+        "Condition": {          
           "IpAddress": {
-            "aws:SourceIp": "203.0.113.0/24"
+            "aws:SourceIp": "1.2.3.0/24"
           }
         }
       }
@@ -80,18 +70,22 @@ recommendation: |
 
   Additional controls:
   - **Require MFA**: Require MFA for sensitive role assumptions using `aws:MultiFactorAuthPresent` condition
-  - **Use External IDs**: Use external IDs for cross-account role assumptions to prevent confused deputy attacks
-  - **IP Address Restrictions**: Implement IP address restrictions in trust policies using `aws:SourceIp` condition
+  - **Use External IDs**: Use external IDs for third-party cross-account role assumptions to prevent confused deputy attacks
+  - **IP Address Restrictions**: Implement IP address restrictions in trust policies using `aws:SourceIp` condition when possible. 
   - **Session Policies**: Implement session policies to limit permissions even when assuming privileged roles, providing an additional layer of defense
   - **Monitor CloudTrail**: Alert on `AssumeRole` events on privileged roles, especially from unexpected principals
-  - **IAM Access Analyzer**: Regularly audit role trust policies with AWS IAM Access Analyzer to identify overly permissive trust relationships
-  - **Alert on Patterns**: Alert on unusual assume-role patterns or assumptions from unexpected IP addresses
-  - **Service Control Policies**: Use SCPs to restrict which roles can be assumed at the organizational level
-  - **AWS Config Rules**: Use AWS Config rules to detect roles with administrative permissions that can be assumed by users or have overly permissive trust policies
+  - **Alert on Patterns**: Alert on unusual assume-role patterns or assumptions from unexpected IP addresses 
+ 
 discoveredBy:
   name: Spencer Gietzen
   organization: Rhino Security Labs
   date: '2019'
+discoveryAttribution:
+  firstDocumented:
+    author: Spencer Gietzen
+    organization: Rhino Security Labs
+    date: 2018
+    link: https://rhinosecuritylabs.com/aws/aws-privilege-escalation-methods-mitigation/
 references:
 - title: AWS Privilege Escalation Methods and Mitigation
   url: https://rhinosecuritylabs.com/aws/aws-privilege-escalation-methods-mitigation/
@@ -105,6 +99,8 @@ relatedPaths:
 - iam-002
 - iam-003
 - iam-004
+detectionTools:
+  pmapper: https://github.com/nccgroup/PMapper/blob/master/principalmapper/graphing/sts_edges.py#L49
 learningEnvironments:
   pathfinder-labs:
     type: open-source

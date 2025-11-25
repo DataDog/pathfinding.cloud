@@ -70,7 +70,10 @@ exploitationSteps:
     command: aws sts get-caller-identity
     description: Verify that your permissions have been escalated (if the task modified your principal)
 recommendation: |
-  Restrict the `iam:PassRole` permission using the principle of least privilege.
+  High powered service roles + overly permissive `iam:PassRole` is what makes this privilege escalation path exploitable and impactful.
+
+  - **Avoid administrative service roles** - Very rarely does an ECS task need administrative access. Use the principle of least privilege.
+  - **Avoid granting `iam:PassRole` on all resources** - Whenever possible, restrict `iam:PassRole` to specific roles or specific services.
 
   Use IAM policy conditions to restrict which roles can be passed and to which services:
 
@@ -78,7 +81,7 @@ recommendation: |
   {
     "Effect": "Allow",
     "Action": "iam:PassRole",
-    "Resource": "arn:aws:iam::ACCOUNT_ID:role/SpecificECSTaskRole",
+    "Resource": "arn:aws:iam::ACCOUNT_ID:role/SpecificECSRole",
     "Condition": {
       "StringEquals": {
         "iam:PassedToService": "ecs-tasks.amazonaws.com"
@@ -87,24 +90,38 @@ recommendation: |
   }
   ```
 
-  Additionally, restrict ECS task and service operations:
-  - Limit `ecs:RegisterTaskDefinition` to specific task families or require approval workflows
-  - Restrict `ecs:CreateService` to specific clusters or task definitions
-  - Monitor CloudTrail for RegisterTaskDefinition followed by CreateService or RunTask
-  - Use ECS service-level IAM permissions to control who can create services
-  - Implement VPC security groups and network policies to limit container network access
+  - Monitor CloudTrail for unusual ECS task definition registration followed by immediate service creation
+  - Monitor CloudTrail for ECS service creation by principals who do not usually create services
+  - Monitor CloudTrail for roles being passed to ECS that haven't been used before
+  - Monitor and alert on ECS service creation with privileged roles
+  - Regularly audit ECS tasks for excessive IAM permissions
+  - Regularly audit all IAM roles that trust the ECS service and down-scope any roles with administrative access
 limitations: |
   This path provides administrative access only if the passed role has administrative permissions (e.g., AdministratorAccess policy). If only limited roles are available, you gain access limited to those permissions. However, even limited access may enable multi-hop attacks or data exfiltration from the container environment.
 discoveredBy:
-  name: Unknown
-  organization: Unknown
+  name: Nick Spagnola
+  organization: Rhino Security Labs
+  date: "2020"
+discoveryAttribution:
+  firstDocumented:
+    source: HackTricks
+    link: https://cloud.hacktricks.wiki/en/pentesting-cloud/aws-security/aws-privilege-escalation/aws-ecs-privesc/
+  derivativeOf:
+    pathId: ecs-004
+    modification: "Uses ecs:CreateService instead of ecs:RunTask to execute the malicious task definition"
+  ultimateOrigin:
+    pathId: ecs-004
+    author: Nick Spagnola
+    organization: Rhino Security Labs
+    date: 2020
+    link: https://rhinosecuritylabs.com/aws/weaponizing-ecs-task-definitions-steal-credentials-running-containers/
 references:
-- title: "Weaponizing AWS ECS Task Definitions to Steal Credentials From Running Containers"
+- title: "AWS ECS Privilege Escalation - HackTricks"
+  url: "https://cloud.hacktricks.wiki/en/pentesting-cloud/aws-security/aws-privilege-escalation/aws-ecs-privesc/index.html#iampassrole-ecsregistertaskdefinition-ecsupdateserviceecscreateservice"
+- title: "Weaponizing AWS ECS Task Definitions to Steal Credentials From Running Containers (Original Research)"
   url: "https://rhinosecuritylabs.com/aws/weaponizing-ecs-task-definitions-steal-credentials-running-containers/"
 - title: "Auditing iam:PassRole: A Problematic Privilege Escalation Permission"
   url: "https://www.tenable.com/blog/auditing-iampassrole-a-problematic-privilege-escalation-permission"
-- title: "HackTricks - AWS - ECS Privesc"
-  url: "https://cloud.hacktricks.wiki/en/pentesting-cloud/aws-security/aws-privilege-escalation/aws-ecs-privesc/index.html#iampassrole-ecsregistertaskdefinition-ecsupdateserviceecscreateservice"
   
 relatedPaths:
 - ec2-001

@@ -91,6 +91,58 @@ Per @.claude/CLAUDE.md:
 - Use `|` pipe for multi-line fields (recommendation, command, limitations)
 - Follow field order convention (CLAUDE.md line 169-186)
 
+### Recommendation field requirements:
+
+**All recommendations MUST use multi-line format with the `|` pipe operator** (never use quoted strings with `\n`).
+
+**For iam:PassRole privilege escalation paths**, use this standardized template adapted for the specific service:
+
+```yaml
+recommendation: |
+  High powered service roles + overly permissive `iam:PassRole` is what makes this privilege escalation path exploitable and impactful.
+
+  - **Avoid administrative service roles** - Very rarely does a [SERVICE_RESOURCE] need administrative access. Use the principle of least privilege.
+  - **Avoid granting `iam:PassRole` on all resources** - Whenever possible, restrict `iam:PassRole` to specific roles or specific services.
+  Use IAM policy conditions to restrict which roles can be passed and to which services:
+
+  ```json
+  {
+    "Effect": "Allow",
+    "Action": "iam:PassRole",
+    "Resource": "arn:aws:iam::ACCOUNT_ID:role/Specific[ServiceRole]",
+    "Condition": {
+      "StringEquals": {
+        "iam:PassedToService": "[service].amazonaws.com"
+      }
+    }
+  }
+  ```
+
+
+  - Monitor CloudTrail for unusual [SERVICE_RESOURCE] creation followed by immediate [execution/invocation]
+  - Monitor CloudTrail for [SERVICE_RESOURCE] creation by principals who do not usually create [resources]
+  - Monitor CloudTrail for roles being passed to [SERVICE] that haven't been used before
+  - Monitor and alert on [SERVICE_RESOURCE] creation with privileged roles
+  - Regularly audit [SERVICE_RESOURCES] for excessive IAM permissions
+  - Regularly audit all IAM roles that trust the [SERVICE] service and down-scope any roles with administrative access
+```
+
+**Template placeholders to adapt:**
+- `[SERVICE_RESOURCE]` - The AWS resource type (e.g., "Lambda function", "EC2 instance", "SageMaker notebook")
+- `[ServiceRole]` - The role name pattern (e.g., "LambdaRole", "EC2Role", "SageMakerRole")
+- `[service]` - The service name (e.g., "lambda", "ec2", "sagemaker")
+- `[SERVICE]` - The capitalized service name (e.g., "Lambda", "EC2", "SageMaker")
+- `[execution/invocation]` - Service-specific action (e.g., "invocation", "execution", "startup")
+- `[resources]` - Plural resource name (e.g., "functions", "instances", "notebooks")
+- `[SERVICE_RESOURCES]` - Plural capitalized (e.g., "Lambda functions", "EC2 instances")
+
+**Examples:**
+- Lambda: "Lambda function", "lambda.amazonaws.com", "invocation", "functions"
+- EC2: "EC2 instance", "ec2.amazonaws.com", "execution", "instances"
+- SageMaker: "SageMaker notebook", "sagemaker.amazonaws.com", "startup", "notebooks"
+
+**For non-PassRole paths**, use multi-line format with service-specific prevention and monitoring guidance.
+
 ### Save and validate:
 
 ```bash
@@ -150,9 +202,6 @@ After all enrichment agents complete:
 # Final validation
 python3 scripts/validate-schema.py data/paths/{service}/{service}-{number}.yaml
 
-# Generate JSON for website
-python3 scripts/generate-json.py
-```
 
 ### Report to user:
 

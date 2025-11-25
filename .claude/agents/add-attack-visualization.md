@@ -100,6 +100,16 @@ description: |
   - `service_role`, `notebook_execution_role`
 - **This is a common mistake - always check your node types before submitting!**
 
+**CRITICAL RULE - Access-Resource Paths Must Include Explicit Role Nodes:**
+- For `category: access-resource` paths, ALWAYS include an explicit role node between the resource and the payload
+- **Pattern:** `[starting principal]` → `[existing resource]` → `[resource's role (principal)]` → `[payload]` → `[outcomes]`
+- **DO NOT skip the role node** - even though the role is attached to the resource, it must be represented as a separate principal node
+- ❌ **WRONG**: `start` → `codebuild_project` → `execute_buildspec` → `outcomes`
+- ✅ **CORRECT**: `start` → `codebuild_project` → `service_role` → `execute_buildspec` → `outcomes`
+- Examples of correct implementations: SSM-001, SSM-002, SAGEMAKER-003, SAGEMAKER-004
+- Examples of files that were fixed: CODEBUILD-002, CODEBUILD-003, BEDROCK-002, LAMBDA-003
+- **Why**: The role is a distinct principal that the resource assumes, and must be explicitly shown in the attack flow
+
 **Resource Nodes:**
 - Use descriptive labels that indicate if a new resource is created of if an existing resource is being attacked.
 - Examples: `Existing EC2 Instance`, `New EC2 Instance`, `New Lambda Function`, `EC2 Instance`, `Lambda Function`, `CloudFormation Stack`
@@ -107,10 +117,13 @@ description: |
 - **IMPORTANT:** IAM roles and users are NOT resources - they are principals (see rule above)
 - Include detailed description explaining the resource's role in the attack
 
-**Action Nodes:**
-- Use for intermediate steps where actions are performed (e.g., "User Data Script Takes Action", "Exfiltrate credentials")
-- Type must be `action`
+**Payload Nodes:**
+- Use for attacker exploitation choices and what malicious code/commands they execute
+- Examples: "Method 1: User Data Script", "Exfiltrate credentials", "Execute buildspec commands", "Method 2: Reverse Shell"
+- Type must be `payload`
 - Color should be `#99ccff` (blue)
+- **NOT for IAM permissions** - IAM actions should be edges, not nodes
+- Represents what the attacker DOES with acquired permissions/credentials
 
 **Outcome Nodes:**
 - Type must be `outcome`
@@ -130,6 +143,15 @@ description: |
 - Follow the description formatting rules in section 0 above
 
 ### 2. Edge Structure Rules
+
+**CRITICAL RULE - Edges Must Use Only Required Permissions:**
+- **Edge labels should ONLY include permissions from the `permissions.required` section**
+- Reconnaissance permissions (describe/list/get) from `permissions.additional` should NOT be edge labels
+- These optional permissions can be mentioned in node descriptions instead
+- ❌ **WRONG**: Edge labeled "ec2:DescribeLaunchTemplates" when this is in additional permissions
+- ✅ **CORRECT**: Edge labeled with only required permissions like "ec2:CreateLaunchTemplateVersion + ec2:ModifyLaunchTemplate"
+- **Why**: Edges represent the attack path flow, not helpful reconnaissance steps
+- **Anti-pattern example**: EC2-004 incorrectly used "ec2:DescribeLaunchTemplates" as an edge label
 
 **Transitive Edges (solid lines WITH labels):**
 - Normal attack flow edges that always happen
@@ -216,9 +238,9 @@ When there are multiple ways to exploit the same path:
 
 For paths where the principal modifies their own permissions directly (e.g., `iam:PutRolePolicy`, `iam:CreatePolicyVersion`, `iam:AttachUserPolicy` on self):
 
-**CRITICAL RULE: DO NOT CREATE INTERMEDIATE ACTION NODES FOR DIRECT PERMISSION MODIFICATIONS**
+**CRITICAL RULE: DO NOT CREATE INTERMEDIATE PAYLOAD NODES FOR DIRECT PERMISSION MODIFICATIONS**
 
-These attacks work by the principal directly executing an IAM permission on a resource. The action IS the edge, not a node.
+These attacks work by the principal directly executing an IAM permission on a resource. The IAM action IS the edge, not a node. Payload nodes are for attacker exploitation choices, not IAM API calls.
 
 **Pattern A - Deterministic outcome (no conditional branching):**
 ```
@@ -234,10 +256,10 @@ starting-principal → (iam:Permission) → outcome
 
 **WRONG EXAMPLE:**
 ```yaml
-# DO NOT DO THIS - no intermediate action node!
+# DO NOT DO THIS - no intermediate payload node!
 nodes:
   - id: start
-  - id: modify_policy  # ❌ WRONG - action should be an edge, not a node
+  - id: modify_policy  # ❌ WRONG - IAM action should be an edge, not a payload node
   - id: outcome
 edges:
   - from: start
@@ -346,8 +368,8 @@ starting-principal → workload-resource → target-role → [3 method nodes] �
 **Structure:**
 - Node 1: `starting-principal` (type: principal)
 - Node 2: The workload resource (e.g., `New EC2 Instance`, `New Lambda Function`, `New App Runner Service`) (type: resource)
-- Node 3: The target role being passed to the workload (e.g., `Existing Role That Trusts the EC2 Service`) (type: resource)
-- Nodes 4-6: Three method/payload nodes representing different exploitation approaches (type: action, color: `#99ccff`)
+- Node 3: The target role being passed to the workload (e.g., `Existing Role That Trusts the EC2 Service`) (type: principal)
+- Nodes 4-6: Three method/payload nodes representing different exploitation approaches (type: payload, color: `#99ccff`)
   - Method 1: Direct elevation approach (e.g., User Data script that modifies IAM)
   - Method 2: Interactive access approach (e.g., Reverse shell)
   - Method 3: Credential exfiltration approach (e.g., Send credentials to webhook)
@@ -399,7 +421,7 @@ nodes:
 
   - id: method_direct
     label: "Method 1: User Data Script (Direct Elevation)"
-    type: action
+    type: payload
     color: '#99ccff'
     description: |
       Configure a User Data script that executes on instance boot and directly modifies IAM to elevate the starting principal. The script uses the target role's credentials to perform actions like:
@@ -411,7 +433,7 @@ nodes:
 
   - id: method_reverse_shell
     label: "Method 2: User Data Script (Reverse Shell)"
-    type: action
+    type: payload
     color: '#99ccff'
     description: |
       Configure a User Data script that establishes a reverse shell connection to an attacker-controlled server. The script runs on instance boot and provides interactive command-line access with the target role's credentials.
@@ -426,7 +448,7 @@ nodes:
 
   - id: method_exfiltration
     label: "Method 3: User Data Script (Credential Exfiltration)"
-    type: action
+    type: payload
     color: '#99ccff'
     description: |
       Configure a User Data script that retrieves the target role's temporary credentials from the metadata service and exfiltrates them to an attacker-controlled webhook or remote server.
@@ -592,12 +614,12 @@ edges:
 
 ## Critical Anti-Patterns to Avoid
 
-### ❌ WRONG: Unnecessary intermediate action nodes
+### ❌ WRONG: Unnecessary intermediate payload nodes
 ```yaml
-# DO NOT CREATE EXTRA NODES FOR SIMPLE ACTIONS
+# DO NOT CREATE EXTRA NODES FOR SIMPLE IAM API CALLS
 nodes:
   - id: start
-  - id: create_key  # ❌ Wrong - action should be edge, not node
+  - id: create_key  # ❌ Wrong - IAM action should be edge, not payload node
   - id: target
 edges:
   - from: start
@@ -608,9 +630,9 @@ edges:
     label: iam:CreateAccessKey
 ```
 
-### ✅ CORRECT: Action as edge label
+### ✅ CORRECT: IAM action as edge label
 ```yaml
-# Keep it simple - actions are edges, not nodes
+# Keep it simple - IAM actions are edges, not payload nodes
 nodes:
   - id: start
   - id: target
@@ -636,7 +658,7 @@ edges:
 - Decision points requiring conditional branching
 
 **When NOT to create intermediate nodes:**
-- Simple API calls (action should be edge label)
+- Simple IAM API calls (IAM action should be edge label, not payload node)
 - Permission checks (permissions are implied)
 - Direct privilege modifications (edge connects start to outcome)
 

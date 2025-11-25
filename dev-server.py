@@ -47,10 +47,14 @@ class SPAHTTPRequestHandler(http.server.SimpleHTTPRequestHandler):
                 self.path = index_path
                 return super().do_GET()
 
-        # For all other requests (like /paths/iam-001), serve root index.html for SPA routing
+        # For all other requests, serve the appropriate index.html for SPA routing
         if not is_file:
-            # Rewrite the path to index.html
-            self.path = '/index.html'
+            # If URL starts with /paths/, serve /paths/index.html
+            if url_path.startswith('/paths/'):
+                self.path = '/paths/index.html'
+            else:
+                # Otherwise serve root index.html
+                self.path = '/index.html'
             return super().do_GET()
 
         # Default: serve normally
@@ -67,6 +71,9 @@ def main():
     """Start the development server."""
     # Change to the website directory (where index.html is)
     os.chdir(os.path.dirname(os.path.abspath(__file__)))
+
+    # Allow address reuse to prevent "Address already in use" errors
+    socketserver.TCPServer.allow_reuse_address = True
 
     with socketserver.TCPServer(("", PORT), SPAHTTPRequestHandler) as httpd:
         print(f"🚀 Development server running at http://localhost:{PORT}")

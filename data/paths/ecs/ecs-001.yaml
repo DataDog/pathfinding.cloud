@@ -98,48 +98,66 @@ exploitationSteps:
         aws sts get-caller-identity
         aws iam list-attached-user-policies --user-name STARTING_USERNAME
       description: Verify that the privilege escalation succeeded by checking if AdministratorAccess policy was attached to the starting user
-
 limitations: |
   This path provides administrative access only if the passed role has administrative permissions (e.g., AdministratorAccess policy). If only limited roles are available, you gain access limited to those permissions. However, even limited access may enable multi-hop attacks or access to sensitive data.
 
   For Fargate tasks, the container must have network connectivity to execute AWS API calls. The execution role (ecsTaskExecutionRole) needs permissions to pull container images from ECR if using private registries.
 
 recommendation: |
-  Restrict `iam:PassRole` using the principle of least privilege. Use IAM policy conditions to limit which roles can be passed and to which services:
+  High powered service roles + overly permissive `iam:PassRole` is what makes this privilege escalation path exploitable and impactful.
 
+  - **Avoid administrative service roles** - Very rarely does an ECS task need administrative access. Use the principle of least privilege.
+  - **Avoid granting `iam:PassRole` on all resources** - Whenever possible, restrict `iam:PassRole` to specific roles or specific services.
+
+  Use IAM policy conditions to restrict which roles can be passed and to which services:
+
+  ```json
   {
     "Effect": "Allow",
     "Action": "iam:PassRole",
-    "Resource": "arn:aws:iam::ACCOUNT:role/SpecificRole",
+    "Resource": "arn:aws:iam::ACCOUNT_ID:role/SpecificECSRole",
     "Condition": {
       "StringEquals": {
         "iam:PassedToService": "ecs-tasks.amazonaws.com"
       }
     }
   }
+  ```
 
-  Restrict access to `ecs:RegisterTaskDefinition` and `ecs:CreateService` to only principals that require them for legitimate workloads. Consider using tag-based conditions to limit which roles can be passed based on resource tags.
-
-  Monitor for unusual ECS activity in CloudTrail:
-  - `RegisterTaskDefinition` events with unfamiliar task roles
-  - `CreateCluster` followed quickly by `CreateService` from non-DevOps principals
-  - Short-lived tasks that make IAM policy changes
-  - Tasks using the Fargate launch type from unexpected principals
-
-  Use AWS Config rules to detect roles with overly permissive trust policies that allow ecs-tasks.amazonaws.com to assume them.
+  - Monitor CloudTrail for unusual ECS task definition registration followed by immediate service creation
+  - Monitor CloudTrail for ECS service creation by principals who do not usually create services
+  - Monitor CloudTrail for roles being passed to ECS that haven't been used before
+  - Monitor and alert on ECS service creation with privileged roles
+  - Regularly audit ECS tasks for excessive IAM permissions
+  - Regularly audit all IAM roles that trust the ECS service and down-scope any roles with administrative access
 
 discoveredBy:
-  name: Unknown
-  organization: Unknown
-  date: "2021"
-
+  name: Seth Art
+  organization: Datadog
+  date: "2025"
+discoveryAttribution:
+  firstDocumented:
+    author: Seth Art
+    organization: Datadog
+    date: 2025
+  derivativeOf:
+    pathId: ecs-003
+    modification: "Adds ecs:CreateCluster permission for scenarios where no ECS cluster exists"
+  ultimateOrigin:
+    pathId: ecs-004
+    author: Nick Spagnola
+    organization: Rhino Security Labs
+    date: 2020
+    link: https://rhinosecuritylabs.com/aws/weaponizing-ecs-task-definitions-steal-credentials-running-containers/
 references:
+- title: "Weaponizing AWS ECS Task Definitions to Steal Credentials From Running Containers (Original Research)"
+  url: "https://rhinosecuritylabs.com/aws/weaponizing-ecs-task-definitions-steal-credentials-running-containers/"
+- title: "AWS ECS Privilege Escalation - HackTricks"
+  url: "https://cloud.hacktricks.wiki/en/pentesting-cloud/aws-security/aws-privilege-escalation/aws-ecs-privesc/"
 - title: "Auditing iam:PassRole: A Problematic Privilege Escalation Permission"
   url: "https://www.tenable.com/blog/auditing-iampassrole-a-problematic-privilege-escalation-permission"
 - title: "Tales from the cloud trenches: Amazon ECS is the new EC2 for crypto mining"
   url: "https://securitylabs.datadoghq.com/articles/tales-from-the-cloud-trenches-ecs-crypto-mining/"
-- title: "Weaponizing AWS ECS Task Definitions to Steal Credentials From Running Containers"
-  url: "https://rhinosecuritylabs.com/aws/weaponizing-ecs-task-definitions-steal-credentials-running-containers/"
 learningEnvironments:
   pathfinder-labs:
     type: open-source

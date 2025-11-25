@@ -58,7 +58,10 @@ exploitationSteps:
     command: aws sts get-caller-identity
     description: Verify that your privileges have been escalated by the task execution
 recommendation: |
-  Restrict the `iam:PassRole` permission using the principle of least privilege.
+  High powered service roles + overly permissive `iam:PassRole` is what makes this privilege escalation path exploitable and impactful.
+
+  - **Avoid administrative service roles** - Very rarely does an ECS task need administrative access. Use the principle of least privilege.
+  - **Avoid granting `iam:PassRole` on all resources** - Whenever possible, restrict `iam:PassRole` to specific roles or specific services.
 
   Use IAM policy conditions to restrict which roles can be passed and to which services:
 
@@ -66,7 +69,7 @@ recommendation: |
   {
     "Effect": "Allow",
     "Action": "iam:PassRole",
-    "Resource": "arn:aws:iam::ACCOUNT_ID:role/SpecificECSTaskRole",
+    "Resource": "arn:aws:iam::ACCOUNT_ID:role/SpecificECSRole",
     "Condition": {
       "StringEquals": {
         "iam:PassedToService": "ecs-tasks.amazonaws.com"
@@ -75,25 +78,31 @@ recommendation: |
   }
   ```
 
-  Additionally, restrict ECS task definition registration and task execution:
-  - Limit `ecs:RegisterTaskDefinition` to specific task definition families or require approval workflows
-  - Restrict `ecs:RunTask` to specific clusters or task definitions
-  - Use SCPs to prevent tasks from running with overly privileged roles
-  - Monitor CloudTrail for unusual task definition registration followed by immediate task execution
-  - Alert on ECS tasks that make IAM API calls (iam:AttachUserPolicy, iam:CreateAccessKey, etc.)
+  - Monitor CloudTrail for unusual ECS task definition registration followed by immediate task execution
+  - Monitor CloudTrail for ECS task execution by principals who do not usually run tasks
+  - Monitor CloudTrail for roles being passed to ECS that haven't been used before
+  - Monitor and alert on ECS task execution with privileged roles
+  - Regularly audit ECS tasks for excessive IAM permissions
+  - Regularly audit all IAM roles that trust the ECS service and down-scope any roles with administrative access
 limitations: |
   This path provides administrative access only if the passed role has administrative permissions (e.g., AdministratorAccess policy). If only limited roles are available, you gain access limited to those permissions. However, even limited access may enable multi-hop attacks or data exfiltration.
 discoveredBy:
-  name: Unknown
-  organization: Unknown
-  date: Unknown
+  name: Nick Spagnola
+  organization: Rhino Security Labs
+  date: "2020"
+discoveryAttribution:
+  firstDocumented:
+    author: Nick Spagnola
+    organization: Rhino Security Labs
+    date: 2020
+    link: https://rhinosecuritylabs.com/aws/weaponizing-ecs-task-definitions-steal-credentials-running-containers/
 references:
+- title: "Weaponizing AWS ECS Task Definitions to Steal Credentials From Running Containers"
+  url: "https://rhinosecuritylabs.com/aws/weaponizing-ecs-task-definitions-steal-credentials-running-containers/"
 - title: "Auditing iam:PassRole: A Problematic Privilege Escalation Permission"
   url: "https://www.tenable.com/blog/auditing-iampassrole-a-problematic-privilege-escalation-permission"
 - title: "HackTricks - AWS - ECS Privesc"
   url: "https://cloud.hacktricks.wiki/en/pentesting-cloud/aws-security/aws-privilege-escalation/aws-ecs-privesc/index.html#iampassrole-ecsregistertaskdefinition-ecsruntask"
-- title: "Weaponizing AWS ECS Task Definitions to Steal Credentials From Running Containers"
-  url: "https://rhinosecuritylabs.com/aws/weaponizing-ecs-task-definitions-steal-credentials-running-containers/"
 
 permissions:
   required:

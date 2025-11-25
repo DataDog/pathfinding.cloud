@@ -26,37 +26,43 @@ exploitationSteps:
   - step: 3
     command: '# Access the newly created resources (e.g., IAM user, Lambda function)'
     description: Use the elevated privileges of the created resources
-  pacu:
-  - step: 1
-    command: run cloudformation__create_stack --stack-name privesc-stack --template exploit-template.yaml --role-arn arn:aws:iam::ACCOUNT_ID:role/PRIVILEGED_ROLE
-    description: Use Pacu to create CloudFormation stack with privileged role
 recommendation: |
-  Restrict the `iam:PassRole` permission using the principle of least privilege.
+  High powered service roles + overly permissive `iam:PassRole` is what makes this privilege escalation path exploitable and impactful.
+
+  - **Avoid administrative service roles** - Very rarely does a CloudFormation stack need administrative access. Use the principle of least privilege.
+  - **Avoid granting `iam:PassRole` on all resources** - Whenever possible, restrict `iam:PassRole` to specific roles or specific services.
 
   Use IAM policy conditions to restrict which roles can be passed and to which services:
 
   ```json
   {
     "Effect": "Allow",
-    "Action": "`iam:PassRole`",
-    "Resource": "arn:aws:iam::ACCOUNT_ID:role/SpecificCFNRole",
+    "Action": "iam:PassRole",
+    "Resource": "arn:aws:iam::ACCOUNT_ID:role/SpecificCloudFormationRole",
     "Condition": {
       "StringEquals": {
-        "`iam:PassedToService`": "cloudformation.amazonaws.com"
+        "iam:PassedToService": "cloudformation.amazonaws.com"
       }
     }
   }
   ```
 
-  Additional controls:
-  - Restrict `cloudformation:CreateStack` to specific stack name patterns or templates
-  - Use CloudFormation service roles with minimal required permissions
-  - Enable CloudFormation stack policies to prevent unauthorized modifications
-  - Monitor CloudTrail for CloudFormation stack creation and the resources they provision
+  - Monitor CloudTrail for unusual CloudFormation stack creation followed by immediate resource creation
+  - Monitor CloudTrail for stack creation by principals who do not usually create stacks
+  - Monitor CloudTrail for roles being passed to CloudFormation that haven't been used before
+  - Monitor and alert on CloudFormation stack creation with privileged roles
+  - Regularly audit CloudFormation stacks for excessive IAM permissions
+  - Regularly audit all IAM roles that trust the CloudFormation service and down-scope any roles with administrative access
 discoveredBy:
   name: Spencer Gietzen
   organization: Rhino Security Labs
-  date: '2019'
+  date: '2018'
+discoveryAttribution:
+  firstDocumented:
+    author: Spencer Gietzen
+    organization: Rhino Security Labs
+    date: 2018
+    link: https://rhinosecuritylabs.com/aws/aws-privilege-escalation-methods-mitigation/
 references:
 - title: AWS Privilege Escalation Methods and Mitigation
   url: https://rhinosecuritylabs.com/aws/aws-privilege-escalation-methods-mitigation/
@@ -115,7 +121,7 @@ attackVisualization:
       The privileged IAM role that is passed to the CloudFormation stack during creation. This role must trust cloudformation.amazonaws.com as a principal in its trust policy. When CloudFormation creates resources, it uses this role's permissions.
   - id: execute_template
     label: Execute Template Resources
-    type: action
+    type: payload
     color: '#99ccff'
     description: |
       The CloudFormation template executes with the target role's permissions, creating AWS resources defined in the template. Common resources for privilege escalation include IAM users with access keys, Lambda functions, EC2 instances with User Data scripts, or IAM policies/roles that grant the starting principal elevated access.

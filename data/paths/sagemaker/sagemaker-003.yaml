@@ -42,7 +42,12 @@ exploitationSteps:
     command: aws sagemaker describe-processing-job --processing-job-name privesc-processing
     description: Monitor the processing job status and wait for execution
 recommendation: |
-  Restrict the `iam:PassRole` permission using the principle of least privilege.
+  High powered service roles + overly permissive `iam:PassRole` is what makes this privilege escalation path exploitable and impactful.
+
+  - **Avoid administrative service roles** - Very rarely does a SageMaker processing job need administrative access. Use the principle of least privilege.
+  - **Avoid granting `iam:PassRole` on all resources** - Whenever possible, restrict `iam:PassRole` to specific roles or specific services.
+
+  Use IAM policy conditions to restrict which roles can be passed and to which services:
 
   ```json
   {
@@ -57,17 +62,31 @@ recommendation: |
   }
   ```
 
-  Additional controls:
-  - Restrict `sagemaker:CreateProcessingJob` permissions
-  - Monitor CloudTrail for SageMaker processing job creation with privileged roles
-  - Use VPC configuration to isolate processing jobs
-  - Restrict S3 access for processing data sources
-  - Alert on processing jobs with administrative roles being created
-  - Use container image signing and validation
+  - Monitor CloudTrail for unusual SageMaker processing job creation followed by immediate execution
+  - Monitor CloudTrail for processing job creation by principals who do not usually create processing jobs
+  - Monitor CloudTrail for roles being passed to SageMaker that haven't been used before
+  - Monitor and alert on SageMaker processing job creation with privileged roles
+  - Regularly audit SageMaker processing jobs for excessive IAM permissions
+  - Regularly audit all IAM roles that trust the SageMaker service and down-scope any roles with administrative access
 discoveredBy:
   name: Spencer Gietzen
   organization: Rhino Security Labs
   date: '2019'
+discoveryAttribution:
+  firstDocumented:
+    author: Erik Steringer
+    organization: NCC Group
+    date: 2022
+    link: https://github.com/nccgroup/PMapper/blob/master/principalmapper/graphing/sagemaker_edges.py
+  derivativeOf:
+    pathId: sagemaker-001
+    modification: "Uses sagemaker:CreateProcessingJob instead of sagemaker:CreateNotebookInstance to execute code with the passed role's permissions via a processing container"
+  ultimateOrigin:
+    pathId: sagemaker-001
+    author: Spencer Gietzen
+    organization: Rhino Security Labs
+    date: 2019
+    link: https://rhinosecuritylabs.com/aws/aws-privilege-escalation-methods-mitigation-part-2/
 references:
 - title: AWS Privilege Escalation Methods and Mitigation
   url: https://rhinosecuritylabs.com/aws/aws-privilege-escalation-methods-mitigation/
@@ -116,7 +135,7 @@ attackVisualization:
       The privileged IAM role that is passed to the SageMaker processing job during creation. This role must trust sagemaker.amazonaws.com as a principal in its trust policy. When the processing job executes, it runs with this role's permissions, allowing the malicious script to access AWS APIs.
   - id: execute_script
     label: Execute Malicious Script
-    type: action
+    type: payload
     color: '#99ccff'
     description: |
       The malicious processing script executes within the SageMaker processing job container with the target role's permissions. The script can perform privileged API calls such as creating access keys, modifying IAM policies, or accessing sensitive resources. The script output can be written to S3 or the processing job logs.

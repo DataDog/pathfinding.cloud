@@ -42,6 +42,7 @@ OPTIONAL_FIELDS = {
     'learningEnvironments': dict,  # New field for learning labs and CTF environments
     'toolSupport': dict,  # DEPRECATED in v1.3.0, kept for backward compatibility
     'attackVisualization': (dict, str),  # dict (new structured format) or str (legacy Mermaid)
+    'discoveryAttribution': (dict, list),  # dict (object format) or list (legacy array format)
 }
 
 ALLOWED_CATEGORIES = [
@@ -298,6 +299,78 @@ def validate_discovered_by(discovered_by: Dict) -> None:
         raise ValidationError("DiscoveredBy must have a 'name' field")
 
 
+def validate_discovery_attribution(discovery_attribution) -> None:
+    """Validate the discoveryAttribution field.
+
+    Supports two formats:
+    1. Object format (preferred): {firstDocumented: {...}, derivativeOf: {...}, ultimateOrigin: {...}}
+    2. List format (legacy): [{item: "...", link: "..."}]
+    """
+    # Object format - new structured format with firstDocumented, derivativeOf, ultimateOrigin
+    if isinstance(discovery_attribution, dict):
+        if 'firstDocumented' not in discovery_attribution:
+            raise ValidationError("Object-format discoveryAttribution must have 'firstDocumented' field")
+
+        first_doc = discovery_attribution['firstDocumented']
+        if not isinstance(first_doc, dict):
+            raise ValidationError("firstDocumented must be a dictionary")
+
+        # Validate firstDocumented fields
+        if 'author' in first_doc and not isinstance(first_doc['author'], str):
+            raise ValidationError("firstDocumented.author must be a string")
+        if 'organization' in first_doc and not isinstance(first_doc['organization'], str):
+            raise ValidationError("firstDocumented.organization must be a string")
+        if 'source' in first_doc and not isinstance(first_doc['source'], str):
+            raise ValidationError("firstDocumented.source must be a string")
+        if 'date' in first_doc and not isinstance(first_doc['date'], (str, int)):
+            raise ValidationError("firstDocumented.date must be a string or integer")
+        if 'link' in first_doc and not isinstance(first_doc['link'], str):
+            raise ValidationError("firstDocumented.link must be a string")
+
+        # Validate derivativeOf if present
+        if 'derivativeOf' in discovery_attribution:
+            deriv = discovery_attribution['derivativeOf']
+            if not isinstance(deriv, dict):
+                raise ValidationError("derivativeOf must be a dictionary")
+            if 'pathId' not in deriv:
+                raise ValidationError("derivativeOf must have 'pathId' field")
+            if not isinstance(deriv['pathId'], str):
+                raise ValidationError("derivativeOf.pathId must be a string")
+            if 'modification' in deriv and not isinstance(deriv['modification'], str):
+                raise ValidationError("derivativeOf.modification must be a string")
+
+        # Validate ultimateOrigin if present
+        if 'ultimateOrigin' in discovery_attribution:
+            origin = discovery_attribution['ultimateOrigin']
+            if not isinstance(origin, dict):
+                raise ValidationError("ultimateOrigin must be a dictionary")
+
+        return
+
+    # List format - legacy format with array of items
+    if isinstance(discovery_attribution, list):
+        if not discovery_attribution:
+            raise ValidationError("DiscoveryAttribution list cannot be empty")
+
+        for idx, attribution in enumerate(discovery_attribution):
+            if not isinstance(attribution, dict):
+                raise ValidationError(f"DiscoveryAttribution item {idx + 1} must be a dictionary")
+
+            if 'item' not in attribution:
+                raise ValidationError(f"DiscoveryAttribution item {idx + 1} must have an 'item' field")
+
+            if not isinstance(attribution['item'], str):
+                raise ValidationError(f"DiscoveryAttribution item {idx + 1} 'item' field must be a string")
+
+            if 'link' in attribution and not isinstance(attribution['link'], str):
+                raise ValidationError(f"DiscoveryAttribution item {idx + 1} 'link' field must be a string")
+
+        return
+
+    # Neither format
+    raise ValidationError("DiscoveryAttribution must be either an object (with firstDocumented) or a list")
+
+
 def validate_references(references: List[Dict]) -> None:
     """Validate the references field."""
     if not isinstance(references, list):
@@ -508,7 +581,7 @@ def validate_attack_visualization(attack_viz) -> None:
         raise ValidationError("AttackVisualization 'nodes' list cannot be empty")
 
     node_ids = set()
-    allowed_node_types = ['principal', 'resource', 'action', 'outcome']
+    allowed_node_types = ['principal', 'resource', 'payload', 'action', 'outcome']
 
     for node in attack_viz['nodes']:
         if not isinstance(node, dict):
@@ -702,6 +775,12 @@ def validate_file(file_path: str) -> Tuple[bool, List[str]]:
         if 'attackVisualization' in data:
             try:
                 validate_attack_visualization(data['attackVisualization'])
+            except ValidationError as e:
+                errors.append(str(e))
+
+        if 'discoveryAttribution' in data:
+            try:
+                validate_discovery_attribution(data['discoveryAttribution'])
             except ValidationError as e:
                 errors.append(str(e))
 

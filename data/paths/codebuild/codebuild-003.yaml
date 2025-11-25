@@ -85,8 +85,24 @@ recommendation: |
   - **Tag-Based Access Control**: Tag CodeBuild projects with privilege levels and enforce tag-based conditional access policies
   - **Approval Workflows**: Require manual approval for buildspec overrides on sensitive CodeBuild projects with privileged service roles
 discoveredBy:
-  name: Unknown
-  organization: Unknown
+  name: Erik Steringer
+  organization: NCC Group
+  date: '2019'
+discoveryAttribution:
+  firstDocumented:
+    author: Erik Steringer
+    organization: NCC Group
+    date: 2019
+    link: https://github.com/nccgroup/PMapper
+  derivativeOf:
+    pathId: codebuild-002
+    modification: "Uses codebuild:StartBuildBatch instead of codebuild:StartBuild to execute batch builds"
+  ultimateOrigin:
+    pathId: codebuild-001
+    author: Erik Steringer
+    organization: NCC Group
+    date: 2019
+    link: https://github.com/nccgroup/PMapper
 references:
 - title: HackTricks - AWS - Codebuild Privesc
   url: https://cloud.hacktricks.wiki/en/pentesting-cloud/aws-security/aws-privilege-escalation/aws-codebuild-privesc/index.html#codebuildstartbuild--codebuildstartbuildbatch
@@ -131,9 +147,14 @@ attackVisualization:
     type: resource
     description: |
       An existing CodeBuild project configured for batch builds with a service role attached. The project must allow buildspec overrides (default behavior unless explicitly disabled). The attacker leverages this project to execute arbitrary commands with the project's service role permissions.
+  - id: service_role
+    label: CodeBuild Service Role
+    type: principal
+    description: |
+      The IAM role attached to the CodeBuild project as its service role. When the batch build executes, CodeBuild automatically assumes this role and makes its credentials available to the build environment. The batch build commands execute with all permissions granted to this service role. This role must trust codebuild.amazonaws.com in its trust policy.
   - id: batch_build
     label: Execute Malicious Batch Build
-    type: action
+    type: payload
     color: '#99ccff'
     description: |
       The attacker starts a build batch with a malicious buildspec override that contains commands to escalate privileges. The buildspec executes with the CodeBuild project's service role permissions.
@@ -180,10 +201,15 @@ attackVisualization:
 
       The malicious buildspec uses batch build syntax to execute privilege escalation commands.
   - from: codebuild_project
-    to: batch_build
+    to: service_role
     label: Batch build assumes service role
     description: |
-      The CodeBuild batch build automatically assumes the project's service role via the instance profile. This happens without requiring `iam:PassRole` permission. The batch build inherits all permissions from the service role and can execute any AWS API calls that the role allows.
+      When the CodeBuild batch build starts, the CodeBuild service automatically assumes the project's service role. This happens without requiring `iam:PassRole` permission from the starting principal. The role's temporary credentials are made available to the build environment through the AWS SDK and CLI.
+  - from: service_role
+    to: batch_build
+    label: Execute batch build commands
+    description: |
+      The batch build environment executes the commands defined in the malicious buildspec with the service role's credentials. These commands can perform any AWS API calls that the service role has permission to execute, including IAM modifications if the role has sufficient privileges.
   - from: batch_build
     to: admin
     label: If service role has admin permissions

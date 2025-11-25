@@ -718,15 +718,6 @@ function showPathDetails(path) {
             </div>
         ` : ''}
 
-        ${path.discoveredBy ? `
-            <div class="detail-section">
-                <h2>Discovered By</h2>
-                <p>
-                    ${escapeHtml(path.discoveredBy.name)}${path.discoveredBy.organization ? ` (${escapeHtml(path.discoveredBy.organization)})` : ''}${path.discoveredBy.date ? `, ${escapeHtml(path.discoveredBy.date)}` : ''}
-                </p>
-            </div>
-        ` : ''}
-
         <div class="detail-section">
             <h2>Permissions</h2>
             ${renderPermissions(path.permissions || (path.requiredPermissions ? { required: path.requiredPermissions } : null))}
@@ -751,6 +742,18 @@ function showPathDetails(path) {
             ${renderExploitationSteps(path.exploitationSteps)}
         </div>
 
+        ${path.learningEnvironments ? `
+            <div class="detail-section">
+                <h2>Learning Environment Options</h2>
+                ${renderLearningEnvironments(path.learningEnvironments)}
+            </div>
+        ` : ''}
+
+        <div class="detail-section">
+            <h2>Detection Coverage (Open Source Tools)</h2>
+            ${renderDetectionTools(path.detectionTools)}
+        </div>
+
         <div class="detail-section">
             <h2>Recommended Remediation</h2>
             <div class="boxed-section">
@@ -758,15 +761,19 @@ function showPathDetails(path) {
             </div>
         </div>
 
-        <div class="detail-section">
-            <h2>Detection Coverage (Open Source Tools)</h2>
-            ${renderDetectionTools(path.detectionTools)}
-        </div>
-
-        ${path.learningEnvironments ? `
+        ${path.discoveryAttribution ? `
             <div class="detail-section">
-                <h2>Learning Environment Options</h2>
-                ${renderLearningEnvironments(path.learningEnvironments)}
+                <h2>Discovery Attribution</h2>
+                <div class="boxed-section">
+                    ${renderDiscoveryAttribution(path.discoveryAttribution)}
+                </div>
+            </div>
+        ` : path.discoveredBy ? `
+            <div class="detail-section">
+                <h2>Discovered By</h2>
+                <p>
+                    ${escapeHtml(path.discoveredBy.name)}${path.discoveredBy.organization ? ` (${escapeHtml(path.discoveredBy.organization)})` : ''}${path.discoveredBy.date ? `, ${escapeHtml(path.discoveredBy.date)}` : ''}
+                </p>
             </div>
         ` : ''}
 
@@ -797,6 +804,45 @@ function showPathDetails(path) {
             renderAttackVisualization(path.id, path.attackVisualization);
         }, 10);
     }
+}
+
+// Calculate hierarchical levels for nodes based on edges
+function calculateHierarchicalLevels(nodes, edges) {
+    const levels = {};
+    const nodeToLevel = {};
+
+    // Find nodes with no incoming edges (root nodes)
+    const incomingEdges = {};
+    nodes.forEach(n => incomingEdges[n.id] = []);
+    edges.forEach(e => {
+        if (!incomingEdges[e.to]) incomingEdges[e.to] = [];
+        incomingEdges[e.to].push(e.from);
+    });
+
+    // BFS to assign levels
+    const queue = [];
+    nodes.forEach(n => {
+        if (incomingEdges[n.id].length === 0) {
+            nodeToLevel[n.id] = 0;
+            queue.push({ id: n.id, level: 0 });
+        }
+    });
+
+    while (queue.length > 0) {
+        const current = queue.shift();
+        if (!levels[current.level]) levels[current.level] = [];
+        levels[current.level].push(current.id);
+
+        // Find all nodes that this node points to
+        edges.forEach(e => {
+            if (e.from === current.id && nodeToLevel[e.to] === undefined) {
+                nodeToLevel[e.to] = current.level + 1;
+                queue.push({ id: e.to, level: current.level + 1 });
+            }
+        });
+    }
+
+    return levels;
 }
 
 // Render attack visualization (supports both structured and legacy Mermaid format)
@@ -833,17 +879,53 @@ function renderAttackVisualization(pathId, visualization) {
         const edgeFontColor = isLightTheme ? '#666' : '#FFFFFF';
         const edgeLabelBg = isLightTheme ? 'rgba(255,255,255,0.9)' : 'rgba(26,26,36,0.9)';
 
+        // Calculate hierarchical levels and center nodes at each level
+        const nodeSpacing = 250;
+        const levelSeparation = 120;
+        const levels = calculateHierarchicalLevels(nodes, edges);
+        const levelNumbers = Object.keys(levels).map(Number).sort((a, b) => a - b);
+
+        // Set both X and Y positions for all nodes manually
+        levelNumbers.forEach((levelNum, levelIndex) => {
+            const nodesAtLevel = levels[levelNum];
+
+            // Calculate Y position for this level
+            const y = levelIndex * levelSeparation;
+
+            // Calculate the center point based on the previous level (or 0 for first level)
+            let centerX = 0;
+            if (levelIndex > 0) {
+                const prevLevelNum = levelNumbers[levelIndex - 1];
+                const prevLevelNodes = levels[prevLevelNum];
+                const prevLevelXPositions = prevLevelNodes.map(nodeId => {
+                    const node = nodes.find(n => n.id === nodeId);
+                    return node ? node.x : 0;
+                });
+                const prevLevelMinX = Math.min(...prevLevelXPositions);
+                const prevLevelMaxX = Math.max(...prevLevelXPositions);
+                centerX = (prevLevelMinX + prevLevelMaxX) / 2;
+            }
+
+            // Calculate positions for current level centered relative to previous level
+            const currentLevelWidth = (nodesAtLevel.length - 1) * nodeSpacing;
+            const startX = centerX - (currentLevelWidth / 2);
+
+            // Set x and y coordinates for each node at this level
+            nodesAtLevel.forEach((nodeId, index) => {
+                const node = nodes.find(n => n.id === nodeId);
+                if (node) {
+                    node.x = startX + (index * nodeSpacing);
+                    node.y = y;
+                    node.fixed = true; // Fix both x and y positions
+                }
+            });
+        });
+
         // Create vis.js network
         const data = { nodes, edges };
         const options = {
             layout: {
-                hierarchical: {
-                    direction: 'UD',
-                    sortMethod: 'directed',
-                    nodeSpacing: 250,
-                    levelSeparation: 120,
-                    shakeTowards: 'leaves'
-                }
+                hierarchical: false  // Disable hierarchical layout since we're setting positions manually
             },
             nodes: {
                 shape: 'box',
@@ -962,11 +1044,13 @@ function renderAttackVisualization(pathId, visualization) {
                 </div>
                 <div class="viz-legend-item">
                     <div class="viz-legend-box" style="background-color: #99ccff;"></div>
-                    <span>Action</span>
+                    <span>Payload (Attacker Actions)</span>
                 </div>
                 <div class="viz-legend-item">
                     <div class="viz-legend-box" style="background-color: #99ff99;"></div>
-                    <span>Outcome (Success)</span>
+                    <div class="viz-legend-box" style="background-color: #ffeb99;"></div>
+                    <div class="viz-legend-box" style="background-color: #cccccc;"></div>
+                    <span>Outcomes</span>
                 </div>
             </div>
             <div class="viz-legend-section">
@@ -1006,7 +1090,8 @@ function convertStructuredToVisData(structured) {
         const colorDefaults = {
             'principal': '#ff9999',
             'resource': '#ffcc99',
-            'action': '#99ccff',
+            'payload': '#99ccff',
+            'action': '#99ccff',  // Deprecated - use 'payload' instead
             'outcome': '#99ff99'
         };
 
@@ -1703,6 +1788,175 @@ function renderDetectionTools(detectionTools) {
             </div>
         </div>
     `;
+}
+
+// Render discovery attribution (supports both TABLE and CARD views)
+// To switch between views, change the return statement at the end of this function
+function renderDiscoveryAttribution(attribution) {
+    // Handle legacy array format (convert to new object format)
+    if (Array.isArray(attribution)) {
+        return `
+            <ul>
+                ${attribution.map(attr => `
+                    <li>${escapeHtml(attr.item)}${attr.link ? ` <a href="${escapeHtml(attr.link)}" target="_blank">[source]</a>` : ''}</li>
+                `).join('')}
+            </ul>
+        `;
+    }
+
+    // New object format with firstDocumented, derivativeOf, ultimateOrigin
+    if (!attribution.firstDocumented) {
+        return '<p>No attribution information available</p>';
+    }
+
+    // TABLE VIEW
+    const tableView = () => {
+        let rows = [];
+
+        // First documented row - includes modification context if derivative
+        const firstDoc = attribution.firstDocumented;
+        const firstDocAuthor = firstDoc.author
+            ? `${escapeHtml(firstDoc.author)}${firstDoc.organization ? ` (${escapeHtml(firstDoc.organization)})` : ''}`
+            : escapeHtml(firstDoc.source || 'Unknown');
+        const firstDocDate = firstDoc.date ? escapeHtml(String(firstDoc.date)) : 'Unknown';
+        const firstDocContext = attribution.derivativeOf
+            ? escapeHtml(attribution.derivativeOf.modification)  // Show what's different in this version
+            : 'Original discovery of this escalation path';
+        const firstDocLink = firstDoc.link
+            ? `<a href="${escapeHtml(firstDoc.link)}" target="_blank" class="attribution-link">View Source →</a>`
+            : '—';
+
+        rows.push(`
+            <tr>
+                <td class="attr-type"><span class="badge badge-primary">First Documented</span></td>
+                <td class="attr-author">${firstDocAuthor}</td>
+                <td class="attr-date">${firstDocDate}</td>
+                <td class="attr-context">${firstDocContext}</td>
+                <td class="attr-link">${firstDocLink}</td>
+            </tr>
+        `);
+
+        // Derivative of row - shows info about the source path
+        if (attribution.derivativeOf) {
+            const deriv = attribution.derivativeOf;
+            const origin = attribution.ultimateOrigin;
+
+            // Build author info from ultimateOrigin if available
+            let derivAuthor = `<a href="/paths/${escapeHtml(deriv.pathId)}" onclick="event.preventDefault(); navigateToPath('${escapeHtml(deriv.pathId)}');">${escapeHtml(deriv.pathId.toUpperCase())}</a>`;
+            if (origin) {
+                derivAuthor += ` (${escapeHtml(origin.author)}${origin.organization ? `, ${escapeHtml(origin.organization)}` : ''})`;
+            }
+
+            const derivDate = origin && origin.date ? escapeHtml(String(origin.date)) : '—';
+            const derivContext = 'Original discovery of this attack technique';
+            const derivLink = origin && origin.link
+                ? `<a href="${escapeHtml(origin.link)}" target="_blank" class="attribution-link">View Source →</a>`
+                : '—';
+
+            rows.push(`
+                <tr>
+                    <td class="attr-type"><span class="badge badge-derivative">Derivative Of</span></td>
+                    <td class="attr-author">${derivAuthor}</td>
+                    <td class="attr-date">${derivDate}</td>
+                    <td class="attr-context">${derivContext}</td>
+                    <td class="attr-link">${derivLink}</td>
+                </tr>
+            `);
+        }
+
+        return `
+            <table class="attribution-table">
+                <thead>
+                    <tr>
+                        <th>Type</th>
+                        <th>Author/Source</th>
+                        <th>Year</th>
+                        <th>Context</th>
+                        <th>Source</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    ${rows.join('')}
+                </tbody>
+            </table>
+        `;
+    };
+
+    // CARD VIEW
+    const cardView = () => {
+        let cards = [];
+
+        // First documented card
+        const firstDoc = attribution.firstDocumented;
+        const firstDocAuthor = firstDoc.author
+            ? `${escapeHtml(firstDoc.author)}${firstDoc.organization ? ` <span class="org-badge">${escapeHtml(firstDoc.organization)}</span>` : ''}`
+            : escapeHtml(firstDoc.source || 'Unknown');
+        const firstDocDate = firstDoc.date ? ` • ${escapeHtml(String(firstDoc.date))}` : '';
+        const firstDocLink = firstDoc.link
+            ? `<a href="${escapeHtml(firstDoc.link)}" target="_blank" class="card-link">View Source →</a>`
+            : '';
+
+        cards.push(`
+            <div class="attribution-card attribution-card-primary">
+                <div class="card-header">
+                    <span class="card-badge">🎯 First Documented</span>
+                </div>
+                <div class="card-body">
+                    <div class="card-author">${firstDocAuthor}${firstDocDate}</div>
+                    ${firstDocLink ? `<div class="card-link-container">${firstDocLink}</div>` : ''}
+                </div>
+            </div>
+        `);
+
+        // Derivative of card
+        if (attribution.derivativeOf) {
+            const deriv = attribution.derivativeOf;
+            cards.push(`
+                <div class="attribution-card attribution-card-derivative">
+                    <div class="card-header">
+                        <span class="card-badge">🔗 Derivative Of</span>
+                    </div>
+                    <div class="card-body">
+                        <div class="card-path-link">
+                            <a href="/paths/${escapeHtml(deriv.pathId)}" onclick="event.preventDefault(); navigateToPath('${escapeHtml(deriv.pathId)}');">
+                                ${escapeHtml(deriv.pathId.toUpperCase())}
+                            </a>
+                        </div>
+                        <div class="card-context">${escapeHtml(deriv.modification)}</div>
+                    </div>
+                </div>
+            `);
+        }
+
+        // Ultimate origin card
+        if (attribution.ultimateOrigin) {
+            const origin = attribution.ultimateOrigin;
+            const originAuthor = `${escapeHtml(origin.author)}${origin.organization ? ` <span class="org-badge">${escapeHtml(origin.organization)}</span>` : ''}`;
+            const originDate = origin.date ? ` • ${escapeHtml(String(origin.date))}` : '';
+            const originLink = origin.link
+                ? `<a href="${escapeHtml(origin.link)}" target="_blank" class="card-link">View Original Research →</a>`
+                : '';
+
+            cards.push(`
+                <div class="attribution-card attribution-card-origin">
+                    <div class="card-header">
+                        <span class="card-badge">⭐ Ultimate Origin</span>
+                    </div>
+                    <div class="card-body">
+                        <div class="card-author">${originAuthor}${originDate}</div>
+                        <div class="card-context">Original discovery of this attack technique</div>
+                        ${originLink ? `<div class="card-link-container">${originLink}</div>` : ''}
+                    </div>
+                </div>
+            `);
+        }
+
+        return `<div class="attribution-cards">${cards.join('')}</div>`;
+    };
+
+    // CHOOSE VIEW: Change this line to switch between table and card views
+     return tableView();  // Use this for TABLE view
+    //return cardView();     // Use this for CARD view
 }
 
 // Render prerequisites with tabs for admin/lateral or simple list

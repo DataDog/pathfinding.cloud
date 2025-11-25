@@ -42,7 +42,12 @@ limitations: |
   3. The ability to pass a role to CodeBuild service (`iam:PassRole`)
   4. A role that trusts codebuild.amazonaws.com
 recommendation: |
-  Restrict `iam:PassRole` using the principle of least privilege. Use IAM policy conditions to limit which roles can be passed and to which services:
+  High powered service roles + overly permissive `iam:PassRole` is what makes this privilege escalation path exploitable and impactful.
+
+  - **Avoid administrative service roles** - Very rarely does a CodeBuild project need administrative access. Use the principle of least privilege.
+  - **Avoid granting `iam:PassRole` on all resources** - Whenever possible, restrict `iam:PassRole` to specific roles or specific services.
+
+  Use IAM policy conditions to restrict which roles can be passed and to which services:
 
   ```json
   {
@@ -57,20 +62,22 @@ recommendation: |
   }
   ```
 
-  Additional controls:
-  - **Separate Permissions**: Avoid granting `codebuild:CreateProject` and `iam:PassRole` to the same principal
-  - **Restrict CodeBuild Project Creation**: Limit `codebuild:CreateProject` to specific project name patterns or require approval workflows
-  - **Service Role Controls**: Ensure CodeBuild service roles follow least privilege and cannot modify IAM permissions
-  - **Monitor CloudTrail**: Alert on `CreateProject` API calls where privileged roles are being passed, and monitor `StartBuild` executions
-  - **Monitor IAM Changes**: Alert on `AttachUserPolicy`, `PutUserPolicy`, `AttachRolePolicy`, and `PutRolePolicy` calls from CodeBuild service principals
-  - **Service Control Policies**: Implement SCPs to prevent CodeBuild service roles from modifying IAM policies
-  - **IAM Access Analyzer**: Use AWS IAM Access Analyzer to identify privilege escalation paths involving CodeBuild and PassRole
-  - **Require Source Control**: Configure organizational policies to require buildspecs from source control repositories rather than inline definitions
-  - **Role Trust Policies**: Review roles that trust codebuild.amazonaws.com and ensure they follow least privilege
+  - Monitor CloudTrail for unusual CodeBuild project creation followed by immediate build execution
+  - Monitor CloudTrail for CodeBuild project creation by principals who do not usually create projects
+  - Monitor CloudTrail for roles being passed to CodeBuild that haven't been used before
+  - Monitor and alert on CodeBuild project creation with privileged roles
+  - Regularly audit CodeBuild projects for excessive IAM permissions
+  - Regularly audit all IAM roles that trust the CodeBuild service and down-scope any roles with administrative access
 discoveredBy:
-  name: Spencer Gietzen
-  organization: Rhino Security Labs
+  name: Erik Steringer
+  organization: NCC Group
   date: '2019'
+discoveryAttribution:
+  firstDocumented:
+    author: Erik Steringer
+    organization: NCC Group
+    date: 2019
+    link: https://github.com/nccgroup/PMapper
 references:
 - title: AWS Privilege Escalation Methods
   url: https://rhinosecuritylabs.com/aws/aws-privilege-escalation-methods-mitigation/
@@ -132,7 +139,7 @@ attackVisualization:
       The privileged IAM role that is passed to the CodeBuild project during creation. This role must trust codebuild.amazonaws.com as a principal in its trust policy. When the build executes, the CodeBuild environment automatically assumes this role and all buildspec commands run with this role's permissions.
   - id: execute_buildspec
     label: Execute buildspec commands
-    type: action
+    type: payload
     color: '#99ccff'
     description: |
       When the build starts, the CodeBuild environment assumes the target role and executes the buildspec commands with the role's permissions. The buildspec can perform various privileged actions such as attaching AdministratorAccess to the starting principal, creating new access keys, modifying IAM policies, or accessing sensitive data.

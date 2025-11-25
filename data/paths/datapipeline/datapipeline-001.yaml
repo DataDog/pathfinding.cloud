@@ -29,9 +29,12 @@ exploitationSteps:
     command: aws datapipeline activate-pipeline --pipeline-id PIPELINE_ID
     description: Activate the pipeline to execute the malicious code
 recommendation: |
-  Restrict the `iam:PassRole` permission using the principle of least privilege.
+  High powered service roles + overly permissive `iam:PassRole` is what makes this privilege escalation path exploitable and impactful.
 
-  Use IAM policy conditions to restrict which roles can be passed:
+  - **Avoid administrative service roles** - Very rarely does a Data Pipeline need administrative access. Use the principle of least privilege.
+  - **Avoid granting `iam:PassRole` on all resources** - Whenever possible, restrict `iam:PassRole` to specific roles or specific services.
+
+  Use IAM policy conditions to restrict which roles can be passed and to which services:
 
   ```json
   {
@@ -46,14 +49,22 @@ recommendation: |
   }
   ```
 
-  Additional controls:
-  - Restrict Data Pipeline permissions to specific users
-  - Monitor CloudTrail for Data Pipeline creation and activation
-  - Require pipeline definitions to be stored in approved repositories
+  - Monitor CloudTrail for unusual Data Pipeline creation followed by immediate activation
+  - Monitor CloudTrail for pipeline creation by principals who do not usually create pipelines
+  - Monitor CloudTrail for roles being passed to Data Pipeline that haven't been used before
+  - Monitor and alert on Data Pipeline creation with privileged roles
+  - Regularly audit Data Pipelines for excessive IAM permissions
+  - Regularly audit all IAM roles that trust the Data Pipeline service and down-scope any roles with administrative access
 discoveredBy:
   name: Spencer Gietzen
   organization: Rhino Security Labs
-  date: '2019'
+  date: '2018'
+discoveryAttribution:
+  firstDocumented:
+    author: Spencer Gietzen
+    organization: Rhino Security Labs
+    date: 2018
+    link: https://rhinosecuritylabs.com/aws/aws-privilege-escalation-methods-mitigation/
 references:
 - title: AWS Privilege Escalation Methods and Mitigation
   url: https://rhinosecuritylabs.com/aws/aws-privilege-escalation-methods-mitigation/
@@ -107,7 +118,7 @@ attackVisualization:
       The privileged IAM role that is passed to the Data Pipeline during creation. This role must trust datapipeline.amazonaws.com or elasticmapreduce.amazonaws.com as a principal in its trust policy. When the pipeline executes, shell commands run with this role's permissions on the underlying compute resources (EC2 or EMR).
   - id: exfiltrate
     label: Execute shell commands
-    type: action
+    type: payload
     color: '#99ccff'
     description: |
       The Data Pipeline executes with the target role's permissions. The pipeline definition includes shell commands that can retrieve temporary credentials from the instance metadata service, perform privileged API calls, or exfiltrate data. Common actions include creating access keys for the starting principal, attaching admin policies, or sending credentials to an attacker-controlled server.

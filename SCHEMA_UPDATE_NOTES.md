@@ -117,16 +117,6 @@ nextSteps: |
 ### Lower Priority (Direct escalation):
 Most IAM self-escalation paths (iam-001 through iam-012) give direct escalation, so limitations/nextSteps are less critical but could still mention what to do after gaining admin.
 
-## Testing
-
-To test the new fields:
-
-1. Regenerate JSON: `python3 scripts/generate-json.py`
-2. Refresh website: http://localhost:7000
-3. Click on ec2-001 card
-4. Scroll down to see:
-   - ⚠️ Limitations section
-   - 🔗 Next Steps section
 
 ## Future Enhancements
 
