@@ -5,19 +5,21 @@
 [![Validate Schema](https://github.com/DataDog/pathfinding.cloud/actions/workflows/validate.yml/badge.svg)](https://github.com/DataDog/pathfinding.cloud/actions/workflows/validate.yml)
 [![Deploy to GitHub Pages](https://github.com/DataDog/pathfinding.cloud/actions/workflows/deploy.yml/badge.svg)](https://github.com/DataDog/pathfinding.cloud/actions/workflows/deploy.yml)
 
-> **Live Website:** [https://miniature-broccoli-wr5lkze.pages.github.io/](https://miniature-broccoli-wr5lkze.pages.github.io/)
+> **Future Website:** [https://pathfinding.cloud](https://pathfinding.cloud)
+> **Live Website:** https://miniature-broccoli-wr5lkze.pages.github.io/
 
 ## Overview
 
-pathfinding.cloud is a comprehensive library documenting all known AWS IAM privilege escalation paths. This project builds upon the foundational research by Spencer Gietzen at Rhino Security Labs and subsequent contributions by many others. 
+pathfinding.cloud is a comprehensive, community-maintained library documenting AWS IAM privilege escalation paths. This project builds upon foundational research by Spencer Gietzen at Rhino Security Labs and subsequent contributions from many other security researchers.
 
-This site providing detailed documentation of:
+The website provides detailed documentation of each privilege escalation path including:
 
-- **35 documented privilege escalation techniques**
-- Prerequisites and conditions for exploitation
-- Step-by-step exploitation commands 
-- Step-by-step simulation commands
+- **Comprehensive path documentation** across multiple AWS services
+- Prerequisites and conditions required for exploitation
+- Step-by-step exploitation commands for multiple tools (AWS CLI, Pacu, etc.)
 - Detection and mitigation strategies
+- Interactive attack flow visualizations
+- Links to detection tools and learning environments
 
 ### Why This Project?
 
@@ -31,47 +33,69 @@ pathfinding.cloud aims to be that single source of truth.
 
 ## Key Features
 
+### Data & Documentation
 - **Structured Data**: All paths documented in validated YAML format
-- **Searchable Website**: Filter by service, category, or search terms
 - **Machine-Readable**: JSON export for security tool integration
 - **Community-Driven**: Easy contribution via pull requests
 - **Automated Validation**: GitHub Actions ensure data quality
-- **Detection Rules**: Links to CloudSIEM, AWS Config, and other platforms
+
+### Website Features
+- **Interactive Visualizations**: Attack flow diagrams showing step-by-step exploitation paths
+- **Advanced Search & Filtering**: Filter by service, category, detection tool support, or search terms
+- **Multiple View Modes**: Switch between card and table views
+- **Responsive Design**: Fully optimized for desktop and mobile devices
+- **Light/Dark Theme**: User-selectable theme with persistent preference
+- **Client-Side Routing**: Fast SPA navigation with shareable URLs
+- **Detection Tool Coverage**: Links to open-source detection tools (PMapper, Cloudsplaining, Prowler, etc.)
+- **Learning Environments**: Links to practice labs and CTF environments
 
 ## Categories
 
-Privilege escalation paths are organized into four categories:
+Privilege escalation paths are organized into five categories:
 
 1. **Self-Escalation** - Modify own permissions directly
 2. **Lateral Movement** - Gain access to other principals
 3. **Service PassRole** - Escalate via service + PassRole combinations
-4. **Access Resource** - Modify or access existing resources to gain elevated access
+4. **Credential Access** - Access or extract credentials from AWS resources
+5. **Access Resource** - Modify or access existing resources to gain elevated access
 
 ## Project Structure
 
 ```
 pathfinding.cloud/
 ├── data/
-│   └── paths/              # YAML files for each escalation path
-│       ├── iam/
-│       ├── ec2/
-│       ├── lambda/
-│       ├── ssm/
-│       └── cloudformation/
-├── css/                    # Website styles
-├── js/                     # Website JavaScript
-├── assets/                 # Website assets
-├── index.html              # Main website page
-├── paths.json              # Generated from YAML files
-├── metadata.json           # Generated metadata
+│   ├── paths/              # YAML files for each escalation path
+│   │   ├── iam/
+│   │   ├── ec2/
+│   │   ├── lambda/
+│   │   ├── ssm/
+│   │   ├── cloudformation/
+│   │   └── [other services]/
+│   └── metadata.json       # Detection tools and learning environments metadata
+├── website/
+│   └── paths.json          # Generated from YAML files (for production)
+├── paths/
+│   └── index.html          # Paths listing page
+├── css/
+│   └── style.css           # Website styles
+├── js/
+│   └── app.js              # Website JavaScript (SPA routing, visualizations)
+├── images/                 # Website images and logos
+├── index.html              # Landing page
+├── dev-server.py           # Local development server (SPA routing support)
 ├── scripts/
-│   ├── validate-schema.py # Schema validation
-│   └── generate-json.py   # YAML to JSON conversion
+│   ├── validate-schema.py  # Schema validation
+│   └── generate-json.py    # YAML to JSON conversion
 ├── .github/
-│   └── workflows/         # CI/CD automation
-├── SCHEMA.md              # Complete schema documentation
-├── CONTRIBUTING.md        # Contribution guidelines
-└── README.md              # This file
+│   └── workflows/          # CI/CD automation
+│       ├── validate.yml    # PR validation
+│       └── deploy.yml      # GitHub Pages deployment
+├── .claude/
+│   └── CLAUDE.md           # AI assistant guidelines (anti-patterns, style)
+├── SCHEMA.md               # Complete schema documentation
+├── CLAUDE.md               # Development workflow and commands
+├── CONTRIBUTING.md         # Contribution guidelines
+└── README.md               # This file
 ```
 
 ## Contributing
@@ -140,9 +164,13 @@ python scripts/validate-schema.py data/paths/
 # Generate JSON for website
 python scripts/generate-json.py
 
-# Open website locally
-open index.html
+# Start local development server (required for SPA routing)
+python3 dev-server.py
+
+# Visit http://localhost:8000 in your browser
 ```
+
+**Note:** The website uses client-side routing (SPA). Always use `dev-server.py` for local testing rather than opening `index.html` directly, as direct file access won't support routing features.
 
 ### Validation
 
@@ -156,6 +184,23 @@ python scripts/validate-schema.py data/paths/
 # Validate and see detailed errors
 python scripts/validate-schema.py data/paths/ --verbose
 ```
+
+### Website Architecture
+
+The website is built as a Single Page Application (SPA) with:
+
+- **Client-Side Routing**: Uses History API for proper URLs (e.g., `/paths/iam-001`)
+- **No Page Reloads**: Instant navigation with dynamic content loading
+- **Interactive Visualizations**: Built with vis.js for network diagrams
+- **Responsive Design**: Mobile-first CSS with breakpoints for all screen sizes
+- **Theme System**: CSS custom properties for light/dark mode switching
+- **Performance**: Lazy loading and optimized rendering for large datasets
+
+**Key Technologies:**
+- Vanilla JavaScript (no frameworks)
+- CSS Custom Properties for theming
+- vis.js for attack visualizations
+- Python for validation and JSON generation
 
 ## Research Credits
 
