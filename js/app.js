@@ -25,14 +25,14 @@ function initTheme() {
     // Check localStorage for saved theme, default to light
     const savedTheme = localStorage.getItem('theme') || 'light';
     if (savedTheme === 'light') {
-        document.body.classList.add('light-theme');
+        document.documentElement.classList.add('light-theme');
     }
     updateThemeText();
 }
 
 function toggleTheme() {
-    document.body.classList.toggle('light-theme');
-    const currentTheme = document.body.classList.contains('light-theme') ? 'light' : 'dark';
+    document.documentElement.classList.toggle('light-theme');
+    const currentTheme = document.documentElement.classList.contains('light-theme') ? 'light' : 'dark';
     localStorage.setItem('theme', currentTheme);
     updateThemeText();
 }
@@ -40,7 +40,7 @@ function toggleTheme() {
 function updateThemeText() {
     const themeText = document.querySelector('.theme-text');
     if (themeText) {
-        const isLight = document.body.classList.contains('light-theme');
+        const isLight = document.documentElement.classList.contains('light-theme');
         themeText.textContent = isLight ? 'Light Mode' : 'Dark Mode';
     }
 }
@@ -188,10 +188,16 @@ function handlePopState(event) {
 
 function handleLegacyHashRedirect() {
     // Redirect old hash-based URLs (#iam-001) to new format (/paths/iam-001)
+    // But ignore section anchors (like #permissions, #description)
     const hash = window.location.hash.substring(1);
     if (hash) {
-        history.replaceState(null, '', `/paths/${hash}`);
-        routeFromURL();
+        // Only redirect if it matches path ID format: service-### (e.g., iam-001)
+        const pathIdPattern = /^[a-z0-9]+-\d{3}$/i;
+        if (pathIdPattern.test(hash)) {
+            history.replaceState(null, '', `/paths/${hash}`);
+            routeFromURL();
+        }
+        // Otherwise, it's a section anchor, let the browser handle it normally
     }
 }
 
@@ -230,7 +236,7 @@ function showListView() {
     // Hide detail view, show list view
     const listView = document.getElementById('list-view');
     const detailView = document.getElementById('detail-view');
-    const nav = document.querySelector('nav');
+    const nav = document.querySelector('nav.container'); // Target search/filter nav specifically
 
     if (listView) listView.style.display = 'block';
     if (detailView) detailView.style.display = 'none';
@@ -654,11 +660,11 @@ function openPathInNewTab(path) {
 
 // Show path details in full-page view
 function showPathDetails(path) {
-    // Hide list view and nav, show detail view
+    // Hide list view and search/filter nav, show detail view
     const listView = document.getElementById('list-view');
     const detailView = document.getElementById('detail-view');
     const detailContent = document.getElementById('detail-content');
-    const nav = document.querySelector('nav');
+    const nav = document.querySelector('nav.container'); // Target search/filter nav specifically
 
     if (listView) listView.style.display = 'none';
     if (detailView) detailView.style.display = 'block';
@@ -700,14 +706,19 @@ function showPathDetails(path) {
         </div>
 
         <div class="detail-section">
-            <h2>Description</h2>
+            ${createHeadingWithAnchor('Description')}
             <div>${renderMarkdown(path.description)}</div>
         </div>
 
         ${path.attackVisualization ? `
             <div class="detail-section">
-                <h2>
+                <h2 id="attack-visualization" class="heading-with-anchor">
                     Attack Visualization
+                    <a href="#attack-visualization" class="heading-anchor" aria-label="Anchor link for: Attack Visualization">
+                        <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor">
+                            <path d="M7.775 3.275a.75.75 0 001.06 1.06l1.25-1.25a2 2 0 112.83 2.83l-2.5 2.5a2 2 0 01-2.83 0 .75.75 0 00-1.06 1.06 3.5 3.5 0 004.95 0l2.5-2.5a3.5 3.5 0 00-4.95-4.95l-1.25 1.25zm-4.69 9.64a2 2 0 010-2.83l2.5-2.5a2 2 0 012.83 0 .75.75 0 001.06-1.06 3.5 3.5 0 00-4.95 0l-2.5 2.5a3.5 3.5 0 004.95 4.95l1.25-1.25a.75.75 0 00-1.06-1.06l-1.25 1.25a2 2 0 01-2.83 0z"/>
+                        </svg>
+                    </a>
                     <button class="fullscreen-viz-btn" onclick="openFullscreenVisualization('${path.id}')" title="Open in fullscreen">
                         <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor">
                             <path d="M1.5 1a.5.5 0 0 0-.5.5v4a.5.5 0 0 1-1 0v-4A1.5 1.5 0 0 1 1.5 0h4a.5.5 0 0 1 0 1h-4zM10 .5a.5.5 0 0 1 .5-.5h4A1.5 1.5 0 0 1 16 1.5v4a.5.5 0 0 1-1 0v-4a.5.5 0 0 0-.5-.5h-4a.5.5 0 0 1-.5-.5zM.5 10a.5.5 0 0 1 .5.5v4a.5.5 0 0 0 .5.5h4a.5.5 0 0 1 0 1h-4A1.5 1.5 0 0 1 0 14.5v-4a.5.5 0 0 1 .5-.5zm15 0a.5.5 0 0 1 .5.5v4a1.5 1.5 0 0 1-1.5 1.5h-4a.5.5 0 0 1 0-1h4a.5.5 0 0 0 .5-.5v-4a.5.5 0 0 1 .5-.5z"/>
@@ -719,43 +730,43 @@ function showPathDetails(path) {
         ` : ''}
 
         <div class="detail-section">
-            <h2>Permissions</h2>
+            ${createHeadingWithAnchor('Permissions')}
             ${renderPermissions(path.permissions || (path.requiredPermissions ? { required: path.requiredPermissions } : null))}
         </div>
 
         ${path.prerequisites ? `
             <div class="detail-section">
-                <h2>Prerequisites</h2>
+                ${createHeadingWithAnchor('Prerequisites')}
                 ${renderPrerequisites(path.prerequisites)}
             </div>
         ` : ''}
 
         ${path.limitations ? `
             <div class="detail-section">
-                <h2>⚠️ Limitations</h2>
+                ${createHeadingWithAnchor('⚠️ Limitations')}
                 <p style="white-space: pre-wrap;">${escapeHtml(path.limitations)}</p>
             </div>
         ` : ''}
 
         <div class="detail-section">
-            <h2>Exploitation Steps</h2>
+            ${createHeadingWithAnchor('Exploitation Steps')}
             ${renderExploitationSteps(path.exploitationSteps)}
         </div>
 
         ${path.learningEnvironments ? `
             <div class="detail-section">
-                <h2>Learning Environment Options</h2>
+                ${createHeadingWithAnchor('Learning Environment Options')}
                 ${renderLearningEnvironments(path.learningEnvironments)}
             </div>
         ` : ''}
 
         <div class="detail-section">
-            <h2>Detection Coverage (Open Source Tools)</h2>
+            ${createHeadingWithAnchor('Detection Coverage (Open Source Tools)')}
             ${renderDetectionTools(path.detectionTools)}
         </div>
 
         <div class="detail-section">
-            <h2>Recommended Remediation</h2>
+            ${createHeadingWithAnchor('Recommended Remediation')}
             <div class="boxed-section">
                 ${renderMarkdown(path.recommendation)}
             </div>
@@ -763,14 +774,14 @@ function showPathDetails(path) {
 
         ${path.discoveryAttribution ? `
             <div class="detail-section">
-                <h2>Discovery Attribution</h2>
+                ${createHeadingWithAnchor('Discovery Attribution')}
                 <div class="boxed-section">
                     ${renderDiscoveryAttribution(path.discoveryAttribution)}
                 </div>
             </div>
         ` : path.discoveredBy ? `
             <div class="detail-section">
-                <h2>Discovered By</h2>
+                ${createHeadingWithAnchor('Discovered By')}
                 <p>
                     ${escapeHtml(path.discoveredBy.name)}${path.discoveredBy.organization ? ` (${escapeHtml(path.discoveredBy.organization)})` : ''}${path.discoveredBy.date ? `, ${escapeHtml(path.discoveredBy.date)}` : ''}
                 </p>
@@ -779,7 +790,7 @@ function showPathDetails(path) {
 
         ${path.references ? `
             <div class="detail-section">
-                <h2>References</h2>
+                ${createHeadingWithAnchor('References')}
                 <div class="boxed-section">
                     <ul>
                         ${path.references.map(ref => `
@@ -795,8 +806,20 @@ function showPathDetails(path) {
 
     detailContent.innerHTML = html;
 
-    // Scroll to top
-    window.scrollTo(0, 0);
+    // Handle anchor scrolling if present in URL
+    const hash = window.location.hash;
+    if (hash) {
+        // Wait for content to render, then scroll to anchor
+        setTimeout(() => {
+            const element = document.querySelector(hash);
+            if (element) {
+                element.scrollIntoView({ behavior: 'smooth', block: 'start' });
+            }
+        }, 100);
+    } else {
+        // Scroll to top if no anchor
+        window.scrollTo(0, 0);
+    }
 
     // Render attack visualization if present
     if (path.attackVisualization && window.vis) {
@@ -874,7 +897,7 @@ function renderAttackVisualization(pathId, visualization) {
         }
 
         // Get theme-aware colors
-        const isLightTheme = document.body.classList.contains('light-theme');
+        const isLightTheme = document.documentElement.classList.contains('light-theme');
         const nodeFontColor = '#232f3e'; // Always dark for contrast with bright node colors
         const edgeFontColor = isLightTheme ? '#666' : '#FFFFFF';
         const edgeLabelBg = isLightTheme ? 'rgba(255,255,255,0.9)' : 'rgba(26,26,36,0.9)';
@@ -1070,6 +1093,17 @@ function renderAttackVisualization(pathId, visualization) {
             </div>
         `;
         container.appendChild(legend);
+
+        // Make legend collapsible on mobile
+        if (window.innerWidth <= 768) {
+            legend.classList.add('collapsed');
+        }
+
+        legend.addEventListener('click', () => {
+            if (window.innerWidth <= 768) {
+                legend.classList.toggle('collapsed');
+            }
+        });
 
         // Store network instance for potential cleanup
         container._visNetwork = network;
@@ -1359,6 +1393,31 @@ function escapeHtml(text) {
     const div = document.createElement('div');
     div.textContent = text;
     return div.innerHTML;
+}
+
+// Convert text to URL-friendly slug for anchor links
+function slugify(text) {
+    return text
+        .toLowerCase()
+        .replace(/[^\w\s-]/g, '') // Remove special characters
+        .replace(/\s+/g, '-') // Replace spaces with hyphens
+        .replace(/-+/g, '-') // Replace multiple hyphens with single hyphen
+        .trim();
+}
+
+// Create a heading with GitHub-style anchor link
+function createHeadingWithAnchor(text, level = 2) {
+    const slug = slugify(text);
+    return `
+        <h${level} id="${slug}" class="heading-with-anchor">
+            ${text}
+            <a href="#${slug}" class="heading-anchor" aria-label="Anchor link for: ${escapeHtml(text)}">
+                <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor">
+                    <path d="M7.775 3.275a.75.75 0 001.06 1.06l1.25-1.25a2 2 0 112.83 2.83l-2.5 2.5a2 2 0 01-2.83 0 .75.75 0 00-1.06 1.06 3.5 3.5 0 004.95 0l2.5-2.5a3.5 3.5 0 00-4.95-4.95l-1.25 1.25zm-4.69 9.64a2 2 0 010-2.83l2.5-2.5a2 2 0 012.83 0 .75.75 0 001.06-1.06 3.5 3.5 0 00-4.95 0l-2.5 2.5a3.5 3.5 0 004.95 4.95l1.25-1.25a.75.75 0 00-1.06-1.06l-1.25 1.25a2 2 0 01-2.83 0z"/>
+                </svg>
+            </a>
+        </h${level}>
+    `;
 }
 
 // Get initials for detection tool circles
