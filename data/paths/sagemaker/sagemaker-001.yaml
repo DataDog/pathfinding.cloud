@@ -56,6 +56,10 @@ recommendation: |
   - Monitor and alert on SageMaker notebook creation with privileged roles
   - Regularly audit SageMaker notebook instances for excessive IAM permissions
   - Regularly audit all IAM roles that trust the SageMaker service and down-scope any roles with administrative access
+
+limitations: |
+  This path provides administrative access only if the passed role has administrative permissions (e.g., AdministratorAccess or an equivalent custom policy). If only limited roles are available, you gain access limited to those permissions. However, even limited access may enable multi-hop attacks or access to sensitive data.
+
 discoveredBy:
   name: Spencer Gietzen
   organization: Rhino Security Labs
@@ -83,6 +87,11 @@ learningEnvironments:
     githubLink: https://github.com/BishopFox/iam-vulnerable
     scenario: SageMaker-CreateNotebookPassRole
     description: "Deploy Terraform into your own AWS account and practice individual exploitation paths"
+  pathfinder-labs:
+    type: open-source
+    githubLink: https://github.com/DataDog/pathfinder-labs
+    scenario: "privesc-one-hop/to-admin/iam-passrole+sagemaker-createnotebookinstance"
+    description: "Deploy Terraform scenarios individually or in groups, each with attack and cleanup scripts"
 permissions:
   required:
   - permission: iam:PassRole
@@ -120,7 +129,7 @@ attackVisualization:
     type: payload
     color: '#99ccff'
     description: |
-      The attacker generates a presigned URL to access the notebook instance and opens the Jupyter terminal. The terminal provides full shell access with the target role's credentials available via the AWS SDK or instance metadata.
+      The attacker accesses the notebook instance and opens the Jupyter terminal. Access can be obtained via a presigned URL (if they have `sagemaker:CreatePresignedNotebookInstanceUrl` permission) or by navigating directly to the notebook in the AWS Console (if they have console access with username/password credentials). Once in Jupyter, the terminal provides full shell access with the target role's credentials available via the AWS SDK or instance metadata.
   - id: admin_outcome
     label: Effective Administrator
     type: outcome
@@ -161,20 +170,22 @@ attackVisualization:
       When the SageMaker notebook instance starts, it automatically assumes the target role. All code executed in the Jupyter environment (including terminal commands) runs with the permissions granted to this role. Credentials are available via the AWS SDK and boto3.
   - from: target_role
     to: access_notebook
-    label: sagemaker:CreatePresignedNotebookInstanceUrl
+    label: sagemaker:CreatePresignedNotebookInstanceUrl (or console access)
     description: |
-      The attacker generates a presigned URL to access the notebook interface and opens the Jupyter terminal. From the terminal, they can execute any AWS CLI commands or Python scripts using the target role's credentials.
+      The attacker accesses the notebook interface to open the Jupyter terminal. There are two methods:
 
-      Commands:
+      **Method 1 (API access - easiest):** If the attacker has `sagemaker:CreatePresignedNotebookInstanceUrl` permission, they can generate a presigned URL for direct access:
+
       ```bash
-      aws sagemaker describe-notebook-instance \
-        --notebook-instance-name privesc-notebook
-
       aws sagemaker create-presigned-notebook-instance-url \
         --notebook-instance-name privesc-notebook
       ```
 
-      The presigned URL provides direct access to the Jupyter interface where the attacker can open a terminal or create notebooks to execute privileged operations.
+      The presigned URL provides authenticated access to the Jupyter interface without requiring AWS Console login.
+
+      **Method 2 (Console access):** If the attacker has an IAM user with a login profile (username/password) and can authenticate to the AWS Console, they can navigate directly to the notebook URL without needing the CreatePresignedNotebookInstanceUrl permission. The direct URL format is: `https://NOTEBOOK_NAME.notebook.REGION.sagemaker.aws/tree`
+
+      Once in Jupyter (via either method), the attacker can open a terminal or create notebooks to execute privileged operations with the target role's credentials.
   - from: access_notebook
     to: admin_outcome
     label: If role has admin permissions

