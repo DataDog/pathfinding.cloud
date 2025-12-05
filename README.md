@@ -63,32 +63,33 @@ Privilege escalation paths are organized into five categories:
 ```
 pathfinding.cloud/
 ├── data/
-│   ├── paths/              # YAML files for each escalation path
-│   │   ├── iam/
-│   │   ├── ec2/
-│   │   ├── lambda/
-│   │   ├── ssm/
-│   │   ├── cloudformation/
-│   │   └── [other services]/
-│   └── metadata.json       # Detection tools and learning environments metadata
-├── website/
-│   └── paths.json          # Generated from YAML files (for production)
-├── paths/
-│   └── index.html          # Paths listing page
-├── css/
-│   └── style.css           # Website styles
-├── js/
-│   └── app.js              # Website JavaScript (SPA routing, visualizations)
-├── images/                 # Website images and logos
-├── index.html              # Landing page
-├── dev-server.py           # Local development server (SPA routing support)
+│   └── paths/              # YAML files for each escalation path (source data)
+│       ├── iam/
+│       ├── ec2/
+│       ├── lambda/
+│       ├── ssm/
+│       ├── cloudformation/
+│       └── [other services]/
+├── website/                # Website files (deployed to GitHub Pages)
+│   ├── index.html          # Landing page
+│   ├── 404.html            # SPA routing handler
+│   ├── paths/
+│   │   └── index.html      # Path detail pages index
+│   ├── css/
+│   │   └── style.css       # Website styles
+│   ├── js/
+│   │   └── app.js          # Website JavaScript (SPA routing, visualizations)
+│   ├── images/             # Website images and logos
+│   ├── paths.json          # Generated from YAML files
+│   ├── metadata.json       # Detection tools and learning environments metadata
+│   └── dev-server.py       # Local development server (SPA routing support)
 ├── scripts/
 │   ├── validate-schema.py  # Schema validation
-│   └── generate-json.py    # YAML to JSON conversion
+│   └── generate-json.py    # YAML to JSON conversion (outputs to website/)
 ├── .github/
 │   └── workflows/          # CI/CD automation
 │       ├── validate.yml    # PR validation
-│       └── deploy.yml      # GitHub Pages deployment
+│       └── deploy.yml      # GitHub Pages deployment (deploys website/ dir)
 ├── .claude/
 │   └── CLAUDE.md           # AI assistant guidelines (anti-patterns, style)
 ├── SCHEMA.md               # Complete schema documentation
@@ -164,12 +165,12 @@ python scripts/validate-schema.py data/paths/
 python scripts/generate-json.py
 
 # Start local development server (required for SPA routing)
-python3 dev-server.py
+cd website && python3 dev-server.py
 
-# Visit http://localhost:8000 in your browser
+# Visit http://localhost:8888 in your browser
 ```
 
-**Note:** The website uses client-side routing (SPA). Always use `dev-server.py` for local testing rather than opening `index.html` directly, as direct file access won't support routing features.
+**Note:** The website uses client-side routing (SPA). Always use `website/dev-server.py` for local testing rather than opening `index.html` directly, as direct file access won't support routing features.
 
 ### Validation
 
