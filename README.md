@@ -5,8 +5,7 @@
 [![Validate Schema](https://github.com/DataDog/pathfinding.cloud/actions/workflows/validate.yml/badge.svg)](https://github.com/DataDog/pathfinding.cloud/actions/workflows/validate.yml)
 [![Deploy to GitHub Pages](https://github.com/DataDog/pathfinding.cloud/actions/workflows/deploy.yml/badge.svg)](https://github.com/DataDog/pathfinding.cloud/actions/workflows/deploy.yml)
 
-> **Future Website:** [https://pathfinding.cloud](https://pathfinding.cloud)
-> **Live Website:** https://miniature-broccoli-wr5lkze.pages.github.io/
+**Website:** [https://pathfinding.cloud](https://pathfinding.cloud)
 
 ## Overview
 

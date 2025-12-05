@@ -120,7 +120,6 @@ async function loadPaths() {
         // Initialize router AFTER paths are loaded
         initRouter();
     } catch (error) {
-        console.error('Error loading paths:', error);
         pathsContainer.innerHTML = `
             <div class="no-results">
                 <p>Error loading privilege escalation paths</p>
@@ -132,7 +131,9 @@ async function loadPaths() {
 
 // Router functions
 function initRouter() {
-    // Check if we were redirected from 404.html (GitHub Pages SPA hack)
+    // Check if we were redirected from 404.html (GitHub Pages SPA routing pattern)
+    // When a user accesses a direct URL like /paths/iam-001, GitHub Pages serves 404.html
+    // The 404.html captures the path and redirects to index.html with the path in sessionStorage
     const redirectPath = sessionStorage.getItem('redirectPath');
     if (redirectPath) {
         sessionStorage.removeItem('redirectPath');
@@ -161,21 +162,17 @@ function routeFromURL() {
 
     if (pathMatch) {
         const pathId = pathMatch[1];
-        console.log('Routing to path:', pathId);
         const path = allPaths.find(p => p.id === pathId);
 
         if (path) {
-            console.log('Path found:', path.name);
             currentRoute = { view: 'detail', pathId };
             showPathDetails(path);
         } else {
-            console.log('Path not found, available paths:', allPaths.length);
             // Invalid path ID, redirect to home
             navigateToList();
         }
     } else {
         // Home/list view
-        console.log('Routing to list view');
         currentRoute = { view: 'list', pathId: null };
         showListView();
     }
@@ -253,21 +250,10 @@ function trackPageView(path, title) {
     // Update page title
     document.title = title;
 
-    // Track with Google Analytics if available
-    if (typeof gtag === 'function') {
-        gtag('config', 'G-XXXXXXXXXX', {
-            page_path: path,
-            page_title: title
-        });
-    }
-
     // Track with Plausible if available
     if (typeof plausible === 'function') {
         plausible('pageview', { props: { path, title } });
     }
-
-    // Log for development
-    console.log('Pageview:', path, title);
 }
 
 function updateMetaTag(name, content) {
@@ -317,9 +303,7 @@ async function fetchAllPaths() {
         }
         return await response.json();
     } catch (error) {
-        console.error('Error loading paths:', error);
         // Fallback to demo data if paths.json is not available
-        console.warn('Falling back to demo data');
         return getDemoData();
     }
 }
@@ -332,7 +316,6 @@ async function fetchMetadata() {
         }
         return await response.json();
     } catch (error) {
-        console.error('Error loading metadata:', error);
         return { detectionTools: {} };
     }
 }
@@ -865,11 +848,8 @@ function calculateHierarchicalLevels(nodes, edges) {
 function renderAttackVisualization(pathId, visualization) {
     const container = document.getElementById(`attack-viz-${pathId}`);
     if (!container) {
-        console.error(`Container not found: attack-viz-${pathId}`);
         return;
     }
-
-    console.log(`Rendering visualization in container: attack-viz-${pathId}`, container);
 
     try {
         let nodes, edges;
@@ -1102,7 +1082,6 @@ function renderAttackVisualization(pathId, visualization) {
         container._visNetwork = network;
 
     } catch (error) {
-        console.error('Error rendering attack visualization:', error);
         container.innerHTML = '<p style="color: #d13212;">Error rendering visualization</p>';
     }
 }

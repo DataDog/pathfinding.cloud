@@ -217,7 +217,7 @@ Provide a summary including:
 
 ## Example Interaction Flow
 
-**User**: "Can you create a path for /Users/seth.art/Documents/projects/pathfinder-labs/modules/scenarios/single-account/privesc-one-hop/to-admin/cloudformation-updatestack"
+**User**: "Can you create a path for ~/Documents/projects/pathfinder-labs/modules/scenarios/single-account/privesc-one-hop/to-admin/cloudformation-updatestack"
 
 **You**:
 1. Read scenario.yaml, demo_attack.sh, README.md
