@@ -37,7 +37,7 @@ python scripts/validate-schema.py data/paths/
 python scripts/generate-json.py
 
 # Test website locally (with SPA routing support)
-cd website && python3 dev-server.py
+cd docs && python3 dev-server.py
 # Then visit http://localhost:8888
 ```
 
@@ -84,21 +84,21 @@ The website is a Single Page Application (SPA) with client-side routing:
 - **Backward compatible**: Old hash URLs (`#iam-001`) redirect to new format
 
 **Directory Structure:**
-- All website files are in the `website/` directory
+- All website files are in the `docs/` directory (GitHub Pages compatible)
 - Source data (YAML files) remain at `data/paths/` in repository root
-- Generated files (`paths.json`, `metadata.json`) are created in `website/`
+- Generated files (`paths.json`, `metadata.json`) are created in `docs/`
 
 **Development:**
-- Use `website/dev-server.py` for local testing (handles SPA routing)
-- Run from project root: `cd website && python3 dev-server.py`
+- Use `docs/dev-server.py` for local testing (handles SPA routing)
+- Run from project root: `cd docs && python3 dev-server.py`
 - Direct file opening won't support routing features
 
 **Production (GitHub Pages):**
-- GitHub Pages deploys only the `website/` directory
+- GitHub Pages deploys only the `docs/` directory
 - `404.html` implements the SPA routing pattern for GitHub Pages
 - When users access direct URLs (e.g., `/paths/iam-001`), GitHub Pages serves `404.html`
 - The 404 page captures the requested path in sessionStorage and redirects to `index.html`
-- The client-side router in `website/js/app.js` reads sessionStorage and restores the original URL
+- The client-side router in `docs/js/app.js` reads sessionStorage and restores the original URL
 - This allows direct linking and page refreshes to work correctly on GitHub Pages
 - All URLs work when shared, bookmarked, or accessed directly
 
@@ -129,7 +129,7 @@ The website is a Single Page Application (SPA) with client-side routing:
 6. **Generate JSON and test:**
    ```bash
    python scripts/generate-json.py
-   cd website && python3 dev-server.py
+   cd docs && python3 dev-server.py
    ```
 
 7. **Submit PR** (validation runs automatically)
@@ -210,7 +210,7 @@ Common issues:
 ### Testing Website Changes
 
 1. Generate JSON: `python scripts/generate-json.py`
-2. Start dev server: `cd website && python3 dev-server.py`
+2. Start dev server: `cd docs && python3 dev-server.py`
 3. Visit `http://localhost:8888` in browser
 4. Test search, filters, path detail pages, and navigation
 5. Test direct URLs like `http://localhost:8888/paths/iam-001`
@@ -246,7 +246,7 @@ Can you task the detection-tools, learning-environments, add-vis, and attributio
 
 ## Website Generation
 
-The website loads data from `website/paths.json`, which is generated from YAML files:
+The website loads data from `docs/paths.json`, which is generated from YAML files:
 1. GitHub Actions runs `scripts/generate-json.py` on every push to main
 2. This converts all YAML files to a single JSON file
 3. The website JavaScript loads and displays the JSON data

@@ -255,7 +255,7 @@ def check_git_sync():
     except Exception:
         pass  # Silently ignore if we can't check
 
-def convert_yaml_to_json(input_dir='data/paths', output_file='website/paths.json'):
+def convert_yaml_to_json(input_dir='data/paths', output_file='docs/paths.json'):
     """Convert all YAML files to a single JSON file."""
     print("Converting YAML files to JSON...")
 

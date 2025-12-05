@@ -70,7 +70,7 @@ pathfinding.cloud/
 │       ├── ssm/
 │       ├── cloudformation/
 │       └── [other services]/
-├── website/                # Website files (deployed to GitHub Pages)
+├── docs/                   # Website files (deployed to GitHub Pages)
 │   ├── index.html          # Landing page
 │   ├── 404.html            # SPA routing handler
 │   ├── paths/
@@ -85,11 +85,11 @@ pathfinding.cloud/
 │   └── dev-server.py       # Local development server (SPA routing support)
 ├── scripts/
 │   ├── validate-schema.py  # Schema validation
-│   └── generate-json.py    # YAML to JSON conversion (outputs to website/)
+│   └── generate-json.py    # YAML to JSON conversion (outputs to docs/)
 ├── .github/
 │   └── workflows/          # CI/CD automation
 │       ├── validate.yml    # PR validation
-│       └── deploy.yml      # GitHub Pages deployment (deploys website/ dir)
+│       └── deploy.yml      # GitHub Pages deployment (deploys docs/ dir)
 ├── .claude/
 │   └── CLAUDE.md           # AI assistant guidelines (anti-patterns, style)
 ├── SCHEMA.md               # Complete schema documentation
@@ -165,12 +165,12 @@ python scripts/validate-schema.py data/paths/
 python scripts/generate-json.py
 
 # Start local development server (required for SPA routing)
-cd website && python3 dev-server.py
+cd docs && python3 dev-server.py
 
 # Visit http://localhost:8888 in your browser
 ```
 
-**Note:** The website uses client-side routing (SPA). Always use `website/dev-server.py` for local testing rather than opening `index.html` directly, as direct file access won't support routing features.
+**Note:** The website uses client-side routing (SPA). Always use `docs/dev-server.py` for local testing rather than opening `index.html` directly, as direct file access won't support routing features.
 
 ### Validation
 
