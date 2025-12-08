@@ -243,35 +243,10 @@ recommendation: |
   Monitor use of this sensitive permission using CloudSIEM detections, and look for usage anomalies.
 ```
 
-#### `discoveredBy` (object)
-Information about who discovered this escalation path. **This field is required.**
-
-**Note:** This field is being superseded by `discoveryAttribution` for richer attribution support. Both fields are currently supported for backward compatibility.
-
-Fields:
-- `name` (string, required): Researcher's name (use "Unknown" if not known)
-- `organization` (string, optional): Organization or company (use "Unknown" if not known)
-- `date` (string, optional): Year discovered (YYYY format)
-
-Example:
-```yaml
-discoveredBy:
-  name: "Spencer Gietzen"
-  organization: "Rhino Security Labs"
-  date: "2019"
-```
-
-If attribution is unknown:
-```yaml
-discoveredBy:
-  name: "Unknown"
-  organization: "Unknown"
-```
-
-#### `discoveryAttribution` (object, optional)
+#### `discoveryAttribution` (object)
 Rich attribution information supporting primary discovery, derivative relationships, and original source tracking. This field allows documenting complex attribution scenarios including derivative work and multi-level attribution chains.
 
-**Note:** When `discoveryAttribution` is present, it will be displayed on the website instead of `discoveredBy`. The `discoveredBy` field is still required for backward compatibility.
+**This is the preferred attribution format.** All new paths should use `discoveryAttribution`.
 
 The `discoveryAttribution` object contains up to three sub-objects:
 
@@ -831,10 +806,12 @@ recommendation: |
   few principals that need it. Monitor use of this sensitive permission using
   CloudSIEM detections, and look for usage anomalies.
 
-discoveredBy:
-  name: "Spencer Gietzen"
-  organization: "Rhino Security Labs"
-  date: "2019"
+discoveryAttribution:
+  firstDocumented:
+    author: "Spencer Gietzen"
+    organization: "Rhino Security Labs"
+    date: "2019"
+    link: "https://rhinosecuritylabs.com/aws/aws-privilege-escalation-methods-mitigation/"
 
 references:
   - title: "AWS Privilege Escalation Methods and Mitigation"

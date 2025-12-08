@@ -74,7 +74,7 @@ Check these tools in order of priority (most comprehensive detection engines fir
    ```
 
 5. **Use the Edit tool to add the `detectionTools` section to the YAML file**:
-   - Add after the `references` section (or after `discoveredBy` if no references exist)
+   - Add after the `references` section (or after `discoveryAttribution` if no references exist)
    - If NO tools support detection, omit this field entirely (it's optional)
    - Only include tools that you've verified actually detect this specific path
    - Use lowercase tool names as keys: `pmapper`, `cloudsplaining`, `pacu`, `prowler`

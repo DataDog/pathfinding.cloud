@@ -144,10 +144,12 @@ exploitationSteps:
       description: Launch EC2 instance with privileged instance profile
 recommendation: |
   Restrict the `iam:PassRole` permission using the principle of least privilege.
-discoveredBy:
-  name: Spencer Gietzen
-  organization: Rhino Security Labs
-  date: '2019'
+discoveryAttribution:
+  firstDocumented:
+    author: Spencer Gietzen
+    organization: Rhino Security Labs
+    date: 2019
+    link: https://rhinosecuritylabs.com/aws/aws-privilege-escalation-methods-mitigation/
 ```
 
 ## Field-Specific Guidelines
@@ -229,12 +231,10 @@ learningEnvironments:
 See [SCHEMA.md#discoveryattribution-array-of-objects-optional](../SCHEMA.md#discoveryattribution-array-of-objects-optional) for complete specification.
 
 **When to use discoveryAttribution:**
-- When an attack path has multiple sources of attribution
-- When an attack path is a derivative of another path
-- When you need to provide links to original sources
-- When an attack path was first documented on pathfinding.cloud
-
-**Note:** Both `discoveredBy` (required) and `discoveryAttribution` (optional) are supported. When `discoveryAttribution` is present, the website displays it instead of `discoveredBy`.
+- Always - this is the required attribution format for all paths
+- Documents who first discovered or documented the path
+- Supports derivative relationships and multi-level attribution chains
+- Provides links to original sources
 
 **Quick reference for single attribution:**
 ```yaml

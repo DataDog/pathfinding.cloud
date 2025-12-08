@@ -3,9 +3,11 @@ name: glue:UpdateDevEndpoint
 category: access-resource
 services:
 - glue
-description: A principal with `glue:UpdateDevEndpoint` can update an existing Glue development endpoint to add their SSH public
-  key, granting them SSH access to the endpoint. Since the endpoint executes with the permissions of its attached IAM role,
-  the attacker gains the privileges of that role. This path doesn't require `iam:PassRole` as the role is already attached.
+description: A principal with `glue:UpdateDevEndpoint` can update an existing Glue
+  development endpoint to add their SSH public key, granting them SSH access to the
+  endpoint. Since the endpoint executes with the permissions of its attached IAM role,
+  the attacker gains the privileges of that role. This path doesn't require `iam:PassRole`
+  as the role is already attached.
 prerequisites:
   admin:
   - A Glue development endpoint must already exist
@@ -18,41 +20,30 @@ exploitationSteps:
     command: aws glue get-dev-endpoints
     description: List existing Glue development endpoints and their attached roles
   - step: 2
-    command: |
-      aws glue update-dev-endpoint --endpoint-name TARGET_ENDPOINT \
-        --add-public-keys "$(cat ~/.ssh/id_rsa.pub)"
+    command: "aws glue update-dev-endpoint --endpoint-name TARGET_ENDPOINT \\\n  --add-public-keys\
+      \ \"$(cat ~/.ssh/id_rsa.pub)\"\n"
     description: Add your SSH public key to an existing privileged dev endpoint
   - step: 3
     command: aws glue get-dev-endpoint --endpoint-name TARGET_ENDPOINT
     description: Retrieve the endpoint address
   - step: 4
     command: ssh glue@ENDPOINT_ADDRESS
-    description: SSH into the dev endpoint and execute code with the endpoint's role permissions
-recommendation: |
-  Restrict access to `glue:UpdateDevEndpoint` using the principle of least privilege.
+    description: SSH into the dev endpoint and execute code with the endpoint's role
+      permissions
+recommendation: "Restrict access to `glue:UpdateDevEndpoint` using the principle of\
+  \ least privilege.\n\n```json\n{\n  \"Effect\": \"Allow\",\n  \"Action\": \"glue:UpdateDevEndpoint\"\
+  ,\n  \"Resource\": \"arn:aws:glue:REGION:ACCOUNT_ID:devEndpoint/SpecificEndpoint\"\
+  \n}\n```\n\nAdditional controls:\n- Monitor CloudTrail for UpdateDevEndpoint API\
+  \ calls\n- Alert on public key additions to dev endpoints\n- Regularly audit dev\
+  \ endpoint SSH keys\n- Implement automated remediation for unauthorized key additions\n\
+  - Consider using session-based access instead of SSH keys\n"
+limitations: 'This path provides administrative access only if the target resource''s
+  execution role has administrative permissions. The attacker gains whatever permissions
+  the resource''s role has. If the role has limited permissions, the attacker gains
+  limited access. However, even limited access may enable multi-hop attacks or access
+  to sensitive data.
 
-  ```json
-  {
-    "Effect": "Allow",
-    "Action": "glue:UpdateDevEndpoint",
-    "Resource": "arn:aws:glue:REGION:ACCOUNT_ID:devEndpoint/SpecificEndpoint"
-  }
-  ```
-
-  Additional controls:
-  - Monitor CloudTrail for UpdateDevEndpoint API calls
-  - Alert on public key additions to dev endpoints
-  - Regularly audit dev endpoint SSH keys
-  - Implement automated remediation for unauthorized key additions
-  - Consider using session-based access instead of SSH keys
-
-limitations: |
-  This path provides administrative access only if the target resource's execution role has administrative permissions. The attacker gains whatever permissions the resource's role has. If the role has limited permissions, the attacker gains limited access. However, even limited access may enable multi-hop attacks or access to sensitive data.
-
-discoveredBy:
-  name: Spencer Gietzen
-  organization: Rhino Security Labs
-  date: "2018"
+  '
 discoveryAttribution:
   firstDocumented:
     author: Spencer Gietzen
@@ -75,139 +66,176 @@ relatedPaths:
 - ssm-001
 - ec2-002
 detectionTools:
-  cloudsplaining: https://github.com/salesforce/cloudsplaining/blob/master/cloudsplaining/shared/constants.py#L166
-  pacu: https://github.com/RhinoSecurityLabs/pacu/blob/master/pacu/modules/iam__privesc_scan/main.py#L471
-  prowler: https://github.com/prowler-cloud/prowler/blob/master/prowler/providers/aws/services/iam/lib/privilege_escalation.py#L69
+  cloudsplaining: https://github.com/salesforce/cloudsplaining/blob/7f82e7ab0a1a714d20a69b1d0b892e4702754e6b/cloudsplaining/shared/constants.py#L159
+  pacu: https://github.com/RhinoSecurityLabs/pacu/blob/50e7ad2d885b7ab4bc130f44b798ca85ed4d7a91/pacu/modules/iam__privesc_scan/main.py#L468
+  prowler: https://github.com/prowler-cloud/prowler/blob/49c75cc4180e2304747d8fe4bd1b16dd38929d07/prowler/providers/aws/services/iam/lib/privilege_escalation.py#L69
 learningEnvironments:
   pathfinder-labs:
     type: open-source
     githubLink: https://github.com/DataDog/pathfinder-labs
-    scenario: "privesc-one-hop/to-admin/glue-updatedevendpoint"
-    description: "Deploy Terraform into your own AWS account to practice this attack path"
+    scenario: privesc-one-hop/to-admin/glue-updatedevendpoint
+    description: Deploy Terraform into your own AWS account to practice this attack
+      path
   iam-vulnerable:
     type: open-source
     githubLink: https://github.com/BishopFox/iam-vulnerable
     scenario: Glue-UpdateExistingGlueDevEndpoint
-    description: "Deploy Terraform into your own AWS account and practice individual exploitation paths"
+    description: Deploy Terraform into your own AWS account and practice individual
+      exploitation paths
   cloudgoat:
     type: open-source
     githubLink: https://github.com/RhinoSecurityLabs/cloudgoat
     scenario: glue_privesc
-    description: "Deploy vulnerable infrastructure using CloudGoat to practice AWS Glue attacks including dev endpoint exploitation"
+    description: Deploy vulnerable infrastructure using CloudGoat to practice AWS
+      Glue attacks including dev endpoint exploitation
 attackVisualization:
   nodes:
-    - id: start
-      label: Starting Principal
-      type: principal
-      description: |
-        The principal with glue:UpdateDevEndpoint permission. Can be an IAM user or role. This principal can modify existing Glue development endpoints to add their SSH public key.
+  - id: start
+    label: Starting Principal
+    type: principal
+    description: 'The principal with glue:UpdateDevEndpoint permission. Can be an
+      IAM user or role. This principal can modify existing Glue development endpoints
+      to add their SSH public key.
 
-    - id: dev_endpoint
-      label: Existing Glue Dev Endpoint
-      type: resource
-      description: |
-        An existing Glue development endpoint that can be accessed via SSH. The endpoint executes with the permissions of its attached IAM role. The attacker updates this endpoint to add their SSH public key, granting them SSH access.
+      '
+  - id: dev_endpoint
+    label: Existing Glue Dev Endpoint
+    type: resource
+    description: 'An existing Glue development endpoint that can be accessed via SSH.
+      The endpoint executes with the permissions of its attached IAM role. The attacker
+      updates this endpoint to add their SSH public key, granting them SSH access.
 
-    - id: target_role
-      label: Target Role
-      type: principal
-      description: |
-        IAM role attached to the Glue development endpoint. This role must trust glue.amazonaws.com to assume it. When the attacker SSHs into the endpoint, they can execute code and make AWS API calls with this role's permissions.
+      '
+  - id: target_role
+    label: Target Role
+    type: principal
+    description: 'IAM role attached to the Glue development endpoint. This role must
+      trust glue.amazonaws.com to assume it. When the attacker SSHs into the endpoint,
+      they can execute code and make AWS API calls with this role''s permissions.
 
-    - id: ssh_access
-      label: SSH into Endpoint
-      type: payload
-      color: '#99ccff'
-      description: |
-        After adding the SSH public key to the dev endpoint, the attacker can SSH into it and execute commands. The endpoint's AWS credentials are available in the environment, allowing the attacker to make AWS API calls with the target role's permissions.
+      '
+  - id: ssh_access
+    label: SSH into Endpoint
+    type: payload
+    color: '#99ccff'
+    description: 'After adding the SSH public key to the dev endpoint, the attacker
+      can SSH into it and execute commands. The endpoint''s AWS credentials are available
+      in the environment, allowing the attacker to make AWS API calls with the target
+      role''s permissions.
 
-        Command:
-        ```bash
-        ssh glue@ENDPOINT_ADDRESS
-        ```
 
-        Once connected, the attacker can use the AWS CLI or SDKs to interact with AWS services using the endpoint's role credentials.
+      Command:
 
-    - id: admin
-      label: Effective Administrator
-      type: outcome
-      description: |
-        If the target role has AdministratorAccess or equivalent permissions, the attacker gains full administrative access to the AWS account by executing commands from within the Glue dev endpoint.
+      ```bash
 
-    - id: some_perms
-      label: Check for Additional Access
-      type: outcome
-      color: '#ffeb99'
-      description: |
-        If the target role has some elevated permissions but not full admin, the attacker gains partial privilege escalation. This could include access to sensitive data (S3, RDS, DynamoDB) or permissions that enable additional privilege escalation paths.
+      ssh glue@ENDPOINT_ADDRESS
 
-    - id: no_access
-      label: No Additional Access
-      type: outcome
-      color: '#cccccc'
-      description: |
-        If the target role only has minimal permissions or no interesting permissions beyond what the starting principal already had, the privilege escalation provides limited value.
+      ```
 
+
+      Once connected, the attacker can use the AWS CLI or SDKs to interact with AWS
+      services using the endpoint''s role credentials.
+
+      '
+  - id: admin
+    label: Effective Administrator
+    type: outcome
+    description: 'If the target role has AdministratorAccess or equivalent permissions,
+      the attacker gains full administrative access to the AWS account by executing
+      commands from within the Glue dev endpoint.
+
+      '
+  - id: some_perms
+    label: Check for Additional Access
+    type: outcome
+    color: '#ffeb99'
+    description: 'If the target role has some elevated permissions but not full admin,
+      the attacker gains partial privilege escalation. This could include access to
+      sensitive data (S3, RDS, DynamoDB) or permissions that enable additional privilege
+      escalation paths.
+
+      '
+  - id: no_access
+    label: No Additional Access
+    type: outcome
+    color: '#cccccc'
+    description: 'If the target role only has minimal permissions or no interesting
+      permissions beyond what the starting principal already had, the privilege escalation
+      provides limited value.
+
+      '
   edges:
-    - from: start
-      to: dev_endpoint
-      label: glue:UpdateDevEndpoint
-      description: |
-        Update an existing Glue development endpoint to add the attacker's SSH public key. This grants SSH access to the endpoint without requiring iam:PassRole since the role is already attached.
+  - from: start
+    to: dev_endpoint
+    label: glue:UpdateDevEndpoint
+    description: "Update an existing Glue development endpoint to add the attacker's\
+      \ SSH public key. This grants SSH access to the endpoint without requiring iam:PassRole\
+      \ since the role is already attached.\n\nCommand:\n```bash\naws glue update-dev-endpoint\
+      \ \\\n  --endpoint-name TARGET_ENDPOINT \\\n  --add-public-keys \"$(cat ~/.ssh/id_rsa.pub)\"\
+      \n```\n\nThe endpoint must already exist with an IAM role attached. Use glue:GetDevEndpoints\
+      \ to discover available endpoints and their roles.\n"
+  - from: dev_endpoint
+    to: target_role
+    label: Endpoint executes with role
+    description: 'The Glue development endpoint automatically executes with the permissions
+      of its attached IAM role. The endpoint''s environment includes AWS credentials
+      for this role, accessible to any code executed within the endpoint.
 
-        Command:
-        ```bash
-        aws glue update-dev-endpoint \
-          --endpoint-name TARGET_ENDPOINT \
-          --add-public-keys "$(cat ~/.ssh/id_rsa.pub)"
-        ```
+      '
+  - from: target_role
+    to: ssh_access
+    label: SSH into endpoint
+    description: 'After adding the SSH public key, retrieve the endpoint address and
+      SSH into it. Once connected, the attacker can execute AWS CLI commands or run
+      scripts that leverage the target role''s permissions.
 
-        The endpoint must already exist with an IAM role attached. Use glue:GetDevEndpoints to discover available endpoints and their roles.
 
-    - from: dev_endpoint
-      to: target_role
-      label: Endpoint executes with role
-      description: |
-        The Glue development endpoint automatically executes with the permissions of its attached IAM role. The endpoint's environment includes AWS credentials for this role, accessible to any code executed within the endpoint.
+      Commands:
 
-    - from: target_role
-      to: ssh_access
-      label: SSH into endpoint
-      description: |
-        After adding the SSH public key, retrieve the endpoint address and SSH into it. Once connected, the attacker can execute AWS CLI commands or run scripts that leverage the target role's permissions.
+      ```bash
 
-        Commands:
-        ```bash
-        # Get endpoint address
-        aws glue get-dev-endpoint --endpoint-name TARGET_ENDPOINT
+      # Get endpoint address
 
-        # SSH into endpoint
-        ssh glue@ENDPOINT_ADDRESS
-        ```
+      aws glue get-dev-endpoint --endpoint-name TARGET_ENDPOINT
 
-    - from: ssh_access
-      to: admin
-      label: If role has admin permissions
-      branch: A
-      condition: admin
-      description: |
-        If the target role has AdministratorAccess or equivalent permissions, the attacker gains full administrative access to the account from within the Glue dev endpoint.
 
-    - from: ssh_access
-      to: some_perms
-      label: If role has some permissions
-      branch: B
-      condition: some_permissions
-      description: |
-        If the target role has elevated permissions like S3 read/write, database access, or other privilege escalation permissions, the attacker can leverage these for further attacks or data exfiltration.
+      # SSH into endpoint
 
-    - from: ssh_access
-      to: no_access
-      label: If role has minimal permissions
-      branch: C
-      condition: no_permissions
-      description: |
-        If the target role only has minimal permissions (like basic Glue job execution), there may be limited value in the privilege escalation beyond the starting principal's existing access.
+      ssh glue@ENDPOINT_ADDRESS
+
+      ```
+
+      '
+  - from: ssh_access
+    to: admin
+    label: If role has admin permissions
+    branch: A
+    condition: admin
+    description: 'If the target role has AdministratorAccess or equivalent permissions,
+      the attacker gains full administrative access to the account from within the
+      Glue dev endpoint.
+
+      '
+  - from: ssh_access
+    to: some_perms
+    label: If role has some permissions
+    branch: B
+    condition: some_permissions
+    description: 'If the target role has elevated permissions like S3 read/write,
+      database access, or other privilege escalation permissions, the attacker can
+      leverage these for further attacks or data exfiltration.
+
+      '
+  - from: ssh_access
+    to: no_access
+    label: If role has minimal permissions
+    branch: C
+    condition: no_permissions
+    description: 'If the target role only has minimal permissions (like basic Glue
+      job execution), there may be limited value in the privilege escalation beyond
+      the starting principal''s existing access.
+
+      '
 permissions:
   required:
   - permission: glue:UpdateDevEndpoint

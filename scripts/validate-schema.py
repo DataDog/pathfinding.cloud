@@ -24,7 +24,6 @@ REQUIRED_FIELDS = {
     'description': str,
     'exploitationSteps': (dict, list),  # dict (new format) or list (legacy)
     'recommendation': str,
-    'discoveredBy': dict,
 }
 
 # For backward compatibility during migration
@@ -43,6 +42,7 @@ OPTIONAL_FIELDS = {
     'toolSupport': dict,  # DEPRECATED in v1.3.0, kept for backward compatibility
     'attackVisualization': (dict, str),  # dict (new structured format) or str (legacy Mermaid)
     'discoveryAttribution': (dict, list),  # dict (object format) or list (legacy array format)
+    'discoveredBy': dict,  # DEPRECATED: Being replaced by discoveryAttribution
 }
 
 ALLOWED_CATEGORIES = [
@@ -730,12 +730,12 @@ def validate_file(file_path: str) -> Tuple[bool, List[str]]:
         except ValidationError as e:
             errors.append(str(e))
 
-        try:
-            validate_discovered_by(data['discoveredBy'])
-        except ValidationError as e:
-            errors.append(str(e))
-
         # Validate optional fields if present
+        if 'discoveredBy' in data:
+            try:
+                validate_discovered_by(data['discoveredBy'])
+            except ValidationError as e:
+                errors.append(str(e))
         if 'prerequisites' in data:
             try:
                 validate_prerequisites(data['prerequisites'])

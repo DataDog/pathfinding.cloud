@@ -72,12 +72,14 @@ ls data/paths/{service}/ | sort | tail -n 1
 
 **Include placeholders for enrichment:**
 ```yaml
-discoveredBy:
-  name: Unknown
+discoveryAttribution:
+  firstDocumented:
+    source: Unknown
 references: []
 ```
 
 **Omit these optional fields** (enrichment agents will add):
+- `discoveryAttribution` (attribution agent will enhance with proper details)
 - `attackVisualization` (add-vis agent)
 - `learningEnvironments` (learning-environments agent)
 - `detectionTools` (detection-tools agent)
@@ -175,7 +177,7 @@ Can you task the add-vis, attribution, learning-environments, and detection-tool
 2. **attribution agent**:
    - Researches who discovered this technique
    - Finds relevant references (blog posts, HackTricks, etc.)
-   - Uses Edit tool to replace `discoveredBy` placeholder
+   - Uses Edit tool to replace `discoveryAttribution` placeholder with proper structure
    - Uses Edit tool to replace empty `references` array
 
 3. **learning-environments agent**:

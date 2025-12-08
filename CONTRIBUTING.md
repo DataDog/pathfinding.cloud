@@ -67,10 +67,12 @@ recommendation: |
   Security recommendations for preventing and detecting this escalation path.
   Include monitoring strategies and best practices.
 
-discoveredBy:
-  name: "Your Name"
-  organization: "Your Organization (optional)"
-  date: "2024"
+discoveryAttribution:
+  firstDocumented:
+    author: "Your Name"
+    organization: "Your Organization (optional)"
+    date: 2024
+    link: "https://example.com/your-research"
 
 references:
   - title: "Blog Post Title"
@@ -182,10 +184,11 @@ Must be one of:
 - Include monitoring and detection strategies
 - Reference the principle of least privilege
 
-#### `discoveredBy` (optional but encouraged)
-- Credit the original researcher
+#### `discoveryAttribution` (required)
+- Credit the original researcher or source
 - Include organization if applicable
-- Add year of discovery
+- Add year of discovery and link to source
+- For derivatives, include `derivativeOf` and `ultimateOrigin` fields
 
 #### `references` (encouraged)
 - Link to blog posts, papers, or documentation
@@ -240,10 +243,12 @@ recommendation: |
   Restrict iam:CreatePolicyVersion to only necessary principals.
   Monitor usage with CloudTrail and CloudSIEM detections.
 
-discoveredBy:
-  name: "Spencer Gietzen"
-  organization: "Rhino Security Labs"
-  date: "2019"
+discoveryAttribution:
+  firstDocumented:
+    author: "Spencer Gietzen"
+    organization: "Rhino Security Labs"
+    date: 2019
+    link: "https://rhinosecuritylabs.com/aws/aws-privilege-escalation-methods-mitigation/"
 
 learningEnvironments:
   iam-vulnerable:
@@ -307,10 +312,12 @@ recommendation: |
   Restrict iam:PassRole with condition keys to limit which roles can be passed
   to Lambda. Monitor Lambda function creation and invocation in CloudTrail.
 
-discoveredBy:
-  name: "Spencer Gietzen"
-  organization: "Rhino Security Labs"
-  date: "2019"
+discoveryAttribution:
+  firstDocumented:
+    author: "Spencer Gietzen"
+    organization: "Rhino Security Labs"
+    date: 2019
+    link: "https://rhinosecuritylabs.com/aws/aws-privilege-escalation-methods-mitigation/"
 
 references:
   - title: "AWS Privilege Escalation Methods"

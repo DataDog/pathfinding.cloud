@@ -162,7 +162,7 @@ For complete field specifications, see [SCHEMA.md](SCHEMA.md).
 | `description` | string | How the privilege escalation works | [SCHEMA.md](SCHEMA.md#description-string) |
 | `exploitationSteps` | object | Step-by-step commands for different tools | [SCHEMA.md](SCHEMA.md#exploitationsteps-object) |
 | `recommendation` | string | Prevention and detection strategies | [SCHEMA.md](SCHEMA.md#recommendation-string) |
-| `discoveredBy` | object | Attribution info (name, org, date) | [SCHEMA.md](SCHEMA.md#discoveredby-object) |
+| `discoveryAttribution` | object | Rich attribution info (author, source, derivatives) | [SCHEMA.md](SCHEMA.md#discoveryattribution-object) |
 
 ### Optional Fields (Commonly Used)
 
@@ -172,7 +172,6 @@ For complete field specifications, see [SCHEMA.md](SCHEMA.md).
 | `limitations` | string | When admin vs limited access is achieved | [SCHEMA.md](SCHEMA.md#limitations-string-optional) |
 | `references` | array | External links and documentation | [SCHEMA.md](SCHEMA.md#references-array-of-objects) |
 | `relatedPaths` | array | Related path IDs | [SCHEMA.md](SCHEMA.md#relatedpaths-array-of-strings) |
-| `discoveryAttribution` | array | Rich attribution info with multiple sources | [SCHEMA.md](SCHEMA.md#discoveryattribution-array-of-objects-optional) |
 | `detectionTools` | object | Open source tools that detect this path | [SCHEMA.md](SCHEMA.md#detectiontools-object) |
 | `learningEnvironments` | object | Practice labs and CTF environments | [SCHEMA.md](SCHEMA.md#learningenvironments-object) |
 | `attackVisualization` | object | Interactive attack flow diagram | [SCHEMA.md](SCHEMA.md#attackvisualization-object) |
@@ -189,13 +188,12 @@ While not enforced by validation, this order improves readability:
 6. `recommendation`
 7. `limitations` (if applicable - especially for PassRole paths)
 8. `nextSteps` (if applicable - guidance for multi-hop attacks)
-9. `discoveredBy` (required - kept for backward compatibility)
-10. `discoveryAttribution` (optional - preferred over discoveredBy for rich attribution)
-11. `references` (if available)
-12. `relatedPaths` (if applicable)
-13. `detectionTools` (if available - added by detection-tools agent)
-14. `learningEnvironments` (if available - added by learning-environments agent)
-15. `attackVisualization` (if available - added by add-vis agent)
+9. `discoveryAttribution` (required - rich attribution with author/source/derivatives)
+10. `references` (if available)
+11. `relatedPaths` (if applicable)
+12. `detectionTools` (if available - added by detection-tools agent)
+13. `learningEnvironments` (if available - added by learning-environments agent)
+14. `attackVisualization` (if available - added by add-vis agent)
 
 ## Common Development Tasks
 

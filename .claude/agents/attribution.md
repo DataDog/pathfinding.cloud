@@ -30,19 +30,15 @@ Your main jobs are:
 4. Determine if this path is a derivative of another existing path in the repository
    - Check if a more general or specific version of this path already exists
    - Look for paths with similar permission combinations
-5. Format the findings according to @SCHEMA.md. You must add both `discoveredBy` (required for backward compatibility) and `discoveryAttribution` (optional but strongly preferred).
+5. Format the findings according to @SCHEMA.md. You must add `discoveryAttribution` (required).
 
-   **IMPORTANT:** The `discoveryAttribution` field is now an OBJECT (not an array) with three possible sub-objects:
+   **IMPORTANT:** The `discoveryAttribution` field is an OBJECT (not an array) with three possible sub-objects:
    - `firstDocumented` (required): Who first documented THIS specific path
    - `derivativeOf` (optional): What path this is derived from and the modification
    - `ultimateOrigin` (optional): The original discovery if this is a multi-level derivative (skip if same as derivativeOf.pathId)
 
    **For paths with single, clear attribution (original discovery):**
    ```yaml
-   discoveredBy:
-     name: "Nick Spagnola"
-     organization: "Rhino Security Labs"
-     date: "2020"
    discoveryAttribution:
      firstDocumented:
        author: Nick Spagnola
@@ -56,10 +52,6 @@ Your main jobs are:
 
    **For derivative paths documented by external sources:**
    ```yaml
-   discoveredBy:
-     name: "Nick Spagnola"  # Original discoverer of the ultimate origin
-     organization: "Rhino Security Labs"
-     date: "2020"
    discoveryAttribution:
      firstDocumented:
        source: HackTricks  # Use 'source' for organizations/websites
@@ -82,10 +74,6 @@ Your main jobs are:
 
    **For paths first documented on pathfinding.cloud:**
    ```yaml
-   discoveredBy:
-     name: "Seth Art"
-     organization: "Datadog"
-     date: "2025"
    discoveryAttribution:
      firstDocumented:
        author: Seth Art
@@ -110,7 +98,6 @@ Your main jobs are:
    - Use `source` for organizations/websites (e.g., "HackTricks", "pathfinding.cloud")
    - Do NOT use both `author` and `source` - pick one
    - Skip `ultimateOrigin` if it would be the same as `derivativeOf.pathId`
-   - The `discoveredBy` field should reference the ORIGINAL discoverer of the ultimate origin (for backward compatibility)
    - Use year-only dates (2018, 2020, 2025) not full dates
    - The `modification` field should clearly explain what makes this path different from its source
 
@@ -127,10 +114,8 @@ Your main jobs are:
    - Do NOT add practice environments here (those go in `learningEnvironments`)
    - Order: Original research first, then derivative documentation
 
-5. **Use the Edit tool to add `discoveredBy`, `discoveryAttribution`, and `references` sections to the YAML file**
-   - Always add `discoveredBy` first (required for backward compatibility)
-   - Add `discoveryAttribution` when you have attribution information
-   - If discoverer is unknown, use: `discoveredBy: {name: "Unknown", organization: "Unknown"}`
+5. **Use the Edit tool to add `discoveryAttribution` and `references` sections to the YAML file**
+   - Add `discoveryAttribution` with proper structure (firstDocumented, derivativeOf, ultimateOrigin)
    - Add after the `recommendation` or `limitations` section
    - Keep `references` focused on attack path documentation (not tools or practice environments)
 6. Validate your changes: `python3 scripts/validate-schema.py data/paths/{service}/{file}.yaml`

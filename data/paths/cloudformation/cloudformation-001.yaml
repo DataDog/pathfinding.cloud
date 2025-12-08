@@ -4,10 +4,11 @@ category: service-passrole
 services:
 - iam
 - cloudformation
-description: A principal with `iam:PassRole` and `cloudformation:CreateStack` can launch a CloudFormation template that creates
-  AWS resources. The template executes with the permissions of the passed IAM role. This allows creation of resources controlled
-  by the attacker, such as IAM users, Lambda functions, or EC2 instances. The level of access gained depends on the permissions
-  of the available roles.
+description: A principal with `iam:PassRole` and `cloudformation:CreateStack` can
+  launch a CloudFormation template that creates AWS resources. The template executes
+  with the permissions of the passed IAM role. This allows creation of resources controlled
+  by the attacker, such as IAM users, Lambda functions, or EC2 instances. The level
+  of access gained depends on the permissions of the available roles.
 prerequisites:
   admin:
   - A role must exist that trusts cloudformation.amazonaws.com to assume it
@@ -17,50 +18,40 @@ prerequisites:
 exploitationSteps:
   awscli:
   - step: 1
-    command: aws cloudformation create-stack --stack-name privesc-stack --template-body file://exploit-template.yaml --capabilities
-      CAPABILITY_IAM --role-arn arn:aws:iam::ACCOUNT_ID:role/PRIVILEGED_ROLE
-    description: Create a CloudFormation stack with a template that creates privileged resources
+    command: aws cloudformation create-stack --stack-name privesc-stack --template-body
+      file://exploit-template.yaml --capabilities CAPABILITY_IAM --role-arn arn:aws:iam::ACCOUNT_ID:role/PRIVILEGED_ROLE
+    description: Create a CloudFormation stack with a template that creates privileged
+      resources
   - step: 2
     command: aws cloudformation describe-stacks --stack-name privesc-stack
     description: Monitor stack creation progress
   - step: 3
     command: '# Access the newly created resources (e.g., IAM user, Lambda function)'
     description: Use the elevated privileges of the created resources
-recommendation: |
-  High powered service roles + overly permissive `iam:PassRole` is what makes this privilege escalation path exploitable and impactful.
+recommendation: "High powered service roles + overly permissive `iam:PassRole` is\
+  \ what makes this privilege escalation path exploitable and impactful.\n\n- **Avoid\
+  \ administrative service roles** - Very rarely does a CloudFormation stack need\
+  \ administrative access. Use the principle of least privilege.\n- **Avoid granting\
+  \ `iam:PassRole` on all resources** - Whenever possible, restrict `iam:PassRole`\
+  \ to specific roles or specific services.\n\nUse IAM policy conditions to restrict\
+  \ which roles can be passed and to which services:\n\n```json\n{\n  \"Effect\":\
+  \ \"Allow\",\n  \"Action\": \"iam:PassRole\",\n  \"Resource\": \"arn:aws:iam::ACCOUNT_ID:role/SpecificCloudFormationRole\"\
+  ,\n  \"Condition\": {\n    \"StringEquals\": {\n      \"iam:PassedToService\": \"\
+  cloudformation.amazonaws.com\"\n    }\n  }\n}\n```\n\n- Monitor CloudTrail for unusual\
+  \ CloudFormation stack creation followed by immediate resource creation\n- Monitor\
+  \ CloudTrail for stack creation by principals who do not usually create stacks\n\
+  - Monitor CloudTrail for roles being passed to CloudFormation that haven't been\
+  \ used before\n- Monitor and alert on CloudFormation stack creation with privileged\
+  \ roles\n- Regularly audit CloudFormation stacks for excessive IAM permissions\n\
+  - Regularly audit all IAM roles that trust the CloudFormation service and down-scope\
+  \ any roles with administrative access\n"
+limitations: 'This path provides administrative access only if the passed role has
+  administrative permissions (e.g., AdministratorAccess or an equivalent custom policy).
+  If only limited roles are available, you gain access limited to those permissions.
+  However, even limited access may enable multi-hop attacks or access to sensitive
+  data.
 
-  - **Avoid administrative service roles** - Very rarely does a CloudFormation stack need administrative access. Use the principle of least privilege.
-  - **Avoid granting `iam:PassRole` on all resources** - Whenever possible, restrict `iam:PassRole` to specific roles or specific services.
-
-  Use IAM policy conditions to restrict which roles can be passed and to which services:
-
-  ```json
-  {
-    "Effect": "Allow",
-    "Action": "iam:PassRole",
-    "Resource": "arn:aws:iam::ACCOUNT_ID:role/SpecificCloudFormationRole",
-    "Condition": {
-      "StringEquals": {
-        "iam:PassedToService": "cloudformation.amazonaws.com"
-      }
-    }
-  }
-  ```
-
-  - Monitor CloudTrail for unusual CloudFormation stack creation followed by immediate resource creation
-  - Monitor CloudTrail for stack creation by principals who do not usually create stacks
-  - Monitor CloudTrail for roles being passed to CloudFormation that haven't been used before
-  - Monitor and alert on CloudFormation stack creation with privileged roles
-  - Regularly audit CloudFormation stacks for excessive IAM permissions
-  - Regularly audit all IAM roles that trust the CloudFormation service and down-scope any roles with administrative access
-
-limitations: |
-  This path provides administrative access only if the passed role has administrative permissions (e.g., AdministratorAccess or an equivalent custom policy). If only limited roles are available, you gain access limited to those permissions. However, even limited access may enable multi-hop attacks or access to sensitive data.
-
-discoveredBy:
-  name: Spencer Gietzen
-  organization: Rhino Security Labs
-  date: '2018'
+  '
 discoveryAttribution:
   firstDocumented:
     author: Spencer Gietzen
@@ -77,26 +68,27 @@ references:
 - title: HackTricks - AWS - Cloudformation Privesc
   url: https://cloud.hacktricks.wiki/en/pentesting-cloud/aws-security/aws-privilege-escalation/aws-cloudformation-privesc/index.html#iampassrole-cloudformationcreatestack
 - title: Well, That Escalated Quickly - Privesc 20
-  url: https://labs.bishopfox.com/tech-blog/privilege-escalation-in-aws  
+  url: https://labs.bishopfox.com/tech-blog/privilege-escalation-in-aws
 relatedPaths:
 - ec2-001
 - lambda-001
 detectionTools:
-  pmapper: https://github.com/nccgroup/PMapper/blob/master/principalmapper/graphing/cloudformation_edges.py#L109-L132
-  cloudsplaining: https://github.com/salesforce/cloudsplaining/blob/master/cloudsplaining/shared/constants.py#L155-L157
-  pacu: https://github.com/RhinoSecurityLabs/pacu/blob/master/pacu/modules/iam__privesc_scan/main.py#L465-L470
-  prowler: https://github.com/prowler-cloud/prowler/blob/master/prowler/providers/aws/services/iam/lib/privilege_escalation.py#L68-L72
+  pmapper: https://github.com/nccgroup/PMapper/blob/91d2e60102bdadf346d77b60d90ddaa4a678f037/principalmapper/graphing/cloudformation_edges.py#L109-L132
+  cloudsplaining: https://github.com/salesforce/cloudsplaining/blob/7f82e7ab0a1a714d20a69b1d0b892e4702754e6b/cloudsplaining/shared/constants.py#L152
+  prowler: https://github.com/prowler-cloud/prowler/blob/49c75cc4180e2304747d8fe4bd1b16dd38929d07/prowler/providers/aws/services/iam/lib/privilege_escalation.py#L60
 learningEnvironments:
   pathfinder-labs:
     type: open-source
     githubLink: https://github.com/DataDog/pathfinder-labs
-    scenario: "privesc-one-hop/to-admin/iam-passrole-cloudformation"
-    description: "Deploy Terraform into your own AWS account to practice this attack path"
+    scenario: privesc-one-hop/to-admin/iam-passrole-cloudformation
+    description: Deploy Terraform into your own AWS account to practice this attack
+      path
   iam-vulnerable:
     type: open-source
     githubLink: https://github.com/BishopFox/iam-vulnerable
     scenario: CloudFormation-PassExistingRoleToCloudFormation
-    description: "Deploy Terraform into your own AWS account and practice individual exploitation paths"
+    description: Deploy Terraform into your own AWS account and practice individual
+      exploitation paths
 permissions:
   required:
   - permission: iam:PassRole
@@ -113,94 +105,134 @@ attackVisualization:
   - id: start
     label: Starting Principal
     type: principal
-    description: |
-      The starting principal (user or role) with `iam:PassRole` and `cloudformation:CreateStack` permissions. This principal will create a CloudFormation stack that executes with a privileged role's permissions.
+    description: 'The starting principal (user or role) with `iam:PassRole` and `cloudformation:CreateStack`
+      permissions. This principal will create a CloudFormation stack that executes
+      with a privileged role''s permissions.
+
+      '
   - id: cfn_stack
     label: New CloudFormation Stack
     type: resource
-    description: |
-      The newly created CloudFormation stack with a malicious template. The stack is created with `cloudformation:CreateStack` and configured to use a privileged IAM role via `iam:PassRole`. The template defines AWS resources to be created with the target role's permissions.
+    description: 'The newly created CloudFormation stack with a malicious template.
+      The stack is created with `cloudformation:CreateStack` and configured to use
+      a privileged IAM role via `iam:PassRole`. The template defines AWS resources
+      to be created with the target role''s permissions.
+
+      '
   - id: target_role
     label: Existing Role That Trusts the cloudformation Service
     type: principal
-    description: |
-      The privileged IAM role that is passed to the CloudFormation stack during creation. This role must trust cloudformation.amazonaws.com as a principal in its trust policy. When CloudFormation creates resources, it uses this role's permissions.
+    description: 'The privileged IAM role that is passed to the CloudFormation stack
+      during creation. This role must trust cloudformation.amazonaws.com as a principal
+      in its trust policy. When CloudFormation creates resources, it uses this role''s
+      permissions.
+
+      '
   - id: execute_template
     label: Execute Template Resources
     type: payload
     color: '#99ccff'
-    description: |
-      The CloudFormation template executes with the target role's permissions, creating AWS resources defined in the template. Common resources for privilege escalation include IAM users with access keys, Lambda functions, EC2 instances with User Data scripts, or IAM policies/roles that grant the starting principal elevated access.
+    description: 'The CloudFormation template executes with the target role''s permissions,
+      creating AWS resources defined in the template. Common resources for privilege
+      escalation include IAM users with access keys, Lambda functions, EC2 instances
+      with User Data scripts, or IAM policies/roles that grant the starting principal
+      elevated access.
+
+      '
   - id: admin_outcome
     label: Effective Administrator
     type: outcome
-    description: |
-      If the target role has administrative permissions (AdministratorAccess or equivalent), the CloudFormation template can create resources that grant the attacker full administrative access to the AWS account. For example, the template could create an IAM user with AdministratorAccess and access keys for the attacker.
+    description: 'If the target role has administrative permissions (AdministratorAccess
+      or equivalent), the CloudFormation template can create resources that grant
+      the attacker full administrative access to the AWS account. For example, the
+      template could create an IAM user with AdministratorAccess and access keys for
+      the attacker.
+
+      '
   - id: partial_outcome
     label: Check for Additional Access
     type: outcome
     color: '#ffeb99'
-    description: |
-      If the target role has some elevated permissions but not full admin, the CloudFormation template can create resources that grant partial privilege escalation. This could include access to sensitive data (S3, RDS, DynamoDB) or resources that enable additional privilege escalation techniques.
+    description: 'If the target role has some elevated permissions but not full admin,
+      the CloudFormation template can create resources that grant partial privilege
+      escalation. This could include access to sensitive data (S3, RDS, DynamoDB)
+      or resources that enable additional privilege escalation techniques.
+
+      '
   - id: minimal_outcome
     label: No Additional Access
     type: outcome
     color: '#cccccc'
-    description: |
-      If the target role only has minimal permissions or no interesting permissions, the CloudFormation template cannot create resources that provide meaningful additional access to the attacker. Limited usefulness for privilege escalation.
+    description: 'If the target role only has minimal permissions or no interesting
+      permissions, the CloudFormation template cannot create resources that provide
+      meaningful additional access to the attacker. Limited usefulness for privilege
+      escalation.
+
+      '
   edges:
   - from: start
     to: cfn_stack
     label: iam:PassRole + cloudformation:CreateStack
-    description: |
-      The attacker creates a new CloudFormation stack and passes a privileged role to it. The stack is created with a malicious template (YAML or JSON) that defines AWS resources to be provisioned.
-
-      Command:
-      ```bash
-      aws cloudformation create-stack \
-        --stack-name privesc-stack \
-        --template-body file://exploit-template.yaml \
-        --capabilities CAPABILITY_IAM \
-        --role-arn arn:aws:iam::ACCOUNT_ID:role/PRIVILEGED_ROLE
-      ```
-
-      The exploit-template.yaml contains resource definitions that will execute with the target role's permissions. Note the `--capabilities CAPABILITY_IAM` flag is required when the template creates IAM resources.
+    description: "The attacker creates a new CloudFormation stack and passes a privileged\
+      \ role to it. The stack is created with a malicious template (YAML or JSON)\
+      \ that defines AWS resources to be provisioned.\n\nCommand:\n```bash\naws cloudformation\
+      \ create-stack \\\n  --stack-name privesc-stack \\\n  --template-body file://exploit-template.yaml\
+      \ \\\n  --capabilities CAPABILITY_IAM \\\n  --role-arn arn:aws:iam::ACCOUNT_ID:role/PRIVILEGED_ROLE\n\
+      ```\n\nThe exploit-template.yaml contains resource definitions that will execute\
+      \ with the target role's permissions. Note the `--capabilities CAPABILITY_IAM`\
+      \ flag is required when the template creates IAM resources.\n"
   - from: cfn_stack
     to: target_role
     label: Stack assumes role
-    description: |
-      When the CloudFormation stack is created, the CloudFormation service automatically assumes the target role. All resource creation operations in the template execute with the permissions granted to this role.
+    description: 'When the CloudFormation stack is created, the CloudFormation service
+      automatically assumes the target role. All resource creation operations in the
+      template execute with the permissions granted to this role.
+
+      '
   - from: target_role
     to: execute_template
     label: CloudFormation provisions resources
-    description: |
-      CloudFormation provisions the resources defined in the template using the target role's permissions. The template can create any AWS resources the role has permissions for, such as IAM users with access keys, Lambda functions, EC2 instances, S3 buckets, or IAM policies and roles.
-
-      Monitor stack progress:
-      ```bash
-      aws cloudformation describe-stacks \
-        --stack-name privesc-stack
-      ```
-
-      The created resources can then be accessed by the attacker to gain elevated privileges.
+    description: "CloudFormation provisions the resources defined in the template\
+      \ using the target role's permissions. The template can create any AWS resources\
+      \ the role has permissions for, such as IAM users with access keys, Lambda functions,\
+      \ EC2 instances, S3 buckets, or IAM policies and roles.\n\nMonitor stack progress:\n\
+      ```bash\naws cloudformation describe-stacks \\\n  --stack-name privesc-stack\n\
+      ```\n\nThe created resources can then be accessed by the attacker to gain elevated\
+      \ privileges.\n"
   - from: execute_template
     to: admin_outcome
     label: If role has admin permissions
     branch: A
     condition: admin
-    description: |
-      If the target role has AdministratorAccess or equivalent administrative permissions, the CloudFormation template can create resources that grant the attacker full control over the AWS account. For example, the template could create an IAM user with AdministratorAccess policy attached and generate access keys that are output in the stack outputs or stored in an S3 bucket the attacker can access.
+    description: 'If the target role has AdministratorAccess or equivalent administrative
+      permissions, the CloudFormation template can create resources that grant the
+      attacker full control over the AWS account. For example, the template could
+      create an IAM user with AdministratorAccess policy attached and generate access
+      keys that are output in the stack outputs or stored in an S3 bucket the attacker
+      can access.
+
+      '
   - from: execute_template
     to: partial_outcome
     label: If role has some permissions
     branch: B
     condition: some_permissions
-    description: |
-      If the target role has elevated but non-administrative permissions, the CloudFormation template can create resources that grant partial privilege escalation. This might include Lambda functions with data access, EC2 instances with privileged instance profiles, or IAM policies that enable additional privilege escalation techniques. The attacker gains access through the newly created resources.
+    description: 'If the target role has elevated but non-administrative permissions,
+      the CloudFormation template can create resources that grant partial privilege
+      escalation. This might include Lambda functions with data access, EC2 instances
+      with privileged instance profiles, or IAM policies that enable additional privilege
+      escalation techniques. The attacker gains access through the newly created resources.
+
+      '
   - from: execute_template
     to: minimal_outcome
     label: If role has minimal permissions
     branch: C
     condition: no_permissions
-    description: |
-      If the target role only has minimal or non-sensitive permissions, the CloudFormation template cannot create resources that provide meaningful additional access. The privilege escalation attempt may not yield significant results, though even limited access could be useful for reconnaissance or as part of a multi-step attack chain.
+    description: 'If the target role only has minimal or non-sensitive permissions,
+      the CloudFormation template cannot create resources that provide meaningful
+      additional access. The privilege escalation attempt may not yield significant
+      results, though even limited access could be useful for reconnaissance or as
+      part of a multi-step attack chain.
+
+      '

