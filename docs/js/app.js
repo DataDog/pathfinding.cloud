@@ -8,6 +8,15 @@ let sortColumn = null;
 let sortDirection = 'asc'; // 'asc' or 'desc'
 let currentRoute = { view: 'list', pathId: null }; // Track current route
 
+// Category tooltips
+const categoryTooltips = {
+    'self-escalation': 'Modify your own permissions directly',
+    'lateral-movement': 'Gain access to a different principal',
+    'service-passrole': 'Pass a privileged role to a resource that executes code',
+    'access-resource': 'Modify existing resources to gain elevated access',
+    'credential-access': 'Read permissions that may expose credentials'
+};
+
 // DOM elements
 const pathsContainer = document.getElementById('paths-container');
 const searchInput = document.getElementById('search');
@@ -50,6 +59,7 @@ document.addEventListener('DOMContentLoaded', () => {
     initTheme();
     setupEventListeners();
     setupTabListeners();
+    setupInstantTooltips(); // Setup tooltips for detection circles and category chips
     loadPaths(); // This will call initRouter() when data is loaded
 });
 
@@ -554,7 +564,7 @@ function createPathCard(path) {
         <div class="path-card">
             <div class="path-card-header">
                 <span class="path-id">${path.id.toUpperCase()}</span>
-                <span class="path-category ${categoryClass}">${formatCategory(path.category)}</span>
+                <span class="path-category ${categoryClass}" data-category-tooltip="${categoryTooltips[path.category] || ''}">${formatCategory(path.category)}</span>
             </div>
             <div class="path-name">${escapeHtml(path.name)}</div>
             <div class="path-description">${escapeHtml(path.description)}</div>
@@ -605,13 +615,13 @@ function createPathTable(paths) {
                             </td>
                             <td class="table-name">${escapeHtml(path.name)}</td>
                             <td class="table-category">
-                                <span class="path-category ${categoryClass}">${formatCategory(path.category)}</span>
+                                <span class="path-category ${categoryClass}" data-category-tooltip="${categoryTooltips[path.category] || ''}">${formatCategory(path.category)}</span>
                             </td>
                             <td class="table-detection">
                                 ${detectionTools.length > 0 ?
                                     detectionTools.map(tool => {
                                         const toolInfo = toolMetadata[tool] || { name: tool };
-                                        return `<span class="detection-tool-circle" title="${toolInfo.name || tool}" data-tool="${tool}">${getToolInitials(tool)}</span>`;
+                                        return `<span class="detection-tool-circle" data-tool="${tool}" data-tool-name="${toolInfo.name || tool}">${getToolInitials(tool)}</span>`;
                                     }).join('')
                                     : '<span class="no-detection">—</span>'}
                             </td>
@@ -621,6 +631,64 @@ function createPathTable(paths) {
             </tbody>
         </table>
     `;
+}
+
+// Setup instant tooltips for detection circles and category chips
+let tooltipsInitialized = false;
+function setupInstantTooltips() {
+    // Only initialize once
+    if (tooltipsInitialized) return;
+    tooltipsInitialized = true;
+
+    // Create tooltip element (reuse single element)
+    const tooltip = document.createElement('div');
+    tooltip.className = 'detection-tooltip';
+    document.body.appendChild(tooltip);
+
+    // Use event delegation for hover on detection circles and category chips
+    document.body.addEventListener('mouseover', (e) => {
+        const circle = e.target.closest('.detection-tool-circle');
+        const category = e.target.closest('.path-category');
+
+        if (circle) {
+            const toolName = circle.getAttribute('data-tool-name');
+            if (toolName) {
+                tooltip.textContent = toolName;
+
+                // Position tooltip above the circle
+                const rect = circle.getBoundingClientRect();
+                tooltip.style.left = `${rect.left + rect.width / 2}px`;
+                tooltip.style.top = `${rect.top - 10}px`;
+                tooltip.style.transform = 'translate(-50%, -100%)';
+
+                // Show immediately
+                tooltip.classList.add('visible');
+            }
+        } else if (category) {
+            const categoryTooltip = category.getAttribute('data-category-tooltip');
+            if (categoryTooltip) {
+                tooltip.textContent = categoryTooltip;
+
+                // Position tooltip above the category chip
+                const rect = category.getBoundingClientRect();
+                tooltip.style.left = `${rect.left + rect.width / 2}px`;
+                tooltip.style.top = `${rect.top - 10}px`;
+                tooltip.style.transform = 'translate(-50%, -100%)';
+
+                // Show immediately
+                tooltip.classList.add('visible');
+            }
+        }
+    });
+
+    document.body.addEventListener('mouseout', (e) => {
+        const circle = e.target.closest('.detection-tool-circle');
+        const category = e.target.closest('.path-category');
+
+        if (circle || category) {
+            tooltip.classList.remove('visible');
+        }
+    });
 }
 
 // Handle path click with modifier keys
@@ -684,7 +752,7 @@ function showPathDetails(path) {
             </div>
             <div class="metadata-item">
                 <span class="metadata-label">Category:</span>
-                <span class="path-category category-${path.category}">${formatCategory(path.category)}</span>
+                <span class="path-category category-${path.category}" data-category-tooltip="${categoryTooltips[path.category] || ''}">${formatCategory(path.category)}</span>
             </div>
         </div>
 
