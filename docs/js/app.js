@@ -12,8 +12,8 @@ let currentRoute = { view: 'list', pathId: null }; // Track current route
 const categoryTooltips = {
     'self-escalation': 'Modify your own permissions directly',
     'lateral-movement': 'Gain access to a different principal',
-    'service-passrole': 'Pass a privileged role to a resource that executes code',
-    'access-resource': 'Modify existing resources to gain elevated access',
+    'service-passrole': 'Create a new resource. Pass a privileged role to it. Gain access to that role',
+    'access-resource': 'Modify an existing resource with an attached role, and gain access to that role',
     'credential-access': 'Read permissions that may expose credentials'
 };
 
