@@ -26,7 +26,7 @@ We welcome the following types of contributions:
 
 ### Step 2: Create the YAML File
 
-Use the template at [data/example-001.yaml] which includes all required and optional fields with detailed comments and formatting examples.
+Use the template at [example-001.yaml](data/example-001.yaml)  which includes all required and optional fields with detailed comments and formatting examples.
 
 ### Step 3: Validate Your File
 
@@ -156,11 +156,11 @@ Must be one of:
 - Uses structured format with `nodes` and `edges` arrays
 - Node types: `principal` (users/roles), `resource` (AWS resources), `payload` (attacker actions), `outcome` (results)
 - Supports conditional branching for different outcomes
-- See `data/example-001.yaml` for a complete example
+- See [example-001.yaml](data/example-001.yaml) for a complete example
 
 ## Examples
 
-Use the template at [data/example-001.yaml] or any of the existing paths to get started. 
+Use the template at [example-001.yaml](data/example-001.yaml)  or any of the existing paths to get started. 
 
 ## Pull Request Guidelines
 
