@@ -1,6 +1,6 @@
 # Contributing to pathfinding.cloud
 
-Thank you for your interest in contributing to pathfinding.cloud! This project aims to be the definitive source of truth for AWS IAM privilege escalation paths.
+Thank you for your interest in contributing to pathfinding.cloud! This project aims to be a comprehensive source of AWS IAM privilege escalation paths.
 
 ## How to Contribute
 
@@ -9,7 +9,7 @@ Thank you for your interest in contributing to pathfinding.cloud! This project a
 We welcome the following types of contributions:
 
 1. **New privilege escalation paths** - Document previously undiscovered or undocumented paths
-2. **Path variations** - Document nuances and variations of existing paths (e.g., different prerequisites)
+2. **Path variations** - Document nuances and variations of existing paths (e.g., different unique permissions combinations)
 3. **Corrections** - Fix errors in existing documentation
 4. **Enhancements** - Add detection rules, tool support, or additional references
 5. **Website improvements** - Enhance the user interface or functionality
@@ -20,79 +20,13 @@ We welcome the following types of contributions:
 
 - Use the format `{service}-{number}` where number is 3 digits
 - For PassRole combinations, use the service of the resource being created/manipulated
-  - Example: `iam:PassRole+ec2:RunInstances` → `ec2-001`
+  - Example: `iam:PassRole + ec2:RunInstances` → `ec2-001` (note: spaces around +)
 - Check existing files to find the next available number for your service
 - Create the file in `data/paths/{service}/{id}.yaml`
 
 ### Step 2: Create the YAML File
 
-Use the template below as a starting point:
-
-```yaml
-id: "service-001"
-name: "iam:Permission" # or "iam:Permission1 + service:Permission2" (note spaces around +)
-category: "self-escalation" # or lateral-movement, service-passrole, credential-access, access-resource
-services:
-  - iam
-  - service
-
-permissions:
-  required:
-    - permission: "iam:Permission"
-      resourceConstraints: "Description of resource requirements"
-  additional:
-    - permission: "iam:ListPermissions"
-      resourceConstraints: "Helpful for discovering resources"
-
-description: Clear explanation of how this privilege escalation works, what it accomplishes, and the end result for the attacker.
-
-prerequisites:
-  admin:
-    - "Description of condition needed for administrative access"
-  lateral:
-    - "Description of condition needed for lateral movement"
-
-exploitationSteps:
-  awscli:
-    - step: 1
-      command: |
-        aws service action --parameters
-      description: "What this step does"
-    - step: 2
-      command: |
-        aws service action --parameters
-      description: "What this step does"
-
-recommendation: |
-  Security recommendations for preventing and detecting this escalation path.
-  Include monitoring strategies and best practices.
-
-discoveryAttribution:
-  firstDocumented:
-    author: "Your Name"
-    organization: "Your Organization (optional)"
-    date: 2024
-    link: "https://example.com/your-research"
-
-references:
-  - title: "Blog Post Title"
-    url: "https://example.com/blog-post"
-
-relatedPaths:
-  - "related-001"
-  - "related-002"
-
-detectionRules:
-  - platform: "CloudSIEM"
-    url: "https://docs.example.com/rules/rule-id"
-
-learningEnvironments:
-  iam-vulnerable:
-    type: open-source
-    githubLink: https://github.com/BishopFox/iam-vulnerable
-    scenario: IAM-SomeScenario
-    description: "Deploy Terraform into your own AWS account and practice exploitation"
-```
+Use the template at [data/example-001.yaml] which includes all required and optional fields with detailed comments and formatting examples.
 
 ### Step 3: Validate Your File
 
@@ -140,8 +74,8 @@ See [SCHEMA.md](SCHEMA.md) for complete documentation of all fields.
 #### `name`
 - Use AWS IAM permission syntax
 - Single permission: `iam:CreatePolicyVersion`
-- Multiple permissions: `iam:PassRole+ec2:RunInstances`
-- Separate with `+` symbol
+- Multiple permissions: `iam:PassRole + ec2:RunInstances` (note: **spaces around +**)
+- Separate with ` + ` (space-plus-space)
 
 #### `category`
 Must be one of:
@@ -186,9 +120,12 @@ Must be one of:
 
 #### `discoveryAttribution` (required)
 - Credit the original researcher or source
-- Include organization if applicable
+- Use `author` for individual researchers (e.g., "Spencer Gietzen")
+- Use `source` for organizations/websites (e.g., "HackTricks", "pathfinding.cloud")
+- **Do not use both** `author` and `source` - choose one
+- Include organization if using `author`
 - Add year of discovery and link to source
-- For derivatives, include `derivativeOf` and `ultimateOrigin` fields
+- For derivatives, include `derivativeOf` and optionally `ultimateOrigin` for multi-level chains
 
 #### `references` (encouraged)
 - Link to blog posts, papers, or documentation
@@ -202,143 +139,28 @@ Must be one of:
 - Link to detection rules in security platforms
 - Include platform name and URL
 
+#### `detectionTools` (optional)
+- Documents which open source security tools detect this path
+- Link directly to the source code where detection logic is implemented
+- Supported tools: `pmapper`, `cloudsplaining`, `pacu`, `prowler`, `scoutsuite`
+- Example: `pmapper: https://github.com/nccgroup/PMapper/blob/master/principalmapper/graphing/iam_edges.py#L123`
+
 #### `learningEnvironments` (optional)
 - Documents learning labs and CTF environments where this path can be practiced
 - **Open-source environments**: Include `type: open-source`, `githubLink`, `description`, optional `scenario`
 - **Closed-source environments**: Include `type: closed-source`, `description`, `scenario`, and `scenarioPricingModel` (paid/free)
 - Replaces the deprecated `toolSupport` field
 
+#### `attackVisualization` (optional but recommended)
+- Creates an interactive diagram showing the attack flow
+- Uses structured format with `nodes` and `edges` arrays
+- Node types: `principal` (users/roles), `resource` (AWS resources), `payload` (attacker actions), `outcome` (results)
+- Supports conditional branching for different outcomes
+- See `data/example-001.yaml` for a complete example
+
 ## Examples
 
-### Example 1: Simple Self-Escalation
-
-```yaml
-id: "iam-001"
-name: "iam:CreatePolicyVersion"
-category: "self-escalation"
-services:
-  - iam
-
-permissions:
-  required:
-    - permission: "iam:CreatePolicyVersion"
-      resourceConstraints: "Policy must be attached to the actor"
-  additional:
-    - permission: "iam:ListPolicies"
-      resourceConstraints: "Helpful for discovering attached policies"
-
-description: A principal with `iam:CreatePolicyVersion` can create a new version of an IAM policy that is already attached to them, granting themselves administrative privileges by setting the new version as default.
-
-prerequisites:
-  - "Policy must already be attached to the actor's user, role, or group"
-
-exploitationSteps:
-  awscli:
-    - step: 1
-      command: |
-        aws iam create-policy-version --policy-arn <policy-arn> --policy-document file://admin.json --set-as-default
-      description: "Create new policy version with admin permissions and set as default"
-
-recommendation: |
-  Restrict iam:CreatePolicyVersion to only necessary principals.
-  Monitor usage with CloudTrail and CloudSIEM detections.
-
-discoveryAttribution:
-  firstDocumented:
-    author: "Spencer Gietzen"
-    organization: "Rhino Security Labs"
-    date: 2019
-    link: "https://rhinosecuritylabs.com/aws/aws-privilege-escalation-methods-mitigation/"
-
-learningEnvironments:
-  iam-vulnerable:
-    type: open-source
-    githubLink: https://github.com/BishopFox/iam-vulnerable
-    scenario: IAM-CreatePolicyVersion
-    description: "Deploy Terraform into your own AWS account and practice exploitation"
-```
-
-### Example 2: Multi-Permission Path with PassRole
-
-```yaml
-id: "lambda-001"
-name: "iam:PassRole + lambda:CreateFunction + lambda:InvokeFunction"
-category: "service-passrole"
-services:
-  - iam
-  - lambda
-
-permissions:
-  required:
-    - permission: "iam:PassRole"
-      resourceConstraints: "Must be able to pass a privileged role to Lambda service"
-    - permission: "lambda:CreateFunction"
-      resourceConstraints: "Must be able to create Lambda functions"
-    - permission: "lambda:InvokeFunction"
-      resourceConstraints: "Must be able to invoke the created function"
-  additional:
-    - permission: "iam:ListRoles"
-      resourceConstraints: "Helpful for discovering available privileged roles"
-    - permission: "iam:GetRole"
-      resourceConstraints: "Useful for viewing role permissions and trust policies"
-
-description: A principal with `iam:PassRole`, `lambda:CreateFunction`, and `lambda:InvokeFunction` can create a Lambda function with a privileged role and invoke it to execute code with elevated permissions.
-
-prerequisites:
-  admin:
-    - "A role must exist that trusts lambda.amazonaws.com to assume it"
-    - "The role must have administrative permissions (e.g., AdministratorAccess or an equivalent custom policy)"
-  lateral:
-    - "A role must exist that trusts lambda.amazonaws.com to assume it"
-    - "The role can have any level of permissions for lateral movement"
-
-exploitationSteps:
-  awscli:
-    - step: 1
-      command: |
-        aws lambda create-function \
-          --function-name exploit \
-          --runtime python3.9 \
-          --role arn:aws:iam::123456789012:role/PrivRole \
-          --handler index.handler \
-          --zip-file fileb://code.zip
-      description: "Create Lambda function with privileged role"
-    - step: 2
-      command: |
-        aws lambda invoke --function-name exploit output.txt
-      description: "Invoke function to execute with elevated permissions"
-
-recommendation: |
-  Restrict iam:PassRole with condition keys to limit which roles can be passed
-  to Lambda. Monitor Lambda function creation and invocation in CloudTrail.
-
-discoveryAttribution:
-  firstDocumented:
-    author: "Spencer Gietzen"
-    organization: "Rhino Security Labs"
-    date: 2019
-    link: "https://rhinosecuritylabs.com/aws/aws-privilege-escalation-methods-mitigation/"
-
-references:
-  - title: "AWS Privilege Escalation Methods"
-    url: "https://rhinosecuritylabs.com/aws/aws-privilege-escalation-methods-mitigation/"
-
-relatedPaths:
-  - "ec2-001"
-  - "cloudformation-001"
-
-learningEnvironments:
-  iam-vulnerable:
-    type: open-source
-    githubLink: https://github.com/BishopFox/iam-vulnerable
-    scenario: IAM-PassRole-Lambda-CreateFunction
-    description: "Deploy Terraform into your own AWS account and practice exploitation"
-  pathfinder-labs:
-    type: open-source
-    githubLink: https://github.com/DataDog/pathfinder-labs
-    scenario: lambda-createfunction
-    description: "Deploy scenarios with attack and cleanup scripts"
-```
+Use the template at [data/example-001.yaml] or any of the existing paths to get started. 
 
 ## Pull Request Guidelines
 

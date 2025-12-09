@@ -1,0 +1,329 @@
+# =============================================================================
+# PRIVILEGE ESCALATION PATH TEMPLATE
+# =============================================================================
+# This template file shows all key fields with instructive placeholders.
+# Copy this file to create a new path: cp data/paths/example-001.yaml data/paths/{service}/{service}-###.yaml
+# Then replace all placeholder values with your specific path details.
+#
+# IMPORTANT FORMATTING RULES:
+# - name field: Use spaces around + (e.g., "iam:PassRole + lambda:CreateFunction")
+# - Use backticks for IAM permissions in descriptions (e.g., `iam:PassRole`)
+# - Multi-line fields use | pipe operator (recommendation, command, limitations)
+# - Never use PowerUserAccess as an example of admin permissions
+# - See SCHEMA.md for complete field documentation
+# =============================================================================
+
+# Required: Unique identifier using format {service}-{number} (e.g., iam-001, lambda-001)
+# For PassRole paths, use the service of the resource being created (e.g., ec2-001 for iam:PassRole+ec2:RunInstances)
+id: service-001
+
+# Required: IAM permission syntax - use spaces around + for multiple permissions
+# Examples: "iam:CreatePolicyVersion" or "iam:PassRole + lambda:CreateFunction + lambda:InvokeFunction"
+name: iam:Permission1 + service:Permission2
+
+# Required: Must be one of: self-escalation, lateral-movement, service-passrole, credential-access, access-resource
+category: service-passrole
+
+# Required: List all AWS services involved (lowercase)
+services:
+  - iam
+  - service
+
+# =============================================================================
+# PERMISSIONS - Organized into required and additional
+# Required: List minimum permissions needed by the exploiting principal
+# Optional: List helpful get/list/describe permissions that aid exploitation
+# =============================================================================
+permissions:
+  required:
+    - permission: iam:RequiredPermission1
+      resourceConstraints: Describe any resource-level requirements (e.g., "Must have access to target role ARN")
+    - permission: service:RequiredPermission2
+      resourceConstraints: Be specific about what resources must be accessible
+  additional:
+    - permission: iam:ListSomething
+      resourceConstraints: Explain how this helps discovery (e.g., "Helpful for discovering available roles")
+    - permission: service:DescribeSomething
+      resourceConstraints: These are optional recon permissions that could come from a separate read-only principal
+
+# =============================================================================
+# DESCRIPTION - Clear explanation using backticks for permissions
+# Required: Explain how the escalation works, what it accomplishes, and end result
+# Always use backticks around IAM permissions (e.g., `iam:PassRole`)
+# =============================================================================
+description: A principal with `iam:Permission1` and `service:Permission2` can [explain the attack mechanism]. [Describe what the attacker gains]. [Explain the end result]. The level of access gained depends on [environment factors like role permissions, policy configurations, etc.].
+
+# =============================================================================
+# PREREQUISITES - Use object format (admin/lateral) for PassRole paths
+# For simple paths with uniform prerequisites, use array format instead
+# =============================================================================
+prerequisites:
+  # For PassRole paths: separate admin and lateral scenarios
+  admin:
+    - Describe conditions needed for administrative privilege escalation
+    - Example: "A role must exist that trusts service.amazonaws.com"
+    - Example: "The role must have administrative permissions (e.g., AdministratorAccess or an equivalent custom policy)"
+  lateral:
+    - Describe conditions needed for lateral movement (non-admin)
+    - Usually similar to admin but without the admin permissions requirement
+
+# Alternative format for non-PassRole paths (use array instead of object):
+# prerequisites:
+#   - "First condition that must be met"
+#   - "Second condition that must be met"
+
+# =============================================================================
+# EXPLOITATION STEPS - Organized by tool, multi-line commands use |
+# Required: At minimum, include awscli steps
+# Optional: Add steps for pacu, pmapper, stratus, leonidas, nebula, pathfinder
+# Number steps sequentially starting from 1 for each tool
+# =============================================================================
+exploitationSteps:
+  awscli:
+    - step: 1
+      command: |
+        aws service action \
+          --parameter1 value1 \
+          --parameter2 value2
+      description: Describe what this step accomplishes
+    - step: 2
+      command: |
+        aws service another-action \
+          --parameter value
+      description: Explain the purpose of this step
+
+  # Optional: Add other tools
+  # pacu:
+  #   - step: 1
+  #     command: run module_name --parameters
+  #     description: What this Pacu module does
+
+# =============================================================================
+# RECOMMENDATION - Use multi-line format with | (NEVER use "\n")
+# Required: Explain prevention, detection, and monitoring strategies
+# For PassRole paths: See SCHEMA.md for standardized template to adapt
+# =============================================================================
+recommendation: |
+  [For PassRole paths, adapt this template:]
+  High powered service roles + overly permissive `iam:PassRole` is what makes this privilege escalation path exploitable and impactful.
+
+  - **Avoid administrative service roles** - Very rarely does a [RESOURCE_TYPE] need administrative access. Use the principle of least privilege.
+  - **Avoid granting `iam:PassRole` on all resources** - Whenever possible, restrict `iam:PassRole` to specific roles or specific services.
+
+  Use IAM policy conditions to restrict which roles can be passed and to which services:
+
+  ```json
+  {
+    "Effect": "Allow",
+    "Action": "iam:PassRole",
+    "Resource": "arn:aws:iam::ACCOUNT_ID:role/Specific[ServiceRole]",
+    "Condition": {
+      "StringEquals": {
+        "iam:PassedToService": "[service].amazonaws.com"
+      }
+    }
+  }
+  ```
+
+  - Monitor CloudTrail for unusual [resource] creation followed by immediate [action]
+  - Monitor CloudTrail for [resource] creation by principals who do not usually create [resources]
+  - Monitor CloudTrail for roles being passed to [SERVICE] that haven't been used before
+  - Monitor and alert on [resource] creation with privileged roles
+  - Regularly audit [resources] for excessive IAM permissions
+  - Regularly audit all IAM roles that trust the [SERVICE] service and down-scope any roles with administrative access
+
+  [For non-PassRole paths, write custom recommendations focused on least privilege and monitoring]
+
+# =============================================================================
+# LIMITATIONS - Explain when admin vs limited access is achieved (optional)
+# Important for PassRole paths where access level depends on available roles
+# =============================================================================
+limitations: |
+  This path provides administrative access only if [condition for admin access]. If only limited [resources/roles] are available, you gain access limited to those permissions. However, even limited access may enable multi-hop attacks or access to sensitive data.
+
+# =============================================================================
+# DISCOVERY ATTRIBUTION - Credit the original researcher/source
+# Required: Use either 'author' OR 'source', not both
+# - Use 'author' for individual researchers (e.g., "Spencer Gietzen")
+# - Use 'source' for organizations/websites (e.g., "HackTricks", "pathfinding.cloud")
+# =============================================================================
+discoveryAttribution:
+  firstDocumented:
+    # Option 1: Use for individual researchers
+    author: Researcher Name
+    organization: Organization Name (optional)
+    date: 2024
+    link: https://example.com/your-research
+
+    # Option 2: Use for organizations/websites (comment out 'author' and 'organization' above)
+    # source: HackTricks
+    # date: 2024
+    # link: https://cloud.hacktricks.xyz/path
+
+  # Only include for derivative paths (variations of existing paths)
+  # derivativeOf:
+  #   pathId: original-path-001
+  #   modification: "Brief description of what makes this variation unique"
+
+  # Only include for multi-level derivative chains (derivative of a derivative)
+  # Skip if it would be the same as derivativeOf.pathId
+  # ultimateOrigin:
+  #   pathId: original-path-001
+  #   author: Original Researcher Name
+  #   organization: Original Organization
+  #   date: 2018
+  #   link: https://example.com/original-research
+
+# =============================================================================
+# REFERENCES - External links (optional but encouraged)
+# Include blog posts, papers, documentation about this path
+# =============================================================================
+references:
+  - title: Title of Blog Post or Paper
+    url: https://example.com/blog-post
+  - title: Another Reference
+    url: https://example.com/documentation
+
+# =============================================================================
+# RELATED PATHS - IDs of similar escalation paths (optional)
+# Link to paths with similar techniques or permissions
+# =============================================================================
+relatedPaths:
+  - similar-path-001
+  - another-related-002
+
+# =============================================================================
+# DETECTION TOOLS - Open source tools that detect this path (optional)
+# Link to specific line in source code where detection logic is implemented
+# Supported tools: pmapper, cloudsplaining, pacu, prowler, scoutsuite
+# =============================================================================
+detectionTools:
+  pmapper: https://github.com/nccgroup/PMapper/blob/master/principalmapper/graphing/iam_edges.py#L123
+  cloudsplaining: https://github.com/salesforce/cloudsplaining/blob/master/cloudsplaining/shared/constants.py#L45
+  # prowler: https://github.com/prowler-cloud/prowler/blob/master/prowler/providers/aws/services/iam/lib/privilege_escalation.py#L100
+
+# =============================================================================
+# LEARNING ENVIRONMENTS - Labs where this can be practiced (optional)
+# =============================================================================
+learningEnvironments:
+  # Open-source environment example:
+  iam-vulnerable:
+    type: open-source
+    githubLink: https://github.com/BishopFox/iam-vulnerable
+    scenario: ScenarioName
+    description: Deploy Terraform into your own AWS account and practice individual exploitation paths
+
+  # Closed-source environment example:
+  # cybr:
+  #   type: closed-source
+  #   description: A hosted learning environment with free and paid labs
+  #   scenario: https://cybr.com/hands-on-labs/lab/scenario-name/
+  #   scenarioPricingModel: paid  # or 'free'
+
+# =============================================================================
+# ATTACK VISUALIZATION - Interactive diagram (optional but recommended)
+# Creates interactive flow diagram showing attack path from start to outcomes
+# Node types: principal (users/roles), resource (AWS resources), payload (attacker code), outcome (results)
+# IMPORTANT: ALL IAM users and roles must be type 'principal', NEVER 'resource'
+# Edge labels should ONLY use permissions from 'permissions.required', NOT from 'permissions.additional'
+# =============================================================================
+attackVisualization:
+  nodes:
+    # Always start with a principal node (the attacker's starting point)
+    - id: start
+      label: Starting Principal
+      type: principal  # Always 'principal' for IAM users/roles
+      description: |
+        Describe the starting principal's permissions and capabilities.
+        This is the attacker's initial access point.
+
+    # Add resource nodes for AWS resources involved (NOT for IAM roles/users)
+    - id: resource_name
+      label: Resource Display Name
+      type: resource  # For AWS resources like EC2, Lambda, S3 (NOT IAM roles/users)
+      description: |
+        Describe the AWS resource being created or manipulated.
+        Explain how this resource fits into the attack chain.
+
+    # Add principal nodes for any IAM roles/users that get assumed or accessed
+    - id: target_role
+      label: Target Role Name
+      type: principal  # IAM roles are ALWAYS 'principal' type
+      description: |
+        Describe the role being passed, assumed, or targeted.
+        Explain its trust policy and permissions.
+
+    # Add payload nodes for attacker exploitation actions
+    - id: exploitation_action
+      label: What the attacker does
+      type: payload  # For attacker actions like running code, exfiltrating creds
+      color: '#99ccff'  # Optional: blue color for payload nodes
+      description: |
+        Describe the malicious action the attacker performs.
+        Example: Execute shell script, run Lambda function code, etc.
+
+    # Add outcome nodes for different results
+    - id: admin_outcome
+      label: Effective Administrator
+      type: outcome
+      description: |
+        Describe what happens if the attacker gains admin access.
+
+    - id: partial_outcome
+      label: Check for Additional Access
+      type: outcome
+      color: '#ffeb99'  # Optional: yellow for partial success
+      description: |
+        Describe what happens if partial privilege escalation occurs.
+
+    - id: no_access_outcome
+      label: No Additional Access
+      type: outcome
+      color: '#cccccc'  # Optional: gray for dead end
+      description: |
+        Describe what happens if no meaningful access is gained.
+
+  edges:
+    # Transitive edges (solid lines with visible labels) - NO branch/condition fields
+    - from: start
+      to: resource_name
+      label: iam:Permission1 + service:Permission2  # Use actual required permissions
+      description: |
+        Describe what this step does and include the command if applicable.
+
+        Command:
+        ```bash
+        aws service action --parameters
+        ```
+
+    - from: resource_name
+      to: target_role
+      label: Describe the transition
+      description: |
+        Explain how the attack progresses from the resource to the role.
+
+    # Conditional edges (dashed lines without visible labels) - MUST have branch/condition fields
+    # Use these for multiple possible outcomes based on environment
+    - from: exploitation_action
+      to: admin_outcome
+      label: If condition for admin access
+      branch: A  # Use A, B, C or A1, A2, A3 for numbering
+      condition: admin  # Common: admin, some_permissions, no_permissions
+      description: |
+        Explain when this outcome occurs (e.g., "If the role has AdministratorAccess...")
+
+    - from: exploitation_action
+      to: partial_outcome
+      label: If condition for partial access
+      branch: B
+      condition: some_permissions
+      description: |
+        Explain when this outcome occurs (e.g., "If the role has elevated but non-admin permissions...")
+
+    - from: exploitation_action
+      to: no_access_outcome
+      label: If condition for no access
+      branch: C
+      condition: no_permissions
+      description: |
+        Explain when this outcome occurs (e.g., "If the role has only minimal permissions...")
