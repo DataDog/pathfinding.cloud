@@ -11,9 +11,9 @@ let currentRoute = { view: 'list', pathId: null }; // Track current route
 // Category tooltips
 const categoryTooltips = {
     'self-escalation': 'Modify your own permissions directly',
-    'lateral-movement': 'Gain access to a different principal',
-    'service-passrole': 'Create a new resource. Pass a privileged role to it. Gain access to that role',
-    'access-resource': 'Modify an existing resource with an attached role, and gain access to that role',
+    'principal-access': 'Gain access to a different principal',
+    'new-passrole': 'Create a new resource. Pass a privileged role to it. Gain access to that role',
+    'existing-passrole': 'Modify an existing resource with an attached role, and gain access to that role',
     'credential-access': 'Read permissions that may expose credentials'
 };
 
@@ -175,14 +175,39 @@ function routeFromURL() {
         const path = allPaths.find(p => p.id === pathId);
 
         if (path) {
+            // Track view change in Datadog RUM
+            if (window.DD_RUM) {
+                window.DD_RUM.startView({
+                    name: `/paths/${pathId}`,
+                    service: 'pathfinding.cloud'
+                });
+            }
             currentRoute = { view: 'detail', pathId };
             showPathDetails(path);
         } else {
-            // Invalid path ID, redirect to home
+            // Invalid path ID, redirect to list
             navigateToList();
         }
+    } else if (pathname === '/paths' || pathname === '/paths/') {
+        // Paths list view
+        // Track view change in Datadog RUM
+        if (window.DD_RUM) {
+            window.DD_RUM.startView({
+                name: '/paths/',
+                service: 'pathfinding.cloud'
+            });
+        }
+        currentRoute = { view: 'list', pathId: null };
+        showListView();
     } else {
-        // Home/list view
+        // Home/landing view
+        // Track view change in Datadog RUM
+        if (window.DD_RUM) {
+            window.DD_RUM.startView({
+                name: '/',
+                service: 'pathfinding.cloud'
+            });
+        }
         currentRoute = { view: 'list', pathId: null };
         showListView();
     }
@@ -215,6 +240,14 @@ function navigateToPath(pathId) {
     // Update URL
     history.pushState(null, '', `/paths/${pathId}`);
 
+    // Track view change in Datadog RUM
+    if (window.DD_RUM) {
+        window.DD_RUM.startView({
+            name: `/paths/${pathId}`,
+            service: 'pathfinding.cloud'
+        });
+    }
+
     // Update route state
     currentRoute = { view: 'detail', pathId };
 
@@ -227,7 +260,15 @@ function navigateToPath(pathId) {
 
 function navigateToList() {
     // Update URL
-    history.pushState(null, '', '/');
+    history.pushState(null, '', '/paths/');
+
+    // Track view change in Datadog RUM
+    if (window.DD_RUM) {
+        window.DD_RUM.startView({
+            name: '/paths/',
+            service: 'pathfinding.cloud'
+        });
+    }
 
     // Update route state
     currentRoute = { view: 'list', pathId: null };
@@ -236,7 +277,7 @@ function navigateToList() {
     showListView();
 
     // Track pageview for analytics
-    trackPageView('/', 'pathfinding.cloud - AWS IAM Privilege Escalation Paths');
+    trackPageView('/paths/', 'pathfinding.cloud - AWS IAM Privilege Escalation Paths');
 }
 
 function showListView() {
@@ -363,7 +404,7 @@ function getDemoData() {
         {
             id: 'iam-002',
             name: 'iam:CreateAccessKey',
-            category: 'lateral-movement',
+            category: 'principal-access',
             services: ['iam'],
             permissions: {
                 required: [
@@ -729,7 +770,7 @@ function showPathDetails(path) {
     // Render breadcrumb
     const breadcrumbHtml = `
         <nav class="breadcrumb">
-            <a href="/" onclick="event.preventDefault(); navigateToList();">All Paths</a>
+            <a href="/paths/" onclick="event.preventDefault(); navigateToList();">All Paths</a>
             <span class="breadcrumb-separator">></span>
             <span class="breadcrumb-current">${escapeHtml(path.name)}</span>
         </nav>

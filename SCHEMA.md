@@ -77,10 +77,10 @@ The type of privilege escalation.
 
 Allowed values:
 - `self-escalation` - Modify own permissions directly
-- `lateral-movement` - Gain access to other principals
-- `service-passrole` - Escalate via service + PassRole combination
+- `principal-access` - Gain access to other principals
+- `new-passrole` - Escalate via service + PassRole combination
 - `credential-access` - Access to hardcoded credentials, not through IAM
-- `access-resource` - Modify resources to gain elevated access
+- `existing-passrole` - Modify resources to gain elevated access
 
 #### `services` (array of strings)
 List of all AWS services involved in the escalation path.

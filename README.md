@@ -53,10 +53,10 @@ pathfinding.cloud aims to be that single source of truth.
 Privilege escalation paths are organized into five categories:
 
 1. **Self-Escalation** - Modify own permissions directly
-2. **Lateral Movement** - Gain access to other principals
-3. **Service PassRole** - Escalate via service + PassRole combinations
+2. **Principal Access** - Gain access to other principals
+3. **New PassRole** - Escalate via service + PassRole combinations
 4. **Credential Access** - Access or extract credentials from AWS resources
-5. **Access Resource** - Modify or access existing resources to gain elevated access
+5. **Existing PassRole** - Modify or access existing resources to gain elevated access
 
 ## Project Structure
 

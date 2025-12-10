@@ -110,7 +110,7 @@ recommendation: |
 ```yaml
 id: example-001
 name: iam:PassRole + ec2:RunInstances  # Note: spaces around +
-category: service-passrole
+category: new-passrole
 services:
   - iam
   - ec2
@@ -293,7 +293,7 @@ See [SCHEMA.md#attackvisualization-object](../SCHEMA.md#attackvisualization-obje
    - ✅ CORRECT: IAM actions should be edge labels, not nodes
    - **Why**: Payload nodes are for attacker exploitation methods, not AWS API calls
 
-5. **Missing explicit role nodes in access-resource paths**
+5. **Missing explicit role nodes in existing-passrole paths**
    - ❌ WRONG: `start` → `codebuild_project` → `execute_buildspec` → `outcomes` (missing service_role node)
    - ✅ CORRECT: `start` → `codebuild_project` → `service_role` → `execute_buildspec` → `outcomes`
    - **Why**: The role is a distinct principal that must be explicitly shown in the attack flow

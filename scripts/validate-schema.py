@@ -47,10 +47,10 @@ OPTIONAL_FIELDS = {
 
 ALLOWED_CATEGORIES = [
     'self-escalation',
-    'lateral-movement',
-    'service-passrole',
+    'principal-access',
+    'new-passrole',
     'credential-access',
-    'access-resource',
+    'existing-passrole',
 ]
 
 ALLOWED_PREREQUISITE_TYPES = [

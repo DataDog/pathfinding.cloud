@@ -156,7 +156,7 @@ For complete field specifications, see [SCHEMA.md](SCHEMA.md).
 |-------|------|-------------------|---------|
 | `id` | string | Unique identifier (e.g., `iam-001`) | [SCHEMA.md](SCHEMA.md#id-string) |
 | `name` | string | IAM permission syntax (e.g., `iam:PassRole + ec2:RunInstances`) | [SCHEMA.md](SCHEMA.md#name-string) |
-| `category` | enum | Type of escalation (`self-escalation`, `lateral-movement`, `service-passrole`, `credential-access`, `access-resource`) | [SCHEMA.md](SCHEMA.md#category-enum) |
+| `category` | enum | Type of escalation (`self-escalation`, `principal-access`, `new-passrole`, `credential-access`, `existing-passrole`) | [SCHEMA.md](SCHEMA.md#category-enum) |
 | `services` | array | AWS services involved (e.g., `[iam, ec2]`) | [SCHEMA.md](SCHEMA.md#services-array-of-strings) |
 | `permissions` | object | Required and additional permissions | [SCHEMA.md](SCHEMA.md#permissions-object) |
 | `description` | string | How the privilege escalation works | [SCHEMA.md](SCHEMA.md#description-string) |
@@ -201,7 +201,7 @@ While not enforced by validation, this order improves readability:
 
 Common issues:
 - **ID format**: Must be `service-###` with exactly 3 digits
-- **Category**: Must be one of: `self-escalation`, `lateral-movement`, `service-passrole`, `credential-access`, `access-resource`
+- **Category**: Must be one of: `self-escalation`, `principal-access`, `new-passrole`, `credential-access`, `existing-passrole`
 - **Step numbering**: Must start at 1 and be sequential
 - **Required fields**: All fields in `REQUIRED_FIELDS` dict must be present
 

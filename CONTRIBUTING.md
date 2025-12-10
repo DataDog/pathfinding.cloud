@@ -80,10 +80,10 @@ See [SCHEMA.md](SCHEMA.md) for complete documentation of all fields.
 #### `category`
 Must be one of:
 - `self-escalation` - Modify own permissions directly
-- `lateral-movement` - Gain access to other principals
-- `service-passrole` - Escalate via service + PassRole combination
+- `principal-access` - Gain access to other principals
+- `new-passrole` - Escalate via service + PassRole combination
 - `credential-access` - Create or steal credentials
-- `access-resource` - Modify resources to gain elevated access
+- `existing-passrole` - Modify resources to gain elevated access
 
 #### `services`
 - List all AWS services involved

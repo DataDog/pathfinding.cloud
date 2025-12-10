@@ -100,8 +100,8 @@ description: |
   - `service_role`, `notebook_execution_role`
 - **This is a common mistake - always check your node types before submitting!**
 
-**CRITICAL RULE - Access-Resource Paths Must Include Explicit Role Nodes:**
-- For `category: access-resource` paths, ALWAYS include an explicit role node between the resource and the payload
+**CRITICAL RULE - Existing-PassRole Paths Must Include Explicit Role Nodes:**
+- For `category: existing-passrole` paths, ALWAYS include an explicit role node between the resource and the payload
 - **Pattern:** `[starting principal]` → `[existing resource]` → `[resource's role (principal)]` → `[payload]` → `[outcomes]`
 - **DO NOT skip the role node** - even though the role is attached to the resource, it must be represented as a separate principal node
 - ❌ **WRONG**: `start` → `codebuild_project` → `execute_buildspec` → `outcomes`
