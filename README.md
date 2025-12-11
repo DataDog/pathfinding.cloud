@@ -13,12 +13,13 @@ pathfinding.cloud is a comprehensive, community-maintained library documenting A
 
 The website provides detailed documentation of each privilege escalation path including:
 
-- **Comprehensive path documentation** across multiple AWS services
+- Attack description
+- Interactive attack visualizations 
 - Prerequisites and conditions required for exploitation
 - Step-by-step exploitation commands for multiple tools (AWS CLI, Pacu, etc.)
-- Detection and mitigation strategies
-- Interactive attack flow visualizations
 - Links to detection tools and learning environments
+- Discovery attribution and references
+- Detection and mitigation strategies
 
 ### Why This Project?
 
@@ -26,7 +27,7 @@ While several excellent resources document AWS IAM privilege escalation, no sing
 - **All known paths** including variations and nuances
 - **Precise prerequisites** (e.g., "works only if user has < 2 access keys")
 - **Path variations** (e.g., `iam:CreateAccessKey` alone vs. with `iam:DeleteAccessKey`)
-- **Up-to-date detection rules** and tool support
+- **OSS detection tool coverage** and learning environment links 
 
 pathfinding.cloud aims to be that single source of truth.
 
@@ -36,15 +37,13 @@ pathfinding.cloud aims to be that single source of truth.
 - **Structured Data**: All paths documented in validated YAML format
 - **Machine-Readable**: JSON export for security tool integration
 - **Community-Driven**: Easy contribution via pull requests
-- **Automated Validation**: GitHub Actions ensure data quality
+
 
 ### Website Features
 - **Interactive Visualizations**: Attack flow diagrams showing step-by-step exploitation paths
 - **Advanced Search & Filtering**: Filter by service, category, detection tool support, or search terms
 - **Multiple View Modes**: Switch between card and table views
 - **Responsive Design**: Fully optimized for desktop and mobile devices
-- **Light/Dark Theme**: User-selectable theme with persistent preference
-- **Client-Side Routing**: Fast SPA navigation with shareable URLs
 - **Detection Tool Coverage**: Links to open-source detection tools (PMapper, Cloudsplaining, Prowler, etc.)
 - **Learning Environments**: Links to practice labs and CTF environments
 
@@ -55,8 +54,9 @@ Privilege escalation paths are organized into five categories:
 1. **Self-Escalation** - Modify own permissions directly
 2. **Principal Access** - Gain access to other principals
 3. **New PassRole** - Escalate via service + PassRole combinations
-4. **Credential Access** - Access or extract credentials from AWS resources
-5. **Existing PassRole** - Modify or access existing resources to gain elevated access
+4. **Existing PassRole** - Modify or access existing resources to gain elevated access
+5. **Credential Access** - Access or extract credentials from AWS resources
+
 
 ## Project Structure
 
@@ -100,44 +100,7 @@ pathfinding.cloud/
 
 ## Contributing
 
-We welcome contributions! Here's how to add a new privilege escalation path:
-
-### Quick Start
-
-1. **Fork this repository**
-
-2. **Create a new YAML file** in `data/paths/{service}/`
-   ```bash
-   # Find the next available ID for your service
-   ls data/paths/iam/
-   # Create your file (e.g., iam-013.yaml)
-   ```
-
-3. **Follow the schema** (see [SCHEMA.md](SCHEMA.md))
-   ```yaml
-   id: "iam-013"
-   name: "iam:YourPermission"
-   category: "self-escalation"
-   services:
-     - iam
-   permissions:
-     required:
-       - permission: "iam:YourPermission"
-         resourceConstraints: "Describe any constraints"
-   description: "Explain how this works..."
-   # ... see SCHEMA.md for all fields
-   ```
-
-4. **Validate your file**
-   ```bash
-   pip install -r requirements.txt
-   python scripts/validate-schema.py data/paths/iam/iam-013.yaml
-   ```
-
-5. **Submit a pull request**
-   - Automated validation runs on all PRs
-   - Maintainers review for accuracy
-   - Once merged, website auto-deploys
+We welcome contributions!
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for detailed guidelines.
 
@@ -156,7 +119,7 @@ git clone https://github.com/DataDog/pathfinding.cloud.git
 cd pathfinding.cloud
 
 # Install dependencies
-pip install -r requirements.txt
+pip install -r scripts/requirements.txt
 
 # Validate all paths
 python scripts/validate-schema.py data/paths/

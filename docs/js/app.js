@@ -2184,22 +2184,24 @@ function renderPermissions(permissions) {
     // Handle legacy format (direct array as requiredPermissions)
     if (Array.isArray(permissions)) {
         return `
-            <table class="permissions-table">
-                <thead>
-                    <tr>
-                        <th>Permission</th>
-                        <th>Resource Constraints</th>
-                    </tr>
-                </thead>
-                <tbody>
-                    ${permissions.map(p => `
+            <div class="permissions-table-wrapper">
+                <table class="permissions-table">
+                    <thead>
                         <tr>
-                            <td><code>${escapeHtml(p.permission)}</code></td>
-                            <td>${p.resourceConstraints ? escapeHtml(p.resourceConstraints) : '<em>None</em>'}</td>
+                            <th>Permission</th>
+                            <th>Resource Constraints</th>
                         </tr>
-                    `).join('')}
-                </tbody>
-            </table>
+                    </thead>
+                    <tbody>
+                        ${permissions.map(p => `
+                            <tr>
+                                <td><code>${escapeHtml(p.permission)}</code></td>
+                                <td>${p.resourceConstraints ? escapeHtml(p.resourceConstraints) : '<em>None</em>'}</td>
+                            </tr>
+                        `).join('')}
+                    </tbody>
+                </table>
+            </div>
         `;
     }
 
@@ -2215,22 +2217,24 @@ function renderPermissions(permissions) {
     if (hasRequired && !hasAdditional) {
         return `
             <p style="margin-bottom: 15px; color: #666;">These are the only permissions needed by the principal that is exploiting this path. Additional get/list type permissions might be needed to exploit this in practice, but sometimes the attacker has already gained that read level access through other means (e.g, read-only access, knowledge base systems).</p>
-            <table class="permissions-table">
-                <thead>
-                    <tr>
-                        <th>Permission</th>
-                        <th>Resource Constraints</th>
-                    </tr>
-                </thead>
-                <tbody>
-                    ${permissions.required.map(p => `
+            <div class="permissions-table-wrapper">
+                <table class="permissions-table">
+                    <thead>
                         <tr>
-                            <td><code>${escapeHtml(p.permission)}</code></td>
-                            <td>${p.resourceConstraints ? escapeHtml(p.resourceConstraints) : '<em>None</em>'}</td>
+                            <th>Permission</th>
+                            <th>Resource Constraints</th>
                         </tr>
-                    `).join('')}
-                </tbody>
-            </table>
+                    </thead>
+                    <tbody>
+                        ${permissions.required.map(p => `
+                            <tr>
+                                <td><code>${escapeHtml(p.permission)}</code></td>
+                                <td>${p.resourceConstraints ? escapeHtml(p.resourceConstraints) : '<em>None</em>'}</td>
+                            </tr>
+                        `).join('')}
+                    </tbody>
+                </table>
+            </div>
         `;
     }
 
