@@ -314,11 +314,11 @@ nodes:
     label: Effective Administrator
     type: outcome
   - id: some_perms
-    label: Check for Additional Access
+    label: Some additional access
     type: outcome
     color: '#ffeb99'
   - id: no_access
-    label: No Additional Access
+    label: No additional access
     type: outcome
     color: '#cccccc'
 edges:
@@ -375,8 +375,8 @@ starting-principal → workload-resource → target-role → [3 method nodes] �
   - Method 3: Credential exfiltration approach (e.g., Send credentials to webhook)
 - Nodes 7-9: Three outcome nodes based on target role's permissions:
   - Admin outcome: "Effective Administrator" (type: outcome, green/default)
-  - Partial outcome: "Check for Additional Access" (type: outcome, yellow `#ffeb99`)
-  - Minimal outcome: "Minimal Additional Access" (type: outcome, gray `#cccccc`)
+  - Partial outcome: "Some additional access" (type: outcome, yellow `#ffeb99`)
+  - Minimal outcome: "No additional access" (type: outcome, gray `#cccccc`)
 
 **Edges:**
 - Transitive edge (solid): starting-principal → workload-resource (label: the permissions, e.g., "iam:PassRole + ec2:RunInstances")
@@ -470,14 +470,14 @@ nodes:
       The target role has AdministratorAccess or equivalent permissions. Using any of the three exploitation methods, the attacker successfully leverages these permissions to gain full administrative access to the AWS account.
 
   - id: some_perms
-    label: Check for Additional Access
+    label: Some additional access
     type: outcome
     color: '#ffeb99'
     description: |
       The target role has some elevated permissions but not full admin access. Using any of the three exploitation methods, the attacker can leverage these permissions for data exfiltration, security configuration changes, or additional privilege escalation paths.
 
   - id: no_access
-    label: Minimal Additional Access
+    label: No additional access
     type: outcome
     color: '#cccccc'
     description: |

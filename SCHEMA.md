@@ -606,7 +606,7 @@ All description fields (for both nodes and edges) should follow these formatting
 - Use `starting-principal` when the attack works from either a user or role
 - Use `starting-user` or `starting-role` only when the attack is specific to one type
 - Use descriptive, specific labels for resources (e.g., `target-role`, `EC2 Instance`)
-- Use clear outcome labels (e.g., `Effective Administrator`, `No Additional Access`)
+- Use clear outcome labels (e.g., `Effective Administrator`, `No additional access`)
 
 **Color Conventions (defaults):**
 - `principal` (users/roles): `#ff9999` (red)
@@ -666,7 +666,7 @@ attackVisualization:
       description: Full administrative access to the AWS account.
 
     - id: no_access
-      label: No Additional Access
+      label: No additional access
       type: outcome
       color: '#cccccc'
       description: |
