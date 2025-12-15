@@ -1993,7 +1993,7 @@ function renderDiscoveryAttribution(attribution) {
             }
 
             const derivDate = origin && origin.date ? escapeHtml(String(origin.date)) : '—';
-            const derivContext = 'Original discovery of this attack technique';
+            const derivContext = 'Original discovery of parent attack';
             const derivLink = origin && origin.link
                 ? `<a href="${escapeHtml(origin.link)}" target="_blank" class="attribution-link">View Source →</a>`
                 : '—';
@@ -2089,7 +2089,7 @@ function renderDiscoveryAttribution(attribution) {
                     </div>
                     <div class="card-body">
                         <div class="card-author">${originAuthor}${originDate}</div>
-                        <div class="card-context">Original discovery of this attack technique</div>
+                        <div class="card-context">Original discovery of parent attack</div>
                         ${originLink ? `<div class="card-link-container">${originLink}</div>` : ''}
                     </div>
                 </div>
