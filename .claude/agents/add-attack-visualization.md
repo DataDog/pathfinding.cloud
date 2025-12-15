@@ -26,7 +26,7 @@ Before creating any visualization:
    - **Pattern A (self-escalation)**: `data/paths/iam/iam-001.yaml`
    - **Pattern B (lateral movement)**: `data/paths/sts/sts-001.yaml`
    - **Pattern C (PassRole workload with multiple methods)**: `data/paths/apprunner/apprunner-001.yaml` and `data/paths/ec2/ec2-001.yaml`
-4. Check if a matching scenario exists in `~/Documents/projects/pathfinder-labs/modules/scenarios/single-account/privesc-one-hop/` and use its scenario.yaml file to:
+4. Check if a matching scenario exists in `~/Documents/projects/pathfinding-labs/modules/scenarios/single-account/privesc-one-hop/` and use its scenario.yaml file to:
    - Validate your understanding of the attack flow
    - Extract any additional technical details (resource names, command syntax)
    - Ensure consistency with the practical implementation

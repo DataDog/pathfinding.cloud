@@ -424,7 +424,7 @@ detectionRules:
 #### `learningEnvironments` (object)
 Documents available learning labs, CTF environments, and cloud security training platforms where this privilege escalation path can be practiced safely.
 
-This field is an object where each key is the environment name (e.g., `iam-vulnerable`, `pathfinder-labs`, `cloudfoxable`, `cybr`, `pwndlabs`) and the value is an object with details about that environment.
+This field is an object where each key is the environment name (e.g., `iam-vulnerable`, `pathfinding-labs`, `cloudfoxable`, `cybr`, `pwndlabs`) and the value is an object with details about that environment.
 
 **Common fields for all environments:**
 - `type` (string, required): Environment type - either `open-source` or `closed-source`
@@ -445,9 +445,9 @@ learningEnvironments:
     githubLink: https://github.com/BishopFox/iam-vulnerable
     scenario: IAM-UpdateLoginProfile
     description: "Deploy Terraform into your own AWS account and practice individual exploitation paths"
-  pathfinder-labs:
+  pathfinding-labs:
     type: open-source
-    githubLink: https://github.com/DataDog/pathfinder-labs
+    githubLink: https://github.com/DataDog/pathfinding-labs
     scenario: iam-updateloginprofile
     description: "Deploy Terraform scenarios individually or in groups, each with attack and cleanup scripts"
 ```

@@ -26,14 +26,14 @@ You orchestrate the complete creation of attack paths by gathering requirements,
 
 ## Step 1: Gather Requirements (Interactive)
 
-### If user provides pathfinder-labs directory:
+### If user provides pathfinding-labs directory:
 
 Read these files to understand the attack:
 - `scenario.yaml` - Structured attack metadata
 - `demo_attack.sh` - Exploitation steps and commands
 - `README.md` - Detailed explanation and context
 
-**Important**: Pathfinder-labs scenarios are very specific (with exact resource names, scripts, etc.). Transform this into **generic guidance** for pathfinding.cloud per @.claude/CLAUDE.md and @SCHEMA.md:
+**Important**: Pathfinding-labs scenarios are very specific (with exact resource names, scripts, etc.). Transform this into **generic guidance** for pathfinding.cloud per @.claude/CLAUDE.md and @SCHEMA.md:
 - Remove scenario-specific resource names
 - Generalize exploitation steps
 - Keep attack principles, not implementation details
@@ -181,7 +181,7 @@ Can you task the add-vis, attribution, learning-environments, and detection-tool
    - Uses Edit tool to replace empty `references` array
 
 3. **learning-environments agent**:
-   - Researches available practice labs (iam-vulnerable, pathfinder-labs, cybr, pwndlabs)
+   - Researches available practice labs (iam-vulnerable, pathfinding-labs, cybr, pwndlabs)
    - Uses Edit tool to add `learningEnvironments` section if labs found
 
 4. **detection-tools agent**:
@@ -219,7 +219,7 @@ Provide a summary including:
 
 ## Example Interaction Flow
 
-**User**: "Can you create a path for ~/Documents/projects/pathfinder-labs/modules/scenarios/single-account/privesc-one-hop/to-admin/cloudformation-updatestack"
+**User**: "Can you create a path for ~/Documents/projects/pathfinding-labs/modules/scenarios/single-account/privesc-one-hop/to-admin/cloudformation-updatestack"
 
 **You**:
 1. Read scenario.yaml, demo_attack.sh, README.md

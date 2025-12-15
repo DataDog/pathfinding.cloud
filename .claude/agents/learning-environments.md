@@ -21,15 +21,15 @@ Check these platforms systematically:
 
 ### 1. **Pathfinder Labs** (Open Source)
 - **Type**: open-source
-- **Repository**: https://github.com/DataDog/pathfinder-labs (IMPORTANT: This repo is still private for now. So you won't be able to do a websearch of the private repo. You should instead read ~/Documents/projects/pathfinder-labs/modules/scenarios/single-account and find the scenario there, but then create a link that will work when the project goes live.)
+- **Repository**: https://github.com/DataDog/pathfinding-labs (IMPORTANT: This repo is still private for now. So you won't be able to do a websearch of the private repo. You should instead read ~/Documents/projects/pathfinding-labs/modules/scenarios/single-account and find the scenario there, but then create a link that will work when the project goes live.)
 - **What to look for**: Check `modules/scenarios/` directory for matching attack paths
 - **Key patterns**: Look for scenario.yaml files that match the required permissions
 - **Search strategy**: Use WebFetch or WebSearch to find scenarios with the specific permissions
 - **Field requirements**:
   ```yaml
-  pathfinder-labs:
+  pathfinding-labs:
     type: open-source
-    githubLink: https://github.com/DataDog/pathfinder-labs
+    githubLink: https://github.com/DataDog/pathfinding-labs
     scenario: "privesc-one-hop/to-admin/iam-passrole+lambda-createfunction"
     description: "Deploy Terraform into your own AWS account to practice this attack path"
   ```
@@ -142,9 +142,9 @@ Check these platforms systematically:
 4. **Format your findings** according to @SCHEMA.md:
    ```yaml
    learningEnvironments:
-     pathfinder-labs:
+     pathfinding-labs:
        type: open-source
-       githubLink: https://github.com/DataDog/pathfinder-labs
+       githubLink: https://github.com/DataDog/pathfinding-labs
        scenario: "privesc-one-hop/to-admin/codebuild-startbuild"
        description: "Deploy Terraform into your own AWS account to practice this attack path"
      iam-vulnerable:
@@ -185,7 +185,7 @@ Check these platforms systematically:
 
 If you were given a Pathfinder Labs directory path when this agent was invoked, that means this attack path is DEFINITELY in Pathfinder Labs. In that case:
 - Extract the scenario path from the directory structure
-- Add pathfinder-labs entry with the correct scenario path
+- Add pathfinding-labs entry with the correct scenario path
 - Then research the other 6 platforms normally
 
 ## Field Format Requirements
@@ -202,9 +202,9 @@ If you were given a Pathfinder Labs directory path when this agent was invoked, 
 
 ```yaml
 learningEnvironments:
-  pathfinder-labs:
+  pathfinding-labs:
     type: open-source
-    githubLink: https://github.com/DataDog/pathfinder-labs
+    githubLink: https://github.com/DataDog/pathfinding-labs
     scenario: "privesc-one-hop/to-admin/lambda-createfunction"
     description: "Deploy Terraform into your own AWS account to practice this attack path"
   iam-vulnerable:
