@@ -497,7 +497,6 @@ This field is an object where each key is the tool name (e.g., `pmapper`, `cloud
 - `cloudsplaining`: Cloudsplaining by Salesforce
 - `pacu`: Pacu AWS exploitation framework by Rhino Security Labs
 - `prowler`: Prowler multi-cloud security tool
-- `scoutsuite`: ScoutSuite by NCC Group
 
 **Note:** The frontend loads tool metadata (display names, GitHub repository links, descriptions) from `metadata.json`. Only the `detectionSource` URL needs to be specified in each path's YAML file.
 

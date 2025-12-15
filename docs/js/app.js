@@ -1513,8 +1513,7 @@ function getToolInitials(toolName) {
         'pmapper': 'PM',
         'cloudsplaining': 'CS',
         'pacu': 'PA',
-        'prowler': 'PR',
-        'scoutsuite': 'SS'
+        'prowler': 'PR'    
     };
     return toolMap[toolName.toLowerCase()] || toolName.substring(0, 2).toUpperCase();
 }

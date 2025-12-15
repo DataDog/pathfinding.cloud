@@ -188,7 +188,6 @@ This project builds upon groundbreaking research by:
 - [Pacu](https://github.com/RhinoSecurityLabs/pacu) - AWS exploitation framework
 - [Prowler](https://github.com/prowler-cloud/prowler) - AWS security assessment tool
 - [CloudSploit](https://github.com/aquasecurity/cloudsploit) - Cloud security scanning
-- [ScoutSuite](https://github.com/nccgroup/ScoutSuite) - Multi-cloud security auditing
 
 ## Disclaimer
 

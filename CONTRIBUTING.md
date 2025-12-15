@@ -142,7 +142,7 @@ Must be one of:
 #### `detectionTools` (optional)
 - Documents which open source security tools detect this path
 - Link directly to the source code where detection logic is implemented
-- Supported tools: `pmapper`, `cloudsplaining`, `pacu`, `prowler`, `scoutsuite`
+- Supported tools: `pmapper`, `cloudsplaining`, `pacu`, `prowler`
 - Example: `pmapper: https://github.com/nccgroup/PMapper/blob/master/principalmapper/graphing/iam_edges.py#L123`
 
 #### `learningEnvironments` (optional)
