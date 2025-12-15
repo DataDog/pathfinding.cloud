@@ -26,7 +26,8 @@ const detectionFilter = document.getElementById('detection-filter');
 const resetButton = document.getElementById('reset-filters');
 const viewCardsBtn = document.getElementById('view-cards');
 const viewTableBtn = document.getElementById('view-table');
-const headerTotalPathsEl = document.getElementById('header-total-paths');
+const totalPathsCountEl = document.getElementById('total-paths-count');
+const filteredPathsCountEl = document.getElementById('filtered-paths-count');
 const themeToggle = document.getElementById('theme-toggle');
 
 // Theme management
@@ -50,7 +51,7 @@ function updateThemeText() {
     const themeText = document.querySelector('.theme-text');
     if (themeText) {
         const isLight = document.documentElement.classList.contains('light-theme');
-        themeText.textContent = isLight ? 'Light Mode' : 'Dark Mode';
+        themeText.textContent = isLight ? 'Mode' : 'Mode';
     }
 }
 
@@ -504,7 +505,12 @@ function resetFilters() {
 
 // Update statistics
 function updateStats() {
-    headerTotalPathsEl.textContent = allPaths.length;
+    if (totalPathsCountEl) {
+        totalPathsCountEl.textContent = allPaths.length;
+    }
+    if (filteredPathsCountEl) {
+        filteredPathsCountEl.textContent = filteredPaths.length;
+    }
 }
 
 // Render paths to the grid or table
