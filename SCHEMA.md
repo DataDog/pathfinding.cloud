@@ -4,9 +4,22 @@ This document defines the YAML schema used for documenting AWS IAM privilege esc
 
 ## Schema Version
 
-Current version: `1.4.0`
+Current version: `1.6.0`
 
 ### Version History
+
+#### Version 1.6.0 (2025-01-15)
+- **Breaking change**: `parent` field changed from string to nested object
+- Added `parent.id` (string, required if parent present): The parent path ID
+- Added `parent.modification` (string, required if parent present): Explanation of what permission(s) the child adds to remove a prerequisite
+- Clarifies parent/child relationship: child adds required permission(s) that expand attack applicability by removing parent's prerequisites
+- Parent/child is specifically for variants where child works in scenarios where parent fails
+
+#### Version 1.5.0 (2025-01-15)
+- Added `parent` optional field for structured parent-child relationships between paths
+- Enables filtering for primary vs. variant techniques
+- Supports programmatic discovery of technique families
+- Works alongside `discoveryAttribution.derivativeOf` for comprehensive lineage tracking
 
 #### Version 1.4.0 (2025-01-11)
 - Added `detectionTools` optional field for documenting open source detection tool coverage
@@ -348,6 +361,102 @@ discoveryAttribution:
 ```
 
 ### Optional Fields
+
+#### `parent` (object, optional)
+Defines a parent-child relationship when this path is a variant that adds required permission(s) to bypass a prerequisite of the parent technique.
+
+This field creates a structured parent-child relationship between paths, enabling:
+- Easy filtering for primary vs. variant paths in the UI
+- Programmatic discovery of related techniques
+- Clear explanation of what makes the child variant necessary
+
+**Parent object structure:**
+- `id` (string, required): The parent path ID
+- `modification` (string, required): Explanation of what required permission(s) this child adds and which prerequisite it removes/bypasses
+
+**Terminology Note:**
+We use different terminology in different contexts for clarity:
+- **In YAML/code**: `parent` field (concise, follows common data structure conventions)
+- **In UI/documentation**: "Primary Technique" and "Variants" (semantic, conveys meaning)
+
+Rationale:
+- **`parent` field name**: Natural for pointing upward in the hierarchy (`parent.id`), concise in YAML
+- **"Primary Technique"**: Conveys that this is the foundational/original technique
+- **"Variant"**: Explains WHAT it is (a modification that expands applicability), not just that it's a child
+
+This hybrid approach gives semantic clarity where users see it (UI/docs) while keeping code simple and conventional.
+
+**When to use parent/child:**
+- ✅ Parent path is exploitable with specific prerequisites (e.g., "user must have < 2 access keys")
+- ✅ Child path adds required permission(s) that remove/bypass those prerequisites
+- ✅ Child works in scenarios where parent fails
+- ✅ Same core attack technique, just expanded applicability
+
+**When NOT to use parent/child (use relatedPaths instead):**
+- ❌ Different categories (new-passrole vs existing-passrole)
+- ❌ Alternative approaches that don't remove prerequisites (siblings)
+- ❌ Neither path works without additional permissions (no true "base" case)
+
+**Key principle:** Child adds permission(s) to the **required** section that expand when the attack works by removing parent's prerequisites.
+
+**Examples:**
+
+**Parent/Child (correct usage):**
+- IAM-002 (CreateAccessKey) → IAM-003 (CreateAccessKey + DeleteAccessKey)
+  - Parent requires: User has < 2 access keys
+  - Child removes prerequisite: Can delete existing key first
+- Lambda-003 (UpdateFunctionCode) → Lambda-004 (UpdateFunctionCode + InvokeFunction)
+  - Parent requires: Function has existing trigger
+  - Child removes prerequisite: Brings own execution via InvokeFunction
+
+**Not Parent/Child (siblings - use relatedPaths):**
+- Glue-003 (PassRole + CreateJob + StartJobRun) and Glue-004 (PassRole + CreateJob + CreateTrigger)
+  - Neither works without the third permission
+  - Different execution methods, not removing prerequisites
+  - These are alternative approaches, not variants
+
+**Relationship to `discoveryAttribution`:**
+- The `parent` field is for machine-readable technical relationships
+- The `discoveryAttribution` field is for human-readable credit and attribution
+- Keep both - they serve different purposes
+
+Example:
+```yaml
+# IAM-003 (child/variant)
+id: iam-003
+name: iam:CreateAccessKey + iam:DeleteAccessKey
+parent:
+  id: iam-002
+  modification: "Adds iam:DeleteAccessKey to enable exploitation even when the target user already has 2 access keys (AWS maximum). The attacker deletes one existing key before creating their own, removing the prerequisite that the user must have fewer than 2 keys."
+discoveryAttribution:
+  firstDocumented:
+    author: Spencer Gietzen
+    organization: Rhino Security Labs
+    date: 2019
+    link: https://rhinosecuritylabs.com/aws/aws-privilege-escalation-methods-mitigation/
+```
+
+```yaml
+# IAM-002 (primary/parent technique)
+id: iam-002
+name: iam:CreateAccessKey
+# No parent field - this is a primary technique
+discoveryAttribution:
+  firstDocumented:
+    author: Spencer Gietzen
+    organization: Rhino Security Labs
+    date: 2019
+    link: https://rhinosecuritylabs.com/aws/aws-privilege-escalation-methods-mitigation/
+```
+
+```yaml
+# Lambda-004 (child/variant)
+id: lambda-004
+name: lambda:UpdateFunctionCode + lambda:InvokeFunction
+parent:
+  id: lambda-003
+  modification: "Adds lambda:InvokeFunction to enable exploitation even when the target function has no existing trigger mechanism. Removes the prerequisite that something must already be invoking the function."
+```
 
 #### `prerequisites` (object or array)
 Conditions that must be met for the escalation to work.

@@ -23,6 +23,7 @@ const searchInput = document.getElementById('search');
 const categoryFilter = document.getElementById('category-filter');
 const serviceFilter = document.getElementById('service-filter');
 const detectionFilter = document.getElementById('detection-filter');
+const lineageFilter = document.getElementById('lineage-filter');
 const resetButton = document.getElementById('reset-filters');
 const viewCardsBtn = document.getElementById('view-cards');
 const viewTableBtn = document.getElementById('view-table');
@@ -70,6 +71,7 @@ function setupEventListeners() {
     categoryFilter.addEventListener('change', applyFilters);
     serviceFilter.addEventListener('change', applyFilters);
     detectionFilter.addEventListener('change', applyFilters);
+    lineageFilter.addEventListener('change', applyFilters);
     resetButton.addEventListener('click', resetFilters);
     viewCardsBtn.addEventListener('click', () => switchView('cards'));
     viewTableBtn.addEventListener('click', () => switchView('table'));
@@ -460,6 +462,7 @@ function applyFilters() {
     const selectedCategory = categoryFilter.value;
     const selectedService = serviceFilter.value;
     const selectedDetection = detectionFilter.value;
+    const selectedLineage = lineageFilter.value;
 
     filteredPaths = allPaths.filter(path => {
         // Search filter
@@ -487,7 +490,19 @@ function applyFilters() {
             }
         }
 
-        return matchesSearch && matchesCategory && matchesService && matchesDetection;
+        // Lineage filter
+        let matchesLineage = true;
+        if (selectedLineage) {
+            if (selectedLineage === 'primary') {
+                // Show only primary paths (paths without a parent)
+                matchesLineage = !path.parent;
+            } else if (selectedLineage === 'variant') {
+                // Show only variant paths (paths with a parent)
+                matchesLineage = !!path.parent;
+            }
+        }
+
+        return matchesSearch && matchesCategory && matchesService && matchesDetection && matchesLineage;
     });
 
     updateStats();
@@ -500,6 +515,7 @@ function resetFilters() {
     categoryFilter.value = '';
     serviceFilter.value = '';
     detectionFilter.value = '';
+    lineageFilter.value = '';
     applyFilters();
 }
 
@@ -773,22 +789,23 @@ function showPathDetails(path) {
     updateMetaTag('description', path.description.substring(0, 160));
     updateOpenGraphTags(path);
 
-    // Render breadcrumb
+    // Render breadcrumb for sticky header (inject into detail-view)
     const breadcrumbHtml = `
-        <nav class="breadcrumb">
-            <a href="/paths/" onclick="event.preventDefault(); navigateToList();">All Paths</a>
-            <span class="breadcrumb-separator">></span>
-            <span class="breadcrumb-current">${escapeHtml(path.name)}</span>
-        </nav>
+        <div class="detail-sticky-header">
+            <nav class="breadcrumb">
+                <a href="/paths/" onclick="event.preventDefault(); navigateToList();">All Paths</a>
+                <span class="breadcrumb-separator">></span>
+                <span class="breadcrumb-current">${escapeHtml(path.name)}</span>
+            </nav>
+        </div>
     `;
 
-    // Render path details
+    // Render path content (inject into detail-content)
     const html = `
-        ${breadcrumbHtml}
+        <div class="detail-scrollable-content">
+            <h1 class="detail-title">${escapeHtml(path.name)}</h1>
 
-        <h1 class="detail-title">${escapeHtml(path.name)}</h1>
-
-        <div class="detail-top-metadata">
+            <div class="detail-top-metadata">
             <div class="metadata-item">
                 <span class="metadata-label">ID:</span>
                 <span class="metadata-value metadata-id">${path.id.toUpperCase()}</span>
@@ -800,6 +817,10 @@ function showPathDetails(path) {
             <div class="metadata-item">
                 <span class="metadata-label">Category:</span>
                 <span class="path-category category-${path.category}" data-category-tooltip="${categoryTooltips[path.category] || ''}">${formatCategory(path.category)}</span>
+            </div>
+            <div class="metadata-item">
+                <span class="metadata-label">Lineage:</span>
+                <span class="metadata-value"><span class="lineage-badge lineage-${path.parent ? 'variant' : 'primary'}">${path.parent ? 'Variant' : 'Primary'}</span></span>
             </div>
         </div>
 
@@ -824,6 +845,15 @@ function showPathDetails(path) {
                     </button>
                 </h2>
                 <div class="attack-viz-container" id="attack-viz-${path.id}"></div>
+            </div>
+        ` : ''}
+
+        ${renderRelatedPaths(path, allPaths) ? `
+            <div class="detail-section">
+                ${createHeadingWithAnchor('Related Paths')}
+                <div class="boxed-section">
+                    ${renderRelatedPaths(path, allPaths)}
+                </div>
             </div>
         ` : ''}
 
@@ -893,9 +923,13 @@ function showPathDetails(path) {
         ` : ''}
 
         ${renderGitMetadata(path)}
+        </div>
     `;
 
+    // Inject breadcrumb into detail-view and content into detail-content
+    detailView.innerHTML = breadcrumbHtml;
     detailContent.innerHTML = html;
+    detailView.appendChild(detailContent);
 
     // Handle anchor scrolling if present in URL
     const hash = window.location.hash;
@@ -1946,6 +1980,73 @@ function renderDetectionTools(detectionTools) {
     `;
 }
 
+// Render related techniques (parent and children)
+function renderRelatedPaths(path, allPaths) {
+    // Handle both legacy (string) and new (object) parent formats
+    const parentId = path.parent ? (typeof path.parent === 'string' ? path.parent : path.parent.id) : null;
+    const parentModification = path.parent && typeof path.parent === 'object' ? path.parent.modification : null;
+
+    const parent = parentId ? allPaths.find(p => p.id === parentId) : null;
+
+    // Find children - check both legacy string and new object formats
+    const children = allPaths.filter(p => {
+        if (!p.parent) return false;
+        const childParentId = typeof p.parent === 'string' ? p.parent : p.parent.id;
+        return childParentId === path.id;
+    });
+
+    // If no parent and no children, don't render the section
+    if (!parent && children.length === 0) {
+        return '';
+    }
+
+    let rows = [];
+
+    // Add parent row if exists
+    if (parent) {
+        const pathLink = `<a href="/paths/${escapeHtml(parent.id)}" onclick="event.preventDefault(); navigateToPath('${escapeHtml(parent.id)}');" class="path-link-full">${escapeHtml(parent.id.toUpperCase())} — ${escapeHtml(parent.name)}</a>`;
+        const notes = parentModification ? escapeHtml(parentModification) : 'This path is a variant of the primary technique';
+
+        rows.push(`
+            <tr>
+                <td class="attr-type attr-type-narrow"><span class="badge badge-derivative">Variant Of</span></td>
+                <td class="attr-author">${pathLink}</td>
+                <td class="attr-context">${notes}</td>
+            </tr>
+        `);
+    }
+
+    // Add children rows
+    children.forEach(child => {
+        const childModification = child.parent && typeof child.parent === 'object' ? child.parent.modification : null;
+        const pathLink = `<a href="/paths/${escapeHtml(child.id)}" onclick="event.preventDefault(); navigateToPath('${escapeHtml(child.id)}');" class="path-link-full">${escapeHtml(child.id.toUpperCase())} — ${escapeHtml(child.name)}</a>`;
+        const notes = childModification ? escapeHtml(childModification) : 'Variant of this technique';
+
+        rows.push(`
+            <tr>
+                <td class="attr-type attr-type-narrow"><span class="badge badge-primary">Parent Of</span></td>
+                <td class="attr-author">${pathLink}</td>
+                <td class="attr-context">${notes}</td>
+            </tr>
+        `);
+    });
+
+    return `
+        <table class="attribution-table">
+            <thead>
+                <tr>
+                    <th class="th-narrow">Type</th>
+                    <th>Path</th>
+                    <th>Relationship Notes</th>
+                </tr>
+            </thead>
+            <tbody>
+                ${rows.join('')}
+            </tbody>
+        </table>
+    `;
+}
+
 // Render discovery attribution (supports both TABLE and CARD views)
 // To switch between views, change the return statement at the end of this function
 function renderDiscoveryAttribution(attribution) {
@@ -1969,15 +2070,12 @@ function renderDiscoveryAttribution(attribution) {
     const tableView = () => {
         let rows = [];
 
-        // First documented row - includes modification context if derivative
+        // First documented row only
         const firstDoc = attribution.firstDocumented;
         const firstDocAuthor = firstDoc.author
             ? `${escapeHtml(firstDoc.author)}${firstDoc.organization ? ` (${escapeHtml(firstDoc.organization)})` : ''}`
             : escapeHtml(firstDoc.source || 'Unknown');
         const firstDocDate = firstDoc.date ? escapeHtml(String(firstDoc.date)) : 'Unknown';
-        const firstDocContext = attribution.derivativeOf
-            ? escapeHtml(attribution.derivativeOf.modification)  // Show what's different in this version
-            : 'Original discovery of this escalation path';
         const firstDocLink = firstDoc.link
             ? `<a href="${escapeHtml(firstDoc.link)}" target="_blank" class="attribution-link">View Source →</a>`
             : '—';
@@ -1987,38 +2085,9 @@ function renderDiscoveryAttribution(attribution) {
                 <td class="attr-type"><span class="badge badge-primary">First Documented</span></td>
                 <td class="attr-author">${firstDocAuthor}</td>
                 <td class="attr-date">${firstDocDate}</td>
-                <td class="attr-context">${firstDocContext}</td>
                 <td class="attr-link">${firstDocLink}</td>
             </tr>
         `);
-
-        // Derivative of row - shows info about the source path
-        if (attribution.derivativeOf) {
-            const deriv = attribution.derivativeOf;
-            const origin = attribution.ultimateOrigin;
-
-            // Build author info from ultimateOrigin if available
-            let derivAuthor = `<a href="/paths/${escapeHtml(deriv.pathId)}" onclick="event.preventDefault(); navigateToPath('${escapeHtml(deriv.pathId)}');">${escapeHtml(deriv.pathId.toUpperCase())}</a>`;
-            if (origin) {
-                derivAuthor += ` (${escapeHtml(origin.author)}${origin.organization ? `, ${escapeHtml(origin.organization)}` : ''})`;
-            }
-
-            const derivDate = origin && origin.date ? escapeHtml(String(origin.date)) : '—';
-            const derivContext = 'Original discovery of parent attack';
-            const derivLink = origin && origin.link
-                ? `<a href="${escapeHtml(origin.link)}" target="_blank" class="attribution-link">View Source →</a>`
-                : '—';
-
-            rows.push(`
-                <tr>
-                    <td class="attr-type"><span class="badge badge-derivative">Derivative Of</span></td>
-                    <td class="attr-author">${derivAuthor}</td>
-                    <td class="attr-date">${derivDate}</td>
-                    <td class="attr-context">${derivContext}</td>
-                    <td class="attr-link">${derivLink}</td>
-                </tr>
-            `);
-        }
 
         return `
             <table class="attribution-table">
@@ -2027,7 +2096,6 @@ function renderDiscoveryAttribution(attribution) {
                         <th>Type</th>
                         <th>Author/Source</th>
                         <th>Year</th>
-                        <th>Context</th>
                         <th>Source</th>
                     </tr>
                 </thead>

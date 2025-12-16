@@ -32,6 +32,7 @@ LEGACY_FIELDS = {
 }
 
 OPTIONAL_FIELDS = {
+    'parent': (str, dict),  # Parent path ID (legacy str) or object with id+modification (v1.6.0)
     'prerequisites': (dict, list),  # dict (new tabbed format) or list (legacy)
     'limitations': str,  # Explains admin vs. limited access
     'references': list,
@@ -400,6 +401,64 @@ def validate_related_paths(related_paths: List[str]) -> None:
             raise ValidationError(f"Invalid related path ID '{path_id}': {e}")
 
 
+def validate_parent(parent: (str, dict), valid_ids: set = None) -> None:
+    """Validate the parent field.
+
+    Args:
+        parent: The parent field - either string (legacy format) or dict with id+modification
+        valid_ids: Optional set of valid path IDs to check against
+    """
+    # Handle legacy string format
+    if isinstance(parent, str):
+        # Validate ID format
+        try:
+            validate_id(parent)
+        except ValidationError as e:
+            raise ValidationError(f"Invalid parent ID '{parent}': {e}")
+
+        # If valid_ids is provided, check that parent exists
+        if valid_ids is not None and parent not in valid_ids:
+            raise ValidationError(f"Parent path '{parent}' does not exist")
+        return
+
+    # Handle new dict format (v1.6.0)
+    if not isinstance(parent, dict):
+        raise ValidationError(f"Parent field must be a string or dict, got {type(parent).__name__}")
+
+    # Required fields in parent object
+    if 'id' not in parent:
+        raise ValidationError("Parent object must have 'id' field")
+    if 'modification' not in parent:
+        raise ValidationError("Parent object must have 'modification' field")
+
+    # Validate parent.id
+    parent_id = parent['id']
+    if not isinstance(parent_id, str):
+        raise ValidationError(f"Parent.id must be a string, got {type(parent_id).__name__}")
+
+    try:
+        validate_id(parent_id)
+    except ValidationError as e:
+        raise ValidationError(f"Invalid parent.id '{parent_id}': {e}")
+
+    # If valid_ids is provided, check that parent exists
+    if valid_ids is not None and parent_id not in valid_ids:
+        raise ValidationError(f"Parent path '{parent_id}' does not exist")
+
+    # Validate parent.modification
+    modification = parent['modification']
+    if not isinstance(modification, str):
+        raise ValidationError(f"Parent.modification must be a string, got {type(modification).__name__}")
+    if not modification.strip():
+        raise ValidationError("Parent.modification cannot be empty")
+
+    # Check for unexpected fields in parent object
+    allowed_keys = {'id', 'modification'}
+    unexpected_keys = set(parent.keys()) - allowed_keys
+    if unexpected_keys:
+        raise ValidationError(f"Unexpected fields in parent object: {', '.join(unexpected_keys)}")
+
+
 def validate_detection_rules(detection_rules: List[Dict]) -> None:
     """Validate the detectionRules field."""
     if not isinstance(detection_rules, list):
@@ -654,9 +713,13 @@ def validate_attack_visualization(attack_viz) -> None:
                 )
 
 
-def validate_file(file_path: str) -> Tuple[bool, List[str]]:
+def validate_file(file_path: str, valid_ids: set = None) -> Tuple[bool, List[str]]:
     """
     Validate a single YAML file against the schema.
+
+    Args:
+        file_path: Path to the YAML file to validate
+        valid_ids: Optional set of all valid path IDs (for parent validation)
 
     Returns:
         Tuple of (success: bool, errors: List[str])
@@ -754,6 +817,12 @@ def validate_file(file_path: str) -> Tuple[bool, List[str]]:
             except ValidationError as e:
                 errors.append(str(e))
 
+        if 'parent' in data:
+            try:
+                validate_parent(data['parent'], valid_ids)
+            except ValidationError as e:
+                errors.append(str(e))
+
         if 'detectionRules' in data:
             try:
                 validate_detection_rules(data['detectionRules'])
@@ -839,12 +908,25 @@ def main():
 
     print(f"Validating {len(yaml_files)} file(s)...\n")
 
+    # First pass: collect all path IDs for parent validation
+    valid_ids = set()
+    for file_path in yaml_files:
+        try:
+            with open(file_path, 'r') as f:
+                data = yaml.safe_load(f)
+                if isinstance(data, dict) and 'id' in data:
+                    valid_ids.add(data['id'])
+        except Exception:
+            # Ignore errors in first pass, they'll be caught in validation pass
+            pass
+
+    # Second pass: validate all files with parent ID checking
     total_files = len(yaml_files)
     passed = 0
     failed = 0
 
     for file_path in yaml_files:
-        success, errors = validate_file(file_path)
+        success, errors = validate_file(file_path, valid_ids)
 
         if success:
             print(f"✓ {file_path}")

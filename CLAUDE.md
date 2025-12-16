@@ -19,6 +19,32 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 3. **Website Layer**: Static HTML/CSS/JS site for browsing paths
 4. **CI/CD Layer**: GitHub Actions for validation and deployment
 
+## Terminology: Parent/Child vs Primary/Variant
+
+We use **different terminology in different contexts** for clarity and semantic meaning:
+
+### In YAML Files and Code
+- **`parent` field**: Points to the parent path (e.g., `parent.id: iam-002`)
+- **Why**: Concise, follows common data structure conventions, natural for hierarchical references
+
+### In UI and Documentation
+- **"Primary Technique"**: The foundational/original technique (what YAML calls the "parent")
+- **"Variant"**: A modification that expands applicability by removing prerequisites (what YAML calls the "child")
+- **Why**: Semantic clarity - "variant" explains WHAT it is, not just that there's a hierarchy
+
+### Key Concepts
+- **Primary techniques** have no `parent` field - they are the foundational attacks
+- **Variant techniques** have a `parent` field with `id` and `modification`
+- **Variants add required permissions** that remove prerequisites from the primary technique
+- **Example**: IAM-002 (primary) requires < 2 keys. IAM-003 (variant) adds DeleteAccessKey to work even with 2 keys.
+
+### When Contributing
+- In YAML: Use `parent` field for variants
+- In documentation/comments: Refer to "primary techniques" and "variants"
+- In UI text: Display "Primary Technique" and "Variants (N)"
+
+See [SCHEMA.md](SCHEMA.md#parent-object-optional) for detailed parent/child relationship criteria.
+
 ## Quick Start Commands
 
 ### Essential Commands
