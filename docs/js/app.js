@@ -2124,14 +2124,16 @@ function renderPrerequisites(prerequisites, limitations) {
 
     // Check if new format (dict) or legacy format (array)
     if (Array.isArray(prerequisites)) {
-        // Legacy format: render as simple list
+        // Legacy format: render as simple list with card background
         return `
             ${limitationsHtml}
-            <ul>
-                ${prerequisites.map(p => `
-                    <li>${escapeHtml(typeof p === 'string' ? p : (p.condition || p))}</li>
-                `).join('')}
-            </ul>
+            <div class="tabs-content">
+                <ul>
+                    ${prerequisites.map(p => `
+                        <li>${escapeHtml(typeof p === 'string' ? p : (p.condition || p))}</li>
+                    `).join('')}
+                </ul>
+            </div>
         `;
     }
 
