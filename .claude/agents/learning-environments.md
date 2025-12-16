@@ -19,7 +19,7 @@ Research the following learning platforms to determine if they have labs/scenari
 
 Check these platforms systematically:
 
-### 1. **Pathfinder Labs** (Open Source)
+### 1. **pathfinding Labs** (Open Source)
 - **Type**: open-source
 - **Repository**: https://github.com/DataDog/pathfinding-labs (IMPORTANT: This repo is still private for now. So you won't be able to do a websearch of the private repo. You should instead read ~/Documents/projects/pathfinding-labs/modules/scenarios/single-account and find the scenario there, but then create a link that will work when the project goes live.)
 - **What to look for**: Check `modules/scenarios/` directory for matching attack paths
@@ -181,9 +181,9 @@ Check these platforms systematically:
   - If you can't verify all platforms in time, add the ones you've confirmed
   - Don't guess or assume - only add verified environments
 
-## Special Note: Pathfinder Labs Integration
+## Special Note: Pathfinding Labs Integration
 
-If you were given a Pathfinder Labs directory path when this agent was invoked, that means this attack path is DEFINITELY in Pathfinder Labs. In that case:
+If you were given a Pathfinding Labs directory path when this agent was invoked, that means this attack path is DEFINITELY in Pathfinding Labs. In that case:
 - Extract the scenario path from the directory structure
 - Add pathfinding-labs entry with the correct scenario path
 - Then research the other 6 platforms normally

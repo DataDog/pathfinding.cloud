@@ -1791,7 +1791,7 @@ function renderLearningEnvironments(environments) {
     // Environment display names
     const envDisplayNames = {
         'iam-vulnerable': 'IAM Vulnerable',
-        'pathfinding-labs': 'Pathfinder Labs',
+        'pathfinding-labs': 'Pathfinding Labs',
         'cloudfoxable': 'CloudFoxable',
         'cybr': 'Cybr',
         'pwndlabs': 'Pwned Labs'
