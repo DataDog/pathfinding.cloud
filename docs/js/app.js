@@ -8,6 +8,9 @@ let sortColumn = null;
 let sortDirection = 'asc'; // 'asc' or 'desc'
 let currentRoute = { view: 'list', pathId: null }; // Track current route
 
+// Store tooltip positions per visualization container
+const tooltipPositions = new WeakMap();
+
 // Category tooltips
 const categoryTooltips = {
     'self-escalation': 'Modify your own permissions directly',
@@ -1329,25 +1332,109 @@ function showVisualizationTooltip(title, description, vizContainer) {
     // Append to the visualization container instead of body
     vizContainer.appendChild(tooltip);
 
-    // Position tooltip at bottom left of the container
+    // Position tooltip - use saved position if available, otherwise default to bottom left
     tooltip.style.position = 'absolute';
-    tooltip.style.left = '10px';
-    tooltip.style.bottom = '10px';
-    tooltip.style.top = 'auto';
+    const savedPosition = tooltipPositions.get(vizContainer);
+    if (savedPosition) {
+        tooltip.style.left = savedPosition.left;
+        tooltip.style.top = savedPosition.top;
+        tooltip.style.bottom = 'auto';
+    } else {
+        tooltip.style.left = '10px';
+        tooltip.style.bottom = '10px';
+        tooltip.style.top = 'auto';
+    }
+
+    // Add drag functionality
+    const header = tooltip.querySelector('.viz-tooltip-header');
+    let isDragging = false;
+    let dragJustEnded = false;
+    let offsetX = 0;
+    let offsetY = 0;
+
+    const onMouseMove = (e) => {
+        if (!isDragging) return;
+
+        e.preventDefault();
+        e.stopPropagation();
+
+        const containerRect = vizContainer.getBoundingClientRect();
+        let newX = e.clientX - containerRect.left - offsetX;
+        let newY = e.clientY - containerRect.top - offsetY;
+
+        // Keep tooltip within container bounds
+        const tooltipRect = tooltip.getBoundingClientRect();
+        const maxX = containerRect.width - tooltipRect.width;
+        const maxY = containerRect.height - tooltipRect.height;
+
+        newX = Math.max(0, Math.min(newX, maxX));
+        newY = Math.max(0, Math.min(newY, maxY));
+
+        tooltip.style.left = newX + 'px';
+        tooltip.style.top = newY + 'px';
+        tooltip.style.bottom = 'auto';
+    };
+
+    const onMouseUp = () => {
+        if (isDragging) {
+            isDragging = false;
+            dragJustEnded = true;
+            header.style.cursor = 'grab';
+
+            // Save the tooltip position for this container
+            tooltipPositions.set(vizContainer, {
+                left: tooltip.style.left,
+                top: tooltip.style.top
+            });
+
+            // Clean up event listeners
+            document.removeEventListener('mousemove', onMouseMove);
+            document.removeEventListener('mouseup', onMouseUp);
+
+            // Reset drag flag after a short delay
+            setTimeout(() => {
+                dragJustEnded = false;
+            }, 150);
+        }
+    };
+
+    header.addEventListener('mousedown', (e) => {
+        // Don't start drag if clicking the close button
+        if (e.target.closest('.viz-tooltip-close')) return;
+
+        isDragging = true;
+
+        // Calculate offset: where within the tooltip did the user click?
+        const rect = tooltip.getBoundingClientRect();
+
+        offsetX = e.clientX - rect.left;
+        offsetY = e.clientY - rect.top;
+
+        header.style.cursor = 'grabbing';
+        e.preventDefault();
+        e.stopPropagation();
+
+        // Add event listeners
+        document.addEventListener('mousemove', onMouseMove);
+        document.addEventListener('mouseup', onMouseUp);
+    });
 
     // Add close handler
-    tooltip.querySelector('.viz-tooltip-close').addEventListener('click', () => {
+    tooltip.querySelector('.viz-tooltip-close').addEventListener('click', (e) => {
+        e.stopPropagation();
         tooltip.remove();
     });
 
-    // Close on outside click
+    // Close on outside click (but not right after dragging)
     setTimeout(() => {
-        document.addEventListener('click', function closeTooltip(e) {
-            if (!tooltip.contains(e.target)) {
-                tooltip.remove();
-                document.removeEventListener('click', closeTooltip);
-            }
-        });
+        const closeHandler = (e) => {
+            // Don't close if we just finished dragging or if clicking inside tooltip
+            if (dragJustEnded || tooltip.contains(e.target)) return;
+
+            tooltip.remove();
+            document.removeEventListener('click', closeHandler);
+        };
+        document.addEventListener('click', closeHandler);
     }, 100);
 }
 
