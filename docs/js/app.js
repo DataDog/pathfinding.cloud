@@ -669,7 +669,7 @@ function createPathCard(path) {
     return `
         <div class="path-card">
             <div class="path-card-header">
-                <span class="path-id">${path.id.toUpperCase()}</span>
+                <span class="path-id">${escapeHtml(sanitizePathId(path.id).toUpperCase())}</span>
                 <span class="path-category ${categoryClass}" data-category-tooltip="${categoryTooltips[path.category] || ''}">${formatCategory(path.category)}</span>
             </div>
             <div class="path-name">${escapeHtml(path.name)}</div>
@@ -714,9 +714,9 @@ function createPathTable(paths) {
                     return `
                         <tr>
                             <td class="table-id-cell">
-                                <div class="table-id">${path.id.toUpperCase()}</div>
+                                <div class="table-id">${escapeHtml(sanitizePathId(path.id).toUpperCase())}</div>
                                 <div class="table-services">
-                                    ${path.services.map(s => `<span class="service-tag">${s}</span>`).join('')}
+                                    ${path.services.map(s => `<span class="service-tag">${escapeHtml(s)}</span>`).join('')}
                                 </div>
                             </td>
                             <td class="table-name">${escapeHtml(path.name)}</td>
@@ -727,7 +727,7 @@ function createPathTable(paths) {
                                 ${detectionTools.length > 0 ?
                                     detectionTools.map(tool => {
                                         const toolInfo = toolMetadata[tool] || { name: tool };
-                                        return `<span class="detection-tool-circle" data-tool="${tool}" data-tool-name="${toolInfo.name || tool}">${getToolInitials(tool)}</span>`;
+                                        return `<span class="detection-tool-circle" data-tool="${escapeHtml(tool)}" data-tool-name="${escapeHtml(toolInfo.name || tool)}">${escapeHtml(getToolInitials(tool))}</span>`;
                                     }).join('')
                                     : '<span class="no-detection">—</span>'}
                             </td>
@@ -851,11 +851,11 @@ function showPathDetails(path) {
             <div class="detail-top-metadata">
             <div class="metadata-item">
                 <span class="metadata-label">ID:</span>
-                <span class="metadata-value metadata-id">${path.id.toUpperCase()}</span>
+                <span class="metadata-value metadata-id">${escapeHtml(sanitizePathId(path.id).toUpperCase())}</span>
             </div>
             <div class="metadata-item">
                 <span class="metadata-label">Services:</span>
-                <span class="metadata-value">${path.services.map(s => `<span class="service-tag">${s}</span>`).join('')}</span>
+                <span class="metadata-value">${path.services.map(s => `<span class="service-tag">${escapeHtml(s)}</span>`).join('')}</span>
             </div>
             <div class="metadata-item">
                 <span class="metadata-label">Category:</span>
@@ -881,7 +881,7 @@ function showPathDetails(path) {
                             <path d="M7.775 3.275a.75.75 0 001.06 1.06l1.25-1.25a2 2 0 112.83 2.83l-2.5 2.5a2 2 0 01-2.83 0 .75.75 0 00-1.06 1.06 3.5 3.5 0 004.95 0l2.5-2.5a3.5 3.5 0 00-4.95-4.95l-1.25 1.25zm-4.69 9.64a2 2 0 010-2.83l2.5-2.5a2 2 0 012.83 0 .75.75 0 001.06-1.06 3.5 3.5 0 00-4.95 0l-2.5 2.5a3.5 3.5 0 004.95 4.95l1.25-1.25a.75.75 0 00-1.06-1.06l-1.25 1.25a2 2 0 01-2.83 0z"/>
                         </svg>
                     </a>
-                    <button class="fullscreen-viz-btn" onclick="openFullscreenVisualization('${path.id}')" title="Open in fullscreen">
+                    <button class="fullscreen-viz-btn" data-path-id="${escapeHtml(path.id)}" title="Open in fullscreen">
                         <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor">
                             <path d="M1.5 1a.5.5 0 0 0-.5.5v4a.5.5 0 0 1-1 0v-4A1.5 1.5 0 0 1 1.5 0h4a.5.5 0 0 1 0 1h-4zM10 .5a.5.5 0 0 1 .5-.5h4A1.5 1.5 0 0 1 16 1.5v4a.5.5 0 0 1-1 0v-4a.5.5 0 0 0-.5-.5h-4a.5.5 0 0 1-.5-.5zM.5 10a.5.5 0 0 1 .5.5v4a.5.5 0 0 0 .5.5h4a.5.5 0 0 1 0 1h-4A1.5 1.5 0 0 1 0 14.5v-4a.5.5 0 0 1 .5-.5zm15 0a.5.5 0 0 1 .5.5v4a1.5 1.5 0 0 1-1.5 1.5h-4a.5.5 0 0 1 0-1h4a.5.5 0 0 0 .5-.5v-4a.5.5 0 0 1 .5-.5z"/>
                         </svg>
@@ -995,6 +995,19 @@ function showPathDetails(path) {
             renderAttackVisualization(path.id, path.attackVisualization);
         }, 10);
     }
+
+    // Add event listener for fullscreen visualization button
+    setTimeout(() => {
+        const fullscreenBtn = document.querySelector('.fullscreen-viz-btn');
+        if (fullscreenBtn) {
+            fullscreenBtn.addEventListener('click', () => {
+                const pathId = fullscreenBtn.getAttribute('data-path-id');
+                if (pathId) {
+                    openFullscreenVisualization(pathId);
+                }
+            });
+        }
+    }, 50);
 }
 
 // Calculate hierarchical levels for nodes based on edges
@@ -1643,6 +1656,46 @@ function escapeHtml(text) {
     return div.innerHTML;
 }
 
+// Sanitize GitHub username to prevent XSS
+// GitHub usernames can only contain alphanumeric characters and hyphens
+// Cannot start or end with a hyphen, max 39 characters
+function sanitizeGithubUsername(username) {
+    if (!username || typeof username !== 'string') {
+        return null;
+    }
+    // Remove any characters that aren't alphanumeric or hyphens
+    const sanitized = username.replace(/[^a-zA-Z0-9-]/g, '');
+    // Validate it matches GitHub username rules
+    if (sanitized.length === 0 || sanitized.length > 39) {
+        return null;
+    }
+    // Cannot start or end with hyphen
+    if (sanitized.startsWith('-') || sanitized.endsWith('-')) {
+        return null;
+    }
+    // Cannot have consecutive hyphens
+    if (sanitized.includes('--')) {
+        return null;
+    }
+    return sanitized;
+}
+
+// Sanitize path ID to prevent XSS
+// Path IDs follow the format: service-### (e.g., iam-001, ec2-004)
+function sanitizePathId(pathId) {
+    if (!pathId || typeof pathId !== 'string') {
+        return '';
+    }
+    // Path IDs should only contain lowercase letters, numbers, and hyphens
+    const sanitized = pathId.replace(/[^a-z0-9-]/gi, '');
+    // Validate it matches the expected pattern (letters-digits)
+    if (!/^[a-z]+-\d+$/i.test(sanitized)) {
+        // If it doesn't match, escape it to prevent XSS
+        return escapeHtml(pathId);
+    }
+    return sanitized;
+}
+
 // Convert text to URL-friendly slug for anchor links
 function slugify(text) {
     return text
@@ -1765,24 +1818,31 @@ function renderGitMetadata(path) {
         }
 
         return metadata.contributors.map(contributor => {
-            const avatarUrl = contributor.githubUsername
-                ? `https://github.com/${contributor.githubUsername}.png?size=40`
+            // Sanitize GitHub username to prevent XSS
+            const sanitizedUsername = sanitizeGithubUsername(contributor.githubUsername);
+
+            const avatarUrl = sanitizedUsername
+                ? `https://github.com/${sanitizedUsername}.png?size=40`
                 : `https://ui-avatars.com/api/?name=${encodeURIComponent(contributor.name)}&size=40&background=random`;
 
-            const profileUrl = contributor.githubUsername
-                ? `https://github.com/${contributor.githubUsername}`
+            const profileUrl = sanitizedUsername
+                ? `https://github.com/${sanitizedUsername}`
                 : null;
 
-            if (profileUrl) {
+            // Escape URLs for use in HTML attributes
+            const escapedProfileUrl = profileUrl ? escapeHtml(profileUrl) : null;
+            const escapedAvatarUrl = escapeHtml(avatarUrl);
+
+            if (escapedProfileUrl) {
                 return `
-                    <a href="${profileUrl}" target="_blank" class="contributor-link" title="${escapeHtml(contributor.name)}">
-                        <img src="${avatarUrl}" alt="${escapeHtml(contributor.name)}" class="contributor-avatar">
+                    <a href="${escapedProfileUrl}" target="_blank" class="contributor-link" title="${escapeHtml(contributor.name)}">
+                        <img src="${escapedAvatarUrl}" alt="${escapeHtml(contributor.name)}" class="contributor-avatar">
                     </a>
                 `;
             } else {
                 return `
                     <span class="contributor-no-link" title="${escapeHtml(contributor.name)} (${escapeHtml(contributor.email)})">
-                        <img src="${avatarUrl}" alt="${escapeHtml(contributor.name)}" class="contributor-avatar">
+                        <img src="${escapedAvatarUrl}" alt="${escapeHtml(contributor.name)}" class="contributor-avatar">
                     </span>
                 `;
             }
