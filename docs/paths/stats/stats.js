@@ -695,6 +695,16 @@ function createServiceTreemap() {
             options: {
                 responsive: true,
                 maintainAspectRatio: false,
+                onClick: (event, elements) => {
+                    if (elements.length > 0) {
+                        const element = elements[0];
+                        const service = element.element.$context.raw._data?.service;
+                        if (service) {
+                            // Navigate to paths page with service filter
+                            window.location.href = `/paths/?service=${service.toLowerCase()}`;
+                        }
+                    }
+                },
                 plugins: {
                     legend: { display: false },
                     tooltip: {
@@ -704,7 +714,7 @@ function createServiceTreemap() {
                             },
                             label: function(context) {
                                 const count = context.raw._data?.count || 0;
-                                return `${count} paths`;
+                                return `${count} paths (Click to view paths)`;
                             }
                         }
                     }
@@ -760,6 +770,16 @@ function createCategoryChart() {
         options: {
             responsive: true,
             maintainAspectRatio: false,
+            onClick: (event, elements) => {
+                if (elements.length > 0) {
+                    const index = elements[0].index;
+                    const categoryKey = Object.keys(categoryCounts)[index];
+                    if (categoryKey) {
+                        // Navigate to paths page with category filter
+                        window.location.href = `/paths/?category=${categoryKey}`;
+                    }
+                }
+            },
             plugins: {
                 legend: {
                     display: false
@@ -770,7 +790,7 @@ function createCategoryChart() {
                             const label = context.label || '';
                             const value = context.parsed;
                             const percentage = Math.round((value / allPaths.length) * 100);
-                            return `${label}: ${value} paths (${percentage}%)`;
+                            return `${label}: ${value} paths (${percentage}%) - Click to view paths`;
                         }
                     }
                 }
@@ -856,6 +876,14 @@ function createDetectionCoverageRing() {
         options: {
             responsive: true,
             maintainAspectRatio: false,
+            onClick: (event, elements) => {
+                if (elements.length > 0) {
+                    const index = elements[0].index;
+                    // 0 = With Detection, 1 = Without Detection
+                    const detectionParam = index === 0 ? 'any' : 'none';
+                    window.location.href = `/paths/?detection=${detectionParam}`;
+                }
+            },
             plugins: {
                 legend: {
                     display: false
@@ -866,7 +894,7 @@ function createDetectionCoverageRing() {
                             const label = context.label || '';
                             const value = context.parsed;
                             const percentage = Math.round((value / allPaths.length) * 100);
-                            return `${label}: ${value} paths (${percentage}%)`;
+                            return `${label}: ${value} paths (${percentage}%) - Click to view paths`;
                         }
                     }
                 }
@@ -968,6 +996,13 @@ function createDetectionToolsChart() {
             indexAxis: 'y',
             responsive: true,
             maintainAspectRatio: false,
+            onClick: (event, elements) => {
+                if (elements.length > 0) {
+                    const index = elements[0].index;
+                    const toolName = sortedTools[index][0]; // Get original tool name
+                    window.location.href = `/paths/?detection=${toolName}`;
+                }
+            },
             plugins: {
                 legend: {
                     display: false
@@ -976,7 +1011,7 @@ function createDetectionToolsChart() {
                     callbacks: {
                         label: function(context) {
                             const percentage = Math.round((context.parsed.x / allPaths.length) * 100);
-                            return `${context.parsed.x} paths (${percentage}%)`;
+                            return `${context.parsed.x} paths (${percentage}%) - Click to view paths`;
                         }
                     }
                 },

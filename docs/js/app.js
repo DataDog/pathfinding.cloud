@@ -336,6 +336,27 @@ function showListView() {
     if (detailView) detailView.style.display = 'none';
     if (nav) nav.style.display = 'block';
 
+    // Check for URL parameters and apply filters
+    const urlParams = new URLSearchParams(window.location.search);
+    const serviceParam = urlParams.get('service');
+    const categoryParam = urlParams.get('category');
+    const detectionParam = urlParams.get('detection');
+
+    if (serviceParam) {
+        serviceFilter.value = serviceParam;
+    }
+    if (categoryParam) {
+        categoryFilter.value = categoryParam;
+    }
+    if (detectionParam) {
+        detectionFilter.value = detectionParam;
+    }
+
+    // Apply filters if parameters were set
+    if (serviceParam || categoryParam || detectionParam) {
+        applyFilters();
+    }
+
     // Update page title
     document.title = 'pathfinding.cloud - AWS IAM Privilege Escalation Paths';
 
@@ -527,6 +548,9 @@ function applyFilters() {
             if (selectedDetection === 'none') {
                 // Show paths with no detection tools
                 matchesDetection = !path.detectionTools || Object.keys(path.detectionTools).length === 0;
+            } else if (selectedDetection === 'any') {
+                // Show paths with at least one detection tool
+                matchesDetection = path.detectionTools && Object.keys(path.detectionTools).length > 0;
             } else {
                 // Show paths that have the selected detection tool
                 matchesDetection = path.detectionTools && path.detectionTools[selectedDetection];
