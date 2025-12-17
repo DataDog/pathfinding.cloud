@@ -28,23 +28,33 @@ exploitationSteps:
   - step: 3
     command: '# Access the newly created resources (e.g., IAM user, Lambda function)'
     description: Use the elevated privileges of the created resources
-recommendation: "High powered service roles + overly permissive `iam:PassRole` is\
-  \ what makes this privilege escalation path exploitable and impactful.\n\n- **Avoid\
-  \ administrative service roles** - Very rarely does a CloudFormation stack need\
-  \ administrative access. Use the principle of least privilege.\n- **Avoid granting\
-  \ `iam:PassRole` on all resources** - Whenever possible, restrict `iam:PassRole`\
-  \ to specific roles or specific services.\n\nUse IAM policy conditions to restrict\
-  \ which roles can be passed and to which services:\n\n```json\n{\n  \"Effect\":\
-  \ \"Allow\",\n  \"Action\": \"iam:PassRole\",\n  \"Resource\": \"arn:aws:iam::ACCOUNT_ID:role/SpecificCloudFormationRole\"\
-  ,\n  \"Condition\": {\n    \"StringEquals\": {\n      \"iam:PassedToService\": \"\
-  cloudformation.amazonaws.com\"\n    }\n  }\n}\n```\n\n- Monitor CloudTrail for unusual\
-  \ CloudFormation stack creation followed by immediate resource creation\n- Monitor\
-  \ CloudTrail for stack creation by principals who do not usually create stacks\n\
-  - Monitor CloudTrail for roles being passed to CloudFormation that haven't been\
-  \ used before\n- Monitor and alert on CloudFormation stack creation with privileged\
-  \ roles\n- Regularly audit CloudFormation stacks for excessive IAM permissions\n\
-  - Regularly audit all IAM roles that trust the CloudFormation service and down-scope\
-  \ any roles with administrative access\n"
+recommendation: |
+  High powered service roles + overly permissive `iam:PassRole` is what makes this privilege escalation path exploitable and impactful.
+
+  - **Avoid administrative service roles** - Very rarely does a CloudFormation stack need administrative access. Use the principle of least privilege.
+  - **Avoid granting `iam:PassRole` on all resources** - Whenever possible, restrict `iam:PassRole` to specific roles or specific services.
+
+  Use IAM policy conditions to restrict which roles can be passed and to which services:
+
+  ```json
+  {
+    "Effect": "Allow",
+    "Action": "iam:PassRole",
+    "Resource": "arn:aws:iam::ACCOUNT_ID:role/SpecificCloudFormationRole",
+    "Condition": {
+      "StringEquals": {
+        "iam:PassedToService": "cloudformation.amazonaws.com"
+      }
+    }
+  }
+  ```
+
+  - Monitor CloudTrail for unusual CloudFormation stack creation followed by immediate resource creation
+  - Monitor CloudTrail for stack creation by principals who do not usually create stacks
+  - Monitor CloudTrail for roles being passed to CloudFormation that haven't been used before
+  - Monitor and alert on CloudFormation stack creation with privileged roles
+  - Regularly audit CloudFormation stacks for excessive IAM permissions
+  - Regularly audit all IAM roles that trust the CloudFormation service and down-scope any roles with administrative access
 limitations: 'This path provides administrative access only if the passed role has
   administrative permissions (e.g., AdministratorAccess or an equivalent custom policy).
   If only limited roles are available, you gain access limited to those permissions.
@@ -173,14 +183,19 @@ attackVisualization:
   - from: start
     to: cfn_stack
     label: iam:PassRole + cloudformation:CreateStack
-    description: "The attacker creates a new CloudFormation stack and passes a privileged\
-      \ role to it. The stack is created with a malicious template (YAML or JSON)\
-      \ that defines AWS resources to be provisioned.\n\nCommand:\n```bash\naws cloudformation\
-      \ create-stack \\\n  --stack-name privesc-stack \\\n  --template-body file://exploit-template.yaml\
-      \ \\\n  --capabilities CAPABILITY_IAM \\\n  --role-arn arn:aws:iam::ACCOUNT_ID:role/PRIVILEGED_ROLE\n\
-      ```\n\nThe exploit-template.yaml contains resource definitions that will execute\
-      \ with the target role's permissions. Note the `--capabilities CAPABILITY_IAM`\
-      \ flag is required when the template creates IAM resources.\n"
+    description: |
+      The attacker creates a new CloudFormation stack and passes a privileged role to it. The stack is created with a malicious template (YAML or JSON) that defines AWS resources to be provisioned.
+
+      Command:
+      ```bash
+      aws cloudformation create-stack \
+        --stack-name privesc-stack \
+        --template-body file://exploit-template.yaml \
+        --capabilities CAPABILITY_IAM \
+        --role-arn arn:aws:iam::ACCOUNT_ID:role/PRIVILEGED_ROLE
+      ```
+
+      The exploit-template.yaml contains resource definitions that will execute with the target role's permissions. Note the `--capabilities CAPABILITY_IAM` flag is required when the template creates IAM resources.
   - from: cfn_stack
     to: target_role
     label: Stack assumes role
@@ -192,13 +207,16 @@ attackVisualization:
   - from: target_role
     to: execute_template
     label: CloudFormation provisions resources
-    description: "CloudFormation provisions the resources defined in the template\
-      \ using the target role's permissions. The template can create any AWS resources\
-      \ the role has permissions for, such as IAM users with access keys, Lambda functions,\
-      \ EC2 instances, S3 buckets, or IAM policies and roles.\n\nMonitor stack progress:\n\
-      ```bash\naws cloudformation describe-stacks \\\n  --stack-name privesc-stack\n\
-      ```\n\nThe created resources can then be accessed by the attacker to gain elevated\
-      \ privileges.\n"
+    description: |
+      CloudFormation provisions the resources defined in the template using the target role's permissions. The template can create any AWS resources the role has permissions for, such as IAM users with access keys, Lambda functions, EC2 instances, S3 buckets, or IAM policies and roles.
+
+      Monitor stack progress:
+      ```bash
+      aws cloudformation describe-stacks \
+        --stack-name privesc-stack
+      ```
+
+      The created resources can then be accessed by the attacker to gain elevated privileges.
   - from: execute_template
     to: admin_outcome
     label: If role has admin permissions

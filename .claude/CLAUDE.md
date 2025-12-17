@@ -7,7 +7,26 @@ This document contains project-specific anti-patterns and style guidelines for w
 
 ## Anti-Patterns to Avoid
 
-### 1. Path Name Formatting
+### 1. Inconsistent Terminology for Parent/Variant Relationships
+
+**WRONG:** Mixing terminology inconsistently
+- Using "child" in UI text
+- Using "primary" in YAML field names
+- Using "parent" in user-facing documentation
+
+**CORRECT:** Use terminology appropriate to context
+- **In YAML/code**: Always use `parent` field name
+- **In UI/user-facing text**: Always use "Primary Technique" and "Variants"
+- **In comments**: Use "primary" and "variant" for clarity
+
+**Rationale**: We maintain this hybrid approach for semantic clarity:
+- `parent` is concise and conventional in code (`parent.id`, `parent.modification`)
+- "Primary Technique" conveys foundational/original technique to users
+- "Variant" explains what the path IS (expanded applicability) not just hierarchy
+
+See [Terminology section in CLAUDE.md](../CLAUDE.md#terminology-parentchild-vs-primaryvariant) for complete guidance.
+
+### 2. Path Name Formatting
 
 **WRONG:** `iam:PassRole+sagemaker:CreateTrainingJob`
 
@@ -15,7 +34,7 @@ This document contains project-specific anti-patterns and style guidelines for w
 
 Always include spaces before and after the `+` sign when combining multiple permissions in the `name` field.
 
-### 2. PowerUserAccess is NOT Administrative Access
+### 3. PowerUserAccess is NOT Administrative Access
 
 **WRONG:** `The role must have administrative permissions (e.g., AdministratorAccess or PowerUserAccess)`
 
@@ -23,7 +42,7 @@ Always include spaces before and after the `+` sign when combining multiple perm
 
 PowerUserAccess does NOT provide administrative permissions (it specifically excludes IAM actions). When describing administrative access requirements in prerequisites, use "AdministratorAccess or an equivalent custom policy" instead.
 
-### 3. Description Field Line Breaks
+### 4. Description Field Line Breaks
 
 **WRONG:**
 ```yaml
@@ -38,7 +57,7 @@ description: A principal with `iam:PassRole` and `ec2:RunInstances` can create a
 
 Descriptions should be single-line in YAML (no artificial line breaks at ~80 characters). They will flow naturally in the UI based on container width.
 
-### 4. Missing Backticks for IAM Permissions
+### 5. Missing Backticks for IAM Permissions
 
 **WRONG:** `A principal with iam:PassRole and ec2:RunInstances...`
 
@@ -46,7 +65,7 @@ Descriptions should be single-line in YAML (no artificial line breaks at ~80 cha
 
 All IAM permissions in descriptions, recommendations, and text should be formatted with backticks for code styling. This applies everywhere EXCEPT in the `name` field (which should be plain text).
 
-### 5. Using Legacy Permission Format
+### 6. Using Legacy Permission Format
 
 **WRONG (deprecated format):**
 ```yaml
