@@ -1081,15 +1081,15 @@ function createRelationshipDisplay() {
             <div class="relationship-item">
                 <div class="parent">
                     <span class="relationship-label">Primary:</span>
-                    <a href="/paths/${parentId}" class="badge badge-primary">${parentId}</a>
-                    <span class="path-name">${parentName}</span>
+                    <a href="/paths/${escapeHtml(parentId)}" class="badge badge-primary">${escapeHtml(parentId)}</a>
+                    <span class="path-name">${escapeHtml(parentName)}</span>
                 </div>
                 <div class="children">
                     ${children.map(child => `
                         <div class="variant-row">
                             <span class="relationship-label">Variant:</span>
-                            <a href="/paths/${child.id}" class="badge badge-derivative">${child.id}</a>
-                            <span class="path-name">${child.name}</span>
+                            <a href="/paths/${escapeHtml(child.id)}" class="badge badge-derivative">${escapeHtml(child.id)}</a>
+                            <span class="path-name">${escapeHtml(child.name)}</span>
                         </div>
                     `).join('')}
                 </div>
@@ -1098,6 +1098,14 @@ function createRelationshipDisplay() {
     });
 
     container.innerHTML = html;
+}
+
+// Helper function to escape HTML and prevent XSS
+function escapeHtml(text) {
+    if (!text) return '';
+    const div = document.createElement('div');
+    div.textContent = text;
+    return div.innerHTML;
 }
 
 // Create network graph visualization
