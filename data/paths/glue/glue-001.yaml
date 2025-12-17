@@ -18,9 +18,10 @@ prerequisites:
 exploitationSteps:
   awscli:
   - step: 1
-    command: "aws glue create-dev-endpoint --endpoint-name privesc-endpoint \\\n \
-      \ --role-arn arn:aws:iam::ACCOUNT_ID:role/PRIVILEGED_ROLE \\\n  --public-key\
-      \ \"$(cat ~/.ssh/id_rsa.pub)\"\n"
+    command: |
+      aws glue create-dev-endpoint --endpoint-name privesc-endpoint \
+        --role-arn arn:aws:iam::ACCOUNT_ID:role/PRIVILEGED_ROLE \
+        --public-key "$(cat ~/.ssh/id_rsa.pub)"
     description: Create a Glue development endpoint with the privileged role and your
       SSH public key
   - step: 2
@@ -30,22 +31,33 @@ exploitationSteps:
   - step: 3
     command: ssh glue@ENDPOINT_ADDRESS
     description: SSH into the dev endpoint and execute code with elevated privileges
-recommendation: "High powered service roles + overly permissive `iam:PassRole` is\
-  \ what makes this privilege escalation path exploitable and impactful.\n\n- **Avoid\
-  \ administrative service roles** - Very rarely does a Glue dev endpoint need administrative\
-  \ access. Use the principle of least privilege.\n- **Avoid granting `iam:PassRole`\
-  \ on all resources** - Whenever possible, restrict `iam:PassRole` to specific roles\
-  \ or specific services.\n\nUse IAM policy conditions to restrict which roles can\
-  \ be passed and to which services:\n\n```json\n{\n  \"Effect\": \"Allow\",\n  \"\
-  Action\": \"iam:PassRole\",\n  \"Resource\": \"arn:aws:iam::ACCOUNT_ID:role/SpecificGlueRole\"\
-  ,\n  \"Condition\": {\n    \"StringEquals\": {\n      \"iam:PassedToService\": \"\
-  glue.amazonaws.com\"\n    }\n  }\n}\n```\n\n- Monitor CloudTrail for unusual Glue\
-  \ dev endpoint creation followed by immediate access\n- Monitor CloudTrail for dev\
-  \ endpoint creation by principals who do not usually create endpoints\n- Monitor\
-  \ CloudTrail for roles being passed to Glue that haven't been used before\n- Monitor\
-  \ and alert on Glue dev endpoint creation with privileged roles\n- Regularly audit\
-  \ Glue dev endpoints for excessive IAM permissions\n- Regularly audit all IAM roles\
-  \ that trust the Glue service and down-scope any roles with administrative access\n"
+recommendation: |
+  High powered service roles + overly permissive `iam:PassRole` is what makes this privilege escalation path exploitable and impactful.
+
+  - **Avoid administrative service roles** - Very rarely does a Glue dev endpoint need administrative access. Use the principle of least privilege.
+  - **Avoid granting `iam:PassRole` on all resources** - Whenever possible, restrict `iam:PassRole` to specific roles or specific services.
+
+  Use IAM policy conditions to restrict which roles can be passed and to which services:
+
+  ```json
+  {
+    "Effect": "Allow",
+    "Action": "iam:PassRole",
+    "Resource": "arn:aws:iam::ACCOUNT_ID:role/SpecificGlueRole",
+    "Condition": {
+      "StringEquals": {
+        "iam:PassedToService": "glue.amazonaws.com"
+      }
+    }
+  }
+  ```
+
+  - Monitor CloudTrail for unusual Glue dev endpoint creation followed by immediate access
+  - Monitor CloudTrail for dev endpoint creation by principals who do not usually create endpoints
+  - Monitor CloudTrail for roles being passed to Glue that haven't been used before
+  - Monitor and alert on Glue dev endpoint creation with privileged roles
+  - Regularly audit Glue dev endpoints for excessive IAM permissions
+  - Regularly audit all IAM roles that trust the Glue service and down-scope any roles with administrative access
 limitations: 'This path provides administrative access only if the passed role has
   administrative permissions (e.g., AdministratorAccess or an equivalent custom policy).
   If only limited roles are available, you gain access limited to those permissions.
@@ -178,12 +190,18 @@ attackVisualization:
   - from: start
     to: dev_endpoint
     label: iam:PassRole + glue:CreateDevEndpoint
-    description: "Create a new Glue development endpoint and pass the target role\
-      \ to it. The endpoint requires a public SSH key for authentication and takes\
-      \ several minutes to become available.\n\nCommand:\n```bash\naws glue create-dev-endpoint\
-      \ \\\n  --endpoint-name privesc-endpoint \\\n  --role-arn arn:aws:iam::ACCOUNT_ID:role/PRIVILEGED_ROLE\
-      \ \\\n  --public-key \"$(cat ~/.ssh/id_rsa.pub)\"\n```\n\nWait for the endpoint\
-      \ to reach the READY state before connecting.\n"
+    description: |
+      Create a new Glue development endpoint and pass the target role to it. The endpoint requires a public SSH key for authentication and takes several minutes to become available.
+
+      Command:
+      ```bash
+      aws glue create-dev-endpoint \
+        --endpoint-name privesc-endpoint \
+        --role-arn arn:aws:iam::ACCOUNT_ID:role/PRIVILEGED_ROLE \
+        --public-key "$(cat ~/.ssh/id_rsa.pub)"
+      ```
+
+      Wait for the endpoint to reach the READY state before connecting.
   - from: dev_endpoint
     to: target_role
     label: Endpoint assumes role

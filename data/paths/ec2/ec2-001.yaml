@@ -31,22 +31,33 @@ exploitationSteps:
       exploit.sh
     description: Use Pacu to launch EC2 instance with the target role and execute
       a shell script on startup
-recommendation: "High powered service roles + overly permissive `iam:PassRole` is \
-  \ what makes this privilege escalation path exploitable and impactful.\n\n- **Avoid\
-  \ administrative service roles** - Very rarely does an EC2 instance need administrative\
-  \ access. Use the principle of least privilege.\n- **Avoid granting `iam:PassRole`\
-  \ on all resources** - Whenever possible, restrict `iam:PassRole` to specific roles\
-  \ or specific services.\n\nUse IAM policy conditions to restrict which roles can\
-  \ be passed and to which services:\n\n```json\n{\n  \"Effect\": \"Allow\",\n  \"\
-  Action\": \"iam:PassRole\",\n  \"Resource\": \"arn:aws:iam::ACCOUNT_ID:role/SpecificEC2Role\"\
-  ,\n  \"Condition\": {\n    \"StringEquals\": {\n      \"iam:PassedToService\": \"\
-  ec2.amazonaws.com\"\n    }\n  }\n}\n```\n\n- Monitor CloudTrail for unusual EC2\
-  \ instance creation followed by immediate access\n- Monitor CloudTrail for EC2 instance\
-  \ launches by principals who do not usually create instances\n- Monitor CloudTrail\
-  \ for roles being passed to EC2 that haven't been used before\n- Monitor and alert\
-  \ on EC2 instance creation with privileged roles\n- Regularly audit EC2 instances\
-  \ for excessive IAM permissions\n- Regularly audit all IAM roles that trust the\
-  \ EC2 service and down-scope any roles with administrative access\n"
+recommendation: |
+  High powered service roles + overly permissive `iam:PassRole` is what makes this privilege escalation path exploitable and impactful.
+
+  - **Avoid administrative service roles** - Very rarely does an EC2 instance need administrative access. Use the principle of least privilege.
+  - **Avoid granting `iam:PassRole` on all resources** - Whenever possible, restrict `iam:PassRole` to specific roles or specific services.
+
+  Use IAM policy conditions to restrict which roles can be passed and to which services:
+
+  ```json
+  {
+    "Effect": "Allow",
+    "Action": "iam:PassRole",
+    "Resource": "arn:aws:iam::ACCOUNT_ID:role/SpecificEC2Role",
+    "Condition": {
+      "StringEquals": {
+        "iam:PassedToService": "ec2.amazonaws.com"
+      }
+    }
+  }
+  ```
+
+  - Monitor CloudTrail for unusual EC2 instance creation followed by immediate access
+  - Monitor CloudTrail for EC2 instance launches by principals who do not usually create instances
+  - Monitor CloudTrail for roles being passed to EC2 that haven't been used before
+  - Monitor and alert on EC2 instance creation with privileged roles
+  - Regularly audit EC2 instances for excessive IAM permissions
+  - Regularly audit all IAM roles that trust the EC2 service and down-scope any roles with administrative access
 limitations: 'This path provides administrative access only if the passed role has
   administrative permissions (e.g., AdministratorAccess or an equivalent custom policy).
   If only limited roles are available, you gain access limited to those permissions.
@@ -135,19 +146,22 @@ attackVisualization:
     label: 'Method 1: User Data Script (Direct Elevation)'
     type: payload
     color: '#99ccff'
-    description: "Configure a User Data script that executes when the instance boots\
-      \ and directly elevates the starting principal by modifying IAM permissions.\
-      \ The script runs with the target role's credentials and can perform privileged\
-      \ IAM actions such as:\n- Attaching AdministratorAccess policy to the starting\
-      \ principal (iam:AttachUserPolicy)\n- Creating new access keys for privileged\
-      \ users (iam:CreateAccessKey)\n- Adding the starting principal to an admin IAM\
-      \ group (iam:AddUserToGroup)\n- Modifying inline policies to grant elevated\
-      \ permissions (iam:PutUserPolicy)\n\nExample User Data script that directly\
-      \ elevates starting principal:\n```bash\n#!/bin/bash\naws iam attach-user-policy\
-      \ \\\n  --user-name starting-user \\\n  --policy-arn arn:aws:iam::aws:policy/AdministratorAccess\n\
-      ```\n\nThis approach is the most straightforward - the User Data script directly\
-      \ modifies IAM to grant the starting principal elevated permissions using the\
-      \ target role's credentials.\n"
+    description: |
+      Configure a User Data script that executes when the instance boots and directly elevates the starting principal by modifying IAM permissions. The script runs with the target role's credentials and can perform privileged IAM actions such as:
+      - Attaching AdministratorAccess policy to the starting principal (iam:AttachUserPolicy)
+      - Creating new access keys for privileged users (iam:CreateAccessKey)
+      - Adding the starting principal to an admin IAM group (iam:AddUserToGroup)
+      - Modifying inline policies to grant elevated permissions (iam:PutUserPolicy)
+
+      Example User Data script that directly elevates starting principal:
+      ```bash
+      #!/bin/bash
+      aws iam attach-user-policy \
+        --user-name starting-user \
+        --policy-arn arn:aws:iam::aws:policy/AdministratorAccess
+      ```
+
+      This approach is the most straightforward - the User Data script directly modifies IAM to grant the starting principal elevated permissions using the target role's credentials.
   - id: method_reverse_shell
     label: 'Method 2: User Data Script (Reverse Shell)'
     type: payload
@@ -259,12 +273,17 @@ attackVisualization:
   - from: start
     to: ec2_instance
     label: iam:PassRole + ec2:RunInstances
-    description: "Launch a new EC2 instance and pass the target role to it via the\
-      \ --iam-instance-profile parameter. Include a User Data script that will execute\
-      \ on instance boot to exfiltrate credentials or establish access.\n\nCommand:\n\
-      ```bash\naws ec2 run-instances \\\n  --image-id ami-12345678 \\\n  --instance-type\
-      \ t2.micro \\\n  --iam-instance-profile Arn=\"arn:aws:iam::ACCOUNT_ID:instance-profile/PRIVILEGED_ROLE\"\
-      \ \\\n  --user-data file://exploit.sh\n```\n"
+    description: |
+      Launch a new EC2 instance and pass the target role to it via the --iam-instance-profile parameter. Include a User Data script that will execute on instance boot to exfiltrate credentials or establish access.
+
+      Command:
+      ```bash
+      aws ec2 run-instances \
+        --image-id ami-12345678 \
+        --instance-type t2.micro \
+        --iam-instance-profile Arn="arn:aws:iam::ACCOUNT_ID:instance-profile/PRIVILEGED_ROLE" \
+        --user-data file://exploit.sh
+      ```
   - from: ec2_instance
     to: target_role
     label: Instance assumes role

