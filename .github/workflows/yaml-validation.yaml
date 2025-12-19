@@ -1,0 +1,86 @@
+name: Validate JSON Schema
+
+on:
+  pull_request:
+    paths:
+      - "data/**/*.yaml"
+      - "schemas/**/*.json"
+  push:
+    branches:
+      - main
+    paths:
+      - "data/**/*.yaml"
+      - "schemas/**/*.json"
+
+  workflow_dispatch:
+    inputs:
+      full_scan:
+        description: "Run full scan on all files"
+        required: false
+        default: false
+        type: boolean
+
+jobs:
+  validate-json:
+    runs-on: ubuntu-latest
+    container:
+      image: python:3.13-slim
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0 # Need full history for git diff
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v7
+
+      - name: Install the project
+        run: uv sync --all-groups
+
+      - name: Get changed YAML files
+        id: changed-files
+        run: |
+          # Manual workflow dispatch with full_scan option
+          if [ "${{ github.event_name }}" == "workflow_dispatch" ] && [ "${{ inputs.full_scan }}" == "true" ]; then
+            echo "mode=full" >> $GITHUB_OUTPUT
+            echo "Running full scan (manual trigger)"
+            exit 0
+          fi
+
+          # Get changed files
+          if [ "${{ github.event_name }}" == "pull_request" ]; then
+            # PR: compare against base branch
+            CHANGED=$(git diff --name-only origin/${{ github.base_ref }}...HEAD | grep -E '^(data)/.*\.yaml$' || true)
+          else
+            # Push: compare against previous commit
+            CHANGED=$(git diff --name-only HEAD^ HEAD | grep -E '^(data)/.*\.yaml$' || true)
+          fi
+
+          if [ -z "$CHANGED" ]; then
+            echo "mode=none" >> $GITHUB_OUTPUT
+            echo "No YAML files changed"
+          else
+            echo "mode=incremental" >> $GITHUB_OUTPUT
+            echo "files<<EOF" >> $GITHUB_OUTPUT
+            echo "$CHANGED" >> $GITHUB_OUTPUT
+            echo "EOF" >> $GITHUB_OUTPUT
+            echo "Changed files:"
+            echo "$CHANGED"
+          fi
+
+      - name: Validate changed files
+        if: steps.changed-files.outputs.mode == 'incremental'
+        run: |
+          echo "${{ steps.changed-files.outputs.files }}" | while read file; do
+            if [ -n "$file" ]; then
+              echo "Validating: $file"
+              uv run python scripts/validate_yaml.py "$file"
+            fi
+          done
+
+      - name: Validate all files
+        if: steps.changed-files.outputs.mode == 'full'
+        run: uv run python scripts/validate_yaml.py --all
+
+      - name: Skip validation
+        if: steps.changed-files.outputs.mode == 'none'
+        run: echo "No YAML files changed, skipping validation"
