@@ -287,13 +287,15 @@ def convert_yaml_to_json(input_dir="data/paths", output_file="docs/paths.json"):
 
     # Get GitHub token from environment variable
     github_token = os.environ.get("GITHUB_TOKEN")
-    use_github_api = False
+    # F841 Local variable `use_github_api` is assigned to but never used
+    # use_github_api = False
 
     if github_token:
         __LOGGER__.info("GitHub token found, checking repository access...")
         if check_github_access(github_token):
             __LOGGER__.info("GitHub API access confirmed")
-            use_github_api = True
+            # F841 Local variable `use_github_api` is assigned to but never used
+            # use_github_api = True
             check_git_sync()
         else:
             # Access check failed, will use git log fallback
