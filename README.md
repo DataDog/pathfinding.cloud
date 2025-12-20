@@ -153,12 +153,21 @@ When using the UV tool, there are several ways to run and install dependencies. 
 1. Here are examples of how to run the script using `uv run`
 
     ```console
+    # Validate all YAML files (default when no --target provided)
     uv run python scripts/validate_yaml.py
       INFO     [validate_yaml.py:main:90] Validating 65 YAML file(s)
       INFO     [validate_yaml.py:main:108] Validation_Summary: passed=65 failed=0 total=65 status=PASSED
     ```
 
     ```console
+    # Validate a single file using --target
+    uv run python scripts/validate_yaml.py --target data/paths/iam/iam-001.yaml
+      INFO     [validate_yaml.py:main:90] Validating 1 YAML file(s)
+      INFO     [validate_yaml.py:main:108] Validation_Summary: passed=1 failed=0 total=1 status=PASSED
+    ```
+
+    ```console
+    # Debug logging
     uv run python scripts/validate_yaml.py --log-level DEBUG
       INFO     [validate_yaml.py:main:90] Validating 65 YAML file(s)
       DEBUG    [validate_yaml.py:main:94] Validating: data\paths\apprunner\apprunner-001.yaml

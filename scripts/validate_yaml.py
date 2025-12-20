@@ -98,7 +98,7 @@ def main() -> None:
         description="Validate YAML files in data/paths against JSON schema"
     )
     parser.add_argument(
-        "target",
+        "--target",
         nargs="?",
         help="Optional file or directory to validate (relative to repo root). If omitted, validates data/paths.",
     )
