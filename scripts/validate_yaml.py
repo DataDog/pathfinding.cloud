@@ -3,6 +3,7 @@ import json
 import logging
 import sys
 from pathlib import Path
+from typing import List, Optional
 
 import yaml
 from jsonschema import Draft7Validator
@@ -33,7 +34,7 @@ class SchemaValidator:
             __LOGGER__.error(f"Invalid JSON in schema file {schema_path}: {exc}")
             sys.exit(1)
 
-    def validate_file(self, yaml_path: Path) -> tuple[bool, list[str]]:
+    def validate_file(self, yaml_path: Path) -> tuple[bool, List[str]]:
         try:
             with open(yaml_path, "r", encoding="utf-8") as f:
                 data = yaml.safe_load(f)
@@ -51,9 +52,60 @@ class SchemaValidator:
             return False, [str(exc)]
 
 
+def collect_yaml_files(
+    target: Optional[str], base_dir: Path, all_flag: bool
+) -> List[Path]:
+    """Collect YAML files to validate based on CLI args.
+
+    - If `all_flag` is True or `target` is None -> return all files under `data/paths`.
+    - If `target` is a file -> return that file if it's YAML.
+    - If `target` is a directory -> return YAML files under it.
+    """
+    data_root = base_dir / "data" / "paths"
+
+    if all_flag or not target:
+        if not data_root.exists():
+            __LOGGER__.warning(f"Data directory '{data_root}' does not exist")
+            return []
+        yaml_files = list(data_root.rglob("*.yaml")) + list(data_root.rglob("*.yml"))
+        return sorted(set(yaml_files))
+
+    target_path = Path(target)
+    if not target_path.is_absolute():
+        target_path = base_dir / target_path
+
+    if not target_path.exists():
+        __LOGGER__.error(f"Target path does not exist: {target}")
+        return []
+
+    if target_path.is_file():
+        if target_path.suffix.lower() in (".yaml", ".yml"):
+            return [target_path]
+        __LOGGER__.warning(f"Warning: {target} is not a YAML file")
+        return []
+
+    if target_path.is_dir():
+        yaml_files = list(target_path.rglob("*.yaml")) + list(
+            target_path.rglob("*.yml")
+        )
+        return sorted(set(yaml_files))
+
+    return []
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(
         description="Validate YAML files in data/paths against JSON schema"
+    )
+    parser.add_argument(
+        "target",
+        nargs="?",
+        help="Optional file or directory to validate (relative to repo root). If omitted, validates data/paths.",
+    )
+    parser.add_argument(
+        "--all",
+        action="store_true",
+        help="Validate all YAML files under data/paths (same as no target).",
     )
     parser.add_argument(
         "--log-level",
@@ -66,20 +118,15 @@ def main() -> None:
 
     base_dir = Path(__file__).parent.parent
     schema_path = base_dir / "schemas" / "path-schema.json"
-    paths_dir = base_dir / "data" / "paths"
 
     if not schema_path.exists():
         __LOGGER__.error(f"Schema file not found: {schema_path}")
         sys.exit(1)
 
-    if not paths_dir.exists():
-        __LOGGER__.error(f"Path directory not found: {paths_dir}")
-        sys.exit(1)
-
-    yaml_files = sorted(set(paths_dir.rglob("*.yaml")) | set(paths_dir.rglob("*.yml")))
+    yaml_files = collect_yaml_files(args.target, base_dir, args.all)
 
     if not yaml_files:
-        __LOGGER__.warning(f"No YAML files found in {paths_dir}")
+        __LOGGER__.warning("No YAML files found to validate")
         sys.exit(0)
 
     validator = SchemaValidator(schema_path)
@@ -90,7 +137,11 @@ def main() -> None:
     __LOGGER__.info(f"Validating {len(yaml_files)} YAML file(s)")
 
     for yaml_file in yaml_files:
-        rel_path = yaml_file.relative_to(base_dir)
+        try:
+            rel_path = yaml_file.relative_to(base_dir)
+        except Exception:
+            rel_path = yaml_file
+
         __LOGGER__.debug(f"Validating: {rel_path}")
 
         success, errors = validator.validate_file(yaml_file)
@@ -99,8 +150,10 @@ def main() -> None:
             __LOGGER__.debug(f"{rel_path} is valid")
             total_success += 1
         else:
-            primary_error = errors[0]
+            primary_error = errors[0] if errors else "Unknown error"
             __LOGGER__.error(f"{rel_path} validation failed: {primary_error}")
+            for err in errors[1:]:
+                __LOGGER__.error(f"  - {err}")
             total_failure += 1
 
     status = "FAILED" if total_failure > 0 else "PASSED"
