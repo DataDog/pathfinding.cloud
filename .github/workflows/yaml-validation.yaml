@@ -23,12 +23,15 @@ on:
 jobs:
   validate-json:
     runs-on: ubuntu-latest
-    container:
-      image: python:3.13-slim
     steps:
       - uses: actions/checkout@v6
         with:
           fetch-depth: 0 # Need full history for git diff
+
+      - name: Setup Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.13'
 
       - name: Install uv
         uses: astral-sh/setup-uv@v7
@@ -70,7 +73,7 @@ jobs:
       - name: Validate changed files
         if: steps.changed-files.outputs.mode == 'incremental'
         run: |
-          echo "${{ steps.changed-files.outputs.files }}" | while read file; do
+          printf '%s\n' "${{ steps.changed-files.outputs.files }}" | while IFS= read -r file; do
             if [ -n "$file" ]; then
               echo "Validating: $file"
               uv run python scripts/validate_yaml.py "$file"
@@ -84,3 +87,27 @@ jobs:
       - name: Skip validation
         if: steps.changed-files.outputs.mode == 'none'
         run: echo "No YAML files changed, skipping validation"
+
+      - name: Comment on PR (on failure)
+        if: failure() && github.event_name == 'pull_request'
+        uses: actions/github-script@v8
+        with:
+          script: |
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: '❌ Schema validation failed. Please check the validation errors above and fix your YAML files according to the [schema documentation](../blob/main/SCHEMA.md).'
+            })
+
+      - name: Comment on PR (on success)
+        if: success() && github.event_name == 'pull_request'
+        uses: actions/github-script@v8
+        with:
+          script: |
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: '✅ All YAML files passed schema validation!'
+            })
