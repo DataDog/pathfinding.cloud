@@ -1,13 +1,36 @@
 # pathfinding.cloud
 
+<a name="readme-top"></a>
+
+<!-- PROJECT SHIELDS -->
+[![Deploy to GitHub Pages][GitHub Pages-badge]][GitHub Pages-url]
+[![Schema Validation][schema-badge]][schema-url]
+[![ruff][ruff-badge]][ruff-url]
+
+
+<!-- PROJECT LOGO -->
+<br />
+<div align="center">
+    <img src="images/logo.png" alt="Logo" width="80" height="80">
+  </a>
+
+  <h3 align="center">README</h3>
+
+  <p align="center">
+    <a href="https://github.com/DataDog/pathfinding.cloud"><strong>Explore the docs »</strong></a>
+    <br />
+    <a href="https://github.com/DataDog/pathfinding.cloud/issues/new?labels=Bug%2CNeeds+Triage&projects=&template=bug.yaml&title=%5BBUG%5D+%3Ctitle%3E">Report Bug</a>
+    ·
+    <a href="https://github.com/DataDog/pathfinding.cloud/issues/new?labels=enhancement%2Cfeature+request&projects=&template=feature.yaml&title=%5BFEATURE%5D%3A+">Request Feature</a>
+  </p>
+</div>
+
+## Overview
 **The definitive source of truth for AWS IAM privilege escalation paths**
 
-[![Validate Schema](https://github.com/DataDog/pathfinding.cloud/actions/workflows/validate.yml/badge.svg)](https://github.com/DataDog/pathfinding.cloud/actions/workflows/validate.yml)
-[![Deploy to GitHub Pages](https://github.com/DataDog/pathfinding.cloud/actions/workflows/deploy.yml/badge.svg)](https://github.com/DataDog/pathfinding.cloud/actions/workflows/deploy.yml)
 
 **Website:** [https://pathfinding.cloud](https://pathfinding.cloud)
 
-## Overview
 
 pathfinding.cloud is a comprehensive, community-maintained library documenting AWS IAM privilege escalation paths. This project builds upon foundational research by Spencer Gietzen at Rhino Security Labs and subsequent contributions from many other security researchers.
 
@@ -104,12 +127,46 @@ We welcome contributions!
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for detailed guidelines.
 
-## Development
 
-### Prerequisites
+## Requirements and Dependencies
+Below is an overview of `uv` (An extremely fast Python package and project manager, written in Rust.).
 
-- Python 3.11+
-- PyYAML
+- `uv` allows dependencies to be locked in the requirements.txt format but it is recommended to [use the standard pyproject.toml](https://packaging.python.org/en/latest/guides/writing-pyproject-toml/) to define dependencies.
+    - [`pyproject.toml`](./pyproject.toml) is a configuration file used by packaging tools, as well as other tools such as linters, type checkers, etc.
+        - If you are using `[dependency-groups]` and wanted to install the different packages listed there then use `uv sync --all-groups`.
+        - If you are using `[project.optional-dependencies]` then you can use `uv pip install --requirements pyproject.toml --extra dev`
+    - [`uv.lock`](https://docs.astral.sh/uv/concepts/projects/layout/#the-lockfile) This file replaces the `requirements.txt`. The lockfile contains the exact resolved versions that are installed in the project environment. This file should be checked into version control, allowing for consistent and reproducible installations across machines. `uv.lock` is a human-readable TOML file but is managed by uv and should not be edited manually.
+
+## Uv Tool Usage
+When using the UV tool, there are several ways to run and install dependencies. Here are a few examples:
+- `Manual setup` (similar to pip-tools):
+   1. Create a Python virtual environment: `uv venv` or `python -m venv .venv`
+   1. Activate the virtual environment: `.\.venv\Scripts\activate.ps1`
+   1. Install dependencies: `uv pip install --requirements pyproject.toml`
+- `uv sync`:
+   1. Sync the project's dependencies with the environment: `uv sync`
+   1. Activate the virtual environment: `.venv\Scripts\activate`
+- `uv run`:
+   1. Run a command in the project environment.: `uv run example.py <args>`
+       1. Note that if you use uv run in a project, i.e. a directory with a pyproject.toml, it will install the current project before running the script.
+
+1. Here are examples of how to run the script using `uv run`
+
+    ```console
+    uv run python scripts/validate_yaml.py
+      INFO     [validate_yaml.py:main:90] Validating 65 YAML file(s)
+      INFO     [validate_yaml.py:main:108] Validation_Summary: passed=65 failed=0 total=65 status=PASSED
+    ```
+
+    ```console
+    uv run python scripts/validate_yaml.py --log-level DEBUG
+      INFO     [validate_yaml.py:main:90] Validating 65 YAML file(s)
+      DEBUG    [validate_yaml.py:main:94] Validating: data\paths\apprunner\apprunner-001.yaml
+      DEBUG    [validate_yaml.py:main:99] data\paths\apprunner\apprunner-001.yaml is valid
+      DEBUG    [validate_yaml.py:main:94] Validating: data\paths\apprunner\apprunner-002.yaml
+      ...
+      INFO     [validate_yaml.py:main:108] Validation_Summary: passed=65 failed=0 total=65 status=PASSED
+    ```
 
 ### Setup
 
@@ -118,14 +175,11 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for detailed guidelines.
 git clone https://github.com/DataDog/pathfinding.cloud.git
 cd pathfinding.cloud
 
-# Install dependencies
-pip install -r scripts/requirements.txt
-
-# Validate all paths
-python scripts/validate-schema.py data/paths/
+# Install dependencies and Validate all paths
+uv run python scripts/validate_yaml.py
 
 # Generate JSON for website
-python scripts/generate-json.py
+uv run python scripts/generate-json.py
 
 # Start local development server (required for SPA routing)
 cd docs && python3 dev-server.py
@@ -134,19 +188,6 @@ cd docs && python3 dev-server.py
 ```
 
 **Note:** The website uses client-side routing (SPA). Always use `docs/dev-server.py` for local testing rather than opening `index.html` directly, as direct file access won't support routing features.
-
-### Validation
-
-```bash
-# Validate a single file
-python scripts/validate-schema.py data/paths/iam/iam-001.yaml
-
-# Validate all files
-python scripts/validate-schema.py data/paths/
-
-# Validate and see detailed errors
-python scripts/validate-schema.py data/paths/ --verbose
-```
 
 ### Website Architecture
 
@@ -220,3 +261,14 @@ Special thanks to:
 ---
 
 **Maintained by Seth Art from Datadog**
+
+
+<!-- MARKDOWN LINKS & IMAGES -->
+[GitHub Pages-badge]:https://github.com/DataDog/pathfinding.cloud/actions/workflows/deploy.yml/badge.svg?branch=main
+[GitHub Pages-url]:https://github.com/DataDog/pathfinding.cloud/actions/workflows/deploy.yml
+
+[schema-badge]:https://github.com/DataDog/pathfinding.cloud/actions/workflows/yaml-validation.yaml/badge.svg?branch=main
+[schema-url]:https://github.com/DataDog/pathfinding.cloud/actions/workflows/yaml-validation.yaml
+
+[ruff-badge]:https://github.com/DataDog/pathfinding.cloud/actions/workflows/ruff.yaml/badge.svg?branch=main
+[ruff-url]:https://github.com/DataDog/pathfinding.cloud/actions/workflows/ruff.yaml
