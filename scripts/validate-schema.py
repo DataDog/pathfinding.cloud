@@ -12,71 +12,75 @@ import sys
 import yaml
 import os
 from pathlib import Path
-from typing import Dict, List, Any, Tuple
+from typing import Dict, List, Tuple
 
 # Schema definition
 REQUIRED_FIELDS = {
-    'id': str,
-    'name': str,
-    'category': str,
-    'services': list,
-    'permissions': dict,  # New format: dict with 'required' and optional 'additional' arrays
-    'description': str,
-    'exploitationSteps': (dict, list),  # dict (new format) or list (legacy)
-    'recommendation': str,
+    "id": str,
+    "name": str,
+    "category": str,
+    "services": list,
+    "permissions": dict,  # New format: dict with 'required' and optional 'additional' arrays
+    "description": str,
+    "exploitationSteps": (dict, list),  # dict (new format) or list (legacy)
+    "recommendation": str,
 }
 
 # For backward compatibility during migration
 LEGACY_FIELDS = {
-    'requiredPermissions': list,  # Old format, being migrated to 'permissions'
+    "requiredPermissions": list  # Old format, being migrated to 'permissions'
 }
 
 OPTIONAL_FIELDS = {
-    'parent': (str, dict),  # Parent path ID (legacy str) or object with id+modification (v1.6.0)
-    'prerequisites': (dict, list),  # dict (new tabbed format) or list (legacy)
-    'limitations': str,  # Explains admin vs. limited access
-    'references': list,
-    'relatedPaths': list,
-    'detectionRules': list,
-    'detectionTools': dict,  # New field for open source detection tool coverage (v1.4.0)
-    'learningEnvironments': dict,  # New field for learning labs and CTF environments
-    'toolSupport': dict,  # DEPRECATED in v1.3.0, kept for backward compatibility
-    'attackVisualization': (dict, str),  # dict (new structured format) or str (legacy Mermaid)
-    'discoveryAttribution': (dict, list),  # dict (object format) or list (legacy array format)
-    'discoveredBy': dict,  # DEPRECATED: Being replaced by discoveryAttribution
+    "parent": (
+        str,
+        dict,
+    ),  # Parent path ID (legacy str) or object with id+modification (v1.6.0)
+    "prerequisites": (dict, list),  # dict (new tabbed format) or list (legacy)
+    "limitations": str,  # Explains admin vs. limited access
+    "references": list,
+    "relatedPaths": list,
+    "detectionRules": list,
+    "detectionTools": dict,  # New field for open source detection tool coverage (v1.4.0)
+    "learningEnvironments": dict,  # New field for learning labs and CTF environments
+    "toolSupport": dict,  # DEPRECATED in v1.3.0, kept for backward compatibility
+    "attackVisualization": (
+        dict,
+        str,
+    ),  # dict (new structured format) or str (legacy Mermaid)
+    "discoveryAttribution": (
+        dict,
+        list,
+    ),  # dict (object format) or list (legacy array format)
+    "discoveredBy": dict,  # DEPRECATED: Being replaced by discoveryAttribution
 }
 
 ALLOWED_CATEGORIES = [
-    'self-escalation',
-    'principal-access',
-    'new-passrole',
-    'credential-access',
-    'existing-passrole',
+    "self-escalation",
+    "principal-access",
+    "new-passrole",
+    "credential-access",
+    "existing-passrole",
 ]
 
-ALLOWED_PREREQUISITE_TYPES = [
-    'resource-state',
-    'trust-relationship',
-    'service-config',
-]
+ALLOWED_PREREQUISITE_TYPES = ["resource-state", "trust-relationship", "service-config"]
 
 ALLOWED_EXPLOITATION_TOOLS = [
-    'awscli',
-    'pacu',
-    'pmapper',
-    'stratus',
-    'leonidas',
-    'nebula',
-    'pathfinder',
+    "awscli",
+    "pacu",
+    "pmapper",
+    "stratus",
+    "leonidas",
+    "nebula",
+    "pathfinder",
 ]
 
-ALLOWED_PREREQUISITE_TABS = [
-    'admin',
-    'lateral',
-]
+ALLOWED_PREREQUISITE_TABS = ["admin", "lateral"]
+
 
 class ValidationError(Exception):
     """Custom exception for validation errors."""
+
     pass
 
 
@@ -85,7 +89,7 @@ def validate_id(id_value: str) -> None:
     if not id_value:
         raise ValidationError("ID cannot be empty")
 
-    parts = id_value.split('-')
+    parts = id_value.split("-")
     if len(parts) != 2:
         raise ValidationError(f"ID '{id_value}' must be in format 'service-###'")
 
@@ -94,7 +98,9 @@ def validate_id(id_value: str) -> None:
         raise ValidationError(f"Service part of ID '{id_value}' must be alphanumeric")
 
     if not number.isdigit() or len(number) != 3:
-        raise ValidationError(f"Number part of ID '{id_value}' must be exactly 3 digits")
+        raise ValidationError(
+            f"Number part of ID '{id_value}' must be exactly 3 digits"
+        )
 
 
 def validate_category(category: str) -> None:
@@ -124,25 +130,25 @@ def validate_permissions(permissions: Dict) -> None:
     if not isinstance(permissions, dict):
         raise ValidationError("Permissions must be a dictionary")
 
-    if 'required' not in permissions:
+    if "required" not in permissions:
         raise ValidationError("Permissions must have a 'required' field")
 
     # Validate required permissions
-    if not isinstance(permissions['required'], list):
+    if not isinstance(permissions["required"], list):
         raise ValidationError("Permissions 'required' must be a list")
 
-    if not permissions['required']:
+    if not permissions["required"]:
         raise ValidationError("Permissions 'required' list cannot be empty")
 
-    for perm in permissions['required']:
+    for perm in permissions["required"]:
         validate_permission_object(perm, "required")
 
     # Validate additional permissions if present
-    if 'additional' in permissions:
-        if not isinstance(permissions['additional'], list):
+    if "additional" in permissions:
+        if not isinstance(permissions["additional"], list):
             raise ValidationError("Permissions 'additional' must be a list")
 
-        for perm in permissions['additional']:
+        for perm in permissions["additional"]:
             validate_permission_object(perm, "additional")
 
 
@@ -151,14 +157,16 @@ def validate_permission_object(perm: Dict, perm_type: str) -> None:
     if not isinstance(perm, dict):
         raise ValidationError(f"Each {perm_type} permission must be a dictionary")
 
-    if 'permission' not in perm:
-        raise ValidationError(f"Each {perm_type} permission must have a 'permission' field")
+    if "permission" not in perm:
+        raise ValidationError(
+            f"Each {perm_type} permission must have a 'permission' field"
+        )
 
-    if not isinstance(perm['permission'], str):
+    if not isinstance(perm["permission"], str):
         raise ValidationError(f"Permission value in {perm_type} must be a string")
 
     # Validate IAM permission format (service:Action)
-    if ':' not in perm['permission']:
+    if ":" not in perm["permission"]:
         raise ValidationError(
             f"Permission '{perm['permission']}' in {perm_type} must be in format 'service:Action'"
         )
@@ -176,14 +184,14 @@ def validate_required_permissions(permissions: List[Dict]) -> None:
         if not isinstance(perm, dict):
             raise ValidationError("Each permission must be a dictionary")
 
-        if 'permission' not in perm:
+        if "permission" not in perm:
             raise ValidationError("Each permission must have a 'permission' field")
 
-        if not isinstance(perm['permission'], str):
+        if not isinstance(perm["permission"], str):
             raise ValidationError("Permission value must be a string")
 
         # Validate IAM permission format (service:Action)
-        if ':' not in perm['permission']:
+        if ":" not in perm["permission"]:
             raise ValidationError(
                 f"Permission '{perm['permission']}' must be in format 'service:Action'"
             )
@@ -208,7 +216,9 @@ def validate_prerequisites(prerequisites) -> None:
 
             for prereq in tab_prereqs:
                 if not isinstance(prereq, str):
-                    raise ValidationError(f"Each prerequisite in tab '{tab}' must be a string")
+                    raise ValidationError(
+                        f"Each prerequisite in tab '{tab}' must be a string"
+                    )
 
     elif isinstance(prerequisites, list):
         # Legacy format: simple list
@@ -218,15 +228,22 @@ def validate_prerequisites(prerequisites) -> None:
                 continue
             elif isinstance(prereq, dict):
                 # Legacy format: dict with condition and type
-                if 'condition' not in prereq:
-                    raise ValidationError("Each prerequisite dict must have a 'condition' field")
-                if 'type' in prereq and prereq['type'] not in ALLOWED_PREREQUISITE_TYPES:
+                if "condition" not in prereq:
+                    raise ValidationError(
+                        "Each prerequisite dict must have a 'condition' field"
+                    )
+                if (
+                    "type" in prereq
+                    and prereq["type"] not in ALLOWED_PREREQUISITE_TYPES
+                ):
                     raise ValidationError(
                         f"Prerequisite type '{prereq['type']}' is not valid. "
                         f"Allowed values: {', '.join(ALLOWED_PREREQUISITE_TYPES)}"
                     )
             else:
-                raise ValidationError("Each prerequisite must be a string or dictionary")
+                raise ValidationError(
+                    "Each prerequisite must be a string or dictionary"
+                )
     else:
         raise ValidationError("Prerequisites must be a dict or list")
 
@@ -271,15 +288,17 @@ def validate_step_list(steps: List[Dict], tool_name: str = None) -> None:
         if not isinstance(step, dict):
             raise ValidationError("Each exploitation step must be a dictionary")
 
-        required_step_fields = ['step', 'command', 'description']
+        required_step_fields = ["step", "command", "description"]
         for field in required_step_fields:
             if field not in step:
-                raise ValidationError(f"Each exploitation step must have a '{field}' field")
+                raise ValidationError(
+                    f"Each exploitation step must have a '{field}' field"
+                )
 
-        if not isinstance(step['step'], int):
+        if not isinstance(step["step"], int):
             raise ValidationError("Step number must be an integer")
 
-        step_numbers.append(step['step'])
+        step_numbers.append(step["step"])
 
     # Validate sequential numbering starting from 1
     expected = list(range(1, len(steps) + 1))
@@ -296,7 +315,7 @@ def validate_discovered_by(discovered_by: Dict) -> None:
     if not isinstance(discovered_by, dict):
         raise ValidationError("DiscoveredBy must be a dictionary")
 
-    if 'name' not in discovered_by:
+    if "name" not in discovered_by:
         raise ValidationError("DiscoveredBy must have a 'name' field")
 
 
@@ -309,40 +328,44 @@ def validate_discovery_attribution(discovery_attribution) -> None:
     """
     # Object format - new structured format with firstDocumented, derivativeOf, ultimateOrigin
     if isinstance(discovery_attribution, dict):
-        if 'firstDocumented' not in discovery_attribution:
-            raise ValidationError("Object-format discoveryAttribution must have 'firstDocumented' field")
+        if "firstDocumented" not in discovery_attribution:
+            raise ValidationError(
+                "Object-format discoveryAttribution must have 'firstDocumented' field"
+            )
 
-        first_doc = discovery_attribution['firstDocumented']
+        first_doc = discovery_attribution["firstDocumented"]
         if not isinstance(first_doc, dict):
             raise ValidationError("firstDocumented must be a dictionary")
 
         # Validate firstDocumented fields
-        if 'author' in first_doc and not isinstance(first_doc['author'], str):
+        if "author" in first_doc and not isinstance(first_doc["author"], str):
             raise ValidationError("firstDocumented.author must be a string")
-        if 'organization' in first_doc and not isinstance(first_doc['organization'], str):
+        if "organization" in first_doc and not isinstance(
+            first_doc["organization"], str
+        ):
             raise ValidationError("firstDocumented.organization must be a string")
-        if 'source' in first_doc and not isinstance(first_doc['source'], str):
+        if "source" in first_doc and not isinstance(first_doc["source"], str):
             raise ValidationError("firstDocumented.source must be a string")
-        if 'date' in first_doc and not isinstance(first_doc['date'], (str, int)):
+        if "date" in first_doc and not isinstance(first_doc["date"], (str, int)):
             raise ValidationError("firstDocumented.date must be a string or integer")
-        if 'link' in first_doc and not isinstance(first_doc['link'], str):
+        if "link" in first_doc and not isinstance(first_doc["link"], str):
             raise ValidationError("firstDocumented.link must be a string")
 
         # Validate derivativeOf if present
-        if 'derivativeOf' in discovery_attribution:
-            deriv = discovery_attribution['derivativeOf']
+        if "derivativeOf" in discovery_attribution:
+            deriv = discovery_attribution["derivativeOf"]
             if not isinstance(deriv, dict):
                 raise ValidationError("derivativeOf must be a dictionary")
-            if 'pathId' not in deriv:
+            if "pathId" not in deriv:
                 raise ValidationError("derivativeOf must have 'pathId' field")
-            if not isinstance(deriv['pathId'], str):
+            if not isinstance(deriv["pathId"], str):
                 raise ValidationError("derivativeOf.pathId must be a string")
-            if 'modification' in deriv and not isinstance(deriv['modification'], str):
+            if "modification" in deriv and not isinstance(deriv["modification"], str):
                 raise ValidationError("derivativeOf.modification must be a string")
 
         # Validate ultimateOrigin if present
-        if 'ultimateOrigin' in discovery_attribution:
-            origin = discovery_attribution['ultimateOrigin']
+        if "ultimateOrigin" in discovery_attribution:
+            origin = discovery_attribution["ultimateOrigin"]
             if not isinstance(origin, dict):
                 raise ValidationError("ultimateOrigin must be a dictionary")
 
@@ -355,21 +378,31 @@ def validate_discovery_attribution(discovery_attribution) -> None:
 
         for idx, attribution in enumerate(discovery_attribution):
             if not isinstance(attribution, dict):
-                raise ValidationError(f"DiscoveryAttribution item {idx + 1} must be a dictionary")
+                raise ValidationError(
+                    f"DiscoveryAttribution item {idx + 1} must be a dictionary"
+                )
 
-            if 'item' not in attribution:
-                raise ValidationError(f"DiscoveryAttribution item {idx + 1} must have an 'item' field")
+            if "item" not in attribution:
+                raise ValidationError(
+                    f"DiscoveryAttribution item {idx + 1} must have an 'item' field"
+                )
 
-            if not isinstance(attribution['item'], str):
-                raise ValidationError(f"DiscoveryAttribution item {idx + 1} 'item' field must be a string")
+            if not isinstance(attribution["item"], str):
+                raise ValidationError(
+                    f"DiscoveryAttribution item {idx + 1} 'item' field must be a string"
+                )
 
-            if 'link' in attribution and not isinstance(attribution['link'], str):
-                raise ValidationError(f"DiscoveryAttribution item {idx + 1} 'link' field must be a string")
+            if "link" in attribution and not isinstance(attribution["link"], str):
+                raise ValidationError(
+                    f"DiscoveryAttribution item {idx + 1} 'link' field must be a string"
+                )
 
         return
 
     # Neither format
-    raise ValidationError("DiscoveryAttribution must be either an object (with firstDocumented) or a list")
+    raise ValidationError(
+        "DiscoveryAttribution must be either an object (with firstDocumented) or a list"
+    )
 
 
 def validate_references(references: List[Dict]) -> None:
@@ -381,7 +414,7 @@ def validate_references(references: List[Dict]) -> None:
         if not isinstance(ref, dict):
             raise ValidationError("Each reference must be a dictionary")
 
-        if 'title' not in ref or 'url' not in ref:
+        if "title" not in ref or "url" not in ref:
             raise ValidationError("Each reference must have 'title' and 'url' fields")
 
 
@@ -423,18 +456,22 @@ def validate_parent(parent: (str, dict), valid_ids: set = None) -> None:
 
     # Handle new dict format (v1.6.0)
     if not isinstance(parent, dict):
-        raise ValidationError(f"Parent field must be a string or dict, got {type(parent).__name__}")
+        raise ValidationError(
+            f"Parent field must be a string or dict, got {type(parent).__name__}"
+        )
 
     # Required fields in parent object
-    if 'id' not in parent:
+    if "id" not in parent:
         raise ValidationError("Parent object must have 'id' field")
-    if 'modification' not in parent:
+    if "modification" not in parent:
         raise ValidationError("Parent object must have 'modification' field")
 
     # Validate parent.id
-    parent_id = parent['id']
+    parent_id = parent["id"]
     if not isinstance(parent_id, str):
-        raise ValidationError(f"Parent.id must be a string, got {type(parent_id).__name__}")
+        raise ValidationError(
+            f"Parent.id must be a string, got {type(parent_id).__name__}"
+        )
 
     try:
         validate_id(parent_id)
@@ -446,17 +483,21 @@ def validate_parent(parent: (str, dict), valid_ids: set = None) -> None:
         raise ValidationError(f"Parent path '{parent_id}' does not exist")
 
     # Validate parent.modification
-    modification = parent['modification']
+    modification = parent["modification"]
     if not isinstance(modification, str):
-        raise ValidationError(f"Parent.modification must be a string, got {type(modification).__name__}")
+        raise ValidationError(
+            f"Parent.modification must be a string, got {type(modification).__name__}"
+        )
     if not modification.strip():
         raise ValidationError("Parent.modification cannot be empty")
 
     # Check for unexpected fields in parent object
-    allowed_keys = {'id', 'modification'}
+    allowed_keys = {"id", "modification"}
     unexpected_keys = set(parent.keys()) - allowed_keys
     if unexpected_keys:
-        raise ValidationError(f"Unexpected fields in parent object: {', '.join(unexpected_keys)}")
+        raise ValidationError(
+            f"Unexpected fields in parent object: {', '.join(unexpected_keys)}"
+        )
 
 
 def validate_detection_rules(detection_rules: List[Dict]) -> None:
@@ -468,7 +509,7 @@ def validate_detection_rules(detection_rules: List[Dict]) -> None:
         if not isinstance(rule, dict):
             raise ValidationError("Each detection rule must be a dictionary")
 
-        if 'platform' not in rule:
+        if "platform" not in rule:
             raise ValidationError("Each detection rule must have a 'platform' field")
 
 
@@ -480,55 +521,65 @@ def validate_learning_environments(learning_envs: Dict) -> None:
     if not learning_envs:
         raise ValidationError("LearningEnvironments dict cannot be empty")
 
-    allowed_types = ['open-source', 'closed-source']
-    allowed_pricing_models = ['paid', 'free']
+    allowed_types = ["open-source", "closed-source"]
+    allowed_pricing_models = ["paid", "free"]
 
     for env_name, env_data in learning_envs.items():
         if not isinstance(env_data, dict):
-            raise ValidationError(f"Learning environment '{env_name}' must be a dictionary")
+            raise ValidationError(
+                f"Learning environment '{env_name}' must be a dictionary"
+            )
 
         # Validate required common fields
-        if 'type' not in env_data:
-            raise ValidationError(f"Learning environment '{env_name}' must have a 'type' field")
+        if "type" not in env_data:
+            raise ValidationError(
+                f"Learning environment '{env_name}' must have a 'type' field"
+            )
 
-        if env_data['type'] not in allowed_types:
+        if env_data["type"] not in allowed_types:
             raise ValidationError(
                 f"Learning environment '{env_name}' has invalid type '{env_data['type']}'. "
                 f"Allowed: {', '.join(allowed_types)}"
             )
 
-        if 'description' not in env_data:
-            raise ValidationError(f"Learning environment '{env_name}' must have a 'description' field")
+        if "description" not in env_data:
+            raise ValidationError(
+                f"Learning environment '{env_name}' must have a 'description' field"
+            )
 
-        if not isinstance(env_data['description'], str):
-            raise ValidationError(f"Learning environment '{env_name}' description must be a string")
+        if not isinstance(env_data["description"], str):
+            raise ValidationError(
+                f"Learning environment '{env_name}' description must be a string"
+            )
 
         # Validate type-specific fields
-        if env_data['type'] == 'open-source':
+        if env_data["type"] == "open-source":
             # Open-source environments require githubLink
-            if 'githubLink' not in env_data:
+            if "githubLink" not in env_data:
                 raise ValidationError(
                     f"Open-source learning environment '{env_name}' must have a 'githubLink' field"
                 )
 
-            if not isinstance(env_data['githubLink'], str):
-                raise ValidationError(f"Learning environment '{env_name}' githubLink must be a string")
+            if not isinstance(env_data["githubLink"], str):
+                raise ValidationError(
+                    f"Learning environment '{env_name}' githubLink must be a string"
+                )
 
-        elif env_data['type'] == 'closed-source':
+        elif env_data["type"] == "closed-source":
             # Closed-source environments require scenarioPricingModel
-            if 'scenarioPricingModel' not in env_data:
+            if "scenarioPricingModel" not in env_data:
                 raise ValidationError(
                     f"Closed-source learning environment '{env_name}' must have a 'scenarioPricingModel' field"
                 )
 
-            if env_data['scenarioPricingModel'] not in allowed_pricing_models:
+            if env_data["scenarioPricingModel"] not in allowed_pricing_models:
                 raise ValidationError(
                     f"Learning environment '{env_name}' has invalid scenarioPricingModel "
                     f"'{env_data['scenarioPricingModel']}'. Allowed: {', '.join(allowed_pricing_models)}"
                 )
 
             # scenario field is recommended for closed-source
-            if 'scenario' not in env_data:
+            if "scenario" not in env_data:
                 # Warning, not error - scenario is optional but recommended
                 pass
 
@@ -538,7 +589,7 @@ def validate_tool_support(tool_support: Dict) -> None:
     if not isinstance(tool_support, dict):
         raise ValidationError("ToolSupport must be a dictionary")
 
-    allowed_tools = ['pmapper', 'iamVulnerable', 'pacu', 'prowler']
+    allowed_tools = ["pmapper", "iamVulnerable", "pacu", "prowler"]
     for tool, supported in tool_support.items():
         if tool not in allowed_tools:
             raise ValidationError(
@@ -557,10 +608,10 @@ def has_artificial_line_breaks(text: str) -> bool:
     Returns True if the text likely has artificial line breaks that should be removed.
     Ignores intentional multi-line structures like code blocks, lists, and paragraph breaks.
     """
-    if not text or '\n' not in text:
+    if not text or "\n" not in text:
         return False
 
-    lines = text.split('\n')
+    lines = text.split("\n")
 
     # Filter out empty lines and lines that are part of intentional structures
     text_lines = []
@@ -570,7 +621,7 @@ def has_artificial_line_breaks(text: str) -> bool:
         stripped = line.strip()
 
         # Track code blocks
-        if stripped.startswith('```'):
+        if stripped.startswith("```"):
             in_code_block = not in_code_block
             continue
 
@@ -583,13 +634,16 @@ def has_artificial_line_breaks(text: str) -> bool:
             continue
 
         # Skip list items (intentional line breaks)
-        if stripped.startswith('-') or stripped.startswith('*') or \
-           (len(stripped) > 2 and stripped[0].isdigit() and stripped[1] in '.):'):
+        if (
+            stripped.startswith("-")
+            or stripped.startswith("*")
+            or (len(stripped) > 2 and stripped[0].isdigit() and stripped[1] in ".):")
+        ):
             continue
 
         # Skip lines that are clearly part of multi-line formatting
         # (like "Command:", "Example:", etc.)
-        if stripped.endswith(':') and len(stripped) < 20:
+        if stripped.endswith(":") and len(stripped) < 20:
             continue
 
         text_lines.append(line)
@@ -608,11 +662,13 @@ def has_artificial_line_breaks(text: str) -> bool:
         # Check if line is around typical wrap length
         if 60 <= length <= 95:
             # Check if it ends mid-sentence (doesn't end with . ! ? : or ,)
-            if stripped and stripped[-1] not in '.!?:,':
+            if stripped and stripped[-1] not in ".!?:,":
                 # Check if next line continues the sentence (starts with lowercase or common continuations)
                 if i + 1 < len(text_lines):
                     next_line = text_lines[i + 1].strip()
-                    if next_line and (next_line[0].islower() or next_line.startswith('(')):
+                    if next_line and (
+                        next_line[0].islower() or next_line.startswith("(")
+                    ):
                         suspicious_breaks += 1
 
     # If we find multiple suspicious breaks, it's likely artificial wrapping
@@ -627,48 +683,50 @@ def validate_attack_visualization(attack_viz) -> None:
 
     # New format: structured dict
     if not isinstance(attack_viz, dict):
-        raise ValidationError("AttackVisualization must be either a string (Mermaid) or dict (structured)")
+        raise ValidationError(
+            "AttackVisualization must be either a string (Mermaid) or dict (structured)"
+        )
 
     # Validate nodes
-    if 'nodes' not in attack_viz:
+    if "nodes" not in attack_viz:
         raise ValidationError("AttackVisualization dict must have 'nodes' field")
 
-    if not isinstance(attack_viz['nodes'], list):
+    if not isinstance(attack_viz["nodes"], list):
         raise ValidationError("AttackVisualization 'nodes' must be a list")
 
-    if not attack_viz['nodes']:
+    if not attack_viz["nodes"]:
         raise ValidationError("AttackVisualization 'nodes' list cannot be empty")
 
     node_ids = set()
-    allowed_node_types = ['principal', 'resource', 'payload', 'action', 'outcome']
+    allowed_node_types = ["principal", "resource", "payload", "action", "outcome"]
 
-    for node in attack_viz['nodes']:
+    for node in attack_viz["nodes"]:
         if not isinstance(node, dict):
             raise ValidationError("Each node must be a dictionary")
 
         # Validate required node fields
-        if 'id' not in node:
+        if "id" not in node:
             raise ValidationError("Each node must have an 'id' field")
-        if 'label' not in node:
+        if "label" not in node:
             raise ValidationError("Each node must have a 'label' field")
-        if 'type' not in node:
+        if "type" not in node:
             raise ValidationError("Each node must have a 'type' field")
 
         # Check for duplicate IDs
-        if node['id'] in node_ids:
+        if node["id"] in node_ids:
             raise ValidationError(f"Duplicate node ID: {node['id']}")
-        node_ids.add(node['id'])
+        node_ids.add(node["id"])
 
         # Validate node type
-        if node['type'] not in allowed_node_types:
+        if node["type"] not in allowed_node_types:
             raise ValidationError(
                 f"Node type '{node['type']}' is not valid. "
                 f"Allowed: {', '.join(allowed_node_types)}"
             )
 
         # Check for artificial line breaks in node descriptions
-        if 'description' in node and node['description']:
-            if has_artificial_line_breaks(node['description']):
+        if "description" in node and node["description"]:
+            if has_artificial_line_breaks(node["description"]):
                 raise ValidationError(
                     f"Node '{node['id']}' has artificial line breaks in description. "
                     f"Text should flow as single-line paragraphs without ~80 character wraps. "
@@ -676,36 +734,36 @@ def validate_attack_visualization(attack_viz) -> None:
                 )
 
     # Validate edges
-    if 'edges' not in attack_viz:
+    if "edges" not in attack_viz:
         raise ValidationError("AttackVisualization dict must have 'edges' field")
 
-    if not isinstance(attack_viz['edges'], list):
+    if not isinstance(attack_viz["edges"], list):
         raise ValidationError("AttackVisualization 'edges' must be a list")
 
-    if not attack_viz['edges']:
+    if not attack_viz["edges"]:
         raise ValidationError("AttackVisualization 'edges' list cannot be empty")
 
-    for edge in attack_viz['edges']:
+    for edge in attack_viz["edges"]:
         if not isinstance(edge, dict):
             raise ValidationError("Each edge must be a dictionary")
 
         # Validate required edge fields
-        if 'from' not in edge:
+        if "from" not in edge:
             raise ValidationError("Each edge must have a 'from' field")
-        if 'to' not in edge:
+        if "to" not in edge:
             raise ValidationError("Each edge must have a 'to' field")
-        if 'label' not in edge:
+        if "label" not in edge:
             raise ValidationError("Each edge must have a 'label' field")
 
         # Validate edge references existing nodes
-        if edge['from'] not in node_ids:
+        if edge["from"] not in node_ids:
             raise ValidationError(f"Edge references non-existent node: {edge['from']}")
-        if edge['to'] not in node_ids:
+        if edge["to"] not in node_ids:
             raise ValidationError(f"Edge references non-existent node: {edge['to']}")
 
         # Check for artificial line breaks in edge descriptions
-        if 'description' in edge and edge['description']:
-            if has_artificial_line_breaks(edge['description']):
+        if "description" in edge and edge["description"]:
+            if has_artificial_line_breaks(edge["description"]):
                 raise ValidationError(
                     f"Edge from '{edge['from']}' to '{edge['to']}' has artificial line breaks in description. "
                     f"Text should flow as single-line paragraphs without ~80 character wraps. "
@@ -727,21 +785,23 @@ def validate_file(file_path: str, valid_ids: set = None) -> Tuple[bool, List[str
     errors = []
 
     try:
-        with open(file_path, 'r') as f:
+        with open(file_path, "r") as f:
             data = yaml.safe_load(f)
 
         if not isinstance(data, dict):
             return False, ["File must contain a YAML dictionary"]
 
         # Check required fields (with backward compatibility support)
-        has_new_permissions = 'permissions' in data
-        has_legacy_permissions = 'requiredPermissions' in data
+        has_new_permissions = "permissions" in data
+        has_legacy_permissions = "requiredPermissions" in data
 
         for field, expected_type in REQUIRED_FIELDS.items():
             # Special handling for permissions field during migration
-            if field == 'permissions':
+            if field == "permissions":
                 if not has_new_permissions and not has_legacy_permissions:
-                    errors.append(f"Missing required field: {field} (or legacy 'requiredPermissions')")
+                    errors.append(
+                        f"Missing required field: {field} (or legacy 'requiredPermissions')"
+                    )
                 elif has_new_permissions and not isinstance(data[field], expected_type):
                     errors.append(
                         f"Field '{field}' must be of type {expected_type.__name__}, "
@@ -762,94 +822,94 @@ def validate_file(file_path: str, valid_ids: set = None) -> Tuple[bool, List[str
 
         # Validate specific field formats
         try:
-            validate_id(data['id'])
+            validate_id(data["id"])
         except ValidationError as e:
             errors.append(str(e))
 
         try:
-            validate_category(data['category'])
+            validate_category(data["category"])
         except ValidationError as e:
             errors.append(str(e))
 
         try:
-            validate_services(data['services'])
+            validate_services(data["services"])
         except ValidationError as e:
             errors.append(str(e))
 
         # Validate permissions (new format) or requiredPermissions (legacy format)
-        if 'permissions' in data:
+        if "permissions" in data:
             try:
-                validate_permissions(data['permissions'])
+                validate_permissions(data["permissions"])
             except ValidationError as e:
                 errors.append(str(e))
-        elif 'requiredPermissions' in data:
+        elif "requiredPermissions" in data:
             try:
-                validate_required_permissions(data['requiredPermissions'])
+                validate_required_permissions(data["requiredPermissions"])
             except ValidationError as e:
                 errors.append(str(e))
 
         try:
-            validate_exploitation_steps(data['exploitationSteps'])
+            validate_exploitation_steps(data["exploitationSteps"])
         except ValidationError as e:
             errors.append(str(e))
 
         # Validate optional fields if present
-        if 'discoveredBy' in data:
+        if "discoveredBy" in data:
             try:
-                validate_discovered_by(data['discoveredBy'])
+                validate_discovered_by(data["discoveredBy"])
             except ValidationError as e:
                 errors.append(str(e))
-        if 'prerequisites' in data:
+        if "prerequisites" in data:
             try:
-                validate_prerequisites(data['prerequisites'])
-            except ValidationError as e:
-                errors.append(str(e))
-
-        if 'references' in data:
-            try:
-                validate_references(data['references'])
+                validate_prerequisites(data["prerequisites"])
             except ValidationError as e:
                 errors.append(str(e))
 
-        if 'relatedPaths' in data:
+        if "references" in data:
             try:
-                validate_related_paths(data['relatedPaths'])
+                validate_references(data["references"])
             except ValidationError as e:
                 errors.append(str(e))
 
-        if 'parent' in data:
+        if "relatedPaths" in data:
             try:
-                validate_parent(data['parent'], valid_ids)
+                validate_related_paths(data["relatedPaths"])
             except ValidationError as e:
                 errors.append(str(e))
 
-        if 'detectionRules' in data:
+        if "parent" in data:
             try:
-                validate_detection_rules(data['detectionRules'])
+                validate_parent(data["parent"], valid_ids)
             except ValidationError as e:
                 errors.append(str(e))
 
-        if 'learningEnvironments' in data:
+        if "detectionRules" in data:
             try:
-                validate_learning_environments(data['learningEnvironments'])
+                validate_detection_rules(data["detectionRules"])
             except ValidationError as e:
                 errors.append(str(e))
 
-        if 'toolSupport' in data:
+        if "learningEnvironments" in data:
             try:
-                validate_tool_support(data['toolSupport'])
+                validate_learning_environments(data["learningEnvironments"])
             except ValidationError as e:
                 errors.append(str(e))
 
-        if 'attackVisualization' in data:
+        if "toolSupport" in data:
             try:
-                validate_attack_visualization(data['attackVisualization'])
+                validate_tool_support(data["toolSupport"])
             except ValidationError as e:
                 errors.append(str(e))
 
-        if 'discoveryAttribution' in data:
+        if "attackVisualization" in data:
             try:
-                validate_discovery_attribution(data['discoveryAttribution'])
+                validate_attack_visualization(data["attackVisualization"])
+            except ValidationError as e:
+                errors.append(str(e))
+
+        if "discoveryAttribution" in data:
+            try:
+                validate_discovery_attribution(data["discoveryAttribution"])
             except ValidationError as e:
                 errors.append(str(e))
 
@@ -873,16 +933,16 @@ def find_yaml_files(path: str) -> List[str]:
     path_obj = Path(path)
 
     if path_obj.is_file():
-        if path_obj.suffix in ['.yaml', '.yml']:
+        if path_obj.suffix in [".yaml", ".yml"]:
             return [str(path_obj)]
         else:
             print(f"Warning: {path} is not a YAML file")
             return []
 
     if path_obj.is_dir():
-        for file_path in path_obj.rglob('*.yaml'):
+        for file_path in path_obj.rglob("*.yaml"):
             yaml_files.append(str(file_path))
-        for file_path in path_obj.rglob('*.yml'):
+        for file_path in path_obj.rglob("*.yml"):
             yaml_files.append(str(file_path))
 
     return sorted(yaml_files)
@@ -912,10 +972,10 @@ def main():
     valid_ids = set()
     for file_path in yaml_files:
         try:
-            with open(file_path, 'r') as f:
+            with open(file_path, "r") as f:
                 data = yaml.safe_load(f)
-                if isinstance(data, dict) and 'id' in data:
-                    valid_ids.add(data['id'])
+                if isinstance(data, dict) and "id" in data:
+                    valid_ids.add(data["id"])
         except Exception:
             # Ignore errors in first pass, they'll be caught in validation pass
             pass
@@ -949,5 +1009,5 @@ def main():
         sys.exit(0)
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()

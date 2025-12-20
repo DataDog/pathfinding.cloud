@@ -11,6 +11,7 @@ from urllib.parse import urlparse
 
 PORT = 8888
 
+
 class SPAHTTPRequestHandler(http.server.SimpleHTTPRequestHandler):
     """HTTP request handler with SPA support."""
 
@@ -20,8 +21,22 @@ class SPAHTTPRequestHandler(http.server.SimpleHTTPRequestHandler):
         url_path = urlparse(self.path).path
 
         # List of file extensions that should be served directly
-        file_extensions = ['.html', '.css', '.js', '.json', '.png', '.jpg', '.jpeg',
-                          '.gif', '.svg', '.ico', '.woff', '.woff2', '.ttf', '.eot']
+        file_extensions = [
+            ".html",
+            ".css",
+            ".js",
+            ".json",
+            ".png",
+            ".jpg",
+            ".jpeg",
+            ".gif",
+            ".svg",
+            ".ico",
+            ".woff",
+            ".woff2",
+            ".ttf",
+            ".eot",
+        ]
 
         # Check if the request is for a static file
         is_file = any(url_path.endswith(ext) for ext in file_extensions)
@@ -39,9 +54,9 @@ class SPAHTTPRequestHandler(http.server.SimpleHTTPRequestHandler):
             return super().do_GET()
 
         # Check if it's a directory request (like /paths/)
-        if url_path.endswith('/'):
+        if url_path.endswith("/"):
             # Try to serve index.html from that directory
-            index_path = url_path + 'index.html'
+            index_path = url_path + "index.html"
             index_file_path = self.translate_path(index_path)
             if os.path.isfile(index_file_path):
                 self.path = index_path
@@ -50,11 +65,11 @@ class SPAHTTPRequestHandler(http.server.SimpleHTTPRequestHandler):
         # For all other requests, serve the appropriate index.html for SPA routing
         if not is_file:
             # If URL starts with /paths/, serve /paths/index.html
-            if url_path.startswith('/paths/'):
-                self.path = '/paths/index.html'
+            if url_path.startswith("/paths/"):
+                self.path = "/paths/index.html"
             else:
                 # Otherwise serve root index.html
-                self.path = '/index.html'
+                self.path = "/index.html"
             return super().do_GET()
 
         # Default: serve normally
@@ -62,8 +77,8 @@ class SPAHTTPRequestHandler(http.server.SimpleHTTPRequestHandler):
 
     def end_headers(self):
         """Add headers to prevent caching during development."""
-        self.send_header('Cache-Control', 'no-store, no-cache, must-revalidate')
-        self.send_header('Expires', '0')
+        self.send_header("Cache-Control", "no-store, no-cache, must-revalidate")
+        self.send_header("Expires", "0")
         return super().end_headers()
 
 
@@ -78,8 +93,8 @@ def main():
     with socketserver.TCPServer(("", PORT), SPAHTTPRequestHandler) as httpd:
         print(f"🚀 Development server running at http://localhost:{PORT}")
         print(f"📂 Serving files from: {os.getcwd()}")
-        print(f"⚡ SPA routing enabled - all paths will serve index.html")
-        print(f"\nPress Ctrl+C to stop the server\n")
+        print("⚡ SPA routing enabled - all paths will serve index.html")
+        print("\nPress Ctrl+C to stop the server\n")
 
         try:
             httpd.serve_forever()
