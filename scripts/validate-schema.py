@@ -6,6 +6,16 @@ Usage:
     python validate-schema.py <file_or_directory>
     python validate-schema.py data/paths/iam/iam-001.yaml
     python validate-schema.py data/paths/
+
+Options:
+    --no-draft    Reject draft submissions (status: draft). Use for main branch validation.
+
+Draft Support:
+    Files with 'status: draft' are validated with relaxed requirements:
+    - Required: id, name, category, services, permissions.required, description
+    - Optional: exploitationSteps, recommendation, discoveryAttribution, etc.
+
+    Use --no-draft flag for main branch CI to ensure only complete paths are merged.
 """
 
 import sys
@@ -24,6 +34,19 @@ REQUIRED_FIELDS = {
     'description': str,
     'exploitationSteps': (dict, list),  # dict (new format) or list (legacy)
     'recommendation': str,
+    'discoveryAttribution': (dict, list),  # Required for complete paths
+}
+
+# Minimum fields required for draft submissions (status: draft)
+# Drafts allow contributors to submit partial paths that maintainers will enhance
+DRAFT_REQUIRED_FIELDS = {
+    'id': str,
+    'name': str,
+    'category': str,
+    'services': list,
+    'permissions': dict,  # Only permissions.required is validated for drafts
+    'description': str,
+    'status': str,  # Must be 'draft' for draft submissions
 }
 
 # For backward compatibility during migration
@@ -32,9 +55,11 @@ LEGACY_FIELDS = {
 }
 
 OPTIONAL_FIELDS = {
+    'status': str,  # 'draft' for partial submissions, omit or 'complete' for full paths
     'parent': (str, dict),  # Parent path ID (legacy str) or object with id+modification (v1.6.0)
     'prerequisites': (dict, list),  # dict (new tabbed format) or list (legacy)
     'limitations': str,  # Explains admin vs. limited access
+    'nextSteps': str,  # Guidance for multi-hop attacks
     'references': list,
     'relatedPaths': list,
     'detectionRules': list,
@@ -42,9 +67,14 @@ OPTIONAL_FIELDS = {
     'learningEnvironments': dict,  # New field for learning labs and CTF environments
     'toolSupport': dict,  # DEPRECATED in v1.3.0, kept for backward compatibility
     'attackVisualization': (dict, str),  # dict (new structured format) or str (legacy Mermaid)
-    'discoveryAttribution': (dict, list),  # dict (object format) or list (legacy array format)
+    'discoveryAttribution': (dict, list),  # dict (object format) or list (legacy array format) - required for complete, optional for draft
     'discoveredBy': dict,  # DEPRECATED: Being replaced by discoveryAttribution
 }
+
+ALLOWED_STATUS_VALUES = [
+    'draft',     # Partial submission - maintainer will enhance
+    'complete',  # Full path - ready for publication (default if omitted)
+]
 
 ALLOWED_CATEGORIES = [
     'self-escalation',
@@ -103,6 +133,15 @@ def validate_category(category: str) -> None:
         raise ValidationError(
             f"Category '{category}' is not valid. "
             f"Allowed values: {', '.join(ALLOWED_CATEGORIES)}"
+        )
+
+
+def validate_status(status: str) -> None:
+    """Validate the status field."""
+    if status not in ALLOWED_STATUS_VALUES:
+        raise ValidationError(
+            f"Status '{status}' is not valid. "
+            f"Allowed values: {', '.join(ALLOWED_STATUS_VALUES)}"
         )
 
 
@@ -713,13 +752,15 @@ def validate_attack_visualization(attack_viz) -> None:
                 )
 
 
-def validate_file(file_path: str, valid_ids: set = None) -> Tuple[bool, List[str]]:
+def validate_file(file_path: str, valid_ids: set = None, allow_draft: bool = True) -> Tuple[bool, List[str]]:
     """
     Validate a single YAML file against the schema.
 
     Args:
         file_path: Path to the YAML file to validate
         valid_ids: Optional set of all valid path IDs (for parent validation)
+        allow_draft: If True, allows status: draft with relaxed validation.
+                     If False, requires complete validation (for main branch).
 
     Returns:
         Tuple of (success: bool, errors: List[str])
@@ -733,11 +774,31 @@ def validate_file(file_path: str, valid_ids: set = None) -> Tuple[bool, List[str
         if not isinstance(data, dict):
             return False, ["File must contain a YAML dictionary"]
 
+        # Determine if this is a draft submission
+        is_draft = data.get('status') == 'draft'
+
+        # If drafts aren't allowed (main branch), reject them
+        if is_draft and not allow_draft:
+            errors.append("Draft paths (status: draft) are not allowed on the main branch. "
+                         "Please complete all required fields and remove the status field.")
+            return False, errors
+
+        # Validate status field if present
+        if 'status' in data:
+            try:
+                validate_status(data['status'])
+            except ValidationError as e:
+                errors.append(str(e))
+                return False, errors
+
+        # Select which required fields to check based on draft status
+        required_fields = DRAFT_REQUIRED_FIELDS if is_draft else REQUIRED_FIELDS
+
         # Check required fields (with backward compatibility support)
         has_new_permissions = 'permissions' in data
         has_legacy_permissions = 'requiredPermissions' in data
 
-        for field, expected_type in REQUIRED_FIELDS.items():
+        for field, expected_type in required_fields.items():
             # Special handling for permissions field during migration
             if field == 'permissions':
                 if not has_new_permissions and not has_legacy_permissions:
@@ -747,6 +808,10 @@ def validate_file(file_path: str, valid_ids: set = None) -> Tuple[bool, List[str
                         f"Field '{field}' must be of type {expected_type.__name__}, "
                         f"got {type(data[field]).__name__}"
                     )
+            elif field == 'status':
+                # Status is required for drafts but already validated above
+                if is_draft and field not in data:
+                    errors.append(f"Missing required field: {field}")
             else:
                 if field not in data:
                     errors.append(f"Missing required field: {field}")
@@ -788,10 +853,12 @@ def validate_file(file_path: str, valid_ids: set = None) -> Tuple[bool, List[str
             except ValidationError as e:
                 errors.append(str(e))
 
-        try:
-            validate_exploitation_steps(data['exploitationSteps'])
-        except ValidationError as e:
-            errors.append(str(e))
+        # Validate exploitation steps (required for complete, optional for draft)
+        if 'exploitationSteps' in data:
+            try:
+                validate_exploitation_steps(data['exploitationSteps'])
+            except ValidationError as e:
+                errors.append(str(e))
 
         # Validate optional fields if present
         if 'discoveredBy' in data:
@@ -890,11 +957,30 @@ def find_yaml_files(path: str) -> List[str]:
 
 def main():
     """Main validation entry point."""
-    if len(sys.argv) != 2:
-        print("Usage: python validate-schema.py <file_or_directory>")
-        sys.exit(1)
+    import argparse
 
-    target = sys.argv[1]
+    parser = argparse.ArgumentParser(
+        description='Validate AWS IAM privilege escalation path YAML files against the schema.',
+        epilog='''Examples:
+  python scripts/validate-schema.py data/paths/                    # Validate all paths
+  python scripts/validate-schema.py data/paths/iam/iam-001.yaml    # Validate single file
+  python scripts/validate-schema.py data/paths/ --no-draft         # Reject drafts (for main branch)
+''',
+        formatter_class=argparse.RawDescriptionHelpFormatter
+    )
+    parser.add_argument(
+        'path',
+        help='File or directory to validate (e.g., data/paths/ or data/paths/iam/iam-001.yaml)'
+    )
+    parser.add_argument(
+        '--no-draft',
+        action='store_true',
+        help='Reject draft submissions (status: draft). Use for main branch validation.'
+    )
+
+    args = parser.parse_args()
+    target = args.path
+    allow_draft = not args.no_draft
 
     if not os.path.exists(target):
         print(f"Error: Path '{target}' does not exist")
@@ -906,7 +992,8 @@ def main():
         print(f"No YAML files found in '{target}'")
         sys.exit(1)
 
-    print(f"Validating {len(yaml_files)} file(s)...\n")
+    mode = "complete paths only" if not allow_draft else "drafts allowed"
+    print(f"Validating {len(yaml_files)} file(s) ({mode})...\n")
 
     # First pass: collect all path IDs for parent validation
     valid_ids = set()
@@ -924,12 +1011,23 @@ def main():
     total_files = len(yaml_files)
     passed = 0
     failed = 0
+    drafts = 0
 
     for file_path in yaml_files:
-        success, errors = validate_file(file_path, valid_ids)
+        success, errors = validate_file(file_path, valid_ids, allow_draft)
 
         if success:
-            print(f"✓ {file_path}")
+            # Check if it's a draft for reporting
+            try:
+                with open(file_path, 'r') as f:
+                    data = yaml.safe_load(f)
+                    if data.get('status') == 'draft':
+                        print(f"✓ {file_path} (draft)")
+                        drafts += 1
+                    else:
+                        print(f"✓ {file_path}")
+            except Exception:
+                print(f"✓ {file_path}")
             passed += 1
         else:
             print(f"✗ {file_path}")
@@ -940,6 +1038,8 @@ def main():
 
     print("\n" + "=" * 70)
     print(f"Results: {passed} passed, {failed} failed out of {total_files} total")
+    if drafts > 0:
+        print(f"         ({drafts} draft path{'s' if drafts != 1 else ''} included)")
     print("=" * 70)
 
     if failed > 0:

@@ -1,172 +1,322 @@
 # Contributing to pathfinding.cloud
 
-Thank you for your interest in contributing to pathfinding.cloud! This project aims to be a comprehensive source of AWS IAM privilege escalation paths.
+Thank you for your interest in contributing to pathfinding.cloud! This project aims to be a comprehensive source of AWS IAM privilege escalation paths, and **every contribution helps** - from rough ideas to fully documented paths.
 
-## How to Contribute
+## Ways to Contribute
 
-### Types of Contributions
+We've designed multiple ways to contribute based on how much time and detail you have. Choose the option that works best for you:
 
-We welcome the following types of contributions:
+| Option | Effort | What You Provide | What We Do |
+|--------|--------|------------------|------------|
+| **[Option 1: Share an idea](#option-1-share-an-idea-easiest)** | Lowest | Description of the attack | Everything else |
+| **[Option 2: Submit a draft](#option-2-submit-a-draft-pr)** | Medium | Core fields (ID, name, permissions, description) | Any missing sections |
+| **[Option 3: Use Claude Code, and <br> our workflow [RECOMMENDED]](#option-3-use-claude-code)** | Medium | You direct our Claude workflow | Review and merge |
+| **[Option 4: Submit a complete path](#option-4-submit-a-complete-path-pr)** | Higher | All required fields manually | Review and merge |
 
-1. **New privilege escalation paths** - Document previously undiscovered or undocumented paths
-2. **Path variations** - Document nuances and variations of existing paths (e.g., different unique permissions combinations)
-3. **Corrections** - Fix errors in existing documentation
-4. **Enhancements** - Add detection rules, tool support, or additional references
-5. **Website improvements** - Enhance the user interface or functionality
+---
 
-## Adding a New Privilege Escalation Path
+## Option 1: Share an Idea (Easiest)
 
-### Step 1: Choose an ID
+**Don't have time to write YAML? Just tell us about it!**
 
-- Use the format `{service}-{number}` where number is 3 digits
-- For PassRole combinations, use the service of the resource being created/manipulated
-  - Example: `iam:PassRole + ec2:RunInstances` → `ec2-001` (note: spaces around +)
-- Check existing files to find the next available number for your service
-- Create the file in `data/paths/{service}/{id}.yaml`
+[Open a New Path Idea issue](../../issues/new?template=new-path-idea.md) and describe:
+- What permissions are involved
+- How the attack works
+- Where you learned about it (optional)
 
-### Step 2: Create the YAML File
+We'll investigate, validate, and build out the full documentation. Your contribution will be credited in the path's attribution.
 
-Use the template at [example-001.yaml](data/example-001.yaml)  which includes all required and optional fields with detailed comments and formatting examples.
+**This is perfect when you:**
+- Found something interesting but don't have time to document it
+- Aren't comfortable with Git/YAML
+- Aren't sure if the path is valid or novel
 
-### Step 3: Validate Your File
+---
 
-Before submitting, validate your YAML file:
+## Option 2: Submit a Draft (PR)
+
+**Have some details but not everything? Submit what you know!**
+
+Draft submissions let you contribute the core information while we handle the rest (exploitation steps, visualization, detection tools, etc.).
+
+### Draft Required Fields
+
+| Field | Description |
+|-------|-------------|
+| `status` | Must be `draft` |
+| `id` | Unique identifier (e.g., `lambda-007`) |
+| `name` | Permission syntax (e.g., `iam:PassRole + lambda:CreateFunction`) |
+| `category` | One of: `self-escalation`, `principal-access`, `new-passrole`, `credential-access`, `existing-passrole` |
+| `services` | AWS services involved (e.g., `[iam, lambda]`) |
+| `permissions.required` | List of required permissions with resource constraints |
+| `description` | How the escalation works |
+
+### How to Submit a Draft
+
+1. **Copy the draft template:**
+   ```bash
+   cp data/example-path-draft.yaml data/paths/{service}/{service}-{number}.yaml
+   ```
+
+2. **Fill in the required fields** (see template for guidance)
+
+3. **Add any optional fields you know** (uncomment and fill in)
+
+4. **Validate your file:**
+   ```bash
+   python scripts/validate-schema.py data/paths/{service}/{service}-{number}.yaml
+   ```
+
+5. **Submit your PR** - our CI will validate, and we'll enhance it from there
+
+### Example Draft Submission
+
+```yaml
+status: draft
+
+id: lambda-007
+name: iam:PassRole + lambda:CreateFunction + lambda:InvokeFunction
+category: new-passrole
+services:
+  - iam
+  - lambda
+
+permissions:
+  required:
+    - permission: iam:PassRole
+      resourceConstraints: Must be able to pass a role that trusts lambda.amazonaws.com
+    - permission: lambda:CreateFunction
+      resourceConstraints: Must be able to create Lambda functions
+    - permission: lambda:InvokeFunction
+      resourceConstraints: Must be able to invoke the created function
+
+description: A principal with `iam:PassRole`, `lambda:CreateFunction`, and `lambda:InvokeFunction` can create a Lambda function with an attached privileged role, then invoke it to execute code as that role and retrieve temporary credentials.
+
+# Optional: Add more if you have it!
+# prerequisites:
+#   admin:
+#     - A role must exist that trusts lambda.amazonaws.com
+#     - The role must have administrative permissions
+```
+
+---
+
+## Option 3: Use Claude Code, and our workflow and sub-agents
+
+**This is our recommended path and how we add paths.**
+
+This project includes a custom [Claude Code](https://claude.ai/code) workflow and specialized sub-agents that automate most of the path creation process. You guide the AI, review the output, and submit the PR.
+
+### What's Included
+
+We've built custom tooling specifically for this project:
+
+- **Orchestrator workflow** (`/workflows:orchestrator`) - Coordinates the entire path creation process
+- **Specialized sub-agents**:
+  - `add-vis` - Creates interactive attack visualizations
+  - `attribution` - Researches and adds discoverer information
+  - `detection-tools` - Finds which OSS tools detect this path
+  - `learning-environments` - Locates practice labs and CTF environments
+
+### How to Use Claude Code
+
+1. **Install Claude Code** from [claude.ai/code](https://claude.ai/code)
+
+2. **Clone the repository:**
+   ```bash
+   git clone https://github.com/DataDog/pathfinding.cloud.git
+   cd pathfinding.cloud
+   ```
+
+3. **Start Claude Code** in the repository directory
+
+4. **Run the orchestrator:**
+   ```
+   /workflows:orchestrator
+   ```
+
+5. **Follow the prompts** - The orchestrator will:
+   - Ask you about the attack path 
+   - Build the base YAML file
+   - Automatically run all enrichment sub-agents in parallel
+   - Validate the final file
+
+   
+Example workflow run: 
+
+```
+>  /workflows:orchestrator
+  ⎿  Read SCHEMA.md (974 lines)
+  ⎿  Read .claude/CLAUDE.md (349 lines)
+  ⎿  Read CLAUDE.md (350 lines)
+
+⏺ I'm ready to help you create a new attack path for pathfinding.cloud!
+
+  To get started, please tell me about the attack path you'd like to document. You can either:
+
+  1. Point me to a pathfinding-labs scenario:
+  ~/Documents/projects/pathfinding-labs/modules/scenarios/...
+  2. Describe the attack path directly:
+    - What AWS permissions are involved?
+    - How does the escalation work?
+    - What services are involved?
+    - Any references or sources where you learned about it?
+
+  What would you like to create?
+
+───────────────────────────────────────────────────────────────────────────────────────────────────
+```
+
+Your prompt could be: 
+```
+❯ Can you create a path for me based on iam:passrole and lambda:createfunction and lambda:invokefunction? 
+The way this works is that a user who has these permissions can create a lambda function with malicious code, 
+and then pass a role to that function that trusts the lambda service. Then the attacker can invoke the 
+function. There are a few different payload options: The lambda can send the credentials to an attacker 
+remote listener or webhook type site. the lambda can also just simply print the session credentials as lambda 
+output for the user.  You can use this resource as supporting info: [resource]
+```
+
+
+Another prompt could be: 
+
+```
+Can you create a pathfinding.cloud path for the privesc described in this blog post: [insert_link]
+```
+
+6. **Review and submit your PR**
+
+### What You Provide
+
+- Description of the attack mechanism
+- AWS services and permissions involved
+- Any references or sources you have
+
+### What the AI Handles
+
+- Proper YAML formatting and field ordering
+- Exploitation step commands
+- Attack visualization diagrams
+- Detection tool research
+- Learning environment discovery
+- Attribution research
+
+**Great for:**
+- Contributors who want a complete path without manual YAML editing
+- Creating multiple paths efficiently
+- Ensuring consistent formatting across contributions
+
+---
+
+## Option 4: Submit a Complete Path (PR)
+
+**Prefer to do it manually? Or using an agent other than Claude Code? That's fine by us! Submit a complete path for fastest review!**
+
+Complete submissions include all required fields and pass full validation. This is the traditional contribution method.
+
+### Complete Path Required Fields
+
+All draft fields plus:
+
+| Field | Description |
+|-------|-------------|
+| `exploitationSteps` | Step-by-step commands (at minimum, `awscli` steps) |
+| `recommendation` | Prevention and detection strategies |
+| `discoveryAttribution` | Who discovered this technique |
+
+### How to Submit a Complete Path
+
+1. **Copy the complete template:**
+   ```bash
+   cp data/example-path-complete.yaml data/paths/{service}/{service}-{number}.yaml
+   ```
+
+2. **Fill in all required fields** (see [SCHEMA.md](SCHEMA.md) for details)
+
+3. **Validate your file:**
+   ```bash
+   python scripts/validate-schema.py data/paths/{service}/{service}-{number}.yaml
+   ```
+
+4. **Submit your PR**
+
+### Optional Enrichments
+
+Complete paths can also include:
+- `attackVisualization` - Interactive attack flow diagram
+- `detectionTools` - Links to OSS tools that detect this path
+- `learningEnvironments` - Practice labs and CTF environments
+- `references` - Blog posts, papers, documentation
+
+Don't worry if you don't have these - we can add them!
+
+---
+
+## Field Reference
+
+### ID Format
+
+- Format: `{service}-{number}` (e.g., `iam-001`, `lambda-007`)
+- Number must be exactly 3 digits
+- For PassRole paths, use the service of the resource being created:
+  - `iam:PassRole + ec2:RunInstances` → `ec2-001`
+  - `iam:PassRole + lambda:CreateFunction` → `lambda-001`
+
+### Finding the Next ID
+
+```bash
+ls data/paths/{service}/ | sort | tail -n 1
+```
+
+### Categories
+
+| Category | Description |
+|----------|-------------|
+| `self-escalation` | Modify own permissions directly |
+| `principal-access` | Gain access to other principals (users/roles) |
+| `new-passrole` | Escalate via creating resources + PassRole |
+| `credential-access` | Access or extract credentials |
+| `existing-passrole` | Modify existing resources to gain elevated access |
+
+### Name Field Formatting
+
+- Use AWS IAM permission syntax
+- **Spaces around `+`**: `iam:PassRole + ec2:RunInstances` (not `iam:PassRole+ec2:RunInstances`)
+
+### Full Schema Documentation
+
+See [SCHEMA.md](SCHEMA.md) for complete field definitions, validation rules, and examples.
+
+---
+
+## Validation
+
+### Validate Your File
 
 ```bash
 # Install dependencies (first time only)
 pip install -r requirements.txt
 
-# Validate your file
-python scripts/validate-schema.py data/paths/{service}/{id}.yaml
+# Validate a single file
+python scripts/validate-schema.py data/paths/{service}/{service}-{number}.yaml
 
-# Or validate all files
+# Validate all files
 python scripts/validate-schema.py data/paths/
 ```
 
-The validation script checks:
-- Required fields are present
-- Field types are correct
-- ID format is valid
-- Category values are allowed
-- Exploitation steps are numbered sequentially
-- And more...
+### Draft vs Complete Validation
 
-### Step 4: Submit a Pull Request
+- **Drafts** (`status: draft`): Only core fields are required
+- **Complete** (no status field): All required fields must be present
 
-1. Fork the repository
-2. Create a new branch: `git checkout -b add-{service}-{number}`
-3. Add your YAML file
-4. Commit your changes: `git commit -m "Add {service}-{number}: {name}"`
-5. Push to your fork: `git push origin add-{service}-{number}`
-6. Open a Pull Request
+Our CI automatically validates PRs and allows drafts. When merging to main, we ensure all paths are complete.
 
-## Schema Reference
-
-See [SCHEMA.md](SCHEMA.md) for complete documentation of all fields.
-
-### Field Guidelines
-
-#### `id`
-- Format: `{service}-{number}` (e.g., `iam-001`, `lambda-001`)
-- Must be unique across all paths
-- Number must be exactly 3 digits
-
-#### `name`
-- Use AWS IAM permission syntax
-- Single permission: `iam:CreatePolicyVersion`
-- Multiple permissions: `iam:PassRole + ec2:RunInstances` (note: **spaces around +**)
-- Separate with ` + ` (space-plus-space)
-
-#### `category`
-Must be one of:
-- `self-escalation` - Modify own permissions directly
-- `principal-access` - Gain access to other principals
-- `new-passrole` - Escalate via service + PassRole combination
-- `credential-access` - Create or steal credentials
-- `existing-passrole` - Modify resources to gain elevated access
-
-#### `services`
-- List all AWS services involved
-- Use lowercase service names (e.g., `iam`, `ec2`, `lambda`)
-
-#### `permissions`
-- **required**: List minimum permissions needed by the exploiting principal
-- **additional**: List helpful get/list permissions that aid exploitation
-- Include `resourceConstraints` to describe requirements for each permission
-- Be specific about what resources must be accessible
-
-#### `description`
-- Explain how the escalation works
-- Describe what the attacker gains
-- Keep it clear and concise but complete
-
-#### `prerequisites`
-- Document all conditions that must be met
-- **New format (recommended)**: Use tabs (`admin` and `lateral`) for different scenarios
-- **Legacy format**: Simple list of conditions (still supported)
-- Be specific about environment requirements
-
-#### `exploitationSteps`
-- Organized by tool (awscli, pacu, pmapper, stratus, leonidas, nebula, pathfinder)
-- Number steps sequentially starting from 1 for each tool
-- Include actual commands with multi-line syntax using `|`
-- Use placeholders like `<value>` for variables
-- Explain what each step accomplishes
-
-#### `recommendation`
-- Explain how to prevent the escalation
-- Include monitoring and detection strategies
-- Reference the principle of least privilege
-
-#### `discoveryAttribution` (required)
-- Credit the original researcher or source
-- Use `author` for individual researchers (e.g., "Spencer Gietzen")
-- Use `source` for organizations/websites (e.g., "HackTricks", "pathfinding.cloud")
-- **Do not use both** `author` and `source` - choose one
-- Include organization if using `author`
-- Add year of discovery and link to source
-- For derivatives, include `derivativeOf` and optionally `ultimateOrigin` for multi-level chains
-
-#### `references` (encouraged)
-- Link to blog posts, papers, or documentation
-- Must include both `title` and `url`
-
-#### `relatedPaths` (optional)
-- Link to similar or related escalation paths
-- Use the path IDs (e.g., `iam-001`)
-
-#### `detectionRules` (optional)
-- Link to detection rules in security platforms
-- Include platform name and URL
-
-#### `detectionTools` (optional)
-- Documents which open source security tools detect this path
-- Link directly to the source code where detection logic is implemented
-- Supported tools: `pmapper`, `cloudsplaining`, `pacu`, `prowler`
-- Example: `pmapper: https://github.com/nccgroup/PMapper/blob/master/principalmapper/graphing/iam_edges.py#L123`
-
-#### `learningEnvironments` (optional)
-- Documents learning labs and CTF environments where this path can be practiced
-- **Open-source environments**: Include `type: open-source`, `githubLink`, `description`, optional `scenario`
-- **Closed-source environments**: Include `type: closed-source`, `description`, `scenario`, and `scenarioPricingModel` (paid/free)
-- Replaces the deprecated `toolSupport` field
-
-#### `attackVisualization` (optional but recommended)
-- Creates an interactive diagram showing the attack flow
-- Uses structured format with `nodes` and `edges` arrays
-- Node types: `principal` (users/roles), `resource` (AWS resources), `payload` (attacker actions), `outcome` (results)
-- Supports conditional branching for different outcomes
-- See [example-001.yaml](data/example-001.yaml) for a complete example
-
-## Examples
-
-Use the template at [example-001.yaml](data/example-001.yaml)  or any of the existing paths to get started. 
+---
 
 ## Pull Request Guidelines
 
 ### PR Title Format
 
-Use one of these formats:
 - `Add {service}-{number}: {name}` - For new paths
 - `Update {service}-{number}: {description}` - For updates
 - `Fix {service}-{number}: {description}` - For corrections
@@ -174,23 +324,30 @@ Use one of these formats:
 ### PR Description
 
 Include:
-- Brief description of the path or changes
-- Why this path is important
+- Brief description of the path
+- Where you learned about it (if applicable)
 - Any testing performed
-- Links to relevant research or documentation
 
 ### Review Process
 
 1. Automated validation runs on all PRs
 2. Maintainers review for accuracy and completeness
-3. At least one maintainer approval required
-4. Once merged, the website is automatically rebuilt
+3. For drafts: maintainers will enhance before merging
+4. Once merged, the website automatically rebuilds
 
-## Questions?
+---
 
-- Open an issue for questions about contributing
-- Check [SCHEMA.md](SCHEMA.md) for detailed field documentation
-- Review existing YAML files in `data/paths/` for examples
+## Other Ways to Contribute
+
+Beyond new paths, we welcome:
+
+1. **Path variations** - Document nuances of existing paths
+2. **Corrections** - Fix errors in existing documentation
+3. **Detection tools** - Add links to tools that detect paths
+4. **Learning environments** - Add links to practice labs
+5. **Website improvements** - Enhance the UI or functionality
+
+---
 
 ## Code of Conduct
 
@@ -198,5 +355,13 @@ Include:
 - Focus on improving AWS security knowledge
 - Credit original researchers appropriately
 - Do not submit malicious content
+
+---
+
+## Questions?
+
+- **Issues**: [Open an issue](../../issues/new/choose)
+- **Discussions**: Use [GitHub Discussions](../../discussions) for questions
+- **Schema questions**: See [SCHEMA.md](SCHEMA.md)
 
 Thank you for contributing to pathfinding.cloud!
