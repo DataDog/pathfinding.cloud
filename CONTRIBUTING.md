@@ -101,11 +101,11 @@ description: A principal with `iam:PassRole`, `lambda:CreateFunction`, and `lamb
 
 ---
 
-## Option 3: Use Claude Code, and our workflow and sub-agents
+## Option 3: Use Claude Code, and our slash command (/workflow:orchestrator), and our and sub-agents
 
-**This is our recommended path and how we add paths.**
+### This is our recommended path and how we add paths
 
-This project includes a custom [Claude Code](https://claude.ai/code) workflow and specialized sub-agents that automate most of the path creation process. You guide the AI, review the output, and submit the PR.
+This project includes a custom [Claude Code](https://claude.ai/code) slash command and specialized sub-agents that automate most of the path creation process. You guide the AI, review the output, and submit the PR.
 
 ### What's Included
 
