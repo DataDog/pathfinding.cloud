@@ -194,6 +194,7 @@ For complete field specifications, see [SCHEMA.md](SCHEMA.md).
 
 | Field | Type | Quick Description | Details |
 |-------|------|-------------------|---------|
+| `status` | enum | `draft` for partial submissions, omit for complete | [CONTRIBUTING.md](CONTRIBUTING.md#option-2-submit-a-draft-pr) |
 | `prerequisites` | object/array | Conditions required for escalation | [SCHEMA.md](SCHEMA.md#prerequisites-object-or-array) |
 | `limitations` | string | When admin vs limited access is achieved | [SCHEMA.md](SCHEMA.md#limitations-string-optional) |
 | `references` | array | External links and documentation | [SCHEMA.md](SCHEMA.md#references-array-of-objects) |
@@ -267,6 +268,21 @@ Can you task the detection-tools, learning-environments, add-vis, and attributio
 - Prerequisites have valid types
 - Exploitation steps are numbered sequentially from 1
 - No unexpected fields
+
+### Draft Mode
+
+The validation script supports draft submissions with relaxed requirements:
+
+```bash
+# Normal mode - allows drafts (for PRs)
+python scripts/validate-schema.py data/paths/
+
+# Strict mode - no drafts allowed (for main branch)
+python scripts/validate-schema.py data/paths/ --no-draft
+```
+
+**Draft paths** (`status: draft`) only require: id, name, category, services, permissions.required, description
+**Complete paths** (no status) require all fields including exploitationSteps, recommendation, discoveryAttribution
 
 ## Website Generation
 

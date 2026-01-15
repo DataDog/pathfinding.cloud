@@ -1,27 +1,52 @@
 ---
-name: Bug report 
-about: Create a bug report in Github
-title: ''
-labels: ''
+name: Bug Report
+about: Report an error in the website, documentation, or existing path data
+title: '[BUG] '
+labels: 'bug'
 assignees: ''
-
 ---
 
-## Categorization 
+## Bug Description
 
-- [ ] New Path
-- [ ] Add / Update / Fix info within an existing path
-- [ ] New Feature / Major Change / Refactor / Optimization
-- [ ] Non path based documentation Update (Readme, etc)
+**What's wrong?**
+<!-- A clear and concise description of the bug -->
 
 
-## Description
-A clear and concise description of what the bug is.
+## Location
 
-## Steps to reproduce
+**Where is the issue?**
+- [ ] Website functionality
+- [ ] Existing path data (incorrect information)
+- [ ] Documentation (README, CONTRIBUTING, etc.)
+- [ ] Validation scripts
+- [ ] Other:
 
-## Expected behavior
+**Specific file or page affected:**
+<!-- e.g., data/paths/iam/iam-001.yaml or https://pathfinding.cloud/paths/iam-001 -->
 
-## Actual behavior
 
-## Environment
+## Details
+
+**Steps to Reproduce** *(for website/script bugs)*
+1.
+2.
+3.
+
+**Expected Behavior**
+<!-- What should happen? -->
+
+
+**Actual Behavior**
+<!-- What happens instead? -->
+
+
+## Environment *(for website/script bugs)*
+
+- Browser:
+- OS:
+- Python version (if running scripts):
+
+## Additional Context
+
+<!-- Screenshots, error messages, or other helpful information -->
+

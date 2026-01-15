@@ -100,9 +100,14 @@ pathfinding.cloud/
 
 ## Contributing
 
-We welcome contributions!
+We welcome contributions of all sizes! Whether you have a rough idea or a fully documented path, we'd love your input.
 
-See [CONTRIBUTING.md](CONTRIBUTING.md) for detailed guidelines.
+**Ways to contribute:**
+- **Have an idea?** [Open an issue](https://github.com/DataDog/pathfinding.cloud/issues/new?template=new-path-idea.md) - no YAML required!
+- **Have some details?** Submit a draft PR with what you know - we'll help complete it
+- **Have everything?** Submit a complete path for fast-track review
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for detailed guidelines and templates.
 
 ## Development
 
@@ -175,11 +180,26 @@ This project builds upon groundbreaking research by:
 - **Gerben Kleijn** (Bishop Fox) - Exploitation steps and requirements guide for original 21 paths
   - [Privilege Escalation in AWS](https://bishopfox.com/blog/privilege-escalation-in-aws)
 
-- **Erik Steringer** - PMapper privilege escalation detection (10 additional privilege escalation paths)
+- **Erik Steringer** (NCC Group) - PMapper privilege escalation detection and 10 additional paths
   - [PMapper](https://github.com/nccgroup/PMapper)
+
+- **Nick Spagnola** (Rhino Security Labs) - ECS privilege escalation research
+  - [Weaponizing ECS Task Definitions](https://rhinosecuritylabs.com/aws/weaponizing-ecs-task-definitions-steal-credentials-running-containers/)
+
+- **Daniel Grzelak** (Plerion) - EC2 and SageMaker privilege escalation paths
+  - [Hacking AWS by Accident](https://blog.plerion.com/hacking-aws-by-accident/)
+
+- **Nigel Sood** (Sonrai Security) - Bedrock privilege escalation paths
+  - [Amazon Bedrock Privilege Escalation](https://sonraisecurity.com/blog/amazon-bedrock-priv-escalation/)
+
+- **Bollina Bhagavan** (Appsecco) - App Runner privilege escalation research
+  - [AWS App Runner Privilege Escalation](https://blog.appsecco.com/aws-app-runner-privilege-escalation-5c109c0b9753)
 
 - **Rhino Security Labs** - Pacu AWS exploitation framework
   - [Pacu](https://github.com/RhinoSecurityLabs/pacu)
+
+- **Bishop Fox** - IAM Vulnerable - 31 paths
+  - [IAM Vulnerable](https://github.com/BishopFox/iam-vulnerable)
 
 ## Related Projects
 

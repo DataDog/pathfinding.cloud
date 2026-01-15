@@ -28,9 +28,15 @@ jobs:
         run: |
           pip install -r scripts/requirements.txt
 
-      - name: Validate YAML files
+      - name: Validate YAML files (PRs - drafts allowed)
+        if: github.event_name == 'pull_request'
         run: |
           python scripts/validate-schema.py data/paths/
+
+      - name: Validate YAML files (main branch - no drafts)
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        run: |
+          python scripts/validate-schema.py data/paths/ --no-draft
 
       - name: Comment on PR (on failure)
         if: failure() && github.event_name == 'pull_request'
@@ -44,14 +50,32 @@ jobs:
               body: '❌ Schema validation failed. Please check the validation errors above and fix your YAML files according to the [schema documentation](../blob/main/SCHEMA.md).'
             })
 
+      - name: Check for draft paths
+        if: success() && github.event_name == 'pull_request'
+        id: check-drafts
+        run: |
+          DRAFT_COUNT=$(grep -rl "status: draft" data/paths/ 2>/dev/null | wc -l | tr -d ' ')
+          echo "draft_count=$DRAFT_COUNT" >> $GITHUB_OUTPUT
+          if [ "$DRAFT_COUNT" -gt 0 ]; then
+            echo "Found $DRAFT_COUNT draft path(s)"
+            echo "draft_files<<EOF" >> $GITHUB_OUTPUT
+            grep -rl "status: draft" data/paths/ >> $GITHUB_OUTPUT
+            echo "EOF" >> $GITHUB_OUTPUT
+          fi
+
       - name: Comment on PR (on success)
         if: success() && github.event_name == 'pull_request'
         uses: actions/github-script@v7
         with:
           script: |
+            const draftCount = '${{ steps.check-drafts.outputs.draft_count }}';
+            let body = '✅ All YAML files passed schema validation!';
+            if (parseInt(draftCount) > 0) {
+              body += `\n\n📝 **Note:** This PR contains ${draftCount} draft path(s) with \`status: draft\`. A maintainer will enhance these before merging.`;
+            }
             github.rest.issues.createComment({
               issue_number: context.issue.number,
               owner: context.repo.owner,
               repo: context.repo.repo,
-              body: '✅ All YAML files passed schema validation!'
+              body: body
             })
