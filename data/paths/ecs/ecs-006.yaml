@@ -1,5 +1,5 @@
 id: ecs-006
-name: ecs:ExecuteCommand
+name: ecs:ExecuteCommand + ecs:DescribeTasks
 category: existing-passrole
 services:
   - ecs
@@ -8,17 +8,17 @@ permissions:
   required:
     - permission: ecs:ExecuteCommand
       resourceConstraints: Must have permission on ECS tasks in clusters with ECS Exec enabled
+    - permission: ecs:DescribeTasks
+      resourceConstraints: Required by the AWS CLI to retrieve the container runtime ID for establishing the SSM session
   additional:
     - permission: ecs:ListClusters
       resourceConstraints: Helpful for discovering ECS clusters in the account
     - permission: ecs:ListTasks
       resourceConstraints: Helpful for discovering task ARNs in the target cluster
-    - permission: ecs:DescribeTasks
-      resourceConstraints: Useful for viewing task details including container names and task role
     - permission: ecs:DescribeTaskDefinition
       resourceConstraints: Useful for viewing the task definition to discover the task role ARN
 
-description: A principal with `ecs:ExecuteCommand` can establish an interactive shell session in a running ECS container, but only if ECS Exec has been explicitly enabled on the service (it is disabled by default). If the task has a privileged IAM role attached, the attacker can retrieve the role's temporary credentials from the container metadata service at `169.254.170.2$AWS_CONTAINER_CREDENTIALS_RELATIVE_URI` and use them to perform actions as that role.
+description: A principal with `ecs:ExecuteCommand` and `ecs:DescribeTasks` can establish an interactive shell session in a running ECS container, but only if ECS Exec has been explicitly enabled on the service (it is disabled by default). Both permissions are required because the AWS CLI internally calls `DescribeTasks` to retrieve the container runtime ID needed to establish the SSM session. If the task has a privileged IAM role attached, the attacker can retrieve the role's temporary credentials from the container metadata service at `169.254.170.2$AWS_CONTAINER_CREDENTIALS_RELATIVE_URI` and use them to perform actions as that role.
 
 prerequisites:
   admin:
@@ -68,18 +68,21 @@ exploitationSteps:
       description: Use the retrieved credentials outside the container to operate as the task role
 
 recommendation: |
-  This privilege escalation path exploits `ecs:ExecuteCommand` access to tasks running with privileged roles. Unlike PassRole-based attacks, the role has already been attached to the running task - the attacker simply needs shell access to retrieve its credentials.
+  High powered service roles + overly permissive `iam:PassRole` is what makes this privilege escalation path exploitable and impactful.
 
-  **Prevention:**
-
-  - **Disable ECS Exec on production tasks** - Only enable ECS Exec when actively debugging, and disable immediately after. Use separate clusters for debugging and production workloads.
   - **Avoid administrative task roles** - Very rarely does an ECS task need administrative access. Use the principle of least privilege for all task roles.
-  - **Restrict `ecs:ExecuteCommand` permission** - Use IAM conditions to limit which clusters, services, or tasks can be accessed:
+  - **Disable ECS Exec on production services** - ECS Exec is disabled by default. Only enable it when actively debugging, and disable immediately after. Use separate clusters for debugging and production workloads.
+  - **Restrict use of the `ecs:ExecuteCommand` permission** - When `ecs:ExecuteCommand` is needed, restrict it's use to to specific clusters or use tag-based conditions.
+
+  Use IAM policy conditions to restrict which tasks can be accessed:
 
   ```json
   {
     "Effect": "Allow",
-    "Action": "ecs:ExecuteCommand",
+    "Action": [
+      "ecs:ExecuteCommand",
+      "ecs:DescribeTasks"
+    ],
     "Resource": "arn:aws:ecs:*:ACCOUNT_ID:task/specific-cluster/*",
     "Condition": {
       "StringEquals": {
@@ -89,15 +92,13 @@ recommendation: |
   }
   ```
 
-  - **Use resource tags** - Tag tasks that should allow ECS Exec and enforce tag-based conditions in IAM policies
-  - **Enable CloudWatch logging for ECS Exec** - Configure logging to capture all commands executed within containers
-
-  **Detection:**
-
   - Monitor CloudTrail for `ecs:ExecuteCommand` API calls, especially targeting tasks with privileged roles
-  - Alert on ECS Exec sessions from unexpected principals or at unusual times
-  - Correlate ECS Exec sessions with subsequent API calls using task role credentials
-  - Monitor container logs for metadata service access patterns
+  - Monitor CloudTrail for `ecs:ExecuteCommand` API calls from principals who do not usually access containers
+  - Alert on `ecs:ExecuteCommand` API calls at unusual times or from unexpected source IPs
+  - Correlate `ecs:ExecuteCommand` API calls with subsequent API calls using task role credentials
+  - Enable CloudWatch logging for ECS Exec to capture all commands executed within containers
+  - Regularly audit ECS task definitions for excessive IAM permissions on task roles
+  - Regularly audit all ECS services to identify which have ECS Exec enabled and whether it's necessary
 
 limitations: |
   This path provides administrative access only if the task role has administrative permissions. The level of access gained depends entirely on what permissions are attached to the running task's role. Even limited access through a task role may enable further privilege escalation or data access.
@@ -110,7 +111,7 @@ discoveryAttribution:
 
 references:
   - title: "AWS - ECS Privesc - HackTricks Cloud"
-    url: "https://cloud.hacktricks.xyz/pentesting-cloud/aws-security/aws-privilege-escalation/aws-ecs-privesc"
+    url: "https://cloud.hacktricks.wiki/en/pentesting-cloud/aws-security/aws-privilege-escalation/aws-ecs-privesc/index.html#ecsexecutecommand-ecsdescribetasksecsruntaskecsstarttaskecsupdateserviceecscreateservice"
   - title: "NEW - Using Amazon ECS Exec to access your containers on AWS Fargate and Amazon EC2"
     url: "https://aws.amazon.com/blogs/containers/new-using-amazon-ecs-exec-access-your-containers-fargate-ec2/"
   - title: "Monitor Amazon ECS containers with ECS Exec - AWS Documentation"
@@ -122,7 +123,7 @@ attackVisualization:
       label: Starting Principal
       type: principal
       description: |
-        The starting principal (user or role) with `ecs:ExecuteCommand` permission. This principal can establish an interactive shell session in any running ECS container that they have permission to access and where ECS Exec is enabled on the service. The session provides direct access to the container's environment including access to the task role's credentials via the ECS metadata service.
+        The starting principal (user or role) with `ecs:ExecuteCommand` and `ecs:DescribeTasks` permissions. Both are required - the AWS CLI internally calls DescribeTasks to retrieve the container runtime ID needed to establish the SSM session. This principal can establish an interactive shell session in any running ECS container that they have permission to access and where ECS Exec is enabled on the service. The session provides direct access to the container's environment including access to the task role's credentials via the ECS metadata service.
 
     - id: ecs_task
       label: Running ECS Task
@@ -201,9 +202,9 @@ attackVisualization:
   edges:
     - from: start
       to: ecs_task
-      label: ecs:ExecuteCommand
+      label: ecs:ExecuteCommand + ecs:DescribeTasks
       description: |
-        Establish an interactive ECS Exec session on the target container using `ecs:ExecuteCommand`. This starts a shell session inside the running container, similar to SSH but operating through the AWS API and SSM.
+        Establish an interactive ECS Exec session on the target container. Both `ecs:ExecuteCommand` and `ecs:DescribeTasks` are required - the AWS CLI internally calls DescribeTasks to retrieve the container runtime ID needed to establish the SSM session.
 
         Command:
         ```bash
