@@ -97,7 +97,7 @@ ALLOWED_EXPLOITATION_TOOLS = [
     'stratus',
     'leonidas',
     'nebula',
-    'pathfinder',
+    'pathrunner',
 ]
 
 ALLOWED_PREREQUISITE_TABS = [

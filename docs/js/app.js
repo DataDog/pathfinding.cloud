@@ -1992,7 +1992,7 @@ function renderExploitationSteps(steps) {
         'stratus': 'Stratus',
         'leonidas': 'Leonidas',
         'nebula': 'Nebula',
-        'pathfinder': 'Pathfinder'
+        'pathrunner': 'Pathrunner'
     };
 
     const uniqueId = `tabs-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;

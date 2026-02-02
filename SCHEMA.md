@@ -149,7 +149,7 @@ Supported tools:
 - `stratus` - Stratus Red Team
 - `leonidas` - Leonidas (AWS attack simulation)
 - `nebula` - Nebula
-- `pathfinder` - Pathfinder
+- `pathrunner` - Pathrunner
 
 Each step object contains:
 - `step` (integer, required): Step number (1, 2, 3, etc.)
