@@ -2,9 +2,6 @@
 
 **The definitive source of truth for AWS IAM privilege escalation paths**
 
-[![Validate Schema](https://github.com/DataDog/pathfinding.cloud/actions/workflows/validate.yml/badge.svg)](https://github.com/DataDog/pathfinding.cloud/actions/workflows/validate.yml)
-[![Deploy to GitHub Pages](https://github.com/DataDog/pathfinding.cloud/actions/workflows/deploy.yml/badge.svg)](https://github.com/DataDog/pathfinding.cloud/actions/workflows/deploy.yml)
-
 **Website:** [https://pathfinding.cloud](https://pathfinding.cloud)
 
 ## Overview
