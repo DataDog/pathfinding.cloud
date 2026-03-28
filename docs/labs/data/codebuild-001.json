@@ -1,0 +1,104 @@
+{
+  "displayName": "Privilege Escalation via CodeBuild Service Abuse",
+  "name": "codebuild-001-iam-passrole+codebuild-createproject+codebuild-startbuild",
+  "description": "Pass a privileged role to CodeBuild and execute buildspec to grant self admin access",
+  "costEstimate": "$0/mo",
+  "pathfindingCloudId": "codebuild-001",
+  "interactiveDemo": false,
+  "category": "Privilege Escalation",
+  "subCategory": "new-passrole",
+  "pathType": "one-hop",
+  "target": "to-admin",
+  "environments": [
+    "prod"
+  ],
+  "attackPath": {
+    "principals": [
+      "arn:aws:iam::{account_id}:user/pl-prod-codebuild-001-to-admin-starting-user",
+      "arn:aws:iam::{account_id}:role/pl-prod-codebuild-001-to-admin-target-role"
+    ],
+    "summary": "starting_user \u2192 (codebuild:CreateProject + iam:PassRole) \u2192 CodeBuild project with target_role \u2192 (codebuild:StartBuild) \u2192 buildspec grants admin to starting_user \u2192 admin access"
+  },
+  "permissions": {
+    "required": [
+      {
+        "permission": "codebuild:CreateProject",
+        "resource": "*"
+      },
+      {
+        "permission": "codebuild:StartBuild",
+        "resource": "*"
+      },
+      {
+        "permission": "iam:PassRole",
+        "resource": "arn:aws:iam::*:role/pl-prod-codebuild-001-to-admin-target-role"
+      }
+    ],
+    "helpful": [
+      {
+        "permission": "iam:ListRoles",
+        "purpose": "Discover available privileged roles to pass to CodeBuild"
+      },
+      {
+        "permission": "codebuild:ListProjects",
+        "purpose": "List existing CodeBuild projects"
+      },
+      {
+        "permission": "codebuild:BatchGetBuilds",
+        "purpose": "Monitor build execution status"
+      },
+      {
+        "permission": "iam:ListUsers",
+        "purpose": "Verify admin access after escalation"
+      }
+    ]
+  },
+  "mitreAttack": {
+    "tactics": [
+      "TA0004 - Privilege Escalation",
+      "TA0002 - Execution"
+    ],
+    "techniques": [
+      "T1078.004 - Valid Accounts: Cloud Accounts",
+      "T1651 - Cloud Administration Command"
+    ]
+  },
+  "terraform": {
+    "variableName": "enable_single_account_privesc_one_hop_to_admin_codebuild_001_iam_passrole_codebuild_createproject_codebuild_startbuild",
+    "modulePath": "modules/scenarios/single-account/privesc-one-hop/to-admin/codebuild-001-iam-passrole+codebuild-createproject+codebuild-startbuild"
+  },
+  "githubUrl": "https://github.com/DataDog/pathfinding-labs/tree/main/modules/scenarios/single-account/privesc-one-hop/to-admin/codebuild-001-iam-passrole+codebuild-createproject+codebuild-startbuild",
+  "readme": {
+    "overview": "This scenario demonstrates a privilege escalation vulnerability where a user has permissions to create and execute AWS CodeBuild projects combined with the ability to pass IAM roles. The attacker can create a CodeBuild project with a privileged service role, then execute a malicious buildspec that uses that role's permissions to grant themselves administrator access.\n\nAWS CodeBuild is a fully managed continuous integration service that compiles source code and runs builds in isolated compute environments. Each CodeBuild project executes with a service role that grants it permissions to perform operations. When a user has both `codebuild:CreateProject` and `iam:PassRole` permissions, they can create a project that assumes a privileged role. By starting a build with a custom buildspec, they can execute arbitrary AWS CLI commands with the role's elevated permissions.\n\nThis is a classic example of the \"pass role to service\" privilege escalation pattern, where the combination of service creation permissions and role passing creates an indirect path to elevated privileges that might not be obvious when reviewing IAM policies individually.",
+    "mitreAttack": "- **Tactic**: TA0004 - Privilege Escalation, TA0002 - Execution\n- **Technique**: T1078.004 - Valid Accounts: Cloud Accounts\n- **Technique**: T1651 - Cloud Administration Command",
+    "attackDiagram": "graph LR\n    A[pl-prod-codebuild-001-to-admin-starting-user] -->|codebuild:CreateProject + iam:PassRole| B[CodeBuild Project]\n    B -->|Service assumes role| C[pl-prod-codebuild-001-to-admin-target-role]\n    C -->|codebuild:StartBuild executes buildspec| D[iam:AttachUserPolicy on starting user]\n    D -->|AdministratorAccess attached| E[Effective Administrator]\n\n    style A fill:#ff9999,stroke:#333,stroke-width:2px\n    style B fill:#ffcc99,stroke:#333,stroke-width:2px\n    style C fill:#ffcc99,stroke:#333,stroke-width:2px\n    style D fill:#ffcc99,stroke:#333,stroke-width:2px\n    style E fill:#99ff99,stroke:#333,stroke-width:2px",
+    "attackSteps": "1. **Initial Access**: Start as `pl-prod-codebuild-001-to-admin-starting-user` (credentials provided via Terraform outputs)\n2. **Create CodeBuild Project**: Use `codebuild:CreateProject` to create a new project, passing the privileged `pl-prod-codebuild-001-to-admin-target-role` via `iam:PassRole`\n3. **Execute Malicious Build**: Use `codebuild:StartBuild` with a custom buildspec that uses the target role's permissions to attach AdministratorAccess policy to the starting user\n4. **Verification**: Verify administrator access with the original user credentials",
+    "resourcesCreated": "| ARN | Purpose |\n| -- | -- |\n| `arn:aws:iam::PROD_ACCOUNT:user/pl-prod-codebuild-001-to-admin-starting-user` | Scenario-specific starting user with access keys |\n| `arn:aws:iam::PROD_ACCOUNT:role/pl-prod-codebuild-001-to-admin-target-role` | Privileged role with iam:AttachUserPolicy permission, trusted by CodeBuild service |\n| `arn:aws:iam::PROD_ACCOUNT:policy/pl-prod-codebuild-001-to-admin-user-policy` | Policy granting codebuild:CreateProject, codebuild:StartBuild, and iam:PassRole to starting user |",
+    "attackLab": {
+      "prerequisites": "1. Install the `plabs` CLI:\n   ```bash\n   brew install pathfinding-labs/tap/plabs\n   ```\n2. Configure your AWS profiles in `~/.plabs/plabs.yaml` (or run `plabs init` if you haven't already)",
+      "deployNonInteractive": "```bash\nplabs enable enable_single_account_privesc_one_hop_to_admin_codebuild_001_iam_passrole_codebuild_createproject_codebuild_startbuild\nplabs apply\n```",
+      "deployTui": "1. Launch the TUI: `plabs`\n2. Navigate to this scenario in the scenarios list\n3. Press `space` to enable it\n4. Press `d` to deploy",
+      "demoAttack": {
+        "intro": "The script will:\n1. Display a step-by-step walkthrough with color-coded output\n2. Show the commands being executed and their results\n3. Verify successful privilege escalation\n4. Output standardized test results for automation",
+        "resourcesCreated": "- CodeBuild project used to execute the malicious buildspec\n- `AdministratorAccess` policy attached to the starting user",
+        "nonInteractive": "```bash\nplabs demo --list\nplabs demo codebuild-001-iam-passrole+codebuild-createproject+codebuild-startbuild\n```",
+        "tui": "1. Launch the TUI: `plabs`\n2. Navigate to this scenario in the scenarios list\n3. Press `r` to run the demo script"
+      },
+      "cleanup": {
+        "nonInteractive": "```bash\nplabs cleanup --list\nplabs cleanup codebuild-001-iam-passrole+codebuild-createproject+codebuild-startbuild\n```",
+        "tui": "1. Launch the TUI: `plabs`\n2. Navigate to this scenario in the scenarios list\n3. Press `c` to run the cleanup script"
+      },
+      "teardownNonInteractive": "```bash\nplabs disable enable_single_account_privesc_one_hop_to_admin_codebuild_001_iam_passrole_codebuild_createproject_codebuild_startbuild\nplabs apply\n```",
+      "teardownTui": "1. Launch the TUI: `plabs`\n2. Navigate to this scenario in the scenarios list\n3. Press `space` to disable it\n4. Press `D` to destroy"
+    },
+    "cspm": {
+      "whatToDetect": "A properly configured Cloud Security Posture Management (CSPM) tool should identify:\n\n1. **Dangerous Permission Combination**: User/role with both `codebuild:CreateProject` and `iam:PassRole` permissions\n2. **Overly Permissive Service Roles**: CodeBuild service roles with powerful IAM permissions (iam:AttachUserPolicy, iam:PutUserPolicy, etc.)\n3. **Privilege Escalation Path**: Automated detection of the complete attack chain from user to admin via CodeBuild\n4. **Missing Constraints**: `iam:PassRole` permission without resource-based restrictions\n5. **Service Trust Relationships**: Roles that can be assumed by CodeBuild without additional conditions",
+      "prevention": "- **Restrict iam:PassRole**: Limit `iam:PassRole` to specific, least-privilege roles using resource-based conditions: `\"Resource\": \"arn:aws:iam::*:role/specific-safe-role\"`\n- **Separate Permissions**: Avoid granting `codebuild:CreateProject` and `iam:PassRole` to the same principal\n- **Service Role Controls**: Ensure CodeBuild service roles follow least privilege and cannot modify IAM permissions\n- **CloudTrail Monitoring**: Alert on `CreateProject` API calls where privileged roles are being passed, and monitor `AttachUserPolicy`/`PutUserPolicy` calls from CodeBuild service principals\n- **Service Control Policies**: Implement SCPs to prevent CodeBuild service roles from modifying IAM policies: `Deny iam:AttachUserPolicy, iam:PutUserPolicy, iam:AttachRolePolicy, iam:PutRolePolicy when aws:PrincipalServiceName = codebuild.amazonaws.com`\n- **IAM Access Analyzer**: Use AWS IAM Access Analyzer to identify privilege escalation paths involving CodeBuild\n- **Require Approval for Service Roles**: Implement approval workflows for creating service roles that can be passed to compute services\n- **Condition Keys**: Use IAM condition keys to restrict CodeBuild project creation to specific source repositories or environments"
+    },
+    "cloudSiem": {
+      "cloudTrailEvents": "- `IAM: PassRole` \u2014 Role passed to CodeBuild service; critical when the target role has elevated IAM permissions\n- `CodeBuild: CreateProject` \u2014 New CodeBuild project created; high severity when a privileged service role is specified\n- `CodeBuild: StartBuild` \u2014 Build execution triggered; monitor for inline buildspec overrides containing AWS CLI commands\n- `IAM: AttachUserPolicy` \u2014 Managed policy attached to a user; critical when AdministratorAccess is attached from a CodeBuild service principal",
+      "detonationLogs": "_Detonation log integration (Stratus Red Team / Grimoire) is planned for a future release._"
+    }
+  },
+  "slug": "codebuild-001"
+}

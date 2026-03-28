@@ -1,0 +1,99 @@
+{
+  "displayName": "Privilege Escalation via iam:DeleteAccessKey + iam:CreateAccessKey",
+  "name": "iam-003-iam-deleteaccesskey+createaccesskey",
+  "description": "Bypassing AWS's 2-access-key limit by deleting an existing key before creating a new one for an admin user",
+  "costEstimate": "$0/mo",
+  "pathfindingCloudId": "iam-003",
+  "interactiveDemo": false,
+  "category": "Privilege Escalation",
+  "subCategory": "credential-access",
+  "pathType": "one-hop",
+  "target": "to-admin",
+  "environments": [
+    "prod"
+  ],
+  "attackPath": {
+    "principals": [
+      "arn:aws:iam::{account_id}:user/pl-prod-iam-003-to-admin-starting-user",
+      "arn:aws:iam::{account_id}:user/pl-prod-iam-003-to-admin-target-user"
+    ],
+    "summary": "starting_user \u2192 (iam:ListAccessKeys) \u2192 list existing keys \u2192 (iam:DeleteAccessKey) \u2192 delete one key \u2192 (iam:CreateAccessKey) \u2192 create new key for admin_user \u2192 admin access"
+  },
+  "permissions": {
+    "required": [
+      {
+        "permission": "iam:DeleteAccessKey",
+        "resource": "arn:aws:iam::*:user/pl-prod-iam-003-to-admin-target-user"
+      },
+      {
+        "permission": "iam:CreateAccessKey",
+        "resource": "arn:aws:iam::*:user/pl-prod-iam-003-to-admin-target-user"
+      }
+    ],
+    "helpful": [
+      {
+        "permission": "iam:ListAccessKeys",
+        "purpose": "List existing access keys to identify which one to delete"
+      },
+      {
+        "permission": "iam:ListUsers",
+        "purpose": "Discover privileged users to target"
+      },
+      {
+        "permission": "iam:GetUser",
+        "purpose": "View user details and attached policies"
+      },
+      {
+        "permission": "iam:ListAttachedUserPolicies",
+        "purpose": "Identify users with admin permissions"
+      }
+    ]
+  },
+  "mitreAttack": {
+    "tactics": [
+      "TA0004 - Privilege Escalation",
+      "TA0003 - Persistence"
+    ],
+    "techniques": [
+      "T1098.001 - Account Manipulation: Additional Cloud Credentials"
+    ]
+  },
+  "terraform": {
+    "variableName": "enable_single_account_privesc_one_hop_to_admin_iam_003_iam_deleteaccesskey_createaccesskey",
+    "modulePath": "modules/scenarios/single-account/privesc-one-hop/to-admin/iam-003-iam-deleteaccesskey+createaccesskey"
+  },
+  "githubUrl": "https://github.com/DataDog/pathfinding-labs/tree/main/modules/scenarios/single-account/privesc-one-hop/to-admin/iam-003-iam-deleteaccesskey+createaccesskey",
+  "readme": {
+    "overview": "This scenario demonstrates a sophisticated variation of the `iam:CreateAccessKey` privilege escalation technique. AWS limits each IAM user to a maximum of two access keys. When a target admin user already has two active access keys, a simple `iam:CreateAccessKey` attack would fail. However, if an attacker has both `iam:DeleteAccessKey` and `iam:CreateAccessKey` permissions, they can bypass this limitation by first deleting one of the existing keys, then creating a new one under their control.\n\nThis attack is particularly dangerous because it works even when standard `iam:CreateAccessKey` exploitation would be blocked by AWS's built-in safety limits. Organizations that believe they're protected because their admin users maintain two active keys are vulnerable to this bypass technique. The attacker can identify which keys exist, delete one (potentially disrupting legitimate automation or access), and then create a new key they control.\n\nThis technique represents a common oversight in IAM security monitoring. While many organizations watch for `CreateAccessKey` API calls on privileged accounts, they may not correlate these events with preceding `DeleteAccessKey` calls. The combination of these two permissions creates a privilege escalation path that's more subtle and harder to detect than the standard access key creation attack, especially if the deleted key wasn't actively monitored.",
+    "mitreAttack": "- **Tactic**: TA0004 - Privilege Escalation, TA0003 - Persistence\n- **Technique**: T1098.001 - Account Manipulation: Additional Cloud Credentials",
+    "attackDiagram": "graph LR\n    A[pl-prod-iam-003-to-admin-starting-user] -->|iam:ListAccessKeys| B[Enumerate Keys]\n    B -->|iam:DeleteAccessKey| C[Delete Existing Key]\n    C -->|iam:CreateAccessKey| D[pl-prod-iam-003-to-admin-target-user]\n    D -->|Administrator Access| E[Effective Administrator]\n\n    style A fill:#ff9999,stroke:#333,stroke-width:2px\n    style B fill:#ffcc99,stroke:#333,stroke-width:2px\n    style C fill:#ffcc99,stroke:#333,stroke-width:2px\n    style D fill:#ffcc99,stroke:#333,stroke-width:2px\n    style E fill:#99ff99,stroke:#333,stroke-width:2px",
+    "attackSteps": "1. **Initial Access**: Start as `pl-prod-iam-003-to-admin-starting-user` (credentials provided via Terraform outputs)\n2. **List Access Keys**: Use `iam:ListAccessKeys` to enumerate existing access keys for the target admin user\n3. **Delete Access Key**: Use `iam:DeleteAccessKey` to remove one of the two existing access keys, freeing up a slot\n4. **Create New Access Key**: Use `iam:CreateAccessKey` to create new programmatic credentials for the admin user under attacker control\n5. **Switch Context**: Configure AWS CLI with the newly created access key and secret key\n6. **Verification**: Verify administrator access by listing IAM users or performing other admin-level actions",
+    "resourcesCreated": "| ARN | Purpose |\n| -- | -- |\n| `arn:aws:iam::PROD_ACCOUNT:user/pl-prod-iam-003-to-admin-starting-user` | Scenario-specific starting user with access keys and permissions to delete and create access keys |\n| `arn:aws:iam::PROD_ACCOUNT:user/pl-prod-iam-003-to-admin-target-user` | Target admin user with AdministratorAccess managed policy attached and 2 pre-existing access keys |",
+    "attackLab": {
+      "prerequisites": "1. Install the `plabs` CLI:\n   ```bash\n   brew install pathfinding-labs/tap/plabs\n   ```\n2. Configure your AWS profiles in `~/.plabs/plabs.yaml` (or run `plabs init` if you haven't already)",
+      "deployNonInteractive": "```bash\nplabs enable enable_single_account_privesc_one_hop_to_admin_iam_003_iam_deleteaccesskey_createaccesskey\nplabs apply\n```",
+      "deployTui": "1. Launch the TUI: `plabs`\n2. Navigate to this scenario in the scenarios list\n3. Press `space` to enable it\n4. Press `d` to deploy",
+      "demoAttack": {
+        "intro": "The script will:\n1. Display a step-by-step walkthrough with color-coded output\n2. Show the commands being executed and their results\n3. Demonstrate bypassing the 2-key limit by deleting an existing key\n4. Verify successful privilege escalation\n5. Output standardized test results for automation",
+        "resourcesCreated": "- New IAM access key created for `pl-prod-iam-003-to-admin-target-user`",
+        "nonInteractive": "```bash\nplabs demo --list\nplabs demo iam-003-iam-deleteaccesskey+createaccesskey\n```",
+        "tui": "1. Launch the TUI: `plabs`\n2. Navigate to this scenario in the scenarios list\n3. Press `r` to run the demo script"
+      },
+      "cleanup": {
+        "nonInteractive": "```bash\nplabs cleanup --list\nplabs cleanup iam-003-iam-deleteaccesskey+createaccesskey\n```",
+        "tui": "1. Launch the TUI: `plabs`\n2. Navigate to this scenario in the scenarios list\n3. Press `c` to run the cleanup script"
+      },
+      "teardownNonInteractive": "```bash\nplabs disable enable_single_account_privesc_one_hop_to_admin_iam_003_iam_deleteaccesskey_createaccesskey\nplabs apply\n```",
+      "teardownTui": "1. Launch the TUI: `plabs`\n2. Navigate to this scenario in the scenarios list\n3. Press `space` to disable it\n4. Press `D` to destroy"
+    },
+    "cspm": {
+      "whatToDetect": "- IAM user (`pl-prod-iam-003-to-admin-starting-user`) has `iam:DeleteAccessKey` permission on a privileged user \u2014 privilege escalation path via credential manipulation\n- IAM user (`pl-prod-iam-003-to-admin-starting-user`) has `iam:CreateAccessKey` permission on a privileged user \u2014 allows creation of new credentials for admin account\n- Combined `iam:DeleteAccessKey` + `iam:CreateAccessKey` permissions on the same target user creates a bypass for AWS's 2-key limit, enabling credential takeover even when both slots are occupied",
+      "prevention": "- Implement least privilege principles - avoid granting `iam:DeleteAccessKey` and `iam:CreateAccessKey` permissions unless absolutely necessary\n- Use resource-based conditions to restrict which users can have access keys deleted or created: `\"Condition\": {\"StringNotEquals\": {\"aws:username\": [\"admin-user\"]}}`\n- Implement Service Control Policies (SCPs) at the organization level to prevent access key operations on privileged accounts\n- Enable MFA requirements for sensitive IAM operations using condition keys like `aws:MultiFactorAuthPresent`\n- Use IAM Access Analyzer to identify and remediate privilege escalation paths involving `iam:DeleteAccessKey` and `iam:CreateAccessKey` permissions\n- Consider using IAM roles instead of IAM users for administrative access, as roles cannot have access keys created by other principals\n- Maintain an inventory of all access keys for privileged accounts and alert on unexpected key lifecycle events (creation, deletion, rotation)"
+    },
+    "cloudSiem": {
+      "cloudTrailEvents": "- `IAM: ListAccessKeys` \u2014 Enumeration of existing access keys on a target user; baseline behavior for this attack pattern\n- `IAM: DeleteAccessKey` \u2014 Access key deleted for an IAM user; critical when the target has elevated permissions and precedes a CreateAccessKey call\n- `IAM: CreateAccessKey` \u2014 New access keys created for an IAM user; critical when the target has elevated permissions; correlate with preceding DeleteAccessKey on the same user",
+      "detonationLogs": "_Detonation log integration (Stratus Red Team / Grimoire) is planned for a future release._"
+    }
+  },
+  "slug": "iam-003"
+}

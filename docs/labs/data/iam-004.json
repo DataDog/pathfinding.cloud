@@ -1,0 +1,92 @@
+{
+  "displayName": "Privilege Escalation via iam:CreateLoginProfile",
+  "name": "iam-004-iam-createloginprofile",
+  "description": "Creating console password for admin user to gain console access",
+  "costEstimate": "$0/mo",
+  "pathfindingCloudId": "iam-004",
+  "interactiveDemo": false,
+  "category": "Privilege Escalation",
+  "subCategory": "credential-access",
+  "pathType": "one-hop",
+  "target": "to-admin",
+  "environments": [
+    "prod"
+  ],
+  "attackPath": {
+    "principals": [
+      "arn:aws:iam::{account_id}:user/pl-prod-iam-004-to-admin-starting-user",
+      "arn:aws:iam::{account_id}:role/pl-prod-iam-004-to-admin-starting-role",
+      "arn:aws:iam::{account_id}:user/pl-prod-iam-004-to-admin-target-user"
+    ],
+    "summary": "starting_user \u2192 (AssumeRole) \u2192 starting_role \u2192 (iam:CreateLoginProfile) \u2192 set password for admin_user \u2192 console login with admin access"
+  },
+  "permissions": {
+    "required": [
+      {
+        "permission": "iam:CreateLoginProfile",
+        "resource": "arn:aws:iam::*:user/pl-prod-iam-004-to-admin-target-user"
+      }
+    ],
+    "helpful": [
+      {
+        "permission": "iam:ListUsers",
+        "purpose": "Discover users without login profiles"
+      },
+      {
+        "permission": "iam:GetUser",
+        "purpose": "View user details"
+      },
+      {
+        "permission": "iam:GetLoginProfile",
+        "purpose": "Check if user already has login profile"
+      }
+    ]
+  },
+  "mitreAttack": {
+    "tactics": [
+      "TA0004 - Privilege Escalation",
+      "TA0003 - Persistence"
+    ],
+    "techniques": [
+      "T1098.001 - Account Manipulation: Additional Cloud Credentials"
+    ]
+  },
+  "terraform": {
+    "variableName": "enable_single_account_privesc_one_hop_to_admin_iam_004_iam_createloginprofile",
+    "modulePath": "modules/scenarios/single-account/privesc-one-hop/to-admin/iam-004-iam-createloginprofile"
+  },
+  "githubUrl": "https://github.com/DataDog/pathfinding-labs/tree/main/modules/scenarios/single-account/privesc-one-hop/to-admin/iam-004-iam-createloginprofile",
+  "readme": {
+    "overview": "This scenario demonstrates a privilege escalation vulnerability where a role has permission to create login profiles (console passwords) for an administrator user. An attacker can assume a role with `iam:CreateLoginProfile` permission on an admin user who lacks a console password, create a login profile with a password they control, and then use those credentials to access the AWS Management Console with full administrator privileges.\n\nThis attack vector is particularly dangerous because many organizations focus on protecting API access keys while overlooking console access. Admin users created for programmatic access often have the `AdministratorAccess` policy but no login profile, making them ideal targets for this technique. Once a login profile is created, the attacker gains interactive console access, which can bypass monitoring systems focused on API-based actions and provides a user-friendly interface for lateral movement and data exfiltration.\n\nThe vulnerability commonly occurs when organizations grant broad IAM management permissions without restricting them to specific operations, or when least privilege principles are not applied to credential management permissions.",
+    "mitreAttack": "- **Tactic**: TA0004 - Privilege Escalation, TA0003 - Persistence\n- **Technique**: T1098.001 - Account Manipulation: Additional Cloud Credentials\n- **Sub-technique**: Creating console credentials for privileged accounts",
+    "attackDiagram": "graph LR\n    A[pl-prod-iam-004-to-admin-starting-user] -->|sts:AssumeRole| B[pl-prod-iam-004-to-admin-starting-role]\n    B -->|iam:CreateLoginProfile| C[pl-prod-iam-004-to-admin-target-user]\n    C -->|Console Login| D[Administrator Console Access]\n\n    style A fill:#ff9999,stroke:#333,stroke-width:2px\n    style B fill:#ffcc99,stroke:#333,stroke-width:2px\n    style C fill:#ffcc99,stroke:#333,stroke-width:2px\n    style D fill:#99ff99,stroke:#333,stroke-width:2px",
+    "attackSteps": "1. **Initial Access**: Start as `pl-prod-iam-004-to-admin-starting-user` (credentials provided via Terraform outputs)\n2. **Assume Role**: Assume the vulnerable role `pl-prod-iam-004-to-admin-starting-role`\n3. **Create Login Profile**: Use `iam:CreateLoginProfile` to set a console password for the admin user `pl-prod-iam-004-to-admin-target-user`\n4. **Console Login**: Access the AWS Management Console using the target user's username and newly created password\n5. **Verification**: Verify administrator access through the console or by testing admin permissions",
+    "resourcesCreated": "| ARN | Purpose |\n| -- | -- |\n| `arn:aws:iam::PROD_ACCOUNT:user/pl-prod-iam-004-to-admin-starting-user` | Scenario-specific starting user with access keys |\n| `arn:aws:iam::PROD_ACCOUNT:role/pl-prod-iam-004-to-admin-starting-role` | Vulnerable role with CreateLoginProfile permission on admin user |\n| `arn:aws:iam::PROD_ACCOUNT:user/pl-prod-iam-004-to-admin-target-user` | Target admin user with AdministratorAccess policy but no initial login profile |",
+    "attackLab": {
+      "prerequisites": "1. Install the `plabs` CLI:\n   ```bash\n   brew install pathfinding-labs/tap/plabs\n   ```\n2. Configure your AWS profiles in `~/.plabs/plabs.yaml` (or run `plabs init` if you haven't already)",
+      "deployNonInteractive": "```bash\nplabs enable enable_single_account_privesc_one_hop_to_admin_iam_004_iam_createloginprofile\nplabs apply\n```",
+      "deployTui": "1. Launch the TUI: `plabs`\n2. Navigate to this scenario in the scenarios list\n3. Press `space` to enable it\n4. Press `d` to deploy",
+      "demoAttack": {
+        "intro": "The script will:\n1. Display a step-by-step walkthrough with color-coded output\n2. Show the commands being executed and their results\n3. Verify successful privilege escalation\n4. Output standardized test results for automation",
+        "resourcesCreated": "- Login profile (console password) on `pl-prod-iam-004-to-admin-target-user`",
+        "nonInteractive": "```bash\nplabs demo --list\nplabs demo iam-004-iam-createloginprofile\n```",
+        "tui": "1. Launch the TUI: `plabs`\n2. Navigate to this scenario in the scenarios list\n3. Press `r` to run the demo script"
+      },
+      "cleanup": {
+        "nonInteractive": "```bash\nplabs cleanup --list\nplabs cleanup iam-004-iam-createloginprofile\n```",
+        "tui": "1. Launch the TUI: `plabs`\n2. Navigate to this scenario in the scenarios list\n3. Press `c` to run the cleanup script"
+      },
+      "teardownNonInteractive": "```bash\nplabs disable enable_single_account_privesc_one_hop_to_admin_iam_004_iam_createloginprofile\nplabs apply\n```",
+      "teardownTui": "1. Launch the TUI: `plabs`\n2. Navigate to this scenario in the scenarios list\n3. Press `space` to disable it\n4. Press `D` to destroy"
+    },
+    "cspm": {
+      "whatToDetect": "- IAM role has `iam:CreateLoginProfile` permission on a privileged user (privilege escalation path via console credential creation)\n- Admin user (`pl-prod-iam-004-to-admin-target-user`) has `AdministratorAccess` and no login profile \u2014 making it a silent target for console access creation\n- Role can manipulate credentials of a higher-privileged principal without restriction",
+      "prevention": "- Avoid granting `iam:CreateLoginProfile` permissions on privileged users - use resource-based conditions to restrict which users can have login profiles created\n- Implement Service Control Policies (SCPs) to prevent login profile creation on admin users across the organization\n- Monitor CloudTrail for `CreateLoginProfile` API calls, especially on privileged accounts, and alert on suspicious activity\n- Enforce MFA requirements for console access using IAM policies with `aws:MultiFactorAuthPresent` conditions\n- Use IAM Access Analyzer to identify and remediate privilege escalation paths involving credential manipulation\n- Regularly audit users with `AdministratorAccess` or other privileged policies to ensure login profiles exist only where necessary\n- Implement conditional policies that require console access to originate from trusted IP ranges or networks\n- Configure AWS Organizations to centrally manage console access policies and prevent unauthorized credential creation"
+    },
+    "cloudSiem": {
+      "cloudTrailEvents": "- `IAM: CreateLoginProfile` \u2014 Console password created for an IAM user; critical when the target user has elevated permissions such as `AdministratorAccess`\n- `STS: AssumeRole` \u2014 Role assumption by the starting user to gain the vulnerable role's permissions",
+      "detonationLogs": "_Detonation log integration (Stratus Red Team / Grimoire) is planned for a future release._"
+    }
+  },
+  "slug": "iam-004"
+}

@@ -1,0 +1,89 @@
+{
+  "displayName": "Cross-Account from Operations to Prod Simple Role Assumption",
+  "name": "simple-role-assumption",
+  "description": "Cross-account role assumption from operations to prod",
+  "costEstimate": "$0/mo",
+  "pathfindingCloudId": null,
+  "interactiveDemo": false,
+  "category": "Privilege Escalation",
+  "subCategory": "cross-account-escalation",
+  "pathType": "cross-account",
+  "target": "to-admin",
+  "environments": [
+    "operations",
+    "prod"
+  ],
+  "attackPath": {
+    "principals": [
+      "arn:aws:iam::{operations_account_id}:user/pl-pathfinding-starting-user-operations",
+      "arn:aws:iam::{operations_account_id}:role/pl-x-account-ops-role-with-assume-role-star",
+      "arn:aws:iam::{prod_account_id}:role/*"
+    ],
+    "summary": "starting_user_ops \u2192 (AssumeRole) \u2192 ops_role \u2192 (sts:AssumeRole cross-account on *) \u2192 any_prod_role \u2192 privileged access"
+  },
+  "permissions": {
+    "required": [
+      {
+        "permission": "sts:AssumeRole",
+        "resource": "*"
+      }
+    ],
+    "helpful": [
+      {
+        "permission": "iam:ListRoles",
+        "purpose": "Discover roles in prod account"
+      },
+      {
+        "permission": "iam:GetRole",
+        "purpose": "View role trust policies and permissions"
+      }
+    ]
+  },
+  "mitreAttack": {
+    "tactics": [
+      "TA0004 - Privilege Escalation",
+      "TA0008 - Lateral Movement"
+    ],
+    "techniques": [
+      "T1078.004 - Valid Accounts: Cloud Accounts"
+    ]
+  },
+  "terraform": {
+    "variableName": "enable_cross_account_ops_to_prod_one_hop_simple_role_assumption",
+    "modulePath": "modules/scenarios/cross-account/ops-to-prod/one-hop/simple-role-assumption"
+  },
+  "githubUrl": "https://github.com/DataDog/pathfinding-labs/tree/main/modules/scenarios/cross-account/ops-to-prod/one-hop/simple-role-assumption",
+  "readme": {
+    "overview": "This module demonstrates cross-account role trust relationships between operations and production accounts, allowing simple role assumption from operations to prod.\n\nThis scenario models a common real-world configuration where an operations account is granted the ability to assume roles in a production account for maintenance and monitoring purposes. When the operations role is granted `sts:AssumeRole` on `*`, an attacker who compromises any principal in the operations account can pivot directly into any role in the production account that trusts the operations account \u2014 including administrative roles.\n\nThe danger is that a blanket `sts:AssumeRole` on `*` means the operations role is not scoped to specific prod roles. Any prod role whose trust policy allows the operations account (or the operations role) can be assumed, turning a limited operations compromise into full production account access.",
+    "mitreAttack": "- **Tactics**: TA0004 - Privilege Escalation, TA0008 - Lateral Movement\n- **Technique**: T1078.004 - Valid Accounts: Cloud Accounts",
+    "attackDiagram": "graph LR\n    %% Nodes\n    StartUser[\"pl-pathfinding-starting-user-operations\"]\n    OpsRole[\"pl-x-account-ops-role-with-assume-role-star\"]\n    ProdRole[\"prod:iam:role:admin-role\"]\n\n    %% Edges\n    StartUser -->|sts:AssumeRole| OpsRole\n    OpsRole -->|sts:AssumeRole cross-account| ProdRole\n\n    %% Styles\n    style StartUser fill:#ff9999,stroke:#333,stroke-width:2px\n    style OpsRole fill:#ffcc99,stroke:#333,stroke-width:2px\n    style ProdRole fill:#99ff99,stroke:#333,stroke-width:2px",
+    "attackSteps": "1. **Initial Access** \u2014 Authenticate as `pl-pathfinding-starting-user-operations` in the operations account using the credentials from Terraform outputs.\n2. **Assume operations role** \u2014 Call `sts:AssumeRole` to assume `pl-x-account-ops-role-with-assume-role-star`. This role has `sts:AssumeRole` on `*`.\n3. **Enumerate prod roles** \u2014 Use `iam:ListRoles` (helpful permission) to discover roles in the prod account and identify those whose trust policies allow assumption from the operations account.\n4. **Cross-account role assumption** \u2014 Call `sts:AssumeRole` on a privileged prod role (e.g., an admin role) using the operations role credentials.\n5. **Verification** \u2014 Run `sts:GetCallerIdentity` and `iam:ListAttachedRolePolicies` (or similar) to confirm admin-level access in the prod account.",
+    "resourcesCreated": "| ARN | Purpose |\n|-----|---------|\n| `arn:aws:iam::{operations_account_id}:user/pl-pathfinding-starting-user-operations` | Starting user in the operations account |\n| `arn:aws:iam::{operations_account_id}:role/pl-x-account-ops-role-with-assume-role-star` | Operations role with unrestricted sts:AssumeRole |\n| `arn:aws:iam::{prod_account_id}:role/pl-x-account-prod-target-role` | Target prod role that trusts the operations account |",
+    "attackLab": {
+      "prerequisites": "1. Install the `plabs` CLI:\n   ```bash\n   brew install pathfinding-labs/tap/plabs\n   ```\n2. Configure your AWS profiles in `~/.plabs/plabs.yaml` (or run `plabs init` if you haven't already)",
+      "deployNonInteractive": "```bash\nplabs enable enable_cross_account_ops_to_prod_one_hop_simple_role_assumption\nplabs apply\n```",
+      "deployTui": "1. Launch the TUI: `plabs`\n2. Navigate to this scenario in the scenarios list\n3. Press `space` to enable it\n4. Press `d` to deploy",
+      "demoAttack": {
+        "intro": "The script will:\n\n1. Read starting credentials from Terraform outputs\n2. Assume the operations role in the operations account\n3. Enumerate roles in the prod account\n4. Assume a privileged prod role using the operations role credentials\n5. Verify elevated access in the prod account",
+        "resourcesCreated": "- Temporary STS session credentials for the operations role\n- Temporary STS session credentials for the prod target role",
+        "nonInteractive": "```bash\nplabs demo --list\nplabs demo simple-role-assumption\n```",
+        "tui": "1. Launch the TUI: `plabs`\n2. Navigate to this scenario in the scenarios list\n3. Press `r` to run the demo script"
+      },
+      "cleanup": {
+        "nonInteractive": "```bash\nplabs cleanup --list\nplabs cleanup simple-role-assumption\n```",
+        "tui": "1. Launch the TUI: `plabs`\n2. Navigate to this scenario in the scenarios list\n3. Press `c` to run the cleanup script"
+      },
+      "teardownNonInteractive": "```bash\nplabs disable enable_cross_account_ops_to_prod_one_hop_simple_role_assumption\nplabs apply\n```",
+      "teardownTui": "1. Launch the TUI: `plabs`\n2. Navigate to this scenario in the scenarios list\n3. Press `space` to disable it\n4. Press `D` to destroy"
+    },
+    "cspm": {
+      "whatToDetect": "- IAM role in the operations account has `sts:AssumeRole` on `*` \u2014 this is an overly permissive cross-account permission that enables lateral movement to any role in any account\n- Prod IAM role trust policy allows assumption from the operations account without condition keys (e.g., no `aws:PrincipalArn` condition narrowing which operations principals may assume it)\n- No MFA or external ID condition on cross-account role assumption in the trust policy of the prod target role\n- The combination of an unconstrained ops-to-prod trust relationship and admin-level permissions on the prod role creates a direct privilege escalation path from the operations account",
+      "prevention": "- Scope `sts:AssumeRole` in the operations role policy to specific prod role ARNs rather than `*`\n- Add `aws:PrincipalArn` or `aws:PrincipalAccount` conditions to prod role trust policies to restrict which principals may assume them\n- Require an `sts:ExternalId` condition on all cross-account trust relationships to prevent confused deputy attacks\n- Implement an SCP in AWS Organizations that denies `sts:AssumeRole` across account boundaries unless the request comes from an approved operations role ARN\n- Enforce MFA conditions (`aws:MultiFactorAuthPresent: true`) on cross-account role trust policies for any role with elevated privileges\n- Use AWS IAM Access Analyzer to continuously monitor cross-account trust relationships and alert on overly permissive configurations"
+    },
+    "cloudSiem": {
+      "cloudTrailEvents": "- `STS: AssumeRole` \u2014 Cross-account role assumption; alert when a principal in the operations account assumes a role in the prod account, especially admin-level roles\n- `IAM: ListRoles` \u2014 Enumeration of roles in the prod account; expected from legitimate ops tooling but suspicious if not from a known automation principal",
+      "detonationLogs": "_Detonation log integration (Stratus Red Team / Grimoire) is planned for a future release._"
+    }
+  },
+  "slug": "simple-role-assumption-ops-to-prod"
+}

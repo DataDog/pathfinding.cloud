@@ -1,0 +1,105 @@
+{
+  "displayName": "Multi-Hop Cross-Account Privilege Escalation (Both Sides)",
+  "name": "multi-hop-both-sides",
+  "description": "Multi-hop privilege escalation across both dev and prod accounts using login profile manipulation",
+  "costEstimate": "$0/mo",
+  "pathfindingCloudId": null,
+  "interactiveDemo": false,
+  "category": "Privilege Escalation",
+  "subCategory": "privilege-chaining",
+  "pathType": "cross-account",
+  "target": "to-admin",
+  "environments": [
+    "dev",
+    "prod"
+  ],
+  "attackPath": {
+    "principals": [
+      "arn:aws:iam::{dev_account_id}:user/pl-pathfinding-starting-user-dev",
+      "arn:aws:iam::{dev_account_id}:role/pl-helpdesk",
+      "arn:aws:iam::{dev_account_id}:user/pl-Josh",
+      "arn:aws:iam::{prod_account_id}:role/pl-trustsdev",
+      "arn:aws:iam::{prod_account_id}:user/pl-Jeremy"
+    ],
+    "summary": "starting_user_dev \u2192 (AssumeRole) \u2192 helpdesk_role \u2192 (iam:CreateLoginProfile) \u2192 josh_user (admin in dev) \u2192 (sts:AssumeRole cross-account) \u2192 trustsdev_role \u2192 (iam:UpdateLoginProfile) \u2192 jeremy_user (admin in prod)"
+  },
+  "permissions": {
+    "required": [
+      {
+        "permission": "iam:CreateLoginProfile",
+        "resource": "arn:aws:iam::{dev_account_id}:user/pl-Josh"
+      },
+      {
+        "permission": "sts:AssumeRole",
+        "resource": "arn:aws:iam::{prod_account_id}:role/pl-trustsdev"
+      },
+      {
+        "permission": "iam:UpdateLoginProfile",
+        "resource": "arn:aws:iam::{prod_account_id}:user/pl-Jeremy"
+      }
+    ],
+    "helpful": [
+      {
+        "permission": "iam:GetLoginProfile",
+        "purpose": "View existing login profile configuration"
+      },
+      {
+        "permission": "iam:ListUsers",
+        "purpose": "Discover users in both accounts"
+      },
+      {
+        "permission": "iam:GetUser",
+        "purpose": "View user details and permissions"
+      }
+    ]
+  },
+  "mitreAttack": {
+    "tactics": [
+      "TA0004 - Privilege Escalation",
+      "TA0006 - Credential Access",
+      "TA0008 - Lateral Movement"
+    ],
+    "techniques": [
+      "T1098.001 - Account Manipulation: Additional Cloud Credentials",
+      "T1078.004 - Valid Accounts: Cloud Accounts"
+    ]
+  },
+  "terraform": {
+    "variableName": "enable_cross_account_dev_to_prod_multi_hop_multi_hop_both_sides",
+    "modulePath": "modules/scenarios/cross-account/dev-to-prod/multi-hop/multi-hop-both-sides"
+  },
+  "githubUrl": "https://github.com/DataDog/pathfinding-labs/tree/main/modules/scenarios/cross-account/dev-to-prod/multi-hop/multi-hop-both-sides",
+  "readme": {
+    "overview": "The attack path shows how a dev user can escalate to admin privileges across both dev and prod accounts through a series of role assumptions and login profile manipulations.\n\nThis attack demonstrates a critical multi-hop privilege escalation vulnerability. A dev user can access prod resources through login profile manipulation. The multi-hop nature of this attack chain spans multiple accounts, ultimately granting full admin access in both dev and prod accounts.\n\nThis configuration appears in real environments where teams share helpdesk roles across account boundaries without fully auditing the downstream privilege chains that those roles enable. The cross-account trust relationship combined with unconstrained login profile permissions creates a path that may not be obvious from a single-account policy review.",
+    "mitreAttack": "- **Tactics**: TA0004 - Privilege Escalation, TA0006 - Credential Access, TA0008 - Lateral Movement\n- **Techniques**: T1098.001 - Account Manipulation: Additional Cloud Credentials, T1078.004 - Valid Accounts: Cloud Accounts",
+    "attackDiagram": "graph LR\n    %% Nodes\n    Pathfinding[dev:user:pl-pathfinding-starting-user-dev]\n    Helpdesk[dev:role:pl-helpdesk]\n    Josh[dev:user:pl-Josh]\n    TrustsDev[prod:role:pl-trustsdev]\n    Jeremy[prod:user:pl-Jeremy]\n\n    %% Edges\n    Pathfinding -->|sts:AssumeRole| Helpdesk\n    Helpdesk -->|iam:CreateLoginProfile| Josh\n    Josh -->|sts:AssumeRole| TrustsDev\n    TrustsDev -->|iam:UpdateLoginProfile| Jeremy\n\n    %% Styling\n    style Pathfinding fill:#ff9999,stroke:#333,stroke-width:2px\n    style Helpdesk fill:#ffcc99,stroke:#333,stroke-width:2px\n    style Josh fill:#ffcc99,stroke:#333,stroke-width:2px\n    style TrustsDev fill:#ffcc99,stroke:#333,stroke-width:2px\n    style Jeremy fill:#99ff99,stroke:#333,stroke-width:2px",
+    "attackSteps": "1. **Initial Access**: Dev user `pl-pathfinding-starting-user-dev` has `sts:AssumeRole` permission on `pl-helpdesk` role\n2. **Hop 1 - Role Assumption**: Dev user assumes the `pl-helpdesk` role in the dev account\n3. **Hop 2 - Login Profile Creation**: Helpdesk role creates a login profile for `pl-Josh` user (admin in dev)\n4. **Hop 3 - Cross-Account Role Assumption**: Josh user (now with login profile) assumes the `pl-trustsdev` role in the prod account\n5. **Hop 4 - Login Profile Update**: Trustsdev role updates the login profile for `pl-Jeremy` user (admin in prod)\n6. **Verification**: Jeremy now has admin access in the prod account; confirm with `sts:GetCallerIdentity` and an admin API call",
+    "resourcesCreated": "| ARN | Purpose |\n|-----|---------|\n| `arn:aws:iam::{DEV_ACCOUNT}:user/pl-pathfinding-starting-user-dev` | Starting principal in dev account |\n| `arn:aws:iam::{DEV_ACCOUNT}:role/pl-helpdesk` | Intermediate helpdesk role with `iam:CreateLoginProfile` permission |\n| `arn:aws:iam::{DEV_ACCOUNT}:user/pl-Josh` | Admin user in dev; target of login profile creation |\n| `arn:aws:iam::{PROD_ACCOUNT}:role/pl-trustsdev` | Prod role that trusts Josh user from dev account |\n| `arn:aws:iam::{PROD_ACCOUNT}:user/pl-Jeremy` | Admin user in prod; target of login profile update |",
+    "attackLab": {
+      "prerequisites": "1. Install the `plabs` CLI:\n   ```bash\n   brew install pathfinding-labs/tap/plabs\n   ```\n2. Configure your AWS profiles in `~/.plabs/plabs.yaml` (or run `plabs init` if you haven't already)",
+      "deployNonInteractive": "```bash\nplabs enable enable_cross_account_dev_to_prod_multi_hop_multi_hop_both_sides\nplabs apply\n```",
+      "deployTui": "1. Launch the TUI: `plabs`\n2. Navigate to this scenario in the scenarios list\n3. Press `space` to enable it\n4. Press `d` to deploy",
+      "demoAttack": {
+        "intro": "The script will:\n\n1. Verify current identity and permissions for the starting dev user\n2. Assume the `pl-helpdesk` role in the dev account\n3. Create a login profile for the `pl-Josh` user\n4. Assume the `pl-trustsdev` role in the prod account as Josh\n5. Update the login profile for the `pl-Jeremy` user in prod\n6. Confirm admin access in both accounts\n7. Reset login profiles to their original state",
+        "resourcesCreated": "- Login profile for `pl-Josh` (created during the attack; removed by cleanup)\n- Updated login profile password for `pl-Jeremy` (reset by cleanup)",
+        "nonInteractive": "```bash\nplabs demo --list\nplabs demo multi-hop-both-sides\n```",
+        "tui": "1. Launch the TUI: `plabs`\n2. Navigate to this scenario in the scenarios list\n3. Press `r` to run the demo script"
+      },
+      "cleanup": {
+        "nonInteractive": "```bash\nplabs cleanup --list\nplabs cleanup multi-hop-both-sides\n```",
+        "tui": "1. Launch the TUI: `plabs`\n2. Navigate to this scenario in the scenarios list\n3. Press `c` to run the cleanup script"
+      },
+      "teardownNonInteractive": "```bash\nplabs disable enable_cross_account_dev_to_prod_multi_hop_multi_hop_both_sides\nplabs apply\n```",
+      "teardownTui": "1. Launch the TUI: `plabs`\n2. Navigate to this scenario in the scenarios list\n3. Press `space` to disable it\n4. Press `D` to destroy"
+    },
+    "cspm": {
+      "whatToDetect": "- IAM role (`pl-helpdesk`) has `iam:CreateLoginProfile` permission scoped to a privileged user (`pl-Josh`), creating a privilege escalation path\n- IAM role (`pl-trustsdev`) in prod has `iam:UpdateLoginProfile` permission scoped to a privileged user (`pl-Jeremy`), creating a privilege escalation path\n- Cross-account role trust (`pl-trustsdev`) allows assumption by a principal from a non-production account (`pl-Josh` in dev), violating account isolation\n- Privilege escalation path exists from dev account to prod admin via login profile manipulation\n- `pl-Josh` and `pl-Jeremy` users hold full admin policies, making them high-value targets for login profile manipulation",
+      "prevention": "- Apply the principle of least privilege: avoid granting `iam:CreateLoginProfile` and `iam:UpdateLoginProfile` unless absolutely necessary, and scope them to non-privileged users only\n- Limit cross-account role assumptions to specific, documented use cases; use conditions like `aws:PrincipalOrgID` or explicit account conditions in trust policies\n- Monitor and alert on login profile creation and updates using CloudTrail; treat any modification to a privileged user's login profile as a high-severity event\n- Use more restrictive trust policies for cross-account roles, including `sts:ExternalId` conditions and MFA requirements\n- Regularly audit cross-account permissions and login profile usage across all accounts in your organization\n- Implement SCPs that deny `iam:CreateLoginProfile` and `iam:UpdateLoginProfile` for production account roles that do not require console access"
+    },
+    "cloudSiem": {
+      "cloudTrailEvents": "- `STS: AssumeRole` \u2014 Role assumption from dev to the helpdesk role; alert when the source principal is the pathfinding starting user\n- `IAM: CreateLoginProfile` \u2014 Login profile created for a user; critical when the target user holds admin or elevated permissions\n- `STS: AssumeRole` \u2014 Cross-account role assumption from dev `pl-Josh` to prod `pl-trustsdev`; alert on cross-account assumptions involving non-prod principals\n- `IAM: UpdateLoginProfile` \u2014 Login profile updated for a user; high severity when the target user holds admin permissions in prod\n- `STS: GetCallerIdentity` \u2014 Identity verification calls that follow a chain of role assumptions; useful for tracing lateral movement",
+      "detonationLogs": "_Detonation log integration (Stratus Red Team / Grimoire) is planned for a future release._"
+    }
+  },
+  "slug": "multi-hop-both-sides"
+}

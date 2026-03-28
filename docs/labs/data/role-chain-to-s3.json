@@ -1,0 +1,96 @@
+{
+  "displayName": "role-chain-to-s3",
+  "name": "role-chain-to-s3",
+  "description": "Three-hop role assumption chain to reach S3 bucket access",
+  "costEstimate": "$0/mo",
+  "pathfindingCloudId": null,
+  "interactiveDemo": false,
+  "category": "Privilege Escalation",
+  "subCategory": "principal-access",
+  "pathType": "multi-hop",
+  "target": "to-bucket",
+  "environments": [
+    "prod"
+  ],
+  "attackPath": {
+    "principals": [
+      "arn:aws:iam::{account_id}:user/pl-pathfinding-starting-user-prod",
+      "arn:aws:iam::{account_id}:role/pl-prod-role-a",
+      "arn:aws:iam::{account_id}:role/pl-prod-role-b",
+      "arn:aws:iam::{account_id}:role/pl-prod-role-c-bucket",
+      "arn:aws:s3:::pl-sensitive-data-{account_id}"
+    ],
+    "summary": "starting_user \u2192 (AssumeRole) \u2192 role_a \u2192 (AssumeRole) \u2192 role_b \u2192 (AssumeRole) \u2192 role_c \u2192 bucket access"
+  },
+  "permissions": {
+    "required": [
+      {
+        "permission": "sts:AssumeRole",
+        "resource": "arn:aws:iam::*:role/*"
+      }
+    ],
+    "helpful": [
+      {
+        "permission": "iam:ListRoles",
+        "purpose": "Discover available roles in the chain"
+      },
+      {
+        "permission": "iam:GetRole",
+        "purpose": "View role trust policies and permissions"
+      },
+      {
+        "permission": "s3:ListBucket",
+        "purpose": "Verify bucket access after chain"
+      }
+    ]
+  },
+  "mitreAttack": {
+    "tactics": [
+      "TA0004 - Privilege Escalation",
+      "TA0008 - Lateral Movement",
+      "TA0009 - Collection"
+    ],
+    "techniques": [
+      "T1078.004 - Valid Accounts: Cloud Accounts",
+      "T1530 - Data from Cloud Storage Object"
+    ]
+  },
+  "terraform": {
+    "variableName": "enable_single_account_privesc_multi_hop_to_bucket_role_chain_to_s3",
+    "modulePath": "modules/scenarios/single-account/privesc-multi-hop/to-bucket/role-chain-to-s3"
+  },
+  "githubUrl": "https://github.com/DataDog/pathfinding-labs/tree/main/modules/scenarios/single-account/privesc-multi-hop/to-bucket/role-chain-to-s3",
+  "readme": {
+    "overview": "This module demonstrates a simple 3-hop role assumption chain where each role can assume the next role in the chain, ultimately granting access to an S3 bucket. The chain also includes an IAM user that can directly assume the intermediate role.\n\nA 3-hop role assumption chain in the production environment with an S3 bucket destination. An attacker starting from a user with only `sts:AssumeRole` permission can traverse three sequential role assumptions to reach a role that has full S3 access to the sensitive destination bucket.\n\nThis configuration is dangerous because the trust relationships between roles are individually innocuous \u2014 each role only trusts the one before it. However, when chained together, they form a complete privilege escalation path that is difficult to detect without analyzing the full transitive trust graph. CSPM tools that only analyze individual roles in isolation will miss this path entirely.\n\nRole chains like this appear in real environments when IAM roles are created incrementally over time by different teams, or when roles are set up for cross-service delegation and the cumulative effect of chained trust policies is never reviewed holistically.",
+    "mitreAttack": "- **Tactics**: TA0004 - Privilege Escalation, TA0008 - Lateral Movement, TA0009 - Collection\n- **Techniques**: T1078.004 - Valid Accounts: Cloud Accounts, T1530 - Data from Cloud Storage Object",
+    "attackDiagram": "graph LR\n    %% Nodes\n    ProdAccount[prod-account:any-user-with-sts-permission]\n    ChainUser[prod-account:user:prod-role-chain-user]\n    InitialRole[prod-account:role:prod-initial-role]\n    IntermediateRole[prod-account:role:prod-intermediate-role]\n    S3AccessRole[prod-account:role:prod-s3-access-role]\n    S3Bucket[prod-account:s3:prod-role-chain-destination]\n\n    %% Edges\n    ProdAccount -->|sts:AssumeRole| InitialRole\n    ChainUser -->|sts:AssumeRole| IntermediateRole\n    InitialRole -->|sts:AssumeRole| IntermediateRole\n    IntermediateRole -->|sts:AssumeRole| S3AccessRole\n    S3AccessRole -->|s3:GetObject, s3:PutObject, etc.| S3Bucket\n\n    style ProdAccount fill:#ff9999,stroke:#333,stroke-width:2px\n    style ChainUser fill:#ff9999,stroke:#333,stroke-width:2px\n    style InitialRole fill:#ffcc99,stroke:#333,stroke-width:2px\n    style IntermediateRole fill:#ffcc99,stroke:#333,stroke-width:2px\n    style S3AccessRole fill:#ffcc99,stroke:#333,stroke-width:2px\n    style S3Bucket fill:#99ff99,stroke:#333,stroke-width:2px",
+    "attackSteps": "1. **Initial Access** \u2014 Begin as `pl-pathfinding-starting-user-prod` with minimal permissions in the prod account\n2. **Hop 1 - Assume Initial Role** \u2014 Call `sts:AssumeRole` to assume `pl-prod-initial-role`; this role trusts any user in the prod account with the `sts:AssumeRole` permission\n3. **Hop 2 - Assume Intermediate Role** \u2014 Using the initial role's credentials, call `sts:AssumeRole` to assume `pl-prod-intermediate-role`; the intermediate role's trust policy allows the initial role to assume it\n4. **Hop 3 - Assume S3 Access Role** \u2014 Using the intermediate role's credentials, call `sts:AssumeRole` to assume `pl-prod-s3-access-role`; this role has `s3:GetObject`, `s3:PutObject`, `s3:DeleteObject`, `s3:ListBucket`, and other permissions on the destination bucket\n5. **Verification** \u2014 List the contents of `pl-prod-role-chain-destination-{account-id}` to confirm full S3 read/write access has been achieved",
+    "resourcesCreated": "| ARN | Purpose |\n|-----|---------|\n| `arn:aws:iam::{PROD_ACCOUNT}:user/pl-prod-role-chain-user` | IAM user that can directly assume the intermediate role (alternate entry point) |\n| `arn:aws:iam::{PROD_ACCOUNT}:role/pl-prod-initial-role` | First-hop role; trusted by all prod account users with `sts:AssumeRole` |\n| `arn:aws:iam::{PROD_ACCOUNT}:role/pl-prod-intermediate-role` | Second-hop role; trusted by the initial role and the chain user |\n| `arn:aws:iam::{PROD_ACCOUNT}:role/pl-prod-s3-access-role` | Third-hop role; holds full S3 access to the destination bucket |\n| `arn:aws:s3:::pl-prod-role-chain-destination-{PROD_ACCOUNT}` | Destination S3 bucket with sensitive data; accessible only via the full role chain |",
+    "attackLab": {
+      "prerequisites": "1. Install the `plabs` CLI:\n   ```bash\n   brew install pathfinding-labs/tap/plabs\n   ```\n2. Configure your AWS profiles in `~/.plabs/plabs.yaml` (or run `plabs init` if you haven't already)",
+      "deployNonInteractive": "```bash\nplabs enable enable_single_account_privesc_multi_hop_to_bucket_role_chain_to_s3\nplabs apply\n```",
+      "deployTui": "1. Launch the TUI: `plabs`\n2. Navigate to this scenario in the scenarios list\n3. Press `space` to enable it\n4. Press `d` to deploy",
+      "demoAttack": {
+        "intro": "The script will:\n1. Read starting user credentials from Terraform outputs\n2. Assume `pl-prod-initial-role` as the first hop\n3. Use the initial role credentials to assume `pl-prod-intermediate-role` as the second hop\n4. Use the intermediate role credentials to assume `pl-prod-s3-access-role` as the third hop\n5. List and access the contents of the destination S3 bucket to confirm full access",
+        "resourcesCreated": "- Temporary STS session credentials for each hop (in-memory only; not persisted)",
+        "nonInteractive": "```bash\nplabs demo --list\nplabs demo role-chain-to-s3\n```",
+        "tui": "1. Launch the TUI: `plabs`\n2. Navigate to this scenario in the scenarios list\n3. Press `r` to run the demo script"
+      },
+      "cleanup": {
+        "nonInteractive": "```bash\nplabs cleanup --list\nplabs cleanup role-chain-to-s3\n```",
+        "tui": "1. Launch the TUI: `plabs`\n2. Navigate to this scenario in the scenarios list\n3. Press `c` to run the cleanup script"
+      },
+      "teardownNonInteractive": "```bash\nplabs disable enable_single_account_privesc_multi_hop_to_bucket_role_chain_to_s3\nplabs apply\n```",
+      "teardownTui": "1. Launch the TUI: `plabs`\n2. Navigate to this scenario in the scenarios list\n3. Press `space` to disable it\n4. Press `D` to destroy"
+    },
+    "cspm": {
+      "whatToDetect": "- IAM role (`pl-prod-initial-role`) trusts the entire prod account (`sts:AssumeRole` for `arn:aws:iam::{account_id}:root` or all users); any principal in the account can begin the chain\n- Transitive role assumption chain of depth 3 leading to S3 data access; CSPM tools performing multi-hop graph analysis should flag this as a privilege escalation path to sensitive data\n- `pl-prod-s3-access-role` has overly broad S3 permissions (`s3:GetObject`, `s3:PutObject`, `s3:DeleteObject`, `s3:ListBucket`) on the sensitive bucket and is reachable transitively from low-privilege starting principals\n- The intermediate role (`pl-prod-intermediate-role`) is trusted by both the initial role and by a specific IAM user, creating two distinct paths to the same sensitive resource \u2014 increasing blast radius",
+      "prevention": "- Apply the principle of least privilege to role trust policies; avoid trusting the entire account (`arn:aws:iam::{account_id}:root`) unless strictly necessary\n- Restrict `sts:AssumeRole` with IAM conditions (e.g., `aws:PrincipalTag`, `sts:ExternalId`, or `aws:SourceAccount`) to limit which principals can initiate role chains\n- Perform transitive graph analysis on role trust policies to detect multi-hop escalation paths that are invisible when evaluating roles individually\n- Limit S3 access permissions on roles that are reachable via chained assumptions; prefer scoped-down resource-based policies on the bucket itself\n- Use AWS IAM Access Analyzer to generate access previews and detect overly permissive cross-principal trust relationships\n- Regularly audit role trust policies, especially for roles that grant access to sensitive S3 buckets, to ensure no unintended trust chains have accumulated over time"
+    },
+    "cloudSiem": {
+      "cloudTrailEvents": "- `STS: AssumeRole` \u2014 Role assumption recorded; three sequential `AssumeRole` calls from the same originating identity within a short time window is a strong indicator of role chain traversal\n- `S3: GetObject` \u2014 Object retrieved from the sensitive bucket; especially suspicious when the requesting principal is a role assumed via a chain of `AssumeRole` calls\n- `S3: ListBucket` \u2014 Bucket contents listed; baseline recon step after gaining S3 access via a role chain\n- `STS: GetCallerIdentity` \u2014 Identity verification call; commonly used by attackers to confirm which role they currently hold at each hop",
+      "detonationLogs": "_Detonation log integration (Stratus Red Team / Grimoire) is planned for a future release._"
+    }
+  },
+  "slug": "role-chain-to-s3"
+}

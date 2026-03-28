@@ -1,0 +1,120 @@
+{
+  "displayName": "Privilege Escalation via iam:PassRole + ecs:RegisterTaskDefinition + ecs:StartTask",
+  "name": "ecs-005-iam-passrole+ecs-registertaskdefinition+ecs-starttask",
+  "description": "ECS EC2 task execution with admin role using ecs:StartTask to grant starting user administrative access",
+  "costEstimate": "$8/mo",
+  "pathfindingCloudId": "ecs-005",
+  "interactiveDemo": false,
+  "category": "Privilege Escalation",
+  "subCategory": "new-passrole",
+  "pathType": "one-hop",
+  "target": "to-admin",
+  "environments": [
+    "prod"
+  ],
+  "attackPath": {
+    "principals": [
+      "arn:aws:iam::{account_id}:user/pl-prod-ecs-005-to-admin-starting-user",
+      "arn:aws:iam::{account_id}:role/pl-prod-ecs-005-to-admin-target-role"
+    ],
+    "summary": "starting_user \u2192 (ecs:RegisterTaskDefinition with admin role) \u2192 (ecs:StartTask) \u2192 ECS task attaches admin policy to starting user \u2192 admin access"
+  },
+  "permissions": {
+    "required": [
+      {
+        "permission": "iam:PassRole",
+        "resource": "arn:aws:iam::*:role/pl-prod-ecs-005-to-admin-target-role"
+      },
+      {
+        "permission": "ecs:RegisterTaskDefinition",
+        "resource": "*"
+      },
+      {
+        "permission": "ecs:StartTask",
+        "resource": "*"
+      }
+    ],
+    "helpful": [
+      {
+        "permission": "ecs:ListContainerInstances",
+        "purpose": "Retrieve container instance ARN for StartTask command"
+      },
+      {
+        "permission": "ecs:DescribeTasks",
+        "purpose": "Monitor task execution status and verify task completion"
+      },
+      {
+        "permission": "ecs:DeregisterTaskDefinition",
+        "purpose": "Clean up task definition after demonstration"
+      },
+      {
+        "permission": "ecs:StopTask",
+        "purpose": "Stop running tasks during cleanup"
+      },
+      {
+        "permission": "ec2:DescribeVpcs",
+        "purpose": "Find default VPC for ECS task network configuration"
+      },
+      {
+        "permission": "ec2:DescribeSubnets",
+        "purpose": "Find subnet in default VPC for ECS task network configuration"
+      },
+      {
+        "permission": "iam:DetachUserPolicy",
+        "purpose": "Remove admin policy from starting user during cleanup"
+      },
+      {
+        "permission": "iam:ListAttachedUserPolicies",
+        "purpose": "Verify privilege escalation success by listing attached policies"
+      }
+    ]
+  },
+  "mitreAttack": {
+    "tactics": [
+      "TA0004 - Privilege Escalation",
+      "TA0002 - Execution"
+    ],
+    "techniques": [
+      "T1078.004 - Valid Accounts: Cloud Accounts",
+      "T1610 - Deploy Container"
+    ]
+  },
+  "terraform": {
+    "variableName": "enable_single_account_privesc_one_hop_to_admin_ecs_005_iam_passrole_ecs_registertaskdefinition_ecs_starttask",
+    "modulePath": "modules/scenarios/single-account/privesc-one-hop/to-admin/ecs-005-iam-passrole+ecs-registertaskdefinition+ecs-starttask"
+  },
+  "githubUrl": "https://github.com/DataDog/pathfinding-labs/tree/main/modules/scenarios/single-account/privesc-one-hop/to-admin/ecs-005-iam-passrole+ecs-registertaskdefinition+ecs-starttask",
+  "readme": {
+    "overview": "This scenario demonstrates a privilege escalation vulnerability where a user has permissions to pass IAM roles to ECS tasks (`iam:PassRole`), register ECS task definitions (`ecs:RegisterTaskDefinition`), and start ECS tasks (`ecs:StartTask`). The attacker can create a malicious ECS task definition that uses an administrative execution role, then launch it on EC2 container instances to modify IAM permissions and grant themselves administrator access.\n\n**Note:** The `ecs:StartTask` permission specifically requires ECS tasks to be launched on EC2 container instances that you manage, unlike `ecs:RunTask` which can use serverless Fargate. This makes `ecs:StartTask` less flexible but may be overlooked during security reviews.\n\nThe key difference between `ecs:StartTask` and the more common `ecs:RunTask` is their intended use case. While `ecs:RunTask` is the standard way to launch tasks and automatically places them within the cluster, `ecs:StartTask` is designed for tasks managed by external schedulers or custom task placement logic. However, both permissions provide the same capability: executing containers with potentially elevated privileges. In practice, `ecs:StartTask` may be overlooked during security reviews because it's less commonly used than `ecs:RunTask`, making it a subtle but effective privilege escalation vector.\n\nECS tasks running on EC2 container instances receive temporary credentials based on their task execution role. By combining `iam:PassRole` with ECS task definition registration and task start permissions, an attacker can leverage the container platform to run arbitrary code with elevated privileges. ECS tasks are ephemeral, execute quickly, and leave minimal forensic evidence beyond CloudTrail logs.\n\nThe attack works by registering a task definition that specifies an admin role and contains a containerized AWS CLI command to attach the AdministratorAccess policy to the starting user. When the task starts on an EC2 container instance, it executes with the admin role's credentials and persistently elevates the attacker's privileges. This technique is particularly stealthy because ECS tasks can complete in seconds and automatically clean up their infrastructure.",
+    "mitreAttack": "- **Tactic**: TA0004 - Privilege Escalation, TA0002 - Execution\n- **Technique**: T1078.004 - Valid Accounts: Cloud Accounts\n- **Technique**: T1610 - Deploy Container",
+    "attackDiagram": "graph LR\n    A[pl-prod-ecs-005-to-admin-starting-user] -->|ecs:RegisterTaskDefinition with admin role| B[ECS Task Definition]\n    B -->|ecs:StartTask| C[ECS Task on EC2]\n    C -->|Executes with| D[pl-prod-ecs-005-to-admin-target-role]\n    D -->|iam:AttachUserPolicy| E[pl-prod-ecs-005-to-admin-starting-user + AdministratorAccess]\n    E --> F[Effective Administrator]\n\n    style A fill:#ff9999,stroke:#333,stroke-width:2px\n    style B fill:#ffcc99,stroke:#333,stroke-width:2px\n    style C fill:#ffcc99,stroke:#333,stroke-width:2px\n    style D fill:#ffcc99,stroke:#333,stroke-width:2px\n    style E fill:#ffcc99,stroke:#333,stroke-width:2px\n    style F fill:#99ff99,stroke:#333,stroke-width:2px",
+    "attackSteps": "1. **Initial Access**: Start as `pl-prod-ecs-005-to-admin-starting-user` (credentials provided via Terraform outputs)\n2. **Register Task Definition**: Use `ecs:RegisterTaskDefinition` with `iam:PassRole` to create an ECS task definition that:\n   - Uses the admin target role as the task execution role\n   - Specifies a container with AWS CLI installed\n   - Defines a command to attach AdministratorAccess policy to the starting user\n3. **Launch Task**: Use `ecs:StartTask` to execute the task on an EC2 container instance\n4. **Policy Attachment**: The ECS task runs with the admin role's credentials and attaches AdministratorAccess to the starting user\n5. **Verification**: Verify administrator access by listing IAM users with the starting user's credentials",
+    "resourcesCreated": "| ARN | Purpose |\n| -- | -- |\n| `arn:aws:iam::PROD_ACCOUNT:user/pl-prod-ecs-005-to-admin-starting-user` | Scenario-specific starting user with access keys and ECS permissions |\n| `arn:aws:iam::PROD_ACCOUNT:role/pl-prod-ecs-005-to-admin-target-role` | Admin role that can be passed to ECS tasks (trusts ecs-tasks.amazonaws.com) |\n| `arn:aws:ecs:REGION:PROD_ACCOUNT:cluster/pl-prod-ecs-005-cluster` | ECS cluster for running tasks on EC2 instances |\n| `arn:aws:ec2:REGION:PROD_ACCOUNT:instance/INSTANCE_ID` | EC2 container instance registered with the ECS cluster |\n| `arn:aws:iam::PROD_ACCOUNT:role/pl-prod-ecs-005-to-admin-instance-role` | IAM role for the EC2 instance (allows ECS agent to function) |",
+    "attackLab": {
+      "prerequisites": "1. Install the `plabs` CLI:\n   ```bash\n   brew install pathfinding-labs/tap/plabs\n   ```\n2. Configure your AWS profiles in `~/.plabs/plabs.yaml` (or run `plabs init` if you haven't already)",
+      "deployNonInteractive": "```bash\nplabs enable enable_single_account_privesc_one_hop_to_admin_ecs_005_iam_passrole_ecs_registertaskdefinition_ecs_starttask\nplabs apply\n```",
+      "deployTui": "1. Launch the TUI: `plabs`\n2. Navigate to this scenario in the scenarios list\n3. Press `space` to enable it\n4. Press `d` to deploy",
+      "demoAttack": {
+        "intro": "The script will:\n1. Display a step-by-step walkthrough with color-coded output\n2. Show the commands being executed and their results\n3. Verify successful privilege escalation\n4. Output standardized test results for automation",
+        "resourcesCreated": "- ECS task definition referencing the admin target role\n- AdministratorAccess policy attached to the starting user",
+        "nonInteractive": "```bash\nplabs demo --list\nplabs demo ecs-005-iam-passrole+ecs-registertaskdefinition+ecs-starttask\n```",
+        "tui": "1. Launch the TUI: `plabs`\n2. Navigate to this scenario in the scenarios list\n3. Press `r` to run the demo script"
+      },
+      "cleanup": {
+        "nonInteractive": "```bash\nplabs cleanup --list\nplabs cleanup ecs-005-iam-passrole+ecs-registertaskdefinition+ecs-starttask\n```",
+        "tui": "1. Launch the TUI: `plabs`\n2. Navigate to this scenario in the scenarios list\n3. Press `c` to run the cleanup script"
+      },
+      "teardownNonInteractive": "```bash\nplabs disable enable_single_account_privesc_one_hop_to_admin_ecs_005_iam_passrole_ecs_registertaskdefinition_ecs_starttask\nplabs apply\n```",
+      "teardownTui": "1. Launch the TUI: `plabs`\n2. Navigate to this scenario in the scenarios list\n3. Press `space` to disable it\n4. Press `D` to destroy"
+    },
+    "cspm": {
+      "whatToDetect": "- IAM user has `iam:PassRole` permission to an admin role trusted by `ecs-tasks.amazonaws.com`\n- IAM user has `ecs:RegisterTaskDefinition` and `ecs:StartTask` permissions, enabling container-based privilege escalation\n- ECS task execution role has administrative permissions (`AdministratorAccess` or equivalent)\n- Privilege escalation path exists: starting user can register an ECS task definition with an admin role and launch it on cluster instances",
+      "prevention": "- Restrict `iam:PassRole` permissions using resource-based conditions to limit which roles can be passed and to which AWS services\n- Implement condition keys like `iam:PassedToService` with value `ecs-tasks.amazonaws.com` to explicitly control PassRole usage\n- Avoid granting broad `ecs:RegisterTaskDefinition` and `ecs:StartTask` permissions; use resource tags or naming patterns to limit task operations\n- Implement Service Control Policies (SCPs) that prevent passing roles with administrative permissions to ECS tasks\n- Use IAM Access Analyzer to identify privilege escalation paths involving PassRole combined with ECS operations\n- Enable AWS Config rules to detect ECS task definitions with overly permissive execution roles\n- Implement IAM permission boundaries on users to limit the maximum permissions that can be attached\n- Pay special attention to `ecs:StartTask` permissions as they are less common than `ecs:RunTask` and may be overlooked in security reviews"
+    },
+    "cloudSiem": {
+      "cloudTrailEvents": "- `IAM: PassRole` \u2014 Role passed to ECS task definition; critical when the target role has administrative permissions\n- `ECS: RegisterTaskDefinition` \u2014 New task definition registered; high severity when the task execution role has elevated permissions\n- `ECS: StartTask` \u2014 Task launched on EC2 container instance; investigate when combined with a recently registered task definition using a privileged role\n- `IAM: AttachUserPolicy` \u2014 Policy attached to an IAM user; critical when the source principal is an ECS task role and the policy is AdministratorAccess",
+      "detonationLogs": "_Detonation log integration (Stratus Red Team / Grimoire) is planned for a future release._"
+    }
+  },
+  "slug": "ecs-005"
+}

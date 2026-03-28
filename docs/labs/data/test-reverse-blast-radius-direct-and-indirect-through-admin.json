@@ -1,0 +1,102 @@
+{
+  "displayName": "Reverse Blast Radius: Direct and Indirect S3 Access Through Admin",
+  "name": "test-reverse-blast-radius-direct-and-indirect-through-admin",
+  "description": "Validating security tool detection of both direct and indirect S3 bucket access via administrative permissions",
+  "costEstimate": "$0/mo",
+  "pathfindingCloudId": null,
+  "interactiveDemo": false,
+  "category": "Tool Testing",
+  "subCategory": "reverse-blast-radius",
+  "pathType": "one-hop",
+  "target": "to-bucket",
+  "environments": [
+    "prod"
+  ],
+  "attackPath": {
+    "principals": [
+      "arn:aws:iam::{account_id}:user/pl-prod-rbr-admin-user1",
+      "arn:aws:iam::{account_id}:user/pl-prod-rbr-admin-user2",
+      "arn:aws:iam::{account_id}:role/pl-prod-rbr-admin-role3",
+      "arn:aws:s3:::pl-sensitive-data-rbr-admin-{account_id}-{suffix}"
+    ],
+    "summary": "Two paths to S3 bucket: user1 has direct S3 permissions; user2 can assume admin role (role3 with AdministratorAccess) granting indirect access to bucket"
+  },
+  "permissions": {
+    "required": [
+      {
+        "permission": "s3:GetObject",
+        "resource": "arn:aws:s3:::pl-sensitive-data-rbr-admin-*/*"
+      },
+      {
+        "permission": "s3:ListBucket",
+        "resource": "arn:aws:s3:::pl-sensitive-data-rbr-admin-*"
+      },
+      {
+        "permission": "sts:AssumeRole",
+        "resource": "arn:aws:iam::{account_id}:role/pl-prod-rbr-admin-role3"
+      },
+      {
+        "permission": "*",
+        "resource": "*"
+      }
+    ],
+    "helpful": [
+      {
+        "permission": "sts:GetCallerIdentity",
+        "purpose": "Verify current identity"
+      },
+      {
+        "permission": "s3:ListAllMyBuckets",
+        "purpose": "Discover available buckets"
+      }
+    ]
+  },
+  "mitreAttack": {
+    "tactics": [
+      "TA0009 - Collection",
+      "TA0004 - Privilege Escalation"
+    ],
+    "techniques": [
+      "T1530 - Data from Cloud Storage Object",
+      "T1078.004 - Valid Accounts: Cloud Accounts"
+    ]
+  },
+  "terraform": {
+    "variableName": "enable_tool_testing_test_reverse_blast_radius_direct_and_indirect_through_admin",
+    "modulePath": "modules/scenarios/tool-testing/test-reverse-blast-radius-direct-and-indirect-through-admin"
+  },
+  "githubUrl": "https://github.com/DataDog/pathfinding-labs/tree/main/modules/scenarios/tool-testing/test-reverse-blast-radius-direct-and-indirect-through-admin",
+  "readme": {
+    "overview": "This tool testing scenario is designed to validate whether Cloud Security Posture Management (CSPM) tools and IAM analysis platforms can correctly answer the critical question: \"Who has access to this S3 bucket?\" The scenario creates two distinct access paths to the same sensitive S3 bucket - one through direct IAM permissions and another through administrative role assumption.\n\nMany security tools excel at identifying direct permission grants but fail to recognize that principals with administrative access (such as the AWS-managed AdministratorAccess policy) implicitly have access to ALL resources in the account, including specific S3 buckets. This creates blind spots in reverse blast radius analysis, where security teams believe they have a complete picture of who can access sensitive data when in fact they're missing principals with indirect access through broad administrative permissions.\n\nThis scenario enables security teams to test their tooling's ability to perform comprehensive reverse blast radius analysis. Tools should identify both user1 (with explicit S3 permissions) and user2 (with access via an administrative role) when querying \"who can access this bucket?\" Failure to detect the administrative path represents a significant gap in security visibility that could lead to incomplete access reviews, flawed least-privilege implementations, and undetected privilege escalation paths.",
+    "mitreAttack": "- **Tactic**: TA0009 - Collection, TA0004 - Privilege Escalation\n- **Technique**: T1530 - Data from Cloud Storage Object\n- **Sub-technique**: T1078.004 - Valid Accounts: Cloud Accounts",
+    "attackDiagram": "graph LR\n    A[pl-prod-rbr-admin-user1] -->|Direct S3 Permissions| D[S3 Bucket]\n    B[pl-prod-rbr-admin-user2] -->|sts:AssumeRole| C[pl-prod-rbr-admin-role3]\n    C -->|AdministratorAccess *:*| D[S3 Bucket]\n\n    style A fill:#ff9999,stroke:#333,stroke-width:2px\n    style B fill:#ff9999,stroke:#333,stroke-width:2px\n    style C fill:#ffcc99,stroke:#333,stroke-width:2px\n    style D fill:#99ff99,stroke:#333,stroke-width:2px",
+    "attackSteps": "#### Path 1: Direct Access (user1)\n1. **Initial Access**: Start as `pl-prod-rbr-admin-user1` (credentials provided via Terraform outputs)\n2. **List Buckets**: Use `s3:ListAllMyBuckets` to discover the sensitive bucket\n3. **Access Bucket**: Use `s3:ListBucket` and `s3:GetObject` to directly access bucket contents\n4. **Verification**: Successfully read objects from the sensitive bucket\n\n#### Path 2: Indirect Access via Admin Role (user2)\n1. **Initial Access**: Start as `pl-prod-rbr-admin-user2` (credentials provided via Terraform outputs)\n2. **Assume Role**: Use `sts:AssumeRole` to assume `pl-prod-rbr-admin-role3`\n3. **Administrator Access**: Role has AdministratorAccess policy granting `*:*` permissions\n4. **Access Bucket**: Use administrative permissions to access the same sensitive bucket\n5. **Verification**: Successfully read objects from the sensitive bucket using admin credentials",
+    "resourcesCreated": "| ARN | Purpose |\n| -- | -- |\n| `arn:aws:iam::PROD_ACCOUNT:user/pl-prod-rbr-admin-user1` | User with direct S3 access permissions and access keys |\n| `arn:aws:iam::PROD_ACCOUNT:user/pl-prod-rbr-admin-user2` | User with permission to assume administrative role and access keys |\n| `arn:aws:iam::PROD_ACCOUNT:role/pl-prod-rbr-admin-role3` | Administrative role with AdministratorAccess managed policy |\n| `arn:aws:iam::PROD_ACCOUNT:policy/pl-prod-rbr-admin-user1-s3-policy` | Policy granting direct S3 access to user1 |\n| `arn:aws:iam::PROD_ACCOUNT:policy/pl-prod-rbr-admin-user2-assume-policy` | Policy granting user2 permission to assume role3 |\n| `arn:aws:s3:::pl-sensitive-data-rbr-admin-PROD_ACCOUNT-SUFFIX` | Target S3 bucket containing sensitive data |",
+    "attackLab": {
+      "prerequisites": "1. Install the `plabs` CLI:\n   ```bash\n   brew install pathfinding-labs/tap/plabs\n   ```\n2. Configure your AWS profiles in `~/.plabs/plabs.yaml` (or run `plabs init` if you haven't already)",
+      "deployNonInteractive": "```bash\nplabs enable enable_tool_testing_test_reverse_blast_radius_direct_and_indirect_through_admin\nplabs apply\n```",
+      "deployTui": "1. Launch the TUI: `plabs`\n2. Navigate to this scenario in the scenarios list\n3. Press `space` to enable it\n4. Press `d` to deploy",
+      "demoAttack": {
+        "intro": "The script will:\n1. Display a step-by-step walkthrough with color-coded output\n2. Demonstrate Path 1: Direct access using user1 credentials\n3. Demonstrate Path 2: Indirect access via admin role using user2 credentials\n4. Show the commands being executed and their results\n5. Verify that both paths successfully access the same S3 bucket\n6. Output standardized test results for automation",
+        "resourcesCreated": "- Temporary test objects uploaded to the S3 bucket during path demonstrations",
+        "nonInteractive": "```bash\nplabs demo --list\nplabs demo test-reverse-blast-radius-direct-and-indirect-through-admin\n```",
+        "tui": "1. Launch the TUI: `plabs`\n2. Navigate to this scenario in the scenarios list\n3. Press `r` to run the demo script"
+      },
+      "cleanup": {
+        "nonInteractive": "```bash\nplabs cleanup --list\nplabs cleanup test-reverse-blast-radius-direct-and-indirect-through-admin\n```",
+        "tui": "1. Launch the TUI: `plabs`\n2. Navigate to this scenario in the scenarios list\n3. Press `c` to run the cleanup script"
+      },
+      "teardownNonInteractive": "```bash\nplabs disable enable_tool_testing_test_reverse_blast_radius_direct_and_indirect_through_admin\nplabs apply\n```",
+      "teardownTui": "1. Launch the TUI: `plabs`\n2. Navigate to this scenario in the scenarios list\n3. Press `space` to disable it\n4. Press `D` to destroy"
+    },
+    "cspm": {
+      "whatToDetect": "When performing reverse blast radius analysis on the sensitive S3 bucket (`pl-sensitive-data-rbr-admin-*`), security tools should identify:\n\n1. **Direct Access Path**:\n   - `pl-prod-rbr-admin-user1` has explicit S3 permissions\n   - Policy grants `s3:ListAllMyBuckets`, `s3:ListBucket`, and `s3:GetObject` on the bucket\n   - This is typically what most tools successfully detect\n\n2. **Indirect Access Path (Critical Test)**:\n   - `pl-prod-rbr-admin-user2` has access via administrative role assumption\n   - User2 can assume `pl-prod-rbr-admin-role3`\n   - Role3 has AdministratorAccess policy (`*:*` on all resources)\n   - Therefore, user2 has implicit access to the S3 bucket\n   - **Many tools fail to detect this indirect administrative access path**\n\n3. **Administrative Permission Analysis**:\n   - Any principal with `*:*` permissions should be flagged as having access to ALL resources\n   - Tools should recognize that AdministratorAccess grants S3 bucket access\n   - This applies to both IAM roles and users with administrative policies\n\n4. **Role Assumption Chain**:\n   - Tools should traverse role assumption relationships\n   - If UserA can assume RoleB, and RoleB has access to ResourceC, then UserA effectively has access to ResourceC",
+      "prevention": "While this is a tool testing scenario, the patterns it demonstrates highlight important security practices:\n\n- Minimize the use of AdministratorAccess and other highly privileged managed policies - they create implicit access to all resources that's difficult to track\n- Implement principle of least privilege with specific, scoped permissions rather than broad administrative access\n- Use IAM Access Analyzer to identify all principals with access to sensitive S3 buckets, including those with administrative permissions\n- Regularly audit role assumption permissions and trust relationships to understand privilege escalation paths\n- Implement resource-based policies on S3 buckets to add additional access controls beyond IAM policies\n- Use AWS Organizations SCPs to prevent creation of overly permissive administrative policies at scale\n- Enable CloudTrail logging and monitor for role assumption events (`AssumeRole`) to high-privilege roles\n- Tag sensitive S3 buckets and implement automated scanning to identify all principals with access (direct or indirect)\n- Consider using AWS IAM Access Analyzer's policy validation to assess permissions before deployment\n- Implement break-glass procedures for administrative access that require additional authentication and are time-limited\n- Use session policies when assuming administrative roles to scope down permissions to only what's needed for the task"
+    },
+    "cloudSiem": {
+      "cloudTrailEvents": "- `STS: AssumeRole` \u2014 Role assumption by user2 to the administrative role; critical when the target role has AdministratorAccess or broad permissions\n- `S3: GetObject` \u2014 Object retrieval from the sensitive bucket; monitor for access by principals that should not have direct S3 permissions\n- `S3: ListBucket` \u2014 Bucket enumeration on the sensitive bucket; indicates a principal is discovering bucket contents\n- `IAM: GetUser` \u2014 Identity enumeration; often precedes escalation or access attempts",
+      "detonationLogs": "_Detonation log integration (Stratus Red Team / Grimoire) is planned for a future release._"
+    }
+  },
+  "slug": "test-reverse-blast-radius-direct-and-indirect-through-admin"
+}

@@ -1,0 +1,97 @@
+{
+  "displayName": "One-Hop Privilege Escalation: iam:PassRole + cloudformation:CreateStack",
+  "name": "cloudformation-001-iam-passrole-cloudformation",
+  "description": "CloudFormation stack creation with privileged service role to create escalated IAM roles",
+  "costEstimate": "$0/mo",
+  "pathfindingCloudId": "cloudformation-001",
+  "interactiveDemo": false,
+  "category": "Privilege Escalation",
+  "subCategory": "new-passrole",
+  "pathType": "one-hop",
+  "target": "to-admin",
+  "environments": [
+    "prod"
+  ],
+  "attackPath": {
+    "principals": [
+      "arn:aws:iam::{account_id}:user/pl-prod-cloudformation-001-to-admin-starting-user",
+      "arn:aws:iam::{account_id}:role/pl-prod-cloudformation-001-to-admin-cfn-role",
+      "arn:aws:iam::{account_id}:role/pl-prod-cloudformation-001-to-admin-escalated-role"
+    ],
+    "summary": "starting_user \u2192 (PassRole + cloudformation:CreateStack) \u2192 CloudFormation creates role with admin \u2192 assume escalated role \u2192 admin access"
+  },
+  "permissions": {
+    "required": [
+      {
+        "permission": "iam:PassRole",
+        "resource": "arn:aws:iam::*:role/pl-prod-cloudformation-001-to-admin-cfn-role"
+      },
+      {
+        "permission": "cloudformation:CreateStack",
+        "resource": "*"
+      }
+    ],
+    "helpful": [
+      {
+        "permission": "cloudformation:DescribeStacks",
+        "purpose": "Monitor stack creation progress"
+      },
+      {
+        "permission": "iam:ListRoles",
+        "purpose": "Discover available privileged roles to pass"
+      },
+      {
+        "permission": "cloudformation:DeleteStack",
+        "purpose": "Clean up attack artifacts"
+      }
+    ]
+  },
+  "mitreAttack": {
+    "tactics": [
+      "TA0004 - Privilege Escalation",
+      "TA0003 - Persistence"
+    ],
+    "techniques": [
+      "T1098.001 - Account Manipulation: Additional Cloud Credentials"
+    ]
+  },
+  "terraform": {
+    "variableName": "enable_single_account_privesc_one_hop_to_admin_cloudformation_001_iam_passrole_cloudformation",
+    "modulePath": "modules/scenarios/single-account/privesc-one-hop/to-admin/cloudformation-001-iam-passrole-cloudformation"
+  },
+  "githubUrl": "https://github.com/DataDog/pathfinding-labs/tree/main/modules/scenarios/single-account/privesc-one-hop/to-admin/cloudformation-001-iam-passrole-cloudformation",
+  "readme": {
+    "overview": "This scenario demonstrates a privilege escalation vulnerability where a user has permission to pass IAM roles to AWS CloudFormation (`iam:PassRole`) and create CloudFormation stacks (`cloudformation:CreateStack`). The attacker creates a CloudFormation stack with a malicious template that defines a new IAM role with administrative permissions and a trust policy allowing the attacker to assume it. By passing a privileged role to CloudFormation as the service role, the attacker leverages CloudFormation's elevated permissions to create resources they couldn't create directly.\n\nThe attack works by exploiting the CloudFormation service's ability to create and manage AWS resources on behalf of users. When CloudFormation executes with an administrative service role, it can create any AWS resource defined in the template, including IAM roles with privileged policies and custom trust relationships. The attacker crafts a template that creates a backdoor admin role, and CloudFormation provisions it using the passed admin role's permissions.\n\nThis technique is particularly dangerous because CloudFormation is often granted broad permissions to provision infrastructure, and developers are frequently given CloudFormation access without understanding the privilege escalation implications. The combination of `iam:PassRole` and `cloudformation:CreateStack` creates a complete path to admin access through infrastructure-as-code abuse.",
+    "mitreAttack": "- **Tactic**: Privilege Escalation (TA0004), Persistence (TA0003)\n- **Technique**: T1548 - Abuse Elevation Control Mechanism\n- **Sub-technique**: T1548.005 - Temporary Elevated Cloud Access\n- **Related Technique**: T1098.003 - Account Manipulation: Additional Cloud Roles",
+    "attackDiagram": "graph LR\n    A[pl-prod-cloudformation-001-to-admin-starting-user] -->|iam:PassRole + cloudformation:CreateStack| B[CloudFormation Stack]\n    B -->|Executes with| C[pl-prod-cloudformation-001-to-admin-cfn-role<br/>AdministratorAccess]\n    C -->|Creates| D[pl-prod-cloudformation-001-to-admin-escalated-role]\n    A -->|sts:AssumeRole| D\n    D -->|Administrator Access| E[Effective Administrator]\n\n    style A fill:#ff9999,stroke:#333,stroke-width:2px\n    style B fill:#ffcc99,stroke:#333,stroke-width:2px\n    style C fill:#ffcc99,stroke:#333,stroke-width:2px\n    style D fill:#ffcc99,stroke:#333,stroke-width:2px\n    style E fill:#99ff99,stroke:#333,stroke-width:2px",
+    "attackSteps": "1. **Initial Access**: Start as `pl-prod-cloudformation-001-to-admin-starting-user` (credentials provided via Terraform outputs)\n2. **Craft Malicious Template**: Create a CloudFormation template that defines a new IAM role with AdministratorAccess and a trust policy allowing the starting user to assume it\n3. **Pass Admin Role**: Use `iam:PassRole` to pass the `pl-prod-cloudformation-001-to-admin-cfn-role` as the CloudFormation service role\n4. **Create Stack**: Use `cloudformation:CreateStack` to deploy the malicious template with the passed admin role\n5. **CloudFormation Execution**: CloudFormation executes with the admin role's permissions and creates the escalated role (`pl-prod-cloudformation-001-to-admin-escalated-role`)\n6. **Assume Escalated Role**: Use `sts:AssumeRole` to assume the newly created admin role\n7. **Verification**: Verify administrator access by listing IAM users or performing other admin actions",
+    "resourcesCreated": "| ARN | Purpose |\n| -- | -- |\n| `arn:aws:iam::PROD_ACCOUNT:user/pl-prod-cloudformation-001-to-admin-starting-user` | Scenario-specific starting user with access keys |\n| `arn:aws:iam::PROD_ACCOUNT:role/pl-prod-cloudformation-001-to-admin-cfn-role` | Privileged role with AdministratorAccess, trusted by cloudformation.amazonaws.com |",
+    "attackLab": {
+      "prerequisites": "1. Install the `plabs` CLI:\n   ```bash\n   brew install pathfinding-labs/tap/plabs\n   ```\n2. Configure your AWS profiles in `~/.plabs/plabs.yaml` (or run `plabs init` if you haven't already)",
+      "deployNonInteractive": "```bash\nplabs enable enable_single_account_privesc_one_hop_to_admin_cloudformation_001_iam_passrole_cloudformation\nplabs apply\n```",
+      "deployTui": "1. Launch the TUI: `plabs`\n2. Navigate to this scenario in the scenarios list\n3. Press `space` to enable it\n4. Press `d` to deploy",
+      "demoAttack": {
+        "intro": "The script will:\n1. Display a step-by-step walkthrough with color-coded output\n2. Show the commands being executed and their results\n3. Create a CloudFormation stack with a malicious template\n4. Pass the admin role to CloudFormation as the service role\n5. Create a new escalated IAM role via CloudFormation\n6. Assume the newly created role\n7. Verify successful privilege escalation\n8. Output standardized test results for automation",
+        "resourcesCreated": "- A CloudFormation stack containing a malicious template\n- `pl-prod-cloudformation-001-to-admin-escalated-role` \u2014 new IAM role with AdministratorAccess created by the stack",
+        "nonInteractive": "```bash\nplabs demo --list\nplabs demo cloudformation-001-iam-passrole-cloudformation\n```",
+        "tui": "1. Launch the TUI: `plabs`\n2. Navigate to this scenario in the scenarios list\n3. Press `r` to run the demo script"
+      },
+      "cleanup": {
+        "nonInteractive": "```bash\nplabs cleanup --list\nplabs cleanup cloudformation-001-iam-passrole-cloudformation\n```",
+        "tui": "1. Launch the TUI: `plabs`\n2. Navigate to this scenario in the scenarios list\n3. Press `c` to run the cleanup script"
+      },
+      "teardownNonInteractive": "```bash\nplabs disable enable_single_account_privesc_one_hop_to_admin_cloudformation_001_iam_passrole_cloudformation\nplabs apply\n```",
+      "teardownTui": "1. Launch the TUI: `plabs`\n2. Navigate to this scenario in the scenarios list\n3. Press `space` to disable it\n4. Press `D` to destroy"
+    },
+    "cspm": {
+      "whatToDetect": "A properly configured Cloud Security Posture Management (CSPM) tool should detect the following issues:\n\n**High Priority Detections:**\n- User with ability to pass privileged roles to CloudFormation (iam:PassRole on admin roles + cloudformation:CreateStack)\n- Combined permissions creating privilege escalation path (PassRole + CreateStack on same principal)\n- User with unrestricted CloudFormation stack creation capabilities\n- Potential for privilege escalation via CloudFormation service abuse\n- CloudFormation service role with IAM creation permissions\n\n**Specific Checks:**\n- Check for iam:PassRole permission with wildcards or broad resource specifications targeting CloudFormation-trusted roles\n- Identify users that can both pass roles and create CloudFormation stacks\n- Detect CloudFormation stacks created with administrative service roles\n- Monitor for privilege escalation paths where CloudFormation is used as an intermediary\n- Flag roles trusted by cloudformation.amazonaws.com with iam:CreateRole or iam:AttachRolePolicy permissions",
+      "prevention": "- **Restrict PassRole permissions**: Never grant iam:PassRole with wildcards. Use resource-based conditions to limit which roles can be passed and to which services (use `iam:PassedToService` condition key to restrict to specific services)\n- **Limit CloudFormation service roles**: CloudFormation service roles should follow least privilege. Avoid granting them administrative IAM permissions\n- **Separate CloudFormation permissions**: Avoid granting cloudformation:CreateStack and cloudformation:UpdateStack to principals that have iam:PassRole on privileged roles\n- **Implement permission boundaries**: Use IAM permission boundaries to prevent roles from being passed to CloudFormation if they contain sensitive IAM creation permissions\n- **Use SCPs**: Implement Service Control Policies to prevent passing of admin roles to infrastructure services (CloudFormation, Terraform Cloud, etc.)\n- **Require stack policies**: Enforce CloudFormation stack policies that restrict IAM resource creation or require approval workflows\n- **Enable resource-based conditions**: Require specific tags or resource paths for iam:PassRole operations targeting CloudFormation-trusted roles\n- **Monitor CloudTrail**: Alert on CreateStack and UpdateStack API calls where the service role has IAM creation or modification permissions\n- **Template validation**: Implement automated CloudFormation template scanning to detect IAM resources with overly permissive policies\n- **Use IAM Access Analyzer**: Leverage IAM Access Analyzer to identify privilege escalation paths involving CloudFormation\n- **Require MFA**: Enforce MFA for sensitive operations like creating CloudFormation stacks with privileged service roles\n- **Implement approval workflows**: Use AWS Service Catalog or custom approval gates for CloudFormation deployments with elevated permissions"
+    },
+    "cloudSiem": {
+      "cloudTrailEvents": "- `IAM: PassRole` \u2014 Role passed to CloudFormation as a service role; critical when the passed role has elevated IAM permissions\n- `CloudFormation: CreateStack` \u2014 New CloudFormation stack created; high severity when a privileged service role is specified\n- `CloudFormation: UpdateStack` \u2014 Existing stack updated; monitor for IAM resource additions with privileged policies\n- `STS: AssumeRole` \u2014 Role assumption following stack creation; suspicious when the assumed role was recently created via CloudFormation",
+      "detonationLogs": "_Detonation log integration (Stratus Red Team / Grimoire) is planned for a future release._"
+    },
+    "references": "- [AWS Documentation - IAM PassRole](https://docs.aws.amazon.com/IAM/latest/UserGuide/id_roles_use_passrole.html)\n- [AWS CloudFormation Service Role](https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/using-iam-servicerole.html)\n- [Rhino Security Labs - AWS IAM Privilege Escalation Methods](https://rhinosecuritylabs.com/aws/aws-privilege-escalation-methods-mitigation/)\n- [AWS Security Best Practices for CloudFormation](https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/security-best-practices.html)"
+  },
+  "slug": "cloudformation-001"
+}

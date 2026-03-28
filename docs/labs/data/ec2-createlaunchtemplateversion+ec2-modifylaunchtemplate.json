@@ -1,0 +1,85 @@
+{
+  "name": "ec2-createlaunchtemplateversion+ec2-modifylaunchtemplate",
+  "description": "User with CreateLaunchTemplateVersion and ModifyLaunchTemplate can update existing template to launch instances with admin role",
+  "costEstimate": "$0.01-0.05/hour (spot instances)",
+  "pathfindingCloudId": null,
+  "category": "Privilege Escalation",
+  "subCategory": "access-resource",
+  "pathType": "one-hop",
+  "target": "to-admin",
+  "environments": [
+    "prod"
+  ],
+  "attackPath": {
+    "principals": [
+      "arn:aws:iam::{account_id}:user/pl-prod-lt-modify-to-admin-starting-user",
+      "arn:aws:iam::{account_id}:role/pl-prod-lt-modify-to-admin-lowpriv-role",
+      "arn:aws:iam::{account_id}:role/pl-prod-lt-modify-to-admin-target-role"
+    ],
+    "summary": "starting_user \u2192 (CreateLaunchTemplateVersion with existing admin role + malicious user data) \u2192 (ModifyLaunchTemplate default version) \u2192 Next instance launch uses admin role \u2192 User data adds AdministratorAccess to starting user \u2192 admin access"
+  },
+  "permissions": {
+    "required": [
+      {
+        "permission": "ec2:CreateLaunchTemplateVersion",
+        "resource": "*"
+      },
+      {
+        "permission": "ec2:ModifyLaunchTemplate",
+        "resource": "*"
+      }
+    ],
+    "helpful": [
+      {
+        "permission": "iam:ListRoles",
+        "purpose": "Discover available privileged roles already configured in existing templates"
+      },
+      {
+        "permission": "ec2:DescribeLaunchTemplates",
+        "purpose": "Discover existing launch templates to target"
+      },
+      {
+        "permission": "ec2:DescribeLaunchTemplateVersions",
+        "purpose": "View existing template configuration before modification"
+      },
+      {
+        "permission": "autoscaling:DescribeAutoScalingGroups",
+        "purpose": "Identify which ASGs use the target launch template"
+      },
+      {
+        "permission": "ec2:DescribeInstances",
+        "purpose": "Monitor instance launch and verify user data execution"
+      },
+      {
+        "permission": "sts:GetCallerIdentity",
+        "purpose": "Verify privilege escalation was successful"
+      }
+    ]
+  },
+  "mitreAttack": {
+    "tactics": [
+      "TA0004 - Privilege Escalation",
+      "TA0003 - Persistence"
+    ],
+    "techniques": [
+      "T1098.001 - Account Manipulation: Additional Cloud Credentials",
+      "T1578 - Modify Cloud Compute Infrastructure"
+    ]
+  },
+  "terraform": {
+    "variableName": "enable_single_account_privesc_one_hop_to_admin_ec2_createlaunchtemplateversion_ec2_modifylaunchtemplate",
+    "modulePath": "modules/scenarios/single-account/privesc-one-hop/to-admin/ec2-createlaunchtemplateversion+ec2-modifylaunchtemplate"
+  },
+  "githubUrl": "https://github.com/DataDog/pathfinding-labs/tree/main/modules/scenarios/single-account/privesc-one-hop/to-admin/ec2-createlaunchtemplateversion+ec2-modifylaunchtemplate",
+  "cspmDetection": null,
+  "risk": null,
+  "remediation": null,
+  "readme": {
+    "overview": "This scenario demonstrates a sophisticated privilege escalation technique where an attacker with permissions to modify EC2 launch templates can change an existing administrative role configuration and inject malicious user data that will be executed when the next EC2 instance is launched. The combination of `ec2:CreateLaunchTemplateVersion` and `ec2:ModifyLaunchTemplate` permissions creates a powerful attack path that allows an attacker to \"pre-stage\" privilege escalation that activates automatically.\n\nEC2 launch templates are commonly used with Auto Scaling Groups (ASGs) to define instance configuration including AMI, instance type, security groups, and crucially - the IAM instance profile and user data script. When an attacker can create a new version of a launch template and set it as the default, they control what configuration will be used for all future instance launches. This is particularly dangerous in environments with auto-scaling policies or scheduled instance launches, where the malicious configuration may activate without any further attacker interaction.\n\nThe attack works by creating a new launch template version that references an existing administrative IAM role (already configured in the template) and user data containing a script that grants the attacker's starting user administrative permissions. Notably, this attack does NOT require `iam:PassRole` permissions because the attacker is simply referencing a role that already exists in a previous template version. When the next instance launches (either through manual action, auto-scaling, or scheduled tasks), the instance receives full administrative permissions via its instance profile, and the user data script immediately modifies IAM policies to grant the attacker persistent admin access. This is a one-hop privilege escalation because the attacker goes directly from limited permissions to admin access through the compromised instance's actions.",
+    "attackSteps": "### Principals in the attack path\n\n- `arn:aws:iam::PROD_ACCOUNT:user/pl-prod-lt-modify-to-admin-starting-user` (Scenario-specific starting user with template modification permissions)\n- `arn:aws:iam::PROD_ACCOUNT:role/pl-prod-lt-modify-to-admin-lowpriv-role` (Low-privilege role in original launch template)\n- `arn:aws:iam::PROD_ACCOUNT:role/pl-prod-lt-modify-to-admin-target-role` (Administrative role passed to modified launch template)\n\n### Attack Path Diagram\n\n```mermaid\ngraph LR\n    A[pl-prod-lt-modify-to-admin-starting-user] -->|CreateLaunchTemplateVersion| B[New Template Version]\n    B -->|Contains target-role + malicious user data| C[Modified Template]\n    A -->|ModifyLaunchTemplate| C\n    C -->|Next instance launch| D[EC2 Instance with Admin Role]\n    D -->|User data executes| E[Grants admin to starting-user]\n    E -->|Effective Administrator| F[Starting User with Admin Access]\n\n    style A fill:#ff9999,stroke:#333,stroke-width:2px\n    style B fill:#ffcc99,stroke:#333,stroke-width:2px\n    style C fill:#ffcc99,stroke:#333,stroke-width:2px\n    style D fill:#ffcc99,stroke:#333,stroke-width:2px\n    style E fill:#ffcc99,stroke:#333,stroke-width:2px\n    style F fill:#99ff99,stroke:#333,stroke-width:2px\n```\n\n### Attack Steps\n\n1. **Initial Access**: Start as `pl-prod-lt-modify-to-admin-starting-user` (credentials provided via Terraform outputs)\n2. **Enumerate Templates**: Use `ec2:DescribeLaunchTemplates` to discover existing launch templates\n3. **Inspect Existing Templates**: Use `ec2:DescribeLaunchTemplateVersions` to identify templates that already have administrative roles configured\n4. **Create Malicious Template Version**: Use `ec2:CreateLaunchTemplateVersion` with:\n   - IAM instance profile referencing the existing admin role (NO PassRole required - just referencing existing configuration)\n   - User data script that attaches AdministratorAccess policy to the starting user\n5. **Set as Default**: Use `ec2:ModifyLaunchTemplate` to make the malicious version the default\n6. **Trigger Instance Launch**: Launch a new EC2 instance using the modified template (or wait for auto-scaling/scheduled launch)\n7. **Automated Escalation**: Instance launches with admin role and executes user data to grant admin to starting user\n8. **Verification**: Verify administrator access by listing IAM users or performing other admin-level actions\n\n### Scenario specific resources created\n\n| ARN | Purpose |\n| -- | -- |\n| `arn:aws:iam::PROD_ACCOUNT:user/pl-prod-lt-modify-to-admin-starting-user` | Scenario-specific starting user with access keys and template modification permissions |\n| `arn:aws:iam::PROD_ACCOUNT:role/pl-prod-lt-modify-to-admin-lowpriv-role` | Low-privilege role initially configured in the launch template |\n| `arn:aws:iam::PROD_ACCOUNT:role/pl-prod-lt-modify-to-admin-target-role` | Administrative role that will be passed to the modified launch template |\n| `arn:aws:ec2:REGION:PROD_ACCOUNT:launch-template/pl-prod-lt-modify-to-admin-template` | EC2 launch template that can be modified to include admin role |",
+    "prevention": "- Restrict who can modify launch templates that contain privileged instance profiles using resource-based IAM policies\n- Use Service Control Policies (SCPs) to prevent launch template modifications in production environments unless from approved automation roles\n- Implement resource tagging and condition keys to restrict which launch templates can be modified: `\"Condition\": {\"StringEquals\": {\"aws:ResourceTag/Environment\": \"dev\"}}`\n- Monitor CloudTrail for `CreateLaunchTemplateVersion` and `ModifyLaunchTemplate` API calls, especially on templates with admin roles\n- Use IAM Access Analyzer to identify principals with template modification permissions on templates containing privileged roles\n- Enable MFA requirements for sensitive operations like launch template modifications using `aws:MultiFactorAuthPresent` condition\n- Implement approval workflows for launch template changes using AWS Service Catalog or custom automation\n- Use launch template versioning strategically: pin Auto Scaling Groups to specific versions rather than using `$Latest` or `$Default`\n- Monitor EC2 user data for suspicious IAM-related commands using AWS Config rules or custom Lambda functions\n- Implement least privilege: Avoid granting wildcard permissions on EC2 resources; scope to specific launch template ARNs\n- Consider using EC2 Image Builder with locked-down instance profiles instead of relying on user data for configuration\n- Regularly audit existing launch templates to identify those with privileged instance profiles and restrict modification permissions\n- Separate permissions: Don't grant template modification permissions to principals who don't need to manage infrastructure",
+    "executionGuide": "### Using the automated demo_attack.sh\n\nTo demonstrate the privilege escalation path, run the provided demo script:\n\n```bash\ncd modules/scenarios/single-account/privesc-one-hop/to-admin/ec2-createlaunchtemplateversion+ec2-modifylaunchtemplate\n./demo_attack.sh\n```\n\nThe script will:\n1. Display a step-by-step walkthrough with color-coded output\n2. Show the commands being executed and their results\n3. Create a new launch template version with admin role and malicious user data\n4. Modify the template to use the new malicious version as default\n5. Launch an EC2 instance to demonstrate the privilege escalation\n6. Verify successful privilege escalation\n7. Output standardized test results for automation\n\n**Cost Warning:** This demo launches a t3.micro spot instance which will incur small charges (~$0.01-0.05/hour). The cleanup script terminates all instances to minimize costs.\n\n### Cleaning up the attack artifacts\n\nAfter demonstrating the attack, clean up the EC2 instances and restore the launch template:\n\n```bash\ncd modules/scenarios/single-account/privesc-one-hop/to-admin/ec2-createlaunchtemplateversion+ec2-modifylaunchtemplate\n./cleanup_attack.sh\n```\n\nThe cleanup script will:\n- Terminate all EC2 instances launched during the demo\n- Restore the launch template to its original default version\n- Remove the malicious launch template version\n- Remove any IAM policy attachments made by the user data script\n- Preserve the deployed infrastructure for future demonstrations",
+    "attackDiagram": "graph LR\n    A[pl-prod-lt-modify-to-admin-starting-user] -->|CreateLaunchTemplateVersion| B[New Template Version]\n    B -->|Contains target-role + malicious user data| C[Modified Template]\n    A -->|ModifyLaunchTemplate| C\n    C -->|Next instance launch| D[EC2 Instance with Admin Role]\n    D -->|User data executes| E[Grants admin to starting-user]\n    E -->|Effective Administrator| F[Starting User with Admin Access]\n\n    style A fill:#ff9999,stroke:#333,stroke-width:2px\n    style B fill:#ffcc99,stroke:#333,stroke-width:2px\n    style C fill:#ffcc99,stroke:#333,stroke-width:2px\n    style D fill:#ffcc99,stroke:#333,stroke-width:2px\n    style E fill:#ffcc99,stroke:#333,stroke-width:2px\n    style F fill:#99ff99,stroke:#333,stroke-width:2px"
+  },
+  "slug": "ec2-createlaunchtemplateversion+ec2-modifylaunchtemplate"
+}

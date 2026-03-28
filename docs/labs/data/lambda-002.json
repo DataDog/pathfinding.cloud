@@ -1,0 +1,122 @@
+{
+  "displayName": "Privilege Escalation via iam:PassRole + lambda:CreateFunction + lambda:CreateEventSourceMapping (DynamoDB Stream)",
+  "name": "lambda-002-iam-passrole+lambda-createfunction+createeventsourcemapping-dynamodb",
+  "description": "Pass privileged role to Lambda function, link to DynamoDB stream for passive execution without requiring InvokeFunction permission",
+  "costEstimate": "$0/mo",
+  "pathfindingCloudId": "lambda-002",
+  "interactiveDemo": false,
+  "category": "Privilege Escalation",
+  "subCategory": "new-passrole",
+  "pathType": "one-hop",
+  "target": "to-admin",
+  "environments": [
+    "prod"
+  ],
+  "attackPath": {
+    "principals": [
+      "arn:aws:iam::{account_id}:user/pl-prod-lambda-002-to-admin-starting-user",
+      "arn:aws:iam::{account_id}:role/pl-prod-lambda-002-to-admin-target-role",
+      "arn:aws:lambda:{region}:{account_id}:function/malicious-escalation-function",
+      "arn:aws:dynamodb:{region}:{account_id}:table/pl-prod-lambda-002-to-admin-trigger-table"
+    ],
+    "summary": "starting_user \u2192 (PassRole + CreateFunction) \u2192 Lambda with target role \u2192 (CreateEventSourceMapping) \u2192 DynamoDB stream trigger \u2192 Lambda executes \u2192 (AttachUserPolicy) \u2192 admin access"
+  },
+  "permissions": {
+    "required": [
+      {
+        "permission": "iam:PassRole",
+        "resource": "arn:aws:iam::*:role/pl-prod-lambda-002-to-admin-target-role"
+      },
+      {
+        "permission": "lambda:CreateFunction",
+        "resource": "*"
+      },
+      {
+        "permission": "lambda:CreateEventSourceMapping",
+        "resource": "*"
+      }
+    ],
+    "helpful": [
+      {
+        "permission": "dynamodb:ListStreams",
+        "purpose": "Discover available DynamoDB streams to target"
+      },
+      {
+        "permission": "dynamodb:DescribeStream",
+        "purpose": "Get stream ARN and configuration details"
+      },
+      {
+        "permission": "dynamodb:DescribeTable",
+        "purpose": "Get table details including stream ARN"
+      },
+      {
+        "permission": "lambda:ListFunctions",
+        "purpose": "Verify Lambda function creation"
+      },
+      {
+        "permission": "lambda:GetFunction",
+        "purpose": "Confirm function configuration and role"
+      },
+      {
+        "permission": "lambda:GetEventSourceMapping",
+        "purpose": "Check event source mapping status and verify activation"
+      },
+      {
+        "permission": "iam:ListRoles",
+        "purpose": "Discover privileged roles available for PassRole"
+      },
+      {
+        "permission": "dynamodb:PutItem",
+        "purpose": "Trigger Lambda execution by inserting test record (demo only"
+      }
+    ]
+  },
+  "mitreAttack": {
+    "tactics": [
+      "TA0004 - Privilege Escalation",
+      "TA0003 - Persistence"
+    ],
+    "techniques": [
+      "T1098.001 - Account Manipulation: Additional Cloud Credentials",
+      "T1578 - Modify Cloud Compute Infrastructure"
+    ]
+  },
+  "terraform": {
+    "variableName": "enable_single_account_privesc_one_hop_to_admin_lambda_002_iam_passrole_lambda_createfunction_createeventsourcemapping_dynamodb",
+    "modulePath": "modules/scenarios/single-account/privesc-one-hop/to-admin/lambda-002-iam-passrole+lambda-createfunction+createeventsourcemapping-dynamodb"
+  },
+  "githubUrl": "https://github.com/DataDog/pathfinding-labs/tree/main/modules/scenarios/single-account/privesc-one-hop/to-admin/lambda-002-iam-passrole+lambda-createfunction+createeventsourcemapping-dynamodb",
+  "readme": {
+    "overview": "This scenario demonstrates a sophisticated privilege escalation vulnerability where a user has permissions to create Lambda functions and pass privileged roles to them, combined with the ability to create event source mappings to DynamoDB streams. Unlike traditional Lambda-based privilege escalation that requires `lambda:InvokeFunction`, this technique leverages event-driven architecture to trigger execution passively.\n\nThe attacker creates a Lambda function with a privileged role attached, then connects it to a DynamoDB stream. When any data is written to the table (either by the attacker inserting a test record or by legitimate application activity), the Lambda function executes automatically with the privileged role's permissions. This makes the attack stealthier as it doesn't require direct function invocation and can piggyback on normal business operations.\n\nThis pattern is particularly dangerous in production environments where DynamoDB tables receive frequent updates from applications, microservices, or automated processes. The attacker's malicious Lambda function will execute every time the table is modified, potentially going unnoticed among legitimate Lambda invocations.",
+    "mitreAttack": "- **Tactic**: Privilege Escalation (TA0004), Persistence (TA0003)\n- **Technique**: T1098.001 - Account Manipulation: Additional Cloud Credentials\n- **Technique**: T1578 - Modify Cloud Compute Infrastructure\n- **Sub-technique**: Creating serverless functions with elevated privileges for passive execution",
+    "attackDiagram": "graph LR\n    A[pl-prod-lambda-002-to-admin-starting-user] -->|lambda:CreateFunction + iam:PassRole| B[Lambda Function with Target Role]\n    B -->|lambda:CreateEventSourceMapping| C[DynamoDB Stream Trigger]\n    C -->|Event triggers Lambda execution| D[Lambda executes with admin role]\n    D -->|iam:AttachUserPolicy| E[Starting user gains admin access]\n\n    style A fill:#ff9999,stroke:#333,stroke-width:2px\n    style B fill:#ffcc99,stroke:#333,stroke-width:2px\n    style C fill:#ffcc99,stroke:#333,stroke-width:2px\n    style D fill:#ffcc99,stroke:#333,stroke-width:2px\n    style E fill:#99ff99,stroke:#333,stroke-width:2px",
+    "attackSteps": "1. **Initial Access**: Start as `pl-prod-lambda-002-to-admin-starting-user` (credentials provided via Terraform outputs)\n2. **Create Malicious Lambda Code**: Write Lambda function code that attaches AdministratorAccess policy to the starting user\n3. **Package Lambda Deployment**: Create deployment package (ZIP file) containing the malicious code\n4. **Create Lambda Function**: Use `lambda:CreateFunction` with `iam:PassRole` to create function with privileged target role\n5. **Link to DynamoDB Stream**: Use `lambda:CreateEventSourceMapping` to connect Lambda to DynamoDB table stream\n6. **Trigger Execution**: Insert a test record into DynamoDB table to trigger Lambda execution (or wait for legitimate activity)\n7. **Automatic Privilege Escalation**: Lambda executes with target role permissions and grants admin access to starting user\n8. **Verification**: Verify administrator access with starting user credentials",
+    "resourcesCreated": "| ARN | Purpose |\n| -- | -- |\n| `arn:aws:iam::PROD_ACCOUNT:user/pl-prod-lambda-002-to-admin-starting-user` | Scenario-specific starting user with access keys |\n| `arn:aws:iam::PROD_ACCOUNT:role/pl-prod-lambda-002-to-admin-target-role` | Privileged role with AdministratorAccess policy |\n| `arn:aws:iam::PROD_ACCOUNT:policy/pl-prod-lambda-002-to-admin-starting-policy` | Allows PassRole, CreateFunction, CreateEventSourceMapping permissions |\n| `arn:aws:dynamodb:REGION:PROD_ACCOUNT:table/pl-prod-lambda-002-to-admin-trigger-table` | DynamoDB table with streams enabled to trigger Lambda execution |",
+    "attackLab": {
+      "prerequisites": "1. Install the `plabs` CLI:\n   ```bash\n   brew install pathfinding-labs/tap/plabs\n   ```\n2. Configure your AWS profiles in `~/.plabs/plabs.yaml` (or run `plabs init` if you haven't already)",
+      "deployNonInteractive": "```bash\nplabs enable enable_single_account_privesc_one_hop_to_admin_lambda_002_iam_passrole_lambda_createfunction_createeventsourcemapping_dynamodb\nplabs apply\n```",
+      "deployTui": "1. Launch the TUI: `plabs`\n2. Navigate to this scenario in the scenarios list\n3. Press `space` to enable it\n4. Press `d` to deploy",
+      "demoAttack": {
+        "intro": "The script will:\n1. Display a step-by-step walkthrough with color-coded output\n2. Show the commands being executed and their results\n3. Verify successful privilege escalation\n4. Output standardized test results for automation",
+        "resourcesCreated": "- Malicious Lambda function (`malicious-escalation-function`) with the privileged target role attached\n- Lambda event source mapping linking the function to the DynamoDB stream\n- AdministratorAccess policy attachment on the starting user (granted by the Lambda execution)",
+        "nonInteractive": "```bash\nplabs demo --list\nplabs demo lambda-002-iam-passrole+lambda-createfunction+createeventsourcemapping-dynamodb\n```",
+        "tui": "1. Launch the TUI: `plabs`\n2. Navigate to this scenario in the scenarios list\n3. Press `r` to run the demo script"
+      },
+      "cleanup": {
+        "nonInteractive": "```bash\nplabs cleanup --list\nplabs cleanup lambda-002-iam-passrole+lambda-createfunction+createeventsourcemapping-dynamodb\n```",
+        "tui": "1. Launch the TUI: `plabs`\n2. Navigate to this scenario in the scenarios list\n3. Press `c` to run the cleanup script"
+      },
+      "teardownNonInteractive": "```bash\nplabs disable enable_single_account_privesc_one_hop_to_admin_lambda_002_iam_passrole_lambda_createfunction_createeventsourcemapping_dynamodb\nplabs apply\n```",
+      "teardownTui": "1. Launch the TUI: `plabs`\n2. Navigate to this scenario in the scenarios list\n3. Press `space` to disable it\n4. Press `D` to destroy"
+    },
+    "cspm": {
+      "whatToDetect": "- IAM user has `iam:PassRole` permission scoped to a role with `AdministratorAccess`, enabling privilege escalation via Lambda\n- IAM user has `lambda:CreateFunction` combined with `iam:PassRole` on a privileged role \u2014 a known privilege escalation path\n- IAM user has `lambda:CreateEventSourceMapping` allowing passive trigger of attacker-controlled Lambda functions\n- Role `pl-prod-lambda-002-to-admin-target-role` with `AdministratorAccess` is passable by a non-administrative user\n- DynamoDB table has streams enabled and is accessible as an event source for Lambda functions, increasing the attack surface",
+      "prevention": "- **Restrict PassRole permissions**: Use resource-based conditions to limit which roles can be passed to Lambda functions. Implement a condition like `\"StringEquals\": {\"iam:PassedToService\": \"lambda.amazonaws.com\"}` combined with specific role ARN restrictions.\n- **Implement Service Control Policies (SCPs)**: Prevent creation of Lambda functions with administrative roles at the organization level using SCPs that deny `lambda:CreateFunction` when PassRole is used with privileged roles.\n- **Restrict CreateEventSourceMapping**: Limit which principals can create event source mappings, especially for DynamoDB streams that process sensitive data. Use resource-based policies on DynamoDB tables to control stream access.\n- **Enable Lambda function signing**: Require code signing for Lambda functions to prevent unauthorized code deployment.\n- **Use IAM Access Analyzer**: Regularly scan for privilege escalation paths involving PassRole and Lambda creation permissions. IAM Access Analyzer can identify these risky permission combinations.\n- **Implement least privilege for Lambda roles**: Ensure Lambda execution roles have only the minimum permissions needed. Avoid attaching AdministratorAccess or broad policies to roles that can be passed to Lambda.\n- **Monitor DynamoDB stream consumers**: Track which Lambda functions are consuming DynamoDB streams and alert on new or unexpected event source mappings, especially to tables containing sensitive data.\n- **Use resource tags and conditions**: Tag Lambda execution roles appropriately and use IAM conditions to prevent high-privilege roles from being passed to Lambda functions (e.g., `\"StringNotEquals\": {\"aws:ResourceTag/Privilege\": \"High\"}`)."
+    },
+    "cloudSiem": {
+      "cloudTrailEvents": "- `IAM: PassRole` \u2014 Starting user passes a privileged role to a Lambda function; high severity when the passed role has admin permissions\n- `Lambda: CreateFunction20150331` \u2014 New Lambda function created with a privileged execution role; critical when combined with PassRole activity\n- `Lambda: CreateEventSourceMapping` \u2014 Lambda function linked to a DynamoDB stream trigger; suspicious when the function was recently created by a low-privilege user\n- `DynamoDB: PutItem` \u2014 Record inserted into the trigger table; may indicate attacker-initiated Lambda execution\n- `IAM: AttachUserPolicy` \u2014 AdministratorAccess policy attached to a user; confirms successful privilege escalation",
+      "detonationLogs": "_Detonation log integration (Stratus Red Team / Grimoire) is planned for a future release._"
+    }
+  },
+  "slug": "lambda-002"
+}

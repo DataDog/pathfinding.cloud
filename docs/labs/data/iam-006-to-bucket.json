@@ -1,0 +1,93 @@
+{
+  "displayName": "One-Hop Privilege Escalation: iam:UpdateLoginProfile",
+  "name": "iam-006-iam-updateloginprofile",
+  "description": "User with iam:UpdateLoginProfile can reset password for user with S3 bucket access",
+  "costEstimate": "$0/mo",
+  "pathfindingCloudId": "iam-006",
+  "interactiveDemo": false,
+  "category": "Privilege Escalation",
+  "subCategory": "credential-access",
+  "pathType": "one-hop",
+  "target": "to-bucket",
+  "environments": [
+    "prod"
+  ],
+  "attackPath": {
+    "principals": [
+      "arn:aws:iam::{account_id}:user/pl-prod-iam-006-to-bucket-starting-user",
+      "arn:aws:iam::{account_id}:user/pl-prod-iam-006-to-bucket-user",
+      "arn:aws:s3:::pl-prod-iam-006-to-bucket-sensitive-data-{account_id}"
+    ],
+    "summary": "starting_user \u2192 (iam:UpdateLoginProfile) \u2192 reset bucket_user password \u2192 console login \u2192 S3 bucket access"
+  },
+  "permissions": {
+    "required": [
+      {
+        "permission": "iam:UpdateLoginProfile",
+        "resource": "arn:aws:iam::*:user/pl-prod-iam-006-to-bucket-user"
+      }
+    ],
+    "helpful": [
+      {
+        "permission": "iam:ListUsers",
+        "purpose": "Discover users with login profiles"
+      },
+      {
+        "permission": "iam:GetUser",
+        "purpose": "View user details"
+      },
+      {
+        "permission": "iam:GetLoginProfile",
+        "purpose": "Verify user has login profile"
+      }
+    ]
+  },
+  "mitreAttack": {
+    "tactics": [
+      "TA0004 - Privilege Escalation",
+      "TA0009 - Collection"
+    ],
+    "techniques": [
+      "T1098.001 - Account Manipulation: Additional Cloud Credentials",
+      "T1530 - Data from Cloud Storage Object"
+    ]
+  },
+  "terraform": {
+    "variableName": "enable_single_account_privesc_one_hop_to_bucket_iam_006_iam_updateloginprofile",
+    "modulePath": "modules/scenarios/single-account/privesc-one-hop/to-bucket/iam-006-iam-updateloginprofile"
+  },
+  "githubUrl": "https://github.com/DataDog/pathfinding-labs/tree/main/modules/scenarios/single-account/privesc-one-hop/to-bucket/iam-006-iam-updateloginprofile",
+  "readme": {
+    "overview": "This scenario demonstrates a privilege escalation vulnerability where a user has permission to update the login profile (console password) of another user with S3 bucket access. Unlike the to-admin variant which targets administrative privileges, this scenario focuses on data exfiltration - showing that privilege escalation to sensitive data access can be just as critical as gaining admin rights.\n\nThe attacker modifies the console password for a user with S3 bucket access permissions, logs into the AWS console with the new credentials, and directly accesses sensitive data stored in S3 buckets. This path demonstrates that not all privilege escalation leads to admin access, yet the impact can be equally severe when sensitive data is the target.",
+    "mitreAttack": "- **Tactic**: Privilege Escalation (TA0004), Persistence (TA0003), Collection (TA0009)\n- **Technique**: T1098.001 - Account Manipulation: Additional Cloud Credentials\n- **Sub-technique**: T1530 - Data from Cloud Storage Object",
+    "attackDiagram": "graph LR\n    A[pl-prod-iam-006-to-bucket-starting-user] -->|iam:UpdateLoginProfile| B[pl-prod-iam-006-to-bucket-user]\n    B -->|Console Login| C[S3 Console Access]\n    C -->|s3:GetObject, s3:ListBucket| D[pl-prod-iam-006-to-bucket-sensitive-data bucket]\n\n    style A fill:#ff9999,stroke:#333,stroke-width:2px\n    style B fill:#ffcc99,stroke:#333,stroke-width:2px\n    style C fill:#ffcc99,stroke:#333,stroke-width:2px\n    style D fill:#99ff99,stroke:#333,stroke-width:2px",
+    "attackSteps": "1. **Initial Access**: Start as `pl-prod-iam-006-to-bucket-starting-user` (credentials provided via Terraform outputs)\n2. **Update Login Profile**: Use `iam:UpdateLoginProfile` to change the console password for `pl-prod-iam-006-to-bucket-user`\n3. **Console Login**: Log into the AWS Management Console using the target user's credentials with the new password\n4. **Access S3 Bucket**: Navigate to the S3 console and access the sensitive data bucket `pl-prod-iam-006-to-bucket-sensitive-data-*`\n5. **Verification**: Read and download sensitive data using S3 read permissions",
+    "resourcesCreated": "| ARN | Purpose |\n| -- | -- |\n| `arn:aws:iam::PROD_ACCOUNT:user/pl-prod-iam-006-to-bucket-starting-user` | Scenario-specific starting user with access keys and UpdateLoginProfile permission |\n| `arn:aws:iam::PROD_ACCOUNT:user/pl-prod-iam-006-to-bucket-user` | Target user with S3 bucket access and console login enabled |\n| `arn:aws:iam::PROD_ACCOUNT:policy/pl-prod-iam-006-to-bucket-policy` | Allows `iam:UpdateLoginProfile` on `pl-prod-iam-006-to-bucket-user` only |\n| `arn:aws:s3:::pl-prod-iam-006-to-bucket-sensitive-data-ACCOUNT_ID-SUFFIX` | Target S3 bucket containing sensitive data |\n| `arn:aws:s3:::pl-prod-iam-006-to-bucket-sensitive-data-ACCOUNT_ID-SUFFIX/sensitive-data.txt` | Sensitive file in the target bucket |",
+    "attackLab": {
+      "prerequisites": "1. Install the `plabs` CLI:\n   ```bash\n   brew install pathfinding-labs/tap/plabs\n   ```\n2. Configure your AWS profiles in `~/.plabs/plabs.yaml` (or run `plabs init` if you haven't already)",
+      "deployNonInteractive": "```bash\nplabs enable enable_single_account_privesc_one_hop_to_bucket_iam_006_iam_updateloginprofile\nplabs apply\n```",
+      "deployTui": "1. Launch the TUI: `plabs`\n2. Navigate to this scenario in the scenarios list\n3. Press `space` to enable it\n4. Press `d` to deploy",
+      "demoAttack": {
+        "intro": "The script will:\n1. Display a step-by-step walkthrough with color-coded output\n2. Show the commands being executed and their results\n3. Verify successful privilege escalation to bucket access\n4. Output standardized test results for automation",
+        "resourcesCreated": "- Updated console login profile password for `pl-prod-iam-006-to-bucket-user`",
+        "nonInteractive": "```bash\nplabs demo --list\nplabs demo iam-006-iam-updateloginprofile\n```",
+        "tui": "1. Launch the TUI: `plabs`\n2. Navigate to this scenario in the scenarios list\n3. Press `r` to run the demo script"
+      },
+      "cleanup": {
+        "nonInteractive": "```bash\nplabs cleanup --list\nplabs cleanup iam-006-iam-updateloginprofile\n```",
+        "tui": "1. Launch the TUI: `plabs`\n2. Navigate to this scenario in the scenarios list\n3. Press `c` to run the cleanup script"
+      },
+      "teardownNonInteractive": "```bash\nplabs disable enable_single_account_privesc_one_hop_to_bucket_iam_006_iam_updateloginprofile\nplabs apply\n```",
+      "teardownTui": "1. Launch the TUI: `plabs`\n2. Navigate to this scenario in the scenarios list\n3. Press `space` to disable it\n4. Press `D` to destroy"
+    },
+    "cspm": {
+      "whatToDetect": "- IAM user `pl-prod-iam-006-to-bucket-starting-user` has `iam:UpdateLoginProfile` permission on `pl-prod-iam-006-to-bucket-user`, enabling console credential takeover\n- `pl-prod-iam-006-to-bucket-user` has S3 read permissions on a sensitive data bucket, making it a high-value target for credential takeover\n- Privilege escalation path exists: starting user can reset another user's console password to gain S3 bucket access",
+      "prevention": "- Avoid granting `iam:UpdateLoginProfile` permissions on users with sensitive data access (S3, databases, etc.)\n- Use resource-based conditions to restrict which users can have login profiles updated: `\"Condition\": {\"StringEquals\": {\"aws:username\": \"${aws:username}\"}}`\n- Implement SCPs to prevent login profile updates on users with data access roles\n- Monitor CloudTrail for `UpdateLoginProfile` API calls, especially on users with S3 permissions\n- Enable MFA requirements for users with sensitive data access\n- Use IAM Access Analyzer to identify privilege escalation paths to sensitive resources, not just admin access\n- Implement S3 bucket policies that require MFA for object access\n- Enable S3 access logging and CloudTrail data events to track data access patterns\n- Consider using AWS Secrets Manager or Parameter Store instead of long-lived IAM user credentials\n- Regularly review and rotate console passwords for users with data access"
+    },
+    "cloudSiem": {
+      "cloudTrailEvents": "- `IAM: UpdateLoginProfile` \u2014 Console password reset for an IAM user; critical when the target user has S3 bucket access permissions\n- `S3: GetObject` \u2014 Object retrieval from S3; high severity when preceded by a login profile update on the accessing user\n- `S3: ListBucket` \u2014 Bucket enumeration; monitor for access following a login profile change event",
+      "detonationLogs": "_Detonation log integration (Stratus Red Team / Grimoire) is planned for a future release._"
+    }
+  },
+  "slug": "iam-006-to-bucket"
+}

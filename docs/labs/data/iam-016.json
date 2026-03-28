@@ -1,0 +1,104 @@
+{
+  "displayName": "Privilege Escalation via iam:CreatePolicyVersion + sts:AssumeRole",
+  "name": "iam-016-iam-createpolicyversion+sts-assumerole",
+  "description": "Modify customer-managed policy version to grant admin permissions, then assume role",
+  "costEstimate": "$0/mo",
+  "pathfindingCloudId": "iam-016",
+  "interactiveDemo": false,
+  "category": "Privilege Escalation",
+  "subCategory": "principal-access",
+  "pathType": "one-hop",
+  "target": "to-admin",
+  "environments": [
+    "prod"
+  ],
+  "attackPath": {
+    "principals": [
+      "arn:aws:iam::{account_id}:user/pl-prod-iam-016-to-admin-starting-user",
+      "arn:aws:iam::{account_id}:role/pl-prod-iam-016-to-admin-target-role",
+      "arn:aws:iam::{account_id}:policy/pl-prod-iam-016-to-admin-target-policy"
+    ],
+    "summary": "starting_user \u2192 (CreatePolicyVersion on target_policy) \u2192 (AssumeRole) \u2192 target_role \u2192 admin access"
+  },
+  "permissions": {
+    "required": [
+      {
+        "permission": "iam:CreatePolicyVersion",
+        "resource": "arn:aws:iam::*:policy/pl-prod-iam-016-to-admin-target-policy"
+      },
+      {
+        "permission": "sts:AssumeRole",
+        "resource": "arn:aws:iam::*:role/pl-prod-iam-016-to-admin-target-role"
+      }
+    ],
+    "helpful": [
+      {
+        "permission": "iam:GetPolicy",
+        "purpose": "Get policy ARN and current version information"
+      },
+      {
+        "permission": "iam:GetPolicyVersion",
+        "purpose": "View current policy document and version details"
+      },
+      {
+        "permission": "iam:ListPolicyVersions",
+        "purpose": "List all policy versions to verify new version creation"
+      },
+      {
+        "permission": "iam:ListRoles",
+        "purpose": "Discover roles that have the target policy attached"
+      },
+      {
+        "permission": "iam:GetRole",
+        "purpose": "View role details and attached policies"
+      }
+    ]
+  },
+  "mitreAttack": {
+    "tactics": [
+      "TA0004 - Privilege Escalation",
+      "TA0003 - Persistence"
+    ],
+    "techniques": [
+      "T1098.001 - Account Manipulation: Additional Cloud Credentials"
+    ]
+  },
+  "terraform": {
+    "variableName": "enable_single_account_privesc_one_hop_to_admin_iam_016_iam_createpolicyversion_sts_assumerole",
+    "modulePath": "modules/scenarios/single-account/privesc-one-hop/to-admin/iam-016-iam-createpolicyversion+sts-assumerole"
+  },
+  "githubUrl": "https://github.com/DataDog/pathfinding-labs/tree/main/modules/scenarios/single-account/privesc-one-hop/to-admin/iam-016-iam-createpolicyversion+sts-assumerole",
+  "readme": {
+    "overview": "This scenario demonstrates a subtle privilege escalation vulnerability where a user has permission to create new versions of a customer-managed IAM policy that is attached to a privileged role. Unlike modifying inline policies or attaching managed policies, this technique exploits AWS's policy versioning feature where new versions automatically become the default.\n\nThe attacker starts with `iam:CreatePolicyVersion` permission on a customer-managed policy attached to a target role. By creating a new policy version with administrative permissions, the attacker can effectively grant the role admin access without needing `iam:AttachRolePolicy` or `iam:PutRolePolicy` permissions. Once the policy is modified, the attacker assumes the now-privileged role to gain full administrator access.\n\nThis is particularly dangerous because policy version modifications are often overlooked in security monitoring, and many organizations don't realize that `iam:CreatePolicyVersion` can be as dangerous as direct policy attachment permissions. The technique also demonstrates lateral movement from a user principal to a role principal through policy manipulation.",
+    "mitreAttack": "- **Tactic**: TA0004 - Privilege Escalation, TA0003 - Persistence\n- **Technique**: T1098.001 - Account Manipulation: Additional Cloud Credentials\n- **Sub-technique**: Modifying policy versions to escalate privileges",
+    "attackDiagram": "graph LR\n    A[pl-prod-iam-016-to-admin-starting-user] -->|iam:CreatePolicyVersion| B[pl-prod-iam-016-to-admin-target-policy v2]\n    B -->|Policy attached to| C[pl-prod-iam-016-to-admin-target-role]\n    A -->|sts:AssumeRole| C\n    C -->|Administrator Access| D[Effective Administrator]\n\n    style A fill:#ff9999,stroke:#333,stroke-width:2px\n    style B fill:#ffcc99,stroke:#333,stroke-width:2px\n    style C fill:#ffcc99,stroke:#333,stroke-width:2px\n    style D fill:#99ff99,stroke:#333,stroke-width:2px",
+    "attackSteps": "1. **Initial Access**: Start as `pl-prod-iam-016-to-admin-starting-user` (credentials provided via Terraform outputs)\n2. **Policy Reconnaissance**: Discover the customer-managed policy `pl-prod-iam-016-to-admin-target-policy` and verify it's attached to a role\n3. **Create Malicious Policy Version**: Use `iam:CreatePolicyVersion` to create a new version (v2) with administrative permissions (`*:*` on `*`)\n4. **Wait for Propagation**: Allow 15 seconds for the new default policy version to propagate\n5. **Assume Role**: Assume the target role `pl-prod-iam-016-to-admin-target-role` which now has admin permissions via the modified policy\n6. **Verification**: Verify administrator access by listing IAM users or performing other admin actions",
+    "resourcesCreated": "| ARN | Purpose |\n| -- | -- |\n| `arn:aws:iam::PROD_ACCOUNT:user/pl-prod-iam-016-to-admin-starting-user` | Scenario-specific starting user with access keys |\n| `arn:aws:iam::PROD_ACCOUNT:policy/pl-prod-iam-016-to-admin-target-policy` | Customer-managed policy with initial non-privileged permissions |\n| `arn:aws:iam::PROD_ACCOUNT:role/pl-prod-iam-016-to-admin-target-role` | Target role with the customer-managed policy attached and trust policy allowing starting user to assume it |",
+    "attackLab": {
+      "prerequisites": "1. Install the `plabs` CLI:\n   ```bash\n   brew install pathfinding-labs/tap/plabs\n   ```\n2. Configure your AWS profiles in `~/.plabs/plabs.yaml` (or run `plabs init` if you haven't already)",
+      "deployNonInteractive": "```bash\nplabs enable enable_single_account_privesc_one_hop_to_admin_iam_016_iam_createpolicyversion_sts_assumerole\nplabs apply\n```",
+      "deployTui": "1. Launch the TUI: `plabs`\n2. Navigate to this scenario in the scenarios list\n3. Press `space` to enable it\n4. Press `d` to deploy",
+      "demoAttack": {
+        "intro": "The script will:\n1. Display a step-by-step walkthrough with color-coded output\n2. Show the commands being executed and their results\n3. Verify successful privilege escalation\n4. Output standardized test results for automation",
+        "resourcesCreated": "- New IAM policy version (v2) with administrative permissions (`*:*` on `*`) on `pl-prod-iam-016-to-admin-target-policy`",
+        "nonInteractive": "```bash\nplabs demo --list\nplabs demo iam-016-iam-createpolicyversion+sts-assumerole\n```",
+        "tui": "1. Launch the TUI: `plabs`\n2. Navigate to this scenario in the scenarios list\n3. Press `r` to run the demo script"
+      },
+      "cleanup": {
+        "nonInteractive": "```bash\nplabs cleanup --list\nplabs cleanup iam-016-iam-createpolicyversion+sts-assumerole\n```",
+        "tui": "1. Launch the TUI: `plabs`\n2. Navigate to this scenario in the scenarios list\n3. Press `c` to run the cleanup script"
+      },
+      "teardownNonInteractive": "```bash\nplabs disable enable_single_account_privesc_one_hop_to_admin_iam_016_iam_createpolicyversion_sts_assumerole\nplabs apply\n```",
+      "teardownTui": "1. Launch the TUI: `plabs`\n2. Navigate to this scenario in the scenarios list\n3. Press `space` to disable it\n4. Press `D` to destroy"
+    },
+    "cspm": {
+      "whatToDetect": "- IAM user has `iam:CreatePolicyVersion` permission on a customer-managed policy attached to a privileged role, creating a privilege escalation path\n- Customer-managed policy attached to a role with admin or high-privilege permissions is modifiable by non-admin principals\n- Privilege escalation path: `starting_user \u2192 iam:CreatePolicyVersion \u2192 target_policy \u2192 target_role (admin)`",
+      "prevention": "- **Restrict CreatePolicyVersion Permission**: Limit `iam:CreatePolicyVersion` to security administrators and infrastructure teams only. This permission is as dangerous as `iam:AttachRolePolicy` or `iam:PutRolePolicy`.\n- **Use Condition Keys**: Apply condition keys to `iam:CreatePolicyVersion` permissions to restrict which policies can be modified (e.g., `aws:RequestedRegion` or custom tags).\n- **Prefer AWS-Managed Policies**: For privileged roles, use AWS-managed policies when possible, as they cannot be versioned or modified by customer accounts.\n- **Implement SCPs**: Create Service Control Policies that prevent policy version creation on sensitive customer-managed policies:\n  ```json\n  {\n    \"Effect\": \"Deny\",\n    \"Action\": \"iam:CreatePolicyVersion\",\n    \"Resource\": \"arn:aws:iam::*:policy/sensitive-*\"\n  }\n  ```\n- **Monitor Policy Version Changes**: Set up CloudTrail alerts for `CreatePolicyVersion` API calls, especially on policies attached to privileged roles. Create CloudWatch alarms or EventBridge rules to detect this activity.\n- **Regular Policy Audits**: Periodically review customer-managed policies and their versions to detect unauthorized changes. Look for policies with multiple versions where the latest version has significantly more permissions.\n- **IAM Access Analyzer**: Use IAM Access Analyzer to continuously monitor for privilege escalation paths involving policy version manipulation.\n- **Limit Policy Scope**: When creating customer-managed policies for roles, minimize the permissions granted and avoid granting permissions that allow self-modification.\n- **Require MFA**: Implement MFA requirements for sensitive IAM operations including policy version creation through condition keys in SCPs or IAM policies."
+    },
+    "cloudSiem": {
+      "cloudTrailEvents": "- `IAM: CreatePolicyVersion` \u2014 New policy version created; critical when the target policy is attached to a privileged role, as new versions automatically become the default\n- `STS: AssumeRole` \u2014 Role assumption; high severity when the assumed role has administrator permissions and follows a recent `CreatePolicyVersion` call",
+      "detonationLogs": "_Detonation log integration (Stratus Red Team / Grimoire) is planned for a future release._"
+    }
+  },
+  "slug": "iam-016"
+}

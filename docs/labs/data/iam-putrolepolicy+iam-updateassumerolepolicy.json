@@ -1,0 +1,74 @@
+{
+  "name": "iam-putrolepolicy+iam-updateassumerolepolicy",
+  "description": "User with iam:PutRolePolicy and iam:UpdateAssumeRolePolicy can add inline admin policy to a role, update that role's trust policy to allow assumption, then assume the role to gain admin access",
+  "costEstimate": "free",
+  "pathfindingCloudId": null,
+  "category": "Privilege Escalation",
+  "subCategory": "principal-lateral-movement",
+  "pathType": "one-hop",
+  "target": "to-admin",
+  "environments": [
+    "prod"
+  ],
+  "attackPath": {
+    "principals": [
+      "arn:aws:iam::{account_id}:user/pl-prod-prpuar-to-admin-starting-user",
+      "arn:aws:iam::{account_id}:role/pl-prod-prpuar-to-admin-target-role"
+    ],
+    "summary": "starting_user \u2192 (iam:PutRolePolicy) \u2192 target_role (add inline admin policy) \u2192 (iam:UpdateAssumeRolePolicy) \u2192 target_role trust policy (allow starting_user) \u2192 (sts:AssumeRole) \u2192 admin access"
+  },
+  "permissions": {
+    "required": [
+      {
+        "permission": "iam:PutRolePolicy",
+        "resource": "arn:aws:iam::*:role/pl-prod-prpuar-to-admin-target-role"
+      },
+      {
+        "permission": "iam:UpdateAssumeRolePolicy",
+        "resource": "arn:aws:iam::*:role/pl-prod-prpuar-to-admin-target-role"
+      }
+    ],
+    "helpful": [
+      {
+        "permission": "iam:ListRoles",
+        "purpose": "Discover available roles that can be modified"
+      },
+      {
+        "permission": "iam:GetRole",
+        "purpose": "View role trust policies and current policies"
+      },
+      {
+        "permission": "iam:ListRolePolicies",
+        "purpose": "View current inline role policies"
+      },
+      {
+        "permission": "iam:GetRolePolicy",
+        "purpose": "View inline policy details before and after modification"
+      }
+    ]
+  },
+  "mitreAttack": {
+    "tactics": [
+      "TA0004 - Privilege Escalation"
+    ],
+    "techniques": [
+      "T1098 - Account Manipulation"
+    ]
+  },
+  "terraform": {
+    "variableName": "enable_single_account_privesc_one_hop_to_admin_iam_putrolepolicy_iam_updateassumerolepolicy",
+    "modulePath": "modules/scenarios/single-account/privesc-one-hop/to-admin/iam-putrolepolicy+iam-updateassumerolepolicy"
+  },
+  "githubUrl": "https://github.com/DataDog/pathfinding-labs/tree/main/modules/scenarios/single-account/privesc-one-hop/to-admin/iam-putrolepolicy+iam-updateassumerolepolicy",
+  "cspmDetection": null,
+  "risk": null,
+  "remediation": null,
+  "readme": {
+    "overview": "This scenario demonstrates a sophisticated privilege escalation vulnerability where a user possesses both `iam:PutRolePolicy` and `iam:UpdateAssumeRolePolicy` permissions on a target role. This powerful combination allows an attacker to first escalate the role's permissions to administrative level, and then modify the role's trust policy to allow themselves to assume it - all without needing explicit `sts:AssumeRole` permissions.\n\nThe attack is particularly insidious because it exploits a commonly misunderstood aspect of AWS IAM: **named principals specified directly in a role's trust policy can assume that role without requiring `sts:AssumeRole` permissions in their own identity policies**. When a principal ARN is explicitly listed in a trust policy, AWS IAM automatically grants that principal the ability to assume the role, bypassing the need for an allow statement in the principal's own policies.\n\nThis privilege escalation path is often overlooked by security teams because it requires the combination of two distinct permissions that seem innocuous when evaluated separately. Organizations may grant `iam:PutRolePolicy` for managing role permissions and `iam:UpdateAssumeRolePolicy` for managing trust relationships, not realizing that together they provide a complete path to administrative access. The attack leaves clear audit trails in CloudTrail but can be executed quickly before detection mechanisms trigger alerts.",
+    "attackSteps": "### Principals in the attack path\n\n- `arn:aws:iam::PROD_ACCOUNT:user/pl-prod-prpuar-to-admin-starting-user` (Scenario-specific starting user with iam:PutRolePolicy and iam:UpdateAssumeRolePolicy permissions)\n- `arn:aws:iam::PROD_ACCOUNT:role/pl-prod-prpuar-to-admin-target-role` (Target role with minimal initial permissions)\n\n### Attack Path Diagram\n\n```mermaid\ngraph LR\n    A[pl-prod-prpuar-to-admin-starting-user] -->|iam:PutRolePolicy| B[pl-prod-prpuar-to-admin-target-role]\n    B -->|Add admin inline policy| C[Target Role with Admin Policy]\n    C -->|iam:UpdateAssumeRolePolicy| D[Update Trust Policy]\n    D -->|Add starting user to trust| E[Target Role Trusts Starting User]\n    E -->|sts:AssumeRole| F[Effective Administrator]\n\n    style A fill:#ff9999,stroke:#333,stroke-width:2px\n    style B fill:#ffcc99,stroke:#333,stroke-width:2px\n    style C fill:#ffcc99,stroke:#333,stroke-width:2px\n    style D fill:#ffcc99,stroke:#333,stroke-width:2px\n    style E fill:#ffcc99,stroke:#333,stroke-width:2px\n    style F fill:#99ff99,stroke:#333,stroke-width:2px\n```\n\n### Attack Steps\n\n1. **Initial Access**: Start as `pl-prod-prpuar-to-admin-starting-user` (credentials provided via Terraform outputs)\n2. **Add Admin Policy**: Use `iam:PutRolePolicy` to attach an inline policy granting `AdministratorAccess` to `pl-prod-prpuar-to-admin-target-role`\n3. **Modify Trust Policy**: Use `iam:UpdateAssumeRolePolicy` to update the target role's trust policy, adding the starting user as a trusted principal\n4. **Assume Role**: Use `sts:AssumeRole` to assume the now-administrative role (no prior sts:AssumeRole permission required - the trust policy grants this automatically)\n5. **Verification**: Verify administrator access by listing IAM users or performing other admin-level actions\n\n### Scenario specific resources created\n\n| ARN | Purpose |\n| -- | -- |\n| `arn:aws:iam::PROD_ACCOUNT:user/pl-prod-prpuar-to-admin-starting-user` | Scenario-specific starting user with access keys and permissions to modify target role |\n| `arn:aws:iam::PROD_ACCOUNT:role/pl-prod-prpuar-to-admin-target-role` | Target role with minimal initial permissions that can be escalated |\n| `arn:aws:iam::PROD_ACCOUNT:policy/pl-prod-prpuar-to-admin-starting-user-policy` | Inline policy granting iam:PutRolePolicy and iam:UpdateAssumeRolePolicy on target role |",
+    "prevention": "- Implement least privilege principles - avoid granting `iam:PutRolePolicy` and `iam:UpdateAssumeRolePolicy` together unless absolutely necessary for administrative functions\n- Use resource-based conditions to restrict which roles can have their policies modified: `\"Condition\": {\"StringNotLike\": {\"iam:PolicyArn\": [\"arn:aws:iam::*:role/admin-*\"]}}`\n- Implement Service Control Policies (SCPs) at the organization level to prevent modification of critical role trust policies and inline policies\n- Monitor CloudTrail for `PutRolePolicy` and `UpdateAssumeRolePolicy` API calls, especially when both occur in sequence on the same role\n- Enable MFA requirements for sensitive IAM operations using condition keys like `aws:MultiFactorAuthPresent`\n- Use IAM Access Analyzer to identify and remediate privilege escalation paths involving policy modification permissions\n- Implement SCPs that deny `iam:PutRolePolicy` and `iam:UpdateAssumeRolePolicy` on roles with administrative permissions or sensitive resource access\n- Create CloudWatch Events or EventBridge rules to alert on suspicious policy modification patterns, particularly when trust policies are updated followed by AssumeRole calls\n- Consider using permission boundaries on roles to limit the maximum permissions that can be granted via inline policies\n- Regularly audit roles with both `iam:PutRolePolicy` and `iam:UpdateAssumeRolePolicy` permissions to ensure they are truly necessary and appropriately scoped",
+    "executionGuide": "### Using the automated demo_attack.sh\n\nTo demonstrate the privilege escalation path, run the provided demo script:\n\n```bash\ncd modules/scenarios/single-account/privesc-one-hop/to-admin/iam-putrolepolicy+iam-updateassumerolepolicy\n./demo_attack.sh\n```\n\nThe script will:\n1. Display a step-by-step walkthrough with color-coded output\n2. Show the commands being executed and their results\n3. Demonstrate adding an admin inline policy to the target role\n4. Demonstrate updating the trust policy to allow assumption\n5. Verify successful privilege escalation by assuming the role and testing admin permissions\n6. Output standardized test results for automation\n\n### Cleaning up the attack artifacts\n\nAfter demonstrating the attack, clean up the inline policy and trust policy modifications:\n\n```bash\ncd modules/scenarios/single-account/privesc-one-hop/to-admin/iam-putrolepolicy+iam-updateassumerolepolicy\n./cleanup_attack.sh\n```\n\nThe cleanup script will:\n- Remove the admin inline policy added to the target role\n- Restore the original trust policy (removing the starting user from trusted principals)\n- Preserve the deployed infrastructure for future demonstrations",
+    "attackDiagram": "graph LR\n    A[pl-prod-prpuar-to-admin-starting-user] -->|iam:PutRolePolicy| B[pl-prod-prpuar-to-admin-target-role]\n    B -->|Add admin inline policy| C[Target Role with Admin Policy]\n    C -->|iam:UpdateAssumeRolePolicy| D[Update Trust Policy]\n    D -->|Add starting user to trust| E[Target Role Trusts Starting User]\n    E -->|sts:AssumeRole| F[Effective Administrator]\n\n    style A fill:#ff9999,stroke:#333,stroke-width:2px\n    style B fill:#ffcc99,stroke:#333,stroke-width:2px\n    style C fill:#ffcc99,stroke:#333,stroke-width:2px\n    style D fill:#ffcc99,stroke:#333,stroke-width:2px\n    style E fill:#ffcc99,stroke:#333,stroke-width:2px\n    style F fill:#99ff99,stroke:#333,stroke-width:2px"
+  },
+  "slug": "iam-putrolepolicy+iam-updateassumerolepolicy"
+}

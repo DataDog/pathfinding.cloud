@@ -1,0 +1,110 @@
+{
+  "displayName": "Privilege Escalation via iam:PassRole + sagemaker:CreateTrainingJob",
+  "name": "sagemaker-002-iam-passrole+sagemaker-createtrainingjob",
+  "description": "Creating SageMaker training job with malicious script and admin role to execute code with elevated privileges",
+  "costEstimate": "$0/mo",
+  "pathfindingCloudId": "sagemaker-002",
+  "interactiveDemo": false,
+  "category": "Privilege Escalation",
+  "subCategory": "new-passrole",
+  "pathType": "one-hop",
+  "target": "to-admin",
+  "environments": [
+    "prod"
+  ],
+  "attackPath": {
+    "principals": [
+      "arn:aws:iam::{account_id}:user/pl-prod-sagemaker-002-to-admin-starting-user",
+      "arn:aws:iam::{account_id}:role/pl-prod-sagemaker-002-to-admin-passable-role",
+      "arn:aws:s3:::pl-prod-sagemaker-002-to-admin-bucket-{account_id}-{suffix}",
+      "arn:aws:sagemaker:{region}:{account_id}:training-job/pl-prod-sagemaker-002-to-admin-training-job"
+    ],
+    "summary": "starting_user \u2192 (upload malicious script to S3) \u2192 (PassRole + CreateTrainingJob) \u2192 training job executes with admin role \u2192 script grants admin access to starting user \u2192 admin access"
+  },
+  "permissions": {
+    "required": [
+      {
+        "permission": "iam:PassRole",
+        "resource": "arn:aws:iam::*:role/pl-prod-sagemaker-002-to-admin-passable-role"
+      },
+      {
+        "permission": "sagemaker:CreateTrainingJob",
+        "resource": "*"
+      },
+      {
+        "permission": "s3:PutObject",
+        "resource": "arn:aws:s3:::pl-prod-sagemaker-002-to-admin-bucket-*/*"
+      },
+      {
+        "permission": "s3:GetObject",
+        "resource": "arn:aws:s3:::pl-prod-sagemaker-002-to-admin-bucket-*/*"
+      }
+    ],
+    "helpful": [
+      {
+        "permission": "iam:ListRoles",
+        "purpose": "Discover available privileged roles to pass"
+      },
+      {
+        "permission": "iam:GetRole",
+        "purpose": "Verify role has administrative permissions"
+      },
+      {
+        "permission": "sagemaker:DescribeTrainingJob",
+        "purpose": "Monitor training job status and execution"
+      },
+      {
+        "permission": "s3:ListBucket",
+        "purpose": "Verify S3 bucket access and list contents"
+      }
+    ]
+  },
+  "mitreAttack": {
+    "tactics": [
+      "TA0004 - Privilege Escalation",
+      "TA0002 - Execution"
+    ],
+    "techniques": [
+      "T1078.004 - Valid Accounts: Cloud Accounts",
+      "T1098.001 - Account Manipulation: Additional Cloud Credentials"
+    ]
+  },
+  "terraform": {
+    "variableName": "enable_single_account_privesc_one_hop_to_admin_sagemaker_002_iam_passrole_sagemaker_createtrainingjob",
+    "modulePath": "modules/scenarios/single-account/privesc-one-hop/to-admin/sagemaker-002-iam-passrole+sagemaker-createtrainingjob"
+  },
+  "githubUrl": "https://github.com/DataDog/pathfinding-labs/tree/main/modules/scenarios/single-account/privesc-one-hop/to-admin/sagemaker-002-iam-passrole+sagemaker-createtrainingjob",
+  "readme": {
+    "overview": "This scenario demonstrates a privilege escalation vulnerability where a user has permissions to pass an IAM role to SageMaker, create training jobs, and upload files to S3. The attacker can upload a malicious training script to S3, create a SageMaker training job that uses an administrative execution role, and have the training job execute the malicious code with admin privileges to grant the attacker administrative access.\n\nSageMaker training jobs run containerized workloads with the permissions of their execution role. When a training job starts, it downloads the specified training script from S3 and executes it with the temporary credentials of the execution role. An attacker can exploit this by uploading a script that creates access keys for the starting user with admin permissions, or performs other privilege escalation actions.\n\nThis attack is particularly powerful because SageMaker training jobs are designed to execute arbitrary code, making it a legitimate-looking avenue for privilege escalation. The technique was discovered by Spencer Gietzen from Rhino Security Labs in 2019 and remains an effective privilege escalation vector when users are granted SageMaker permissions alongside the ability to pass privileged roles.",
+    "mitreAttack": "- **Tactic**: TA0004 - Privilege Escalation, TA0002 - Execution\n- **Technique**: T1098.001 - Account Manipulation: Additional Cloud Credentials\n- **Technique**: T1078.004 - Valid Accounts: Cloud Accounts",
+    "attackDiagram": "graph LR\n    A[pl-prod-sagemaker-002-to-admin-starting-user] -->|s3:PutObject| B[Upload Malicious Script to S3]\n    B -->|iam:PassRole + sagemaker:CreateTrainingJob| C[SageMaker Training Job]\n    C -->|Executes with| D[pl-prod-sagemaker-002-to-admin-passable-role]\n    D -->|Execute Script| E[Grant Admin Access to Starting User]\n    E -->|New Credentials| F[Administrator Access]\n\n    style A fill:#ff9999,stroke:#333,stroke-width:2px\n    style B fill:#ffcc99,stroke:#333,stroke-width:2px\n    style C fill:#ffcc99,stroke:#333,stroke-width:2px\n    style D fill:#ffcc99,stroke:#333,stroke-width:2px\n    style E fill:#ffcc99,stroke:#333,stroke-width:2px\n    style F fill:#99ff99,stroke:#333,stroke-width:2px",
+    "attackSteps": "1. **Initial Access**: Start as `pl-prod-sagemaker-002-to-admin-starting-user` (credentials provided via Terraform outputs)\n2. **Upload Malicious Script**: Use `s3:PutObject` to upload a Python script to the training bucket that will create access keys or attach admin policies to the starting user\n3. **Create Training Job**: Use `sagemaker:CreateTrainingJob` with `iam:PassRole` to create a training job that uses the admin execution role and references the malicious script\n4. **Automatic Execution**: SageMaker automatically downloads and executes the training script with the admin role's temporary credentials\n5. **Extract Credentials**: The script grants admin access to the starting user (via access keys, inline policies, or managed policy attachments)\n6. **Verification**: Verify administrator access with the newly granted permissions",
+    "resourcesCreated": "| ARN | Purpose |\n| -- | -- |\n| `arn:aws:iam::PROD_ACCOUNT:user/pl-prod-sagemaker-002-to-admin-starting-user` | Scenario-specific starting user with access keys |\n| `arn:aws:iam::PROD_ACCOUNT:role/pl-prod-sagemaker-002-to-admin-passable-role` | Admin role that trusts SageMaker service and can be passed to training jobs |\n| `arn:aws:s3:::pl-prod-sagemaker-002-to-admin-bucket-PROD_ACCOUNT-SUFFIX` | S3 bucket for storing training scripts and outputs |\n| Policy attached to starting user | Grants `iam:PassRole` on admin role, `sagemaker:CreateTrainingJob`, and S3 upload/download permissions |",
+    "attackLab": {
+      "prerequisites": "1. Install the `plabs` CLI:\n   ```bash\n   brew install pathfinding-labs/tap/plabs\n   ```\n2. Configure your AWS profiles in `~/.plabs/plabs.yaml` (or run `plabs init` if you haven't already)",
+      "deployNonInteractive": "```bash\nplabs enable enable_single_account_privesc_one_hop_to_admin_sagemaker_002_iam_passrole_sagemaker_createtrainingjob\nplabs apply\n```",
+      "deployTui": "1. Launch the TUI: `plabs`\n2. Navigate to this scenario in the scenarios list\n3. Press `space` to enable it\n4. Press `d` to deploy",
+      "demoAttack": {
+        "intro": "The script will:\n1. Display a step-by-step walkthrough with color-coded output\n2. Show the commands being executed and their results\n3. Verify successful privilege escalation\n4. Output standardized test results for automation",
+        "resourcesCreated": "- Malicious Python training script uploaded to the scenario S3 bucket\n- SageMaker training job executing with the admin passable role\n- Access keys or inline policy attached to the starting user granting admin access",
+        "nonInteractive": "```bash\nplabs demo --list\nplabs demo sagemaker-002-iam-passrole+sagemaker-createtrainingjob\n```",
+        "tui": "1. Launch the TUI: `plabs`\n2. Navigate to this scenario in the scenarios list\n3. Press `r` to run the demo script"
+      },
+      "cleanup": {
+        "nonInteractive": "```bash\nplabs cleanup --list\nplabs cleanup sagemaker-002-iam-passrole+sagemaker-createtrainingjob\n```",
+        "tui": "1. Launch the TUI: `plabs`\n2. Navigate to this scenario in the scenarios list\n3. Press `c` to run the cleanup script"
+      },
+      "teardownNonInteractive": "```bash\nplabs disable enable_single_account_privesc_one_hop_to_admin_sagemaker_002_iam_passrole_sagemaker_createtrainingjob\nplabs apply\n```",
+      "teardownTui": "1. Launch the TUI: `plabs`\n2. Navigate to this scenario in the scenarios list\n3. Press `space` to disable it\n4. Press `D` to destroy"
+    },
+    "cspm": {
+      "whatToDetect": "- IAM principal has both `iam:PassRole` and `sagemaker:CreateTrainingJob` permissions, enabling privilege escalation via SageMaker training jobs\n- Passable role (`pl-prod-sagemaker-002-to-admin-passable-role`) has administrative permissions and trusts the SageMaker service principal\n- Starting user has `s3:PutObject` on the training bucket, allowing malicious script injection\n- Privilege escalation path exists: starting user can achieve admin access through SageMaker training job execution",
+      "prevention": "- Restrict `iam:PassRole` permissions using strict resource conditions to limit which roles can be passed to SageMaker\n- Implement condition keys like `iam:PassedToService` to ensure PassRole is only allowed for specific services: `\"Condition\": {\"StringEquals\": {\"iam:PassedToService\": \"sagemaker.amazonaws.com\"}}`\n- Avoid granting broad `sagemaker:CreateTrainingJob` permissions; use resource tags or naming patterns to control training job creation\n- Implement Service Control Policies (SCPs) that prevent passing roles with administrative privileges to SageMaker\n- Use IAM Access Analyzer to identify privilege escalation paths involving PassRole to SageMaker\n- Restrict S3 bucket permissions to prevent unauthorized script uploads, or implement S3 Object Lambda to scan uploaded training scripts\n- Enable AWS Config rules to detect SageMaker training jobs with overly permissive execution roles\n- Consider using SageMaker service role boundaries to limit the maximum permissions that can be used by training jobs"
+    },
+    "cloudSiem": {
+      "cloudTrailEvents": "- `IAM: PassRole` \u2014 IAM role passed to SageMaker service; critical when the passed role has administrative permissions\n- `SageMaker: CreateTrainingJob` \u2014 New training job created; high severity when the execution role has elevated privileges\n- `S3: PutObject` \u2014 Object uploaded to training bucket; suspicious when followed by a CreateTrainingJob event targeting that bucket\n- `IAM: CreateAccessKey` \u2014 Access keys created; indicates the training script may have executed privilege escalation actions\n- `IAM: AttachUserPolicy` \u2014 Managed policy attached to a user; indicates the training script may have granted elevated permissions\n- `IAM: PutUserPolicy` \u2014 Inline policy added to a user; indicates privilege escalation via training job execution",
+      "detonationLogs": "_Detonation log integration (Stratus Red Team / Grimoire) is planned for a future release._"
+    }
+  },
+  "slug": "sagemaker-002"
+}

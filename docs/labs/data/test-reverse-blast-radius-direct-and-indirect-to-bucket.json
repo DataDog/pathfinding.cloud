@@ -1,0 +1,104 @@
+{
+  "displayName": "Tool Testing: Reverse Blast Radius Query Detection (Direct and Indirect S3 Access)",
+  "name": "test-reverse-blast-radius-direct-and-indirect-to-bucket",
+  "description": "Testing security tool capability to identify both direct and indirect S3 bucket access paths in reverse blast radius queries",
+  "costEstimate": "$0/mo",
+  "pathfindingCloudId": null,
+  "interactiveDemo": false,
+  "category": "Tool Testing",
+  "subCategory": "reverse-blast-radius",
+  "pathType": "one-hop",
+  "target": "to-bucket",
+  "environments": [
+    "prod"
+  ],
+  "attackPath": {
+    "principals": [
+      "arn:aws:iam::{account_id}:user/pl-prod-rbr-di-user1",
+      "arn:aws:iam::{account_id}:user/pl-prod-rbr-di-user2",
+      "arn:aws:iam::{account_id}:role/pl-prod-rbr-di-role3",
+      "arn:aws:s3:::pl-sensitive-data-rbr-di-{account_id}-{suffix}"
+    ],
+    "summary": "Two paths to S3 bucket: user1 has direct S3 permissions; user2 can assume role3 which has S3 permissions granting indirect access to bucket"
+  },
+  "permissions": {
+    "required": [
+      {
+        "permission": "s3:GetObject",
+        "resource": "arn:aws:s3:::pl-sensitive-data-rbr-di-*/*"
+      },
+      {
+        "permission": "s3:ListBucket",
+        "resource": "arn:aws:s3:::pl-sensitive-data-rbr-di-*"
+      },
+      {
+        "permission": "sts:AssumeRole",
+        "resource": "arn:aws:iam::{account_id}:role/pl-prod-rbr-di-role3"
+      },
+      {
+        "permission": "s3:GetObject",
+        "resource": "arn:aws:s3:::pl-sensitive-data-rbr-di-*/*"
+      },
+      {
+        "permission": "s3:ListBucket",
+        "resource": "arn:aws:s3:::pl-sensitive-data-rbr-di-*"
+      }
+    ],
+    "helpful": [
+      {
+        "permission": "sts:GetCallerIdentity",
+        "purpose": "Verify current identity"
+      },
+      {
+        "permission": "s3:ListAllMyBuckets",
+        "purpose": "Discover available buckets"
+      }
+    ]
+  },
+  "mitreAttack": {
+    "tactics": [
+      "TA0009 - Collection"
+    ],
+    "techniques": [
+      "T1530 - Data from Cloud Storage Object"
+    ]
+  },
+  "terraform": {
+    "variableName": "enable_tool_testing_test_reverse_blast_radius_direct_and_indirect_to_bucket",
+    "modulePath": "modules/scenarios/tool-testing/test-reverse-blast-radius-direct-and-indirect-to-bucket"
+  },
+  "githubUrl": "https://github.com/DataDog/pathfinding-labs/tree/main/modules/scenarios/tool-testing/test-reverse-blast-radius-direct-and-indirect-to-bucket",
+  "readme": {
+    "overview": "This scenario is specifically designed to validate that Cloud Security Posture Management (CSPM) tools and security analysis platforms can accurately answer the critical question: \"Who has access to this S3 bucket?\" Modern security tools must identify not only direct IAM permissions that grant bucket access, but also indirect access paths through role assumption chains.\n\nThe scenario creates two distinct access paths to the same sensitive S3 bucket. The first path provides direct IAM permissions to a user, granting immediate access to the bucket. The second path involves an intermediate role assumption - a user can assume a role, and that role has the same S3 bucket permissions. Both users should appear in any \"reverse blast radius\" query asking \"who can access this bucket?\"\n\nThis test is essential for validating security tool accuracy because many tools fail to traverse the complete graph of IAM relationships. A tool that only reports direct permissions would miss half the risk surface, failing to identify users who can reach the bucket through role assumption. Organizations rely on these queries to understand their true attack surface, make access decisions, and respond to incidents. This scenario provides a definitive test case: if a security tool cannot identify both users as having bucket access, it has incomplete visibility into the environment's IAM topology.",
+    "mitreAttack": "- **Tactic**: TA0009 - Collection\n- **Technique**: T1530 - Data from Cloud Storage Object",
+    "attackDiagram": "graph LR\n    A[pl-prod-rbr-di-user1] -->|Direct S3 Permissions| D[pl-sensitive-data-rbr-di bucket]\n    B[pl-prod-rbr-di-user2] -->|sts:AssumeRole| C[pl-prod-rbr-di-role3]\n    C -->|S3 Permissions| D\n\n    style A fill:#ff9999,stroke:#333,stroke-width:2px\n    style B fill:#ff9999,stroke:#333,stroke-width:2px\n    style C fill:#ffcc99,stroke:#333,stroke-width:2px\n    style D fill:#99ff99,stroke:#333,stroke-width:2px",
+    "attackSteps": "1. **Path 1 - Direct Access**: User `pl-prod-rbr-di-user1` has direct IAM permissions to list and read objects from the sensitive S3 bucket\n2. **Path 2 - Indirect Access (Step 1)**: User `pl-prod-rbr-di-user2` can assume role `pl-prod-rbr-di-role3`\n3. **Path 2 - Indirect Access (Step 2)**: Role `pl-prod-rbr-di-role3` has the same S3 bucket permissions as user1\n4. **Verification**: Both users can successfully access the S3 bucket (user1 directly, user2 via assumed role)",
+    "resourcesCreated": "| ARN | Purpose |\n| -- | -- |\n| `arn:aws:iam::PROD_ACCOUNT:user/pl-prod-rbr-di-user1` | User with direct S3 bucket access permissions (access keys provided) |\n| `arn:aws:iam::PROD_ACCOUNT:user/pl-prod-rbr-di-user2` | User with sts:AssumeRole permission for role3 (access keys provided) |\n| `arn:aws:iam::PROD_ACCOUNT:role/pl-prod-rbr-di-role3` | Role with S3 bucket access, assumable by user2 |\n| `arn:aws:s3:::pl-sensitive-data-rbr-di-{account-id}-{suffix}` | Target sensitive S3 bucket containing test data |",
+    "attackLab": {
+      "prerequisites": "1. Install the `plabs` CLI:\n   ```bash\n   brew install pathfinding-labs/tap/plabs\n   ```\n2. Configure your AWS profiles in `~/.plabs/plabs.yaml` (or run `plabs init` if you haven't already)",
+      "deployNonInteractive": "```bash\nplabs enable enable_tool_testing_test_reverse_blast_radius_direct_and_indirect_to_bucket\nplabs apply\n```",
+      "deployTui": "1. Launch the TUI: `plabs`\n2. Navigate to this scenario in the scenarios list\n3. Press `space` to enable it\n4. Press `d` to deploy",
+      "demoAttack": {
+        "intro": "The script will:\n1. Display a step-by-step walkthrough with color-coded output\n2. Show the commands being executed and their results\n3. Verify successful bucket access via both paths (direct and indirect)\n4. Output standardized test results for automation",
+        "resourcesCreated": "- No persistent resources are created. The demo script only performs read operations (listing buckets, getting objects) and does not create or modify any resources.",
+        "nonInteractive": "```bash\nplabs demo --list\nplabs demo test-reverse-blast-radius-direct-and-indirect-to-bucket\n```",
+        "tui": "1. Launch the TUI: `plabs`\n2. Navigate to this scenario in the scenarios list\n3. Press `r` to run the demo script"
+      },
+      "cleanup": {
+        "nonInteractive": "```bash\nplabs cleanup --list\nplabs cleanup test-reverse-blast-radius-direct-and-indirect-to-bucket\n```",
+        "tui": "1. Launch the TUI: `plabs`\n2. Navigate to this scenario in the scenarios list\n3. Press `c` to run the cleanup script"
+      },
+      "teardownNonInteractive": "```bash\nplabs disable enable_tool_testing_test_reverse_blast_radius_direct_and_indirect_to_bucket\nplabs apply\n```",
+      "teardownTui": "1. Launch the TUI: `plabs`\n2. Navigate to this scenario in the scenarios list\n3. Press `space` to disable it\n4. Press `D` to destroy"
+    },
+    "cspm": {
+      "whatToDetect": "A properly configured security analysis platform or CSPM tool performing a reverse blast radius query on the S3 bucket should identify:\n\n1. **Direct Access Path**: `pl-prod-rbr-di-user1` has direct access to the bucket through IAM permissions\n2. **Indirect Access Path**: `pl-prod-rbr-di-user2` has indirect access to the bucket through role assumption (`user2` \u2192 `role3` \u2192 `bucket`)\n3. **Complete Access List**: When asked \"Who has access to bucket pl-sensitive-data-rbr-di-*?\", the tool should return BOTH users in the result set\n\n**Expected Query Results:**\n\nQuery: \"Who can access bucket `pl-sensitive-data-rbr-di-{account-id}-{suffix}`?\"\n\nExpected Response:\n```\n- arn:aws:iam::{account-id}:user/pl-prod-rbr-di-user1 (direct access)\n- arn:aws:iam::{account-id}:user/pl-prod-rbr-di-user2 (indirect via role/pl-prod-rbr-di-role3)\n- arn:aws:iam::{account-id}:role/pl-prod-rbr-di-role3 (direct access)\n```\n\n**Tool Testing Focus:**\n\nThis scenario specifically tests:\n\n1. **Graph Traversal Capability**: Can the tool traverse IAM trust relationships to identify indirect access?\n2. **Complete Path Enumeration**: Does the tool identify ALL principals with access, not just those with direct permissions?\n3. **Role Assumption Detection**: Can the tool recognize that users who can assume roles inherit those roles' permissions?\n4. **Reverse Query Accuracy**: When querying \"who has access to X\", does the tool return complete results?\n\n**Expected Tool Behavior:**\n\nPassing tools:\n- Identify both user1 (direct) and user2 (indirect) as having bucket access\n- Show the complete path: user2 \u2192 role3 \u2192 bucket\n- Provide clear indication of direct vs. indirect access\n- Include role3 itself as a principal with access\n\nFailing tools:\n- Only identify user1 (direct access)\n- Only identify role3 but miss user2\n- Fail to traverse the AssumeRole trust relationship\n- Provide incomplete results for \"who has access\" queries",
+      "prevention": "While this is a tool-testing scenario designed to validate detection capabilities rather than demonstrate a real vulnerability, the following best practices apply to managing S3 bucket access in production environments:\n\n- Use AWS IAM Access Analyzer to continuously monitor and validate S3 bucket access permissions\n- Implement least privilege principles - grant S3 access only to principals that require it\n- Regularly audit IAM trust relationships to understand complete access paths to sensitive resources\n- Use S3 bucket policies in addition to IAM policies to implement defense in depth\n- Monitor CloudTrail for S3 access patterns from unexpected principals or roles\n- Implement SCPs (Service Control Policies) at the organization level to prevent overly broad S3 permissions\n- Use tools that support reverse blast radius queries to understand \"who can access X\" for critical resources\n- Regularly validate that your security tooling can identify both direct and indirect access paths\n- Consider implementing resource-based conditions that restrict access even when IAM permissions allow it\n- Use AWS Config rules to detect and alert on changes to S3 bucket permissions or IAM trust policies"
+    },
+    "cloudSiem": {
+      "cloudTrailEvents": "- `STS: AssumeRole` \u2014 Role assumption by user2 to gain indirect S3 bucket access; monitor for assumption of `pl-prod-rbr-di-role3`\n- `S3: GetObject` \u2014 Object retrieval from the sensitive bucket; monitor for access by unexpected principals or assumed-role sessions\n- `S3: ListBucket` \u2014 Bucket listing requests; monitor for enumeration of bucket contents from both direct and indirect principals",
+      "detonationLogs": "_Detonation log integration (Stratus Red Team / Grimoire) is planned for a future release._"
+    }
+  },
+  "slug": "test-reverse-blast-radius-direct-and-indirect-to-bucket"
+}

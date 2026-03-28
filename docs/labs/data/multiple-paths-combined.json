@@ -1,0 +1,106 @@
+{
+  "displayName": "Prod Role with Multiple Privilege Escalation Paths Module",
+  "name": "multiple-paths-combined",
+  "description": "Multiple privilege escalation techniques combined - EC2, Lambda, and CloudFormation paths to admin",
+  "costEstimate": "$0/mo",
+  "pathfindingCloudId": null,
+  "interactiveDemo": false,
+  "category": "Privilege Escalation",
+  "subCategory": "privilege-chaining",
+  "pathType": "multi-hop",
+  "target": "to-admin",
+  "environments": [
+    "prod"
+  ],
+  "attackPath": {
+    "principals": [
+      "arn:aws:iam::{account_id}:user/pl-pathfinding-starting-user-prod",
+      "arn:aws:iam::{account_id}:role/pl-prod-role-with-multiple-privesc-paths",
+      "arn:aws:iam::{account_id}:role/pl-EC2Admin"
+    ],
+    "summary": "starting_user \u2192 (AssumeRole) \u2192 starting_role \u2192 (PassRole + EC2/Lambda/CloudFormation) \u2192 admin role \u2192 admin access"
+  },
+  "permissions": {
+    "required": [
+      {
+        "permission": "iam:PassRole",
+        "resource": "arn:aws:iam::*:role/*"
+      },
+      {
+        "permission": "ec2:RunInstances",
+        "resource": "*"
+      },
+      {
+        "permission": "lambda:CreateFunction",
+        "resource": "*"
+      },
+      {
+        "permission": "cloudformation:CreateStack",
+        "resource": "*"
+      }
+    ],
+    "helpful": [
+      {
+        "permission": "iam:ListRoles",
+        "purpose": "Discover available privileged roles"
+      },
+      {
+        "permission": "ec2:DescribeInstances",
+        "purpose": "Verify EC2 escalation path"
+      },
+      {
+        "permission": "lambda:ListFunctions",
+        "purpose": "Verify Lambda escalation path"
+      }
+    ]
+  },
+  "mitreAttack": {
+    "tactics": [
+      "TA0004 - Privilege Escalation",
+      "TA0002 - Execution"
+    ],
+    "techniques": [
+      "T1098.001 - Account Manipulation: Additional Cloud Credentials",
+      "T1578 - Modify Cloud Compute Infrastructure",
+      "T1648 - Serverless Execution"
+    ]
+  },
+  "terraform": {
+    "variableName": "enable_single_account_privesc_multi_hop_to_admin_multiple_paths_combined",
+    "modulePath": "modules/scenarios/single-account/privesc-multi-hop/to-admin/multiple-paths-combined"
+  },
+  "githubUrl": "https://github.com/DataDog/pathfinding-labs/tree/main/modules/scenarios/single-account/privesc-multi-hop/to-admin/multiple-paths-combined",
+  "readme": {
+    "overview": "The attack paths are:\n1. `pl-pathfinding_starting_user_prod` assumes `pl-prod-role-with-multiple-privesc-paths`\n2. The role can then use multiple methods to escalate privileges:\n   - **EC2 Path**: Create EC2 instance with admin role \u2192 EC2 creates new admin role\n   - **Lambda Path**: Create Lambda function with admin role \u2192 Lambda creates new admin role\n   - **CloudFormation Path**: Create CloudFormation stack with admin role \u2192 Stack creates new admin role\n\nThis pattern is dangerous because it provides multiple attack vectors for privilege escalation. Service-trusting roles with admin access are extremely powerful, and the attack can be automated and scaled. Each service provides a different persistence mechanism, demonstrating real-world attack patterns used by adversaries.\n\nWhen this configuration appears in real environments, it is typically the result of overly permissive `iam:PassRole` grants combined with broad service creation permissions. A single role holding `iam:PassRole` plus the ability to launch EC2 instances, Lambda functions, or CloudFormation stacks is effectively equivalent to having administrative access.",
+    "mitreAttack": "- **Tactics**: TA0004 - Privilege Escalation, TA0002 - Execution\n- **Techniques**: T1098.001 - Account Manipulation: Additional Cloud Credentials, T1578 - Modify Cloud Compute Infrastructure, T1648 - Serverless Execution",
+    "attackDiagram": "graph LR\n    A[pl-pathfinding-starting-user-prod] -->|sts:AssumeRole| B[pl-prod-role-with-multiple-privesc-paths]\n    B -->|ec2:RunInstances + iam:PassRole| C[EC2 instance with admin role]\n    B -->|lambda:CreateFunction + iam:PassRole| D[Lambda function with admin role]\n    B -->|cloudformation:CreateStack + iam:PassRole| E[CloudFormation stack with admin role]\n    C -->|creates| F[new admin role]\n    D -->|creates| F\n    E -->|creates| F\n    F -->|trusts| A\n\n    style A fill:#ff9999,stroke:#333,stroke-width:2px\n    style B fill:#ffcc99,stroke:#333,stroke-width:2px\n    style C fill:#ffcc99,stroke:#333,stroke-width:2px\n    style D fill:#ffcc99,stroke:#333,stroke-width:2px\n    style E fill:#ffcc99,stroke:#333,stroke-width:2px\n    style F fill:#99ff99,stroke:#333,stroke-width:2px",
+    "attackSteps": "1. **Initial Access** \u2014 The attacker compromises `pl-pathfinding-starting-user-prod` credentials.\n2. **Hop 1 - Role Assumption** \u2014 Assume `pl-prod-role-with-multiple-privesc-paths` via `sts:AssumeRole`.\n3. **Hop 2 - Privilege Escalation (choose one path)**:\n   - **EC2 Path**: Call `ec2:RunInstances` with `iam:PassRole` to launch an EC2 instance attached to `pl-prod-ec2-admin-role`. The instance payload creates a new admin role that trusts the starting user.\n   - **Lambda Path**: Call `lambda:CreateFunction` with `iam:PassRole` to create a Lambda function using `pl-prod-lambda-admin-role`. Invoke the function; the payload creates a new admin role that trusts the starting user.\n   - **CloudFormation Path**: Call `cloudformation:CreateStack` with `iam:PassRole` to deploy a stack using `pl-prod-cloudformation-admin-role`. The stack template creates a new admin role that trusts the starting user.\n4. **Verification** \u2014 Assume the newly created admin role and call `sts:GetCallerIdentity` or `iam:ListAttachedRolePolicies` to confirm administrative access.",
+    "resourcesCreated": "| ARN | Purpose |\n|-----|---------|\n| `arn:aws:iam::{PROD_ACCOUNT}:role/pl-prod-role-with-multiple-privesc-paths` | Starting escalation role with PassRole + service creation permissions |\n| `arn:aws:iam::{PROD_ACCOUNT}:role/pl-prod-ec2-admin-role` | EC2 service admin role (trusts ec2.amazonaws.com, has AdministratorAccess) |\n| `arn:aws:iam::{PROD_ACCOUNT}:role/pl-prod-lambda-admin-role` | Lambda service admin role (trusts lambda.amazonaws.com, has AdministratorAccess) |\n| `arn:aws:iam::{PROD_ACCOUNT}:role/pl-prod-cloudformation-admin-role` | CloudFormation service admin role (trusts cloudformation.amazonaws.com, has AdministratorAccess) |",
+    "attackLab": {
+      "prerequisites": "1. Install the `plabs` CLI:\n   ```bash\n   brew install pathfinding-labs/tap/plabs\n   ```\n2. Configure your AWS profiles in `~/.plabs/plabs.yaml` (or run `plabs init` if you haven't already)",
+      "deployNonInteractive": "```bash\nplabs enable enable_single_account_privesc_multi_hop_to_admin_multiple_paths_combined\nplabs apply\n```",
+      "deployTui": "1. Launch the TUI: `plabs`\n2. Navigate to this scenario in the scenarios list\n3. Press `space` to enable it\n4. Press `d` to deploy",
+      "demoAttack": {
+        "intro": "The script will:\n1. Assume the privilege escalation role (`pl-prod-role-with-multiple-privesc-paths`)\n2. Create an EC2 instance with the admin role and payload\n3. Create a Lambda function with the admin role and payload\n4. Create a CloudFormation stack with the admin role and payload\n5. Verify that new admin roles were created by each service\n6. Clean up all created resources",
+        "resourcesCreated": "- EC2 instance with `pl-prod-ec2-admin-role` attached (terminated after verification)\n- Lambda function using `pl-prod-lambda-admin-role` (deleted after verification)\n- CloudFormation stack using `pl-prod-cloudformation-admin-role` (deleted after verification)\n- New admin IAM roles created by each service payload (deleted during cleanup)",
+        "nonInteractive": "```bash\nplabs demo --list\nplabs demo multiple-paths-combined\n```",
+        "tui": "1. Launch the TUI: `plabs`\n2. Navigate to this scenario in the scenarios list\n3. Press `r` to run the demo script"
+      },
+      "cleanup": {
+        "nonInteractive": "```bash\nplabs cleanup --list\nplabs cleanup multiple-paths-combined\n```",
+        "tui": "1. Launch the TUI: `plabs`\n2. Navigate to this scenario in the scenarios list\n3. Press `c` to run the cleanup script"
+      },
+      "teardownNonInteractive": "```bash\nplabs disable enable_single_account_privesc_multi_hop_to_admin_multiple_paths_combined\nplabs apply\n```",
+      "teardownTui": "1. Launch the TUI: `plabs`\n2. Navigate to this scenario in the scenarios list\n3. Press `space` to disable it\n4. Press `D` to destroy"
+    },
+    "cspm": {
+      "whatToDetect": "- `pl-prod-role-with-multiple-privesc-paths` has `iam:PassRole` combined with `ec2:RunInstances`, `lambda:CreateFunction`, and `cloudformation:CreateStack` \u2014 each pairing independently constitutes a privilege escalation path\n- Three service-linked admin roles (`pl-prod-ec2-admin-role`, `pl-prod-lambda-admin-role`, `pl-prod-cloudformation-admin-role`) each carry `AdministratorAccess`, making them high-value targets if any role with `iam:PassRole` can reference them\n- The starting role can be assumed by a non-privileged IAM user, creating a multi-hop path from a low-privilege identity to full administrative control via three different compute services",
+      "prevention": "- Remove `iam:PassRole` from any role that also holds compute service creation permissions (`ec2:RunInstances`, `lambda:CreateFunction`, `cloudformation:CreateStack`); these combinations are always privilege escalation paths\n- Apply permission boundaries to service execution roles so that even if they carry `AdministratorAccess` in their trust/attached policies, a boundary prevents IAM write operations\n- Use SCPs to restrict `iam:PassRole` to specific, approved role ARN patterns (e.g., only roles prefixed with `svc-`) rather than allowing `*`\n- Enforce least-privilege on CloudFormation stack creation by requiring a `cloudformation:RoleArn` condition that limits which roles can be assumed by CloudFormation\n- Audit all roles holding both `iam:PassRole` and any compute creation permission quarterly; alert on any new grant of this combination\n- Tag service admin roles with a sensitivity label and enforce that only approved automation can assume or pass them"
+    },
+    "cloudSiem": {
+      "cloudTrailEvents": "- `STS: AssumeRole` \u2014 initial role assumption from starting user into the escalation role; alert when a low-privilege user assumes a role with PassRole + compute creation permissions\n- `EC2: RunInstances` \u2014 EC2 instance launched with an IAM instance profile attached; high severity when the profile role carries AdministratorAccess\n- `Lambda: CreateFunction20150331` \u2014 Lambda function created with an execution role; alert when the role has AdministratorAccess\n- `Lambda: Invoke` \u2014 Lambda function invoked shortly after creation; escalation payload likely executing\n- `CloudFormation: CreateStack` \u2014 stack created with an explicit role ARN; alert when the role has AdministratorAccess and `CAPABILITY_NAMED_IAM` is used\n- `IAM: CreateRole` \u2014 new IAM role created from within an EC2 instance, Lambda function, or CloudFormation stack execution context; strong indicator of payload success\n- `IAM: AttachRolePolicy` \u2014 AdministratorAccess or similar managed policy attached to a newly created role\n- `STS: AssumeRole` \u2014 assumption of the newly created admin role by the original starting user identity; confirms successful escalation",
+      "detonationLogs": "_Detonation log integration (Stratus Red Team / Grimoire) is planned for a future release._"
+    }
+  },
+  "slug": "multiple-paths-combined"
+}

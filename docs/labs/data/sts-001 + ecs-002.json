@@ -1,0 +1,117 @@
+{
+  "displayName": "Multi-Hop Privilege Escalation via AssumeRole and ECS Fargate",
+  "name": "sts-001-to-ecs-002-to-admin",
+  "description": "Assume a role with ECS permissions, then use PassRole combined with ECS Fargate to run a task with an administrative role",
+  "costEstimate": "~$1/mo (ECS Fargate tasks incur minimal charges when run briefly for demonstrations)",
+  "pathfindingCloudId": "sts-001 + ecs-002",
+  "interactiveDemo": false,
+  "category": "Privilege Escalation",
+  "subCategory": "",
+  "pathType": "multi-hop",
+  "target": "to-admin",
+  "environments": [
+    "prod"
+  ],
+  "attackPath": {
+    "principals": [
+      "arn:aws:iam::{account_id}:user/pl-prod-sts001-ecs002-starting-user",
+      "arn:aws:iam::{account_id}:role/pl-prod-sts001-ecs002-starting-role",
+      "arn:aws:iam::{account_id}:role/pl-prod-sts001-ecs002-admin-role"
+    ],
+    "summary": "starting_user \u2192 (sts:AssumeRole) \u2192 starting_role \u2192 (iam:PassRole + ecs:CreateCluster + ecs:RegisterTaskDefinition + ecs:RunTask) \u2192 admin_role (via ECS task) \u2192 admin access"
+  },
+  "permissions": {
+    "required": [
+      {
+        "permission": "sts:AssumeRole",
+        "resource": "arn:aws:iam::*:role/pl-prod-sts001-ecs002-starting-role"
+      },
+      {
+        "permission": "iam:PassRole",
+        "resource": "arn:aws:iam::*:role/pl-prod-sts001-ecs002-admin-role"
+      },
+      {
+        "permission": "ecs:CreateCluster",
+        "resource": "*"
+      },
+      {
+        "permission": "ecs:RegisterTaskDefinition",
+        "resource": "*"
+      },
+      {
+        "permission": "ecs:RunTask",
+        "resource": "*"
+      }
+    ],
+    "helpful": [
+      {
+        "permission": "ec2:DescribeVpcs",
+        "purpose": "Find default VPC for Fargate network configuration"
+      },
+      {
+        "permission": "ec2:DescribeSubnets",
+        "purpose": "Find subnets for Fargate network configuration"
+      },
+      {
+        "permission": "ecs:DescribeTasks",
+        "purpose": "Monitor task status and completion"
+      },
+      {
+        "permission": "iam:ListRoles",
+        "purpose": "Discover available roles that trust ecs-tasks.amazonaws.com"
+      },
+      {
+        "permission": "iam:GetRole",
+        "purpose": "View role permissions and trust policies"
+      }
+    ]
+  },
+  "mitreAttack": {
+    "tactics": [
+      "TA0004 - Privilege Escalation"
+    ],
+    "techniques": [
+      "T1098.001 - Account Manipulation: Additional Cloud Credentials",
+      "T1578 - Modify Cloud Compute Infrastructure"
+    ]
+  },
+  "terraform": {
+    "variableName": "enable_single_account_privesc_multi_hop_to_admin_sts_001_to_ecs_002_to_admin",
+    "modulePath": "modules/scenarios/single-account/privesc-multi-hop/to-admin/sts-001-to-ecs-002-to-admin"
+  },
+  "githubUrl": "https://github.com/DataDog/pathfinding-labs/tree/main/modules/scenarios/single-account/privesc-multi-hop/to-admin/sts-001-to-ecs-002-to-admin",
+  "readme": {
+    "overview": "This scenario demonstrates a sophisticated two-hop privilege escalation attack that chains role assumption with Amazon ECS Fargate exploitation. The attack path exploits a common pattern where users are granted the ability to assume roles for operational purposes, and those roles have overly permissive ECS and IAM PassRole permissions that can be abused to gain administrative access.\n\nIn the first hop, an attacker with `sts:AssumeRole` permission assumes an intermediate role that has been configured with ECS management capabilities. This initial role assumption is often considered low-risk because the role itself doesn't have direct administrative permissions. However, the combination of `iam:PassRole`, `ecs:CreateCluster`, `ecs:RegisterTaskDefinition`, and `ecs:RunTask` permissions creates a dangerous privilege escalation opportunity.\n\nThe second hop leverages these ECS permissions to create infrastructure that executes with elevated privileges. The attacker creates an ECS cluster, registers a task definition that specifies an administrative role as the task role, and then runs the task on Fargate. When the task executes, it receives temporary credentials for the administrative role through the ECS credential provider. The attacker can then exfiltrate these credentials to gain full administrative access to the AWS environment.\n\nThis attack chain is particularly insidious because ECS is a legitimate service for running containerized workloads, and the individual permissions involved are commonly granted for DevOps and automation purposes. Organizations often overlook this privilege escalation path because it requires multiple steps and relies on understanding how ECS task roles work.",
+    "mitreAttack": "- **Tactics**:\n  - TA0004 - Privilege Escalation\n  - TA0002 - Execution\n- **Techniques**:\n  - T1098.001 - Account Manipulation: Additional Cloud Credentials\n  - T1578 - Modify Cloud Compute Infrastructure\n  - T1078.004 - Valid Accounts: Cloud Accounts (role assumption)\n  - T1610 - Deploy Container",
+    "attackDiagram": "graph LR\n    A[pl-prod-sts001-ecs002-starting-user] -->|sts:AssumeRole| B[pl-prod-sts001-ecs002-starting-role]\n    B -->|ecs:CreateCluster| C[ECS Cluster]\n    B -->|iam:PassRole + ecs:RegisterTaskDefinition| D[Task Definition with Admin Role]\n    D -->|ecs:RunTask| E[Fargate Task]\n    E -->|Task Role Credentials| F[pl-prod-sts001-ecs002-admin-role]\n    F -->|Administrator Access| G[Effective Administrator]\n\n    style A fill:#ff9999,stroke:#333,stroke-width:2px\n    style B fill:#ffcc99,stroke:#333,stroke-width:2px\n    style C fill:#ffcc99,stroke:#333,stroke-width:2px\n    style D fill:#ffcc99,stroke:#333,stroke-width:2px\n    style E fill:#ffcc99,stroke:#333,stroke-width:2px\n    style F fill:#ffcc99,stroke:#333,stroke-width:2px\n    style G fill:#99ff99,stroke:#333,stroke-width:2px",
+    "attackSteps": "1. **Initial Access**: Start as `pl-prod-sts001-ecs002-starting-user` (credentials provided via Terraform outputs)\n\n2. **Reconnaissance** (optional): Use `iam:ListRoles` and `iam:GetRole` to identify assumable roles and understand their permissions\n\n3. **Hop 1 - Assume Starting Role**: Use `sts:AssumeRole` to assume `pl-prod-sts001-ecs002-starting-role` and obtain temporary credentials with ECS management permissions\n\n4. **Hop 2 - Create ECS Cluster**: Use `ecs:CreateCluster` to create a new ECS cluster that will host the malicious task\n\n5. **Hop 2 - Register Task Definition**: Use `ecs:RegisterTaskDefinition` with `iam:PassRole` to register a task definition that specifies `pl-prod-sts001-ecs002-admin-role` as the task role. The task should run a container that extracts and outputs the AWS credentials\n\n6. **Hop 2 - Run Task**: Use `ecs:RunTask` to launch the task on Fargate, which will execute with the admin role's permissions\n\n7. **Hop 2 - Extract Credentials**: Retrieve the task's output (via CloudWatch Logs or task metadata) to obtain the admin role's temporary credentials\n\n8. **Verification**: Configure AWS CLI with the extracted admin credentials and verify administrative access by performing privileged operations (e.g., `iam:ListUsers`, `iam:CreateUser`)",
+    "resourcesCreated": "| ARN | Purpose |\n| -- | -- |\n| `arn:aws:iam::PROD_ACCOUNT:user/pl-prod-sts001-ecs002-starting-user` | Scenario-specific starting user with sts:AssumeRole permission on the starting role |\n| `arn:aws:iam::PROD_ACCOUNT:role/pl-prod-sts001-ecs002-starting-role` | Intermediate role with ECS management permissions and iam:PassRole on the admin role |\n| `arn:aws:iam::PROD_ACCOUNT:role/pl-prod-sts001-ecs002-admin-role` | Target admin role with AdministratorAccess, trusts ecs-tasks.amazonaws.com (also serves as task execution role) |",
+    "attackLab": {
+      "prerequisites": "1. Install the `plabs` CLI:\n   ```bash\n   brew install pathfinding-labs/tap/plabs\n   ```\n2. Configure your AWS profiles in `~/.plabs/plabs.yaml` (or run `plabs init` if you haven't already)",
+      "deployNonInteractive": "```bash\nplabs enable enable_single_account_privesc_multi_hop_to_admin_sts_001_to_ecs_002_to_admin\nplabs apply\n```",
+      "deployTui": "1. Launch the TUI: `plabs`\n2. Navigate to this scenario in the scenarios list\n3. Press `space` to enable it\n4. Press `d` to deploy",
+      "demoAttack": {
+        "intro": "The script will:\n1. Display a step-by-step walkthrough with color-coded output\n2. Assume the starting role to obtain ECS management permissions\n3. Create an ECS cluster for hosting the malicious task\n4. Register a task definition with the admin role attached\n5. Run the task on Fargate and wait for completion\n6. Extract the admin role credentials from the task output\n7. Verify successful privilege escalation to administrator\n8. Output standardized test results for automation",
+        "resourcesCreated": "- ECS cluster (`pl-prod-sts001-ecs002-attack-cluster`)\n- ECS task definition (`pl-prod-sts001-ecs002-attack-task`) with admin role attached\n- CloudWatch log group (`/ecs/pl-sts001-ecs002-admin-escalation`)\n- Temporary task definition JSON file (`/tmp/task-definition.json`)",
+        "nonInteractive": "```bash\nplabs demo --list\nplabs demo sts-001-to-ecs-002-to-admin\n```",
+        "tui": "1. Launch the TUI: `plabs`\n2. Navigate to this scenario in the scenarios list\n3. Press `r` to run the demo script"
+      },
+      "cleanup": {
+        "nonInteractive": "```bash\nplabs cleanup --list\nplabs cleanup sts-001-to-ecs-002-to-admin\n```",
+        "tui": "1. Launch the TUI: `plabs`\n2. Navigate to this scenario in the scenarios list\n3. Press `c` to run the cleanup script"
+      },
+      "teardownNonInteractive": "```bash\nplabs disable enable_single_account_privesc_multi_hop_to_admin_sts_001_to_ecs_002_to_admin\nplabs apply\n```",
+      "teardownTui": "1. Launch the TUI: `plabs`\n2. Navigate to this scenario in the scenarios list\n3. Press `space` to disable it\n4. Press `D` to destroy"
+    },
+    "cspm": {
+      "whatToDetect": "A properly configured Cloud Security Posture Management tool should identify the following risks in this scenario:\n\n**High Severity Findings:**\n- IAM role has `ecs:RegisterTaskDefinition` combined with `iam:PassRole` - allows task role injection\n- IAM role can pass administrative roles to ECS tasks\n- Administrative role trusts `ecs-tasks.amazonaws.com` - can be assumed by ECS tasks\n- Multi-hop privilege escalation path from starting user to administrator via ECS\n- User can assume role with dangerous ECS/PassRole combination\n\n**Medium Severity Findings:**\n- IAM role has `ecs:CreateCluster` permission - allows creation of compute resources\n- IAM role has `ecs:RunTask` permission - allows code execution in account\n- Administrative role exists that trusts AWS service principals\n- ECS task execution role with broad permissions exists\n\n**Attack Path Detection:**\n- Path: `starting-user` -> `sts:AssumeRole` -> `starting-role` -> `iam:PassRole + ecs:*` -> `admin-role` (via ECS task)\n- Risk: Complete environment compromise through chained privilege escalation via container service",
+      "prevention": "- **Restrict iam:PassRole with conditions**: Limit which roles can be passed and to which services using conditions: `\"Condition\": {\"StringEquals\": {\"iam:PassedToService\": \"ecs-tasks.amazonaws.com\"}, \"ArnNotLike\": {\"iam:AssociatedResourceArn\": \"*admin*\"}}`\n\n- **Separate ECS permissions from PassRole**: Avoid granting both `ecs:RegisterTaskDefinition` and `iam:PassRole` to the same principal - this combination enables task role injection attacks\n\n- **Use permission boundaries on task roles**: Apply permission boundaries that explicitly deny administrative actions to roles that trust `ecs-tasks.amazonaws.com`\n\n- **Restrict trust policies on administrative roles**: Administrative roles should not trust service principals like `ecs-tasks.amazonaws.com`. Use dedicated, least-privilege task roles instead\n\n- **Implement SCPs for ECS task roles**: Organization-level SCPs can prevent ECS tasks from using roles with administrative permissions regardless of their attached policies\n\n- **Monitor ECS task definitions**: Set up CloudWatch Events/EventBridge rules to alert when task definitions are registered with privileged task roles\n\n- **Use AWS Config rules**: Implement Config rules to detect IAM roles with AdministratorAccess that trust ECS service principals\n\n- **Require task definition review**: Implement approval workflows for task definition changes that include privileged roles\n\n- **Enable VPC Flow Logs**: Monitor network traffic from ECS tasks to detect credential exfiltration attempts via the container metadata service\n\n- **Limit sts:AssumeRole permissions**: Use resource-based conditions to restrict which roles users can assume, preventing lateral movement to roles with dangerous permissions"
+    },
+    "cloudSiem": {
+      "cloudTrailEvents": "- `STS: AssumeRole` \u2014 Role assumption (initial escalation step); monitor for assumption of roles with ECS management permissions\n- `ECS: CreateCluster` \u2014 New ECS cluster created; suspicious when not part of a normal deployment workflow\n- `ECS: RegisterTaskDefinition` \u2014 Task definition registered; critical when `taskRoleArn` points to a privileged role\n- `ECS: RunTask` \u2014 Task execution initiated; high severity when combined with a recently registered task definition bearing an admin role\n- `IAM: PassRole` \u2014 Role passed to ECS service (implicit in RegisterTaskDefinition); critical when the passed role has AdministratorAccess",
+      "detonationLogs": "_Detonation log integration (Stratus Red Team / Grimoire) is planned for a future release._"
+    },
+    "references": "- [pathfinding.cloud - sts-001](https://pathfinding.cloud/paths/sts-001) - STS AssumeRole privilege escalation\n- [pathfinding.cloud - ecs-002](https://pathfinding.cloud/paths/ecs-002) - ECS PassRole + Task execution privilege escalation\n- [MITRE ATT&CK T1098.001](https://attack.mitre.org/techniques/T1098/001/) - Account Manipulation: Additional Cloud Credentials\n- [MITRE ATT&CK T1578](https://attack.mitre.org/techniques/T1578/) - Modify Cloud Compute Infrastructure\n- [AWS ECS Task IAM Roles](https://docs.aws.amazon.com/AmazonECS/latest/developerguide/task-iam-roles.html) - AWS documentation on ECS task roles\n- [AWS IAM PassRole](https://docs.aws.amazon.com/IAM/latest/UserGuide/id_roles_use_passrole.html) - Understanding the PassRole permission\n- [AWS Fargate Security](https://docs.aws.amazon.com/AmazonECS/latest/bestpracticesguide/security-fargate.html) - Best practices for securing Fargate workloads"
+  },
+  "slug": "sts-001 + ecs-002"
+}

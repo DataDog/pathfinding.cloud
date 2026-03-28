@@ -1,0 +1,103 @@
+{
+  "displayName": "One-Hop Privilege Escalation: iam:PutUserPolicy + iam:CreateAccessKey",
+  "name": "iam-018-iam-putuserpolicy+iam-createaccesskey",
+  "description": "User-to-user lateral movement via policy modification and credential creation",
+  "costEstimate": "$0/mo",
+  "pathfindingCloudId": "iam-018",
+  "interactiveDemo": false,
+  "category": "Privilege Escalation",
+  "subCategory": "principal-access",
+  "pathType": "one-hop",
+  "target": "to-admin",
+  "environments": [
+    "prod"
+  ],
+  "attackPath": {
+    "principals": [
+      "arn:aws:iam::{account_id}:user/pl-prod-iam-018-to-admin-starting-user",
+      "arn:aws:iam::{account_id}:user/pl-prod-iam-018-to-admin-target-user"
+    ],
+    "summary": "starting_user \u2192 (PutUserPolicy on target_user) \u2192 (CreateAccessKey for target_user) \u2192 authenticate as target_user \u2192 admin access"
+  },
+  "permissions": {
+    "required": [
+      {
+        "permission": "iam:PutUserPolicy",
+        "resource": "arn:aws:iam::*:user/pl-prod-iam-018-to-admin-target-user"
+      },
+      {
+        "permission": "iam:CreateAccessKey",
+        "resource": "arn:aws:iam::*:user/pl-prod-iam-018-to-admin-target-user"
+      }
+    ],
+    "helpful": [
+      {
+        "permission": "iam:ListUsers",
+        "purpose": "Discover target users to escalate through"
+      },
+      {
+        "permission": "iam:GetUser",
+        "purpose": "Get target user details and current permissions"
+      },
+      {
+        "permission": "iam:ListUserPolicies",
+        "purpose": "List inline policies on target user"
+      },
+      {
+        "permission": "iam:GetUserPolicy",
+        "purpose": "View target user's inline policies"
+      },
+      {
+        "permission": "iam:ListAccessKeys",
+        "purpose": "List existing access keys for target user"
+      }
+    ]
+  },
+  "mitreAttack": {
+    "tactics": [
+      "TA0004 - Privilege Escalation",
+      "TA0003 - Persistence"
+    ],
+    "techniques": [
+      "T1098.001 - Account Manipulation: Additional Cloud Credentials"
+    ]
+  },
+  "terraform": {
+    "variableName": "enable_single_account_privesc_one_hop_to_admin_iam_018_iam_putuserpolicy_iam_createaccesskey",
+    "modulePath": "modules/scenarios/single-account/privesc-one-hop/to-admin/iam-018-iam-putuserpolicy+iam-createaccesskey"
+  },
+  "githubUrl": "https://github.com/DataDog/pathfinding-labs/tree/main/modules/scenarios/single-account/privesc-one-hop/to-admin/iam-018-iam-putuserpolicy+iam-createaccesskey",
+  "readme": {
+    "overview": "This scenario demonstrates a compound privilege escalation vulnerability where a user has both `iam:PutUserPolicy` and `iam:CreateAccessKey` permissions on a target user. This dangerous combination allows an attacker to modify another user's permissions and then authenticate as that user.\n\nThe attack involves two critical steps: first, the attacker adds an inline policy with administrative permissions to the target user using `iam:PutUserPolicy`. Then, they create access keys for that target user using `iam:CreateAccessKey`. With these new credentials, the attacker can authenticate as the target user and gain the administrative permissions they just granted.\n\nThis represents a lateral movement privilege escalation path, where the attacker pivots from one user identity to another, more privileged identity. It's particularly dangerous because it combines policy modification with credential creation, creating a complete attack chain from limited access to full administrative control.",
+    "mitreAttack": "- **Tactic**: Privilege Escalation (TA0004), Persistence (TA0003)\n- **Technique**: T1098.001 - Account Manipulation: Additional Cloud Credentials\n- **Sub-technique**: Creating additional credentials for privileged accounts and modifying account permissions",
+    "attackDiagram": "graph LR\n    A[pl-prod-iam-018-to-admin-starting-user] -->|iam:PutUserPolicy| B[pl-prod-iam-018-to-admin-target-user]\n    B -->|iam:CreateAccessKey| C[New Access Keys]\n    C -->|Authenticate| D[pl-prod-iam-018-to-admin-target-user<br/>with Admin Access]\n    D -->|Administrator Access| E[Effective Administrator]\n\n    style A fill:#ff9999,stroke:#333,stroke-width:2px\n    style B fill:#ffcc99,stroke:#333,stroke-width:2px\n    style C fill:#ffcc99,stroke:#333,stroke-width:2px\n    style D fill:#ffcc99,stroke:#333,stroke-width:2px\n    style E fill:#99ff99,stroke:#333,stroke-width:2px",
+    "attackSteps": "1. **Initial Access**: Start as `pl-prod-iam-018-to-admin-starting-user` (credentials provided via Terraform outputs)\n2. **Modify Target User Permissions**: Use `iam:PutUserPolicy` to add an inline policy with `AdministratorAccess` permissions to `pl-prod-iam-018-to-admin-target-user`\n3. **Create Access Keys**: Use `iam:CreateAccessKey` to create new access keys for the target user\n4. **Switch Context**: Configure AWS CLI with the newly created access keys to authenticate as the target user\n5. **Verification**: Verify administrator access with the target user's credentials",
+    "resourcesCreated": "| ARN | Purpose |\n| -- | -- |\n| `arn:aws:iam::PROD_ACCOUNT:user/pl-prod-iam-018-to-admin-starting-user` | Scenario-specific starting user with access keys and inline policy for lateral movement permissions |\n| `arn:aws:iam::PROD_ACCOUNT:user/pl-prod-iam-018-to-admin-target-user` | Target user that will be granted admin permissions and have credentials created (initially has minimal permissions) |",
+    "attackLab": {
+      "prerequisites": "1. Install the `plabs` CLI:\n   ```bash\n   brew install pathfinding-labs/tap/plabs\n   ```\n2. Configure your AWS profiles in `~/.plabs/plabs.yaml` (or run `plabs init` if you haven't already)",
+      "deployNonInteractive": "```bash\nplabs enable enable_single_account_privesc_one_hop_to_admin_iam_018_iam_putuserpolicy_iam_createaccesskey\nplabs apply\n```",
+      "deployTui": "1. Launch the TUI: `plabs`\n2. Navigate to this scenario in the scenarios list\n3. Press `space` to enable it\n4. Press `d` to deploy",
+      "demoAttack": {
+        "intro": "The script will:\n1. Display a step-by-step walkthrough with color-coded output\n2. Show the commands being executed and their results\n3. Verify successful privilege escalation\n4. Output standardized test results for automation",
+        "resourcesCreated": "- Inline policy added to `pl-prod-iam-018-to-admin-target-user` granting `AdministratorAccess`\n- New access keys for `pl-prod-iam-018-to-admin-target-user`",
+        "nonInteractive": "```bash\nplabs demo --list\nplabs demo iam-018-iam-putuserpolicy+iam-createaccesskey\n```",
+        "tui": "1. Launch the TUI: `plabs`\n2. Navigate to this scenario in the scenarios list\n3. Press `r` to run the demo script"
+      },
+      "cleanup": {
+        "nonInteractive": "```bash\nplabs cleanup --list\nplabs cleanup iam-018-iam-putuserpolicy+iam-createaccesskey\n```",
+        "tui": "1. Launch the TUI: `plabs`\n2. Navigate to this scenario in the scenarios list\n3. Press `c` to run the cleanup script"
+      },
+      "teardownNonInteractive": "```bash\nplabs disable enable_single_account_privesc_one_hop_to_admin_iam_018_iam_putuserpolicy_iam_createaccesskey\nplabs apply\n```",
+      "teardownTui": "1. Launch the TUI: `plabs`\n2. Navigate to this scenario in the scenarios list\n3. Press `space` to disable it\n4. Press `D` to destroy"
+    },
+    "cspm": {
+      "whatToDetect": "- IAM user (`pl-prod-iam-018-to-admin-starting-user`) has `iam:PutUserPolicy` permission targeting another IAM user (`pl-prod-iam-018-to-admin-target-user`)\n- IAM user has `iam:CreateAccessKey` permission targeting another IAM user \u2014 enabling credential theft\n- Combined `iam:PutUserPolicy` + `iam:CreateAccessKey` on the same target user constitutes a complete privilege escalation path\n- Cross-user IAM management permissions present without resource-level restrictions",
+      "prevention": "- Never grant `iam:PutUserPolicy` permissions that allow modifying other users' policies\n- Restrict `iam:CreateAccessKey` to prevent users from creating credentials for other users; use `Condition: {\"StringLike\": {\"iam:ResourceTag/aws:username\": \"${aws:username}\"}}` to enforce self-only operations\n- Use SCPs to prevent cross-user IAM policy modifications: `Deny iam:PutUserPolicy where aws:userId != ${aws:userid}`\n- Use IAM Access Analyzer to identify users with permissions on other IAM principals\n- Use resource-based conditions to restrict which users can be modified: `\"Resource\": \"arn:aws:iam::*:user/${aws:username}\"`\n- Regularly audit IAM permissions to identify and remediate cross-user management capabilities"
+    },
+    "cloudSiem": {
+      "cloudTrailEvents": "- `IAM: PutUserPolicy` \u2014 Inline policy added to an IAM user; critical when targeting a user other than the caller and when the policy grants elevated permissions\n- `IAM: CreateAccessKey` \u2014 New access keys created for an IAM user; critical when the caller and the target user differ, indicating cross-user credential creation",
+      "detonationLogs": "_Detonation log integration (Stratus Red Team / Grimoire) is planned for a future release._"
+    }
+  },
+  "slug": "iam-018"
+}

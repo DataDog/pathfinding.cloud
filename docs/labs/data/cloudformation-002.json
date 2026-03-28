@@ -1,0 +1,97 @@
+{
+  "displayName": "Privilege Escalation via cloudformation:UpdateStack",
+  "name": "cloudformation-002-cloudformation-updatestack",
+  "description": "Modifying existing CloudFormation stack to create admin role using stack's elevated service role",
+  "costEstimate": "$0/mo",
+  "pathfindingCloudId": "cloudformation-002",
+  "interactiveDemo": false,
+  "category": "Privilege Escalation",
+  "subCategory": "existing-passrole",
+  "pathType": "one-hop",
+  "target": "to-admin",
+  "environments": [
+    "prod"
+  ],
+  "attackPath": {
+    "principals": [
+      "arn:aws:iam::{account_id}:user/pl-prod-cloudformation-002-to-admin-starting-user",
+      "arn:aws:iam::{account_id}:role/pl-prod-cloudformation-002-to-admin-stack-role",
+      "arn:aws:iam::{account_id}:role/pl-prod-cloudformation-002-to-admin-escalated-role"
+    ],
+    "summary": "starting_user \u2192 (cloudformation:UpdateStack) \u2192 stack (with admin service role) \u2192 creates escalated admin role \u2192 (sts:AssumeRole) \u2192 admin access"
+  },
+  "permissions": {
+    "required": [
+      {
+        "permission": "cloudformation:UpdateStack",
+        "resource": "arn:aws:cloudformation:*:*:stack/pl-prod-cloudformation-002-to-admin-stack/*"
+      }
+    ],
+    "helpful": [
+      {
+        "permission": "cloudformation:DescribeStacks",
+        "purpose": "View stack details and verify stack configuration"
+      },
+      {
+        "permission": "cloudformation:GetTemplate",
+        "purpose": "Retrieve current stack template for modification"
+      },
+      {
+        "permission": "iam:GetRole",
+        "purpose": "Verify the escalated role was created by the stack update"
+      },
+      {
+        "permission": "sts:AssumeRole",
+        "purpose": "Assume the escalated role created by stack update"
+      }
+    ]
+  },
+  "mitreAttack": {
+    "tactics": [
+      "TA0004 - Privilege Escalation",
+      "TA0003 - Persistence"
+    ],
+    "techniques": [
+      "T1098 - Account Manipulation",
+      "T1098.001 - Account Manipulation: Additional Cloud Credentials"
+    ]
+  },
+  "terraform": {
+    "variableName": "enable_single_account_privesc_one_hop_to_admin_cloudformation_002_cloudformation_updatestack",
+    "modulePath": "modules/scenarios/single-account/privesc-one-hop/to-admin/cloudformation-002-cloudformation-updatestack"
+  },
+  "githubUrl": "https://github.com/DataDog/pathfinding-labs/tree/main/modules/scenarios/single-account/privesc-one-hop/to-admin/cloudformation-002-cloudformation-updatestack",
+  "readme": {
+    "overview": "This scenario demonstrates a sophisticated privilege escalation vulnerability where a user with `cloudformation:UpdateStack` permission can modify an existing CloudFormation stack that has an administrative service role attached. CloudFormation stacks execute with the permissions of their service role, which often requires elevated privileges to manage infrastructure. By updating the stack template to include new IAM resources, an attacker can leverage the stack's elevated permissions to create resources they couldn't create directly.\n\nIn production environments, CloudFormation stacks frequently have administrative or near-administrative service roles to allow them to provision and manage diverse AWS resources. DevOps teams may grant developers `cloudformation:UpdateStack` permissions for legitimate infrastructure updates, but this creates an indirect privilege escalation path. The attacker doesn't need direct IAM permissions to create roles or policies - they only need the ability to modify a stack that already has those permissions.\n\nThis attack is particularly insidious because it appears as legitimate infrastructure management activity. The CloudFormation stack update follows normal change management processes, making it difficult to distinguish from authorized infrastructure modifications. Organizations often overlook this privilege escalation vector because the UpdateStack permission seems less dangerous than direct IAM permissions, yet it provides equivalent access through the stack's service role.",
+    "mitreAttack": "- **Tactic**: TA0004 - Privilege Escalation, TA0003 - Persistence\n- **Technique**: T1098 - Account Manipulation\n- **Sub-technique**: T1098.001 - Account Manipulation: Additional Cloud Credentials",
+    "attackDiagram": "graph LR\n    A[pl-prod-cloudformation-002-to-admin-starting-user] -->|cloudformation:UpdateStack| B[CloudFormation Stack]\n    B -->|Executes with| C[pl-prod-cloudformation-002-to-admin-stack-role]\n    C -->|iam:CreateRole| D[pl-prod-cloudformation-002-to-admin-escalated-role]\n    A -->|sts:AssumeRole| D\n    D -->|Administrator Access| E[Effective Administrator]\n\n    style A fill:#ff9999,stroke:#333,stroke-width:2px\n    style B fill:#ffcc99,stroke:#333,stroke-width:2px\n    style C fill:#ffcc99,stroke:#333,stroke-width:2px\n    style D fill:#ffcc99,stroke:#333,stroke-width:2px\n    style E fill:#99ff99,stroke:#333,stroke-width:2px",
+    "attackSteps": "1. **Initial Access**: Start as `pl-prod-cloudformation-002-to-admin-starting-user` (credentials provided via Terraform outputs)\n2. **Retrieve Existing Template**: Use `cloudformation:GetTemplate` to download the current stack template\n3. **Modify Template**: Add a new IAM role resource to the template with AdministratorAccess policy and a trust relationship allowing the starting user to assume it\n4. **Update Stack**: Use `cloudformation:UpdateStack` to apply the modified template, leveraging the stack's admin service role to create the new role\n5. **Assume Escalated Role**: Use `sts:AssumeRole` to assume the newly created admin role\n6. **Verification**: Verify administrator access by listing IAM users or performing other admin-level actions",
+    "resourcesCreated": "| ARN | Purpose |\n| -- | -- |\n| `arn:aws:iam::PROD_ACCOUNT:user/pl-prod-cloudformation-002-to-admin-starting-user` | Scenario-specific starting user with access keys and cloudformation:UpdateStack permission |\n| `arn:aws:iam::PROD_ACCOUNT:role/pl-prod-cloudformation-002-to-admin-stack-role` | CloudFormation service role with AdministratorAccess used by the stack |\n| `arn:aws:cloudformation:*:PROD_ACCOUNT:stack/pl-prod-cloudformation-002-to-admin-stack/*` | CloudFormation stack that can be updated by the starting user |\n| `arn:aws:iam::PROD_ACCOUNT:role/pl-prod-cloudformation-002-to-admin-escalated-role` | Admin role created during stack update (created by demo script) |",
+    "attackLab": {
+      "prerequisites": "1. Install the `plabs` CLI:\n   ```bash\n   brew install pathfinding-labs/tap/plabs\n   ```\n2. Configure your AWS profiles in `~/.plabs/plabs.yaml` (or run `plabs init` if you haven't already)",
+      "deployNonInteractive": "```bash\nplabs enable enable_single_account_privesc_one_hop_to_admin_cloudformation_002_cloudformation_updatestack\nplabs apply\n```",
+      "deployTui": "1. Launch the TUI: `plabs`\n2. Navigate to this scenario in the scenarios list\n3. Press `space` to enable it\n4. Press `d` to deploy",
+      "demoAttack": {
+        "intro": "The script will:\n1. Display a step-by-step walkthrough with color-coded output\n2. Show the commands being executed and their results\n3. Verify successful privilege escalation\n4. Output standardized test results for automation",
+        "resourcesCreated": "- New IAM role (`pl-prod-cloudformation-002-to-admin-escalated-role`) with `AdministratorAccess` policy, created via CloudFormation stack update",
+        "nonInteractive": "```bash\nplabs demo --list\nplabs demo cloudformation-002-cloudformation-updatestack\n```",
+        "tui": "1. Launch the TUI: `plabs`\n2. Navigate to this scenario in the scenarios list\n3. Press `r` to run the demo script"
+      },
+      "cleanup": {
+        "nonInteractive": "```bash\nplabs cleanup --list\nplabs cleanup cloudformation-002-cloudformation-updatestack\n```",
+        "tui": "1. Launch the TUI: `plabs`\n2. Navigate to this scenario in the scenarios list\n3. Press `c` to run the cleanup script"
+      },
+      "teardownNonInteractive": "```bash\nplabs disable enable_single_account_privesc_one_hop_to_admin_cloudformation_002_cloudformation_updatestack\nplabs apply\n```",
+      "teardownTui": "1. Launch the TUI: `plabs`\n2. Navigate to this scenario in the scenarios list\n3. Press `space` to disable it\n4. Press `D` to destroy"
+    },
+    "cspm": {
+      "whatToDetect": "- IAM principal has `cloudformation:UpdateStack` permission on a stack with an administrative service role attached\n- CloudFormation stack service role has `AdministratorAccess` or equivalent IAM write permissions, creating a privilege escalation path for any user who can update the stack\n- Privilege escalation path detected: starting user can create IAM roles and policies indirectly via CloudFormation stack update",
+      "prevention": "- Implement least privilege principles for CloudFormation service roles - avoid granting AdministratorAccess when more granular permissions suffice\n- Restrict `cloudformation:UpdateStack` permissions to specific users/roles who require infrastructure management capabilities\n- Use CloudFormation stack policies to prevent modifications to sensitive resources: `\"Effect\": \"Deny\", \"Principal\": \"*\", \"Action\": \"Update:*\", \"Resource\": \"LogicalResourceId/SensitiveRole\"`\n- Implement Service Control Policies (SCPs) to restrict CloudFormation stack updates that create or modify IAM resources\n- Monitor CloudTrail for `UpdateStack` API calls, especially those that modify stacks with elevated service roles\n- Use resource-based conditions to limit UpdateStack permissions to specific stacks: `\"Condition\": {\"StringEquals\": {\"cloudformation:StackId\": \"arn:aws:cloudformation:*:*:stack/approved-stack/*\"}}`\n- Enable CloudFormation drift detection and alerts to identify unauthorized stack modifications\n- Require MFA for CloudFormation updates using condition keys like `aws:MultiFactorAuthPresent`\n- Use IAM Access Analyzer to identify and remediate privilege escalation paths involving CloudFormation permissions\n- Implement change approval workflows for CloudFormation stack updates that modify IAM resources\n- Regularly audit CloudFormation service roles and reduce permissions to the minimum required for stack operations"
+    },
+    "cloudSiem": {
+      "cloudTrailEvents": "- `CloudFormation: UpdateStack` \u2014 CloudFormation stack update executed; high severity when the stack has an elevated service role and the update modifies IAM resources\n- `IAM: CreateRole` \u2014 New IAM role created; critical when triggered by a CloudFormation stack execution with an administrative service role\n- `IAM: AttachRolePolicy` \u2014 Managed policy attached to a role; critical when `AdministratorAccess` or other high-privilege policies are attached via CloudFormation\n- `STS: AssumeRole` \u2014 Role assumption; investigate when the assumed role was recently created by a CloudFormation stack update",
+      "detonationLogs": "_Detonation log integration (Stratus Red Team / Grimoire) is planned for a future release._"
+    }
+  },
+  "slug": "cloudformation-002"
+}

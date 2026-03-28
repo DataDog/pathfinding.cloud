@@ -1,0 +1,120 @@
+{
+  "displayName": "Privilege Escalation via iam:PassRole + cloudformation:CreateStackSet + cloudformation:CreateStackInstances",
+  "name": "cloudformation-003-iam-passrole+cloudformation-createstackset+cloudformation-createstackinstances",
+  "description": "Passing administrative execution role to CloudFormation StackSet to create escalated IAM resources",
+  "costEstimate": "$0/mo",
+  "pathfindingCloudId": "cloudformation-003",
+  "interactiveDemo": false,
+  "category": "Privilege Escalation",
+  "subCategory": "new-passrole",
+  "pathType": "one-hop",
+  "target": "to-admin",
+  "environments": [
+    "prod"
+  ],
+  "attackPath": {
+    "principals": [
+      "arn:aws:iam::{account_id}:user/pl-prod-cloudformation-003-to-admin-starting-user",
+      "arn:aws:iam::{account_id}:role/pl-prod-cloudformation-003-to-admin-execution-role",
+      "arn:aws:iam::{account_id}:role/pl-prod-cloudformation-003-to-admin-escalated-role"
+    ],
+    "summary": "starting_user \u2192 (PassRole + cloudformation:CreateStackSet + CreateStackInstances) \u2192 StackSet creates role with admin \u2192 assume escalated role \u2192 admin access"
+  },
+  "permissions": {
+    "required": [
+      {
+        "permission": "iam:PassRole",
+        "resource": "arn:aws:iam::*:role/pl-prod-cloudformation-003-to-admin-execution-role"
+      },
+      {
+        "permission": "cloudformation:CreateStackSet",
+        "resource": "*"
+      },
+      {
+        "permission": "cloudformation:CreateStackInstances",
+        "resource": "*"
+      }
+    ],
+    "helpful": [
+      {
+        "permission": "cloudformation:DescribeStackSet",
+        "purpose": "Monitor StackSet creation progress"
+      },
+      {
+        "permission": "cloudformation:DescribeStackSetOperation",
+        "purpose": "Check StackSet operation status"
+      },
+      {
+        "permission": "cloudformation:ListStackInstances",
+        "purpose": "List stack instances for cleanup"
+      },
+      {
+        "permission": "cloudformation:DeleteStackInstances",
+        "purpose": "Delete stack instances during cleanup"
+      },
+      {
+        "permission": "cloudformation:DeleteStackSet",
+        "purpose": "Clean up attack artifacts"
+      },
+      {
+        "permission": "iam:ListRoles",
+        "purpose": "Discover available privileged roles to pass"
+      },
+      {
+        "permission": "iam:GetRole",
+        "purpose": "Verify the escalated role was created"
+      },
+      {
+        "permission": "sts:AssumeRole",
+        "purpose": "Assume the escalated role for admin access"
+      }
+    ]
+  },
+  "mitreAttack": {
+    "tactics": [
+      "TA0004 - Privilege Escalation",
+      "TA0003 - Persistence"
+    ],
+    "techniques": [
+      "T1098.001 - Account Manipulation: Additional Cloud Credentials"
+    ]
+  },
+  "terraform": {
+    "variableName": "enable_single_account_privesc_one_hop_to_admin_cloudformation_003_iam_passrole_cloudformation_createstackset_cloudformation_createstackinstances",
+    "modulePath": "modules/scenarios/single-account/privesc-one-hop/to-admin/cloudformation-003-iam-passrole+cloudformation-createstackset+cloudformation-createstackinstances"
+  },
+  "githubUrl": "https://github.com/DataDog/pathfinding-labs/tree/main/modules/scenarios/single-account/privesc-one-hop/to-admin/cloudformation-003-iam-passrole+cloudformation-createstackset+cloudformation-createstackinstances",
+  "readme": {
+    "overview": "This scenario demonstrates a sophisticated privilege escalation vulnerability where a user with both `iam:PassRole` and `cloudformation:CreateStackSet` permissions can escalate privileges by passing an administrative execution role to CloudFormation StackSets. CloudFormation StackSets are designed to deploy stacks across multiple AWS accounts and regions, but they can also be used within a single account to create resources with elevated permissions.\n\nThe attack exploits the StackSet execution model, which requires two roles: an administration role (used by the AWS service) and an execution role (used to perform the actual resource creation). When a user can pass a privileged execution role to a StackSet and deploy CloudFormation templates, they can create IAM resources such as roles, users, or policies with any permissions defined in the template. The attacker then assumes the newly created escalated role to gain administrative access.\n\nThis privilege escalation path is particularly dangerous because it leverages a legitimate AWS service (CloudFormation StackSets) to create privileged resources indirectly. Many organizations grant `cloudformation:CreateStackSet` permissions without fully understanding the privilege escalation implications when combined with `iam:PassRole` on administrative execution roles. The attack is stealthy, as the resource creation appears to be a normal infrastructure deployment operation, and it provides persistence through the newly created IAM role.",
+    "mitreAttack": "- **Tactic**: TA0004 - Privilege Escalation, TA0003 - Persistence\n- **Technique**: T1098.001 - Account Manipulation: Additional Cloud Credentials",
+    "attackDiagram": "graph LR\n    A[pl-prod-cloudformation-003-to-admin-starting-user] -->|iam:PassRole + cloudformation:CreateStackSet + cloudformation:CreateStackInstances| B[CloudFormation StackSet]\n    B -->|Uses execution role permissions| C[pl-prod-cloudformation-003-to-admin-execution-role]\n    C -->|Creates IAM role| D[pl-prod-cloudformation-003-to-admin-escalated-role]\n    D -->|sts:AssumeRole| E[Effective Administrator]\n\n    style A fill:#ff9999,stroke:#333,stroke-width:2px\n    style B fill:#ffcc99,stroke:#333,stroke-width:2px\n    style C fill:#ffcc99,stroke:#333,stroke-width:2px\n    style D fill:#ffcc99,stroke:#333,stroke-width:2px\n    style E fill:#99ff99,stroke:#333,stroke-width:2px",
+    "attackSteps": "1. **Initial Access**: Start as `pl-prod-cloudformation-003-to-admin-starting-user` (credentials provided via Terraform outputs)\n2. **Prepare CloudFormation Template**: Create a CloudFormation template that defines an IAM role with administrative permissions and a trust policy allowing the starting user to assume it\n3. **Create StackSet**: Use `cloudformation:CreateStackSet` to create a new StackSet, passing the privileged `pl-prod-cloudformation-003-to-admin-execution-role` via `iam:PassRole`\n4. **Deploy Stack Instance**: Create a stack instance within the StackSet to deploy the template in the current account and region\n5. **Wait for Completion**: Monitor the StackSet operation until the escalated role is successfully created\n6. **Assume Escalated Role**: Use `sts:AssumeRole` to assume the newly created `pl-prod-cloudformation-003-to-admin-escalated-role`\n7. **Verification**: Verify administrator access by listing IAM users or performing other admin-level actions",
+    "resourcesCreated": "| ARN | Purpose |\n| -- | -- |\n| `arn:aws:iam::PROD_ACCOUNT:user/pl-prod-cloudformation-003-to-admin-starting-user` | Scenario-specific starting user with access keys, iam:PassRole, and cloudformation:CreateStackSet permissions |\n| `arn:aws:iam::PROD_ACCOUNT:role/pl-prod-cloudformation-003-to-admin-execution-role` | Privileged execution role with AdministratorAccess policy that can be passed to StackSets |\n| `arn:aws:iam::PROD_ACCOUNT:role/pl-prod-cloudformation-003-to-admin-escalated-role` | Escalated admin role created by the StackSet with full administrative permissions |",
+    "attackLab": {
+      "prerequisites": "1. Install the `plabs` CLI:\n   ```bash\n   brew install pathfinding-labs/tap/plabs\n   ```\n2. Configure your AWS profiles in `~/.plabs/plabs.yaml` (or run `plabs init` if you haven't already)",
+      "deployNonInteractive": "```bash\nplabs enable enable_single_account_privesc_one_hop_to_admin_cloudformation_003_iam_passrole_cloudformation_createstackset_cloudformation_createstackinstances\nplabs apply\n```",
+      "deployTui": "1. Launch the TUI: `plabs`\n2. Navigate to this scenario in the scenarios list\n3. Press `space` to enable it\n4. Press `d` to deploy",
+      "demoAttack": {
+        "intro": "The script will:\n1. Display a step-by-step walkthrough with color-coded output\n2. Show the commands being executed and their results\n3. Create a CloudFormation template defining an escalated IAM role\n4. Create a StackSet and deploy a stack instance with the execution role\n5. Wait for the StackSet operation to complete\n6. Assume the escalated role and verify administrative access\n7. Output standardized test results for automation",
+        "resourcesCreated": "- A CloudFormation StackSet with the privileged execution role passed via `iam:PassRole`\n- A stack instance deployed into the current account and region\n- An escalated IAM role (`pl-prod-cloudformation-003-to-admin-escalated-role`) with full administrative permissions and a trust policy allowing the starting user to assume it",
+        "nonInteractive": "```bash\nplabs demo --list\nplabs demo cloudformation-003-iam-passrole+cloudformation-createstackset+cloudformation-createstackinstances\n```",
+        "tui": "1. Launch the TUI: `plabs`\n2. Navigate to this scenario in the scenarios list\n3. Press `r` to run the demo script"
+      },
+      "cleanup": {
+        "nonInteractive": "```bash\nplabs cleanup --list\nplabs cleanup cloudformation-003-iam-passrole+cloudformation-createstackset+cloudformation-createstackinstances\n```",
+        "tui": "1. Launch the TUI: `plabs`\n2. Navigate to this scenario in the scenarios list\n3. Press `c` to run the cleanup script"
+      },
+      "teardownNonInteractive": "```bash\nplabs disable enable_single_account_privesc_one_hop_to_admin_cloudformation_003_iam_passrole_cloudformation_createstackset_cloudformation_createstackinstances\nplabs apply\n```",
+      "teardownTui": "1. Launch the TUI: `plabs`\n2. Navigate to this scenario in the scenarios list\n3. Press `space` to disable it\n4. Press `D` to destroy"
+    },
+    "cspm": {
+      "whatToDetect": "- IAM principal has `iam:PassRole` permission on a role with `AdministratorAccess` or equivalent administrative policy attached\n- IAM principal has both `iam:PassRole` and `cloudformation:CreateStackSet` permissions, enabling indirect privilege escalation via StackSet execution roles\n- IAM principal has `cloudformation:CreateStackInstances` permission, completing the StackSet-based escalation chain\n- CloudFormation execution role has `AdministratorAccess` or broad `iam:*` permissions, making it a high-risk target for PassRole abuse",
+      "prevention": "- Implement strict least privilege for `iam:PassRole` permissions - use resource-based conditions to limit which roles can be passed: `\"Resource\": \"arn:aws:iam::*:role/approved-stackset-roles/*\"`\n- Restrict `cloudformation:CreateStackSet` permissions to only authorized infrastructure automation principals\n- Apply permission boundaries to StackSet execution roles to limit what resources they can create, even with administrative policies attached\n- Use Service Control Policies (SCPs) to prevent StackSet execution roles from creating IAM resources: `\"Effect\": \"Deny\", \"Action\": [\"iam:CreateRole\", \"iam:PutRolePolicy\"], \"Resource\": \"*\"`\n- Implement CloudFormation stack policies and StackSet operation preferences to require approval workflows for IAM resource creation\n- Use AWS IAM Access Analyzer to identify roles with overly permissive PassRole capabilities\n- Consider using CloudFormation service-managed StackSets with Organizations, which provide more controlled permission models than self-managed StackSets\n- Enable MFA requirements for sensitive CloudFormation operations using condition keys like `aws:MultiFactorAuthPresent`\n- Regularly audit StackSet execution roles to ensure they follow least privilege principles and have appropriate permission boundaries"
+    },
+    "cloudSiem": {
+      "cloudTrailEvents": "- `IAM: PassRole` \u2014 Starting user passes the privileged execution role to CloudFormation; critical when the target role has administrative permissions\n- `CloudFormation: CreateStackSet` \u2014 A new StackSet is created; high severity when accompanied by a PassRole event for an admin-level execution role\n- `CloudFormation: CreateStackInstances` \u2014 Stack instances are deployed; triggers actual resource creation in the target account and region\n- `IAM: CreateRole` \u2014 A new IAM role is created by the StackSet execution role; indicates potential privilege escalation via CloudFormation\n- `STS: AssumeRole` \u2014 Attacker assumes the newly created escalated role to gain admin access",
+      "detonationLogs": "_Detonation log integration (Stratus Red Team / Grimoire) is planned for a future release._"
+    }
+  },
+  "slug": "cloudformation-003"
+}

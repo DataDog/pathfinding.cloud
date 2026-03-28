@@ -1,0 +1,93 @@
+{
+  "displayName": "One-Hop Privilege Escalation: ssm:SendCommand to EC2 with Admin Role",
+  "name": "ssm-002-ssm-sendcommand",
+  "description": "Execute commands on EC2 instances with privileged roles to extract credentials via SSM SendCommand",
+  "costEstimate": "$8/mo",
+  "pathfindingCloudId": "ssm-002",
+  "interactiveDemo": false,
+  "category": "Privilege Escalation",
+  "subCategory": "existing-passrole",
+  "pathType": "one-hop",
+  "target": "to-admin",
+  "environments": [
+    "prod"
+  ],
+  "attackPath": {
+    "principals": [
+      "arn:aws:iam::{account_id}:user/pl-prod-ssm-002-to-admin-starting-user",
+      "arn:aws:ec2:{region}:{account_id}:instance/i-xxxxxxxxx",
+      "arn:aws:iam::{account_id}:role/pl-prod-ssm-002-to-admin-ec2-admin-role"
+    ],
+    "summary": "starting_user \u2192 (ssm:SendCommand) \u2192 EC2 instance \u2192 extract instance role credentials \u2192 admin access"
+  },
+  "permissions": {
+    "required": [
+      {
+        "permission": "ssm:SendCommand",
+        "resource": "*"
+      }
+    ],
+    "helpful": [
+      {
+        "permission": "ssm:ListCommands",
+        "purpose": "Track command execution status during demo"
+      },
+      {
+        "permission": "ssm:ListCommandInvocations",
+        "purpose": "Retrieve command output containing extracted credentials"
+      },
+      {
+        "permission": "ec2:DescribeInstances",
+        "purpose": "Discover target EC2 instances with privileged roles"
+      }
+    ]
+  },
+  "mitreAttack": {
+    "tactics": [
+      "TA0004 - Privilege Escalation",
+      "TA0008 - Lateral Movement"
+    ],
+    "techniques": [
+      "T1651 - Cloud Administration Command",
+      "T1552.005 - Unsecured Credentials: Cloud Instance Metadata API"
+    ]
+  },
+  "terraform": {
+    "variableName": "enable_single_account_privesc_one_hop_to_admin_ssm_002_ssm_sendcommand",
+    "modulePath": "modules/scenarios/single-account/privesc-one-hop/to-admin/ssm-002-ssm-sendcommand"
+  },
+  "githubUrl": "https://github.com/DataDog/pathfinding-labs/tree/main/modules/scenarios/single-account/privesc-one-hop/to-admin/ssm-002-ssm-sendcommand",
+  "readme": {
+    "overview": "This scenario demonstrates a privilege escalation vulnerability where an IAM user has permission to execute commands on EC2 instances via AWS Systems Manager (SSM) SendCommand. The attacker can execute arbitrary commands on an EC2 instance that has an administrative IAM role attached, extract the temporary credentials from the EC2 instance metadata service, and then use those credentials locally to gain full administrator access.\n\nThis attack vector is particularly dangerous because it combines the operational convenience of SSM (remote command execution without SSH/RDP access) with the common misconfiguration of assigning overly privileged IAM roles to EC2 instances. Unlike SSH-based attacks, SSM access is often granted broadly across engineering teams for legitimate troubleshooting purposes, making this a realistic initial access vector.\n\nThe attack leaves minimal forensic evidence if SSM Session Manager logging is not properly configured, and the extracted credentials are time-limited but fully functional AWS credentials that can be used from any location.",
+    "mitreAttack": "- **Tactic**: TA0004 - Privilege Escalation, TA0008 - Lateral Movement\n- **Technique**: T1651 - Cloud Administration Command\n- **Technique**: T1552.005 - Unsecured Credentials: Cloud Instance Metadata API",
+    "attackDiagram": "graph LR\n    A[pl-prod-ssm-002-to-admin-starting-user] -->|ssm:SendCommand| B[EC2 Instance]\n    B -->|Metadata API| C[Extract Admin Role Credentials]\n    C -->|Use Locally| D[Effective Administrator]\n\n    style A fill:#ff9999,stroke:#333,stroke-width:2px\n    style B fill:#ffcc99,stroke:#333,stroke-width:2px\n    style C fill:#ffcc99,stroke:#333,stroke-width:2px\n    style D fill:#99ff99,stroke:#333,stroke-width:2px",
+    "attackSteps": "1. **Initial Access**: Start as `pl-prod-ssm-002-to-admin-starting-user` (credentials provided via Terraform outputs)\n2. **Discover Target Instances**: Use `ec2:DescribeInstances` to identify EC2 instances with privileged IAM roles\n3. **Execute Remote Command**: Use `ssm:SendCommand` to execute a shell command on the target EC2 instance that extracts credentials from the instance metadata endpoint using IMDSv2 (session-based token authentication to `http://169.254.169.254/latest/meta-data/iam/security-credentials/ROLE_NAME`)\n4. **Retrieve Command Output**: Use `ssm:ListCommandInvocations` to retrieve the command output containing the temporary AWS credentials (access key, secret key, session token)\n5. **Configure Local Credentials**: Export the extracted credentials as environment variables in the local shell\n6. **Verification**: Verify administrator access by executing privileged AWS API calls (e.g., `iam:ListUsers`)",
+    "resourcesCreated": "| ARN | Purpose |\n| -- | -- |\n| `arn:aws:iam::PROD_ACCOUNT:user/pl-prod-ssm-002-to-admin-starting-user` | Scenario-specific starting user with access keys and SSM permissions |\n| `arn:aws:iam::PROD_ACCOUNT:policy/pl-prod-ssm-002-to-admin-policy` | Allows `ssm:SendCommand`, `ssm:ListCommands`, `ssm:ListCommandInvocations`, and `ec2:DescribeInstances` |\n| `arn:aws:iam::PROD_ACCOUNT:role/pl-prod-ssm-002-to-admin-ec2-admin-role` | Administrative role attached to the EC2 instance (target for credential extraction) |\n| `arn:aws:iam::PROD_ACCOUNT:instance-profile/pl-prod-ssm-002-to-admin-ec2-admin-profile` | Instance profile associating the admin role with the EC2 instance |\n| `arn:aws:ec2:REGION:PROD_ACCOUNT:instance/i-xxxxxxxxx` | EC2 instance with SSM agent and admin role attached |",
+    "attackLab": {
+      "prerequisites": "1. Install the `plabs` CLI:\n   ```bash\n   brew install pathfinding-labs/tap/plabs\n   ```\n2. Configure your AWS profiles in `~/.plabs/plabs.yaml` (or run `plabs init` if you haven't already)",
+      "deployNonInteractive": "```bash\nplabs enable enable_single_account_privesc_one_hop_to_admin_ssm_002_ssm_sendcommand\nplabs apply\n```",
+      "deployTui": "1. Launch the TUI: `plabs`\n2. Navigate to this scenario in the scenarios list\n3. Press `space` to enable it\n4. Press `d` to deploy",
+      "demoAttack": {
+        "intro": "The script will:\n1. Display a step-by-step walkthrough with color-coded output\n2. Show the commands being executed and their results\n3. Verify successful privilege escalation\n4. Output standardized test results for automation",
+        "resourcesCreated": "- Temporary credential files containing the extracted EC2 instance role credentials\n- Environment variable exports for the extracted AWS access key, secret key, and session token",
+        "nonInteractive": "```bash\nplabs demo --list\nplabs demo ssm-002-ssm-sendcommand\n```",
+        "tui": "1. Launch the TUI: `plabs`\n2. Navigate to this scenario in the scenarios list\n3. Press `r` to run the demo script"
+      },
+      "cleanup": {
+        "nonInteractive": "```bash\nplabs cleanup --list\nplabs cleanup ssm-002-ssm-sendcommand\n```",
+        "tui": "1. Launch the TUI: `plabs`\n2. Navigate to this scenario in the scenarios list\n3. Press `c` to run the cleanup script"
+      },
+      "teardownNonInteractive": "```bash\nplabs disable enable_single_account_privesc_one_hop_to_admin_ssm_002_ssm_sendcommand\nplabs apply\n```",
+      "teardownTui": "1. Launch the TUI: `plabs`\n2. Navigate to this scenario in the scenarios list\n3. Press `space` to disable it\n4. Press `D` to destroy"
+    },
+    "cspm": {
+      "whatToDetect": "A properly configured Cloud Security Posture Management (CSPM) tool should identify the following security issues:\n\n1. **EC2 instances with overly privileged IAM roles**: Instances should follow the principle of least privilege. An EC2 instance with `AdministratorAccess` or similar broad permissions represents a significant risk.\n\n2. **Principals with ssm:SendCommand on wildcard resources**: The ability to execute commands on any EC2 instance in the account should be restricted to specific instances using resource ARNs or IAM condition keys.\n\n3. **Lack of IAM condition keys restricting SSM access**: Policies should use conditions like `ssm:resourceTag/Environment` to limit which instances can be targeted.\n\n4. **Missing AWS Systems Manager Session Manager logging**: SSM commands should be logged to CloudWatch Logs or S3 for audit and forensic purposes.\n\n5. **EC2 instances without IMDSv2 enforcement**: The Instance Metadata Service should be configured to require IMDSv2, which provides protection against SSRF attacks and makes metadata extraction more difficult.",
+      "prevention": "- **Restrict ssm:SendCommand with resource conditions**: Use IAM policy conditions to limit SSM command execution to specific instances or instances with specific tags:\n  ```json\n  {\n    \"Effect\": \"Allow\",\n    \"Action\": \"ssm:SendCommand\",\n    \"Resource\": \"arn:aws:ec2:*:*:instance/*\",\n    \"Condition\": {\n      \"StringEquals\": {\n        \"ssm:resourceTag/Environment\": \"dev\"\n      }\n    }\n  }\n  ```\n\n- **Apply least privilege to EC2 instance roles**: EC2 instances should only have the minimum permissions necessary for their function. Avoid attaching `AdministratorAccess` or other broad policies to instance profiles.\n\n- **Enforce IMDSv2 on all EC2 instances**: Require Instance Metadata Service Version 2 (IMDSv2), which uses session-based authentication and provides protection against SSRF attacks:\n  ```bash\n  aws ec2 modify-instance-metadata-options \\\n    --instance-id i-1234567890abcdef0 \\\n    --http-tokens required\n  ```\n\n- **Enable SSM Session Manager logging**: Configure AWS Systems Manager to log all command executions to CloudWatch Logs or S3 for audit and forensic analysis.\n\n- **Implement Service Control Policies (SCPs)**: Use AWS Organizations SCPs to prevent overly broad SSM permissions at the organization level:\n  ```json\n  {\n    \"Version\": \"2012-10-17\",\n    \"Statement\": [{\n      \"Effect\": \"Deny\",\n      \"Action\": \"ssm:SendCommand\",\n      \"Resource\": \"*\",\n      \"Condition\": {\n        \"StringNotEquals\": {\n          \"ssm:resourceTag/SSMAccess\": \"Allowed\"\n        }\n      }\n    }]\n  }\n  ```\n\n- **Use IAM Access Analyzer**: Regularly scan for privilege escalation paths involving SSM and EC2 instance roles using AWS IAM Access Analyzer or third-party tools."
+    },
+    "cloudSiem": {
+      "cloudTrailEvents": "- `SSM: SendCommand` \u2014 SSM command executed on an EC2 instance; critical when the target instance has a privileged IAM role attached\n- `SSM: ListCommandInvocations` \u2014 Command output retrieved; high severity when following a SendCommand on a privileged instance, as it may contain extracted credentials\n- `STS: GetCallerIdentity` \u2014 Identity verification call; suspicious when originating from instance role credentials used at a non-EC2 IP address or in an unexpected region\n\n**Credential Extraction Pattern to alert on**:\n- `SSM: SendCommand` targeting an instance with a privileged role, followed by\n- `SSM: ListCommandInvocations` retrieving the output, followed by\n- AWS API calls using the instance role credentials from a non-EC2 source IP\n\n**Anomalous API Usage indicators**:\n- Instance role credentials being used from geographic locations inconsistent with the EC2 instance region\n- High-volume API calls from instance role credentials outside normal usage patterns\n- Instance role credentials used after the EC2 instance has been terminated",
+      "detonationLogs": "_Detonation log integration (Stratus Red Team / Grimoire) is planned for a future release._"
+    }
+  },
+  "slug": "ssm-002"
+}

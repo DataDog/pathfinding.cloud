@@ -1,0 +1,94 @@
+{
+  "displayName": "One-Hop Privilege Escalation: iam:AttachRolePolicy + sts:AssumeRole",
+  "name": "iam-014-iam-attachrolepolicy+sts-assumerole",
+  "description": "Attaching administrator policy to an assumable role to gain admin access",
+  "costEstimate": "$0/mo",
+  "pathfindingCloudId": "iam-014",
+  "interactiveDemo": false,
+  "category": "Privilege Escalation",
+  "subCategory": "principal-access",
+  "pathType": "one-hop",
+  "target": "to-admin",
+  "environments": [
+    "prod"
+  ],
+  "attackPath": {
+    "principals": [
+      "arn:aws:iam::{account_id}:user/pl-prod-iam-014-to-admin-starting-user",
+      "arn:aws:iam::{account_id}:role/pl-prod-iam-014-to-admin-target-role"
+    ],
+    "summary": "starting_user \u2192 (iam:AttachRolePolicy) \u2192 target_role (attach AdministratorAccess) \u2192 (sts:AssumeRole) \u2192 target_role credentials \u2192 admin access"
+  },
+  "permissions": {
+    "required": [
+      {
+        "permission": "iam:AttachRolePolicy",
+        "resource": "arn:aws:iam::*:role/pl-prod-iam-014-to-admin-target-role"
+      },
+      {
+        "permission": "sts:AssumeRole",
+        "resource": "arn:aws:iam::*:role/pl-prod-iam-014-to-admin-target-role"
+      }
+    ],
+    "helpful": [
+      {
+        "permission": "iam:ListRoles",
+        "purpose": "Discover available roles that can be modified"
+      },
+      {
+        "permission": "iam:GetRole",
+        "purpose": "View role trust policies to identify assumable roles"
+      },
+      {
+        "permission": "iam:ListAttachedRolePolicies",
+        "purpose": "View current role permissions before and after modification"
+      }
+    ]
+  },
+  "mitreAttack": {
+    "tactics": [
+      "TA0004 - Privilege Escalation"
+    ],
+    "techniques": [
+      "T1098 - Account Manipulation"
+    ]
+  },
+  "terraform": {
+    "variableName": "enable_single_account_privesc_one_hop_to_admin_iam_014_iam_attachrolepolicy_sts_assumerole",
+    "modulePath": "modules/scenarios/single-account/privesc-one-hop/to-admin/iam-014-iam-attachrolepolicy+sts-assumerole"
+  },
+  "githubUrl": "https://github.com/DataDog/pathfinding-labs/tree/main/modules/scenarios/single-account/privesc-one-hop/to-admin/iam-014-iam-attachrolepolicy+sts-assumerole",
+  "readme": {
+    "overview": "This scenario demonstrates a privilege escalation vulnerability where a user has permission to both attach managed policies to a role AND assume that role. Unlike self-escalation scenarios where a role modifies its own permissions, this scenario involves lateral movement - a user modifying a different principal (a role) and then assuming it to gain elevated privileges.\n\nThe combination of `iam:AttachRolePolicy` and `sts:AssumeRole` on the same target role creates a complete privilege escalation path. Even if the target role initially has minimal or no privileges, the attacker can attach the AWS-managed `AdministratorAccess` policy to it and then assume the newly-privileged role to gain full administrative access.\n\nThis pattern is particularly dangerous because it may appear safe at first glance - the user doesn't directly have admin permissions, and the target role may only have read-only access. However, write access to a role's policy combined with the ability to assume that role is functionally equivalent to having administrative access.",
+    "mitreAttack": "- **Tactic**: Privilege Escalation (TA0004)\n- **Technique**: T1098 - Account Manipulation\n- **Sub-technique**: Modifying cloud account permissions to escalate privileges",
+    "attackDiagram": "graph LR\n    A[pl-prod-iam-014-to-admin-starting-user] -->|iam:AttachRolePolicy| B[pl-prod-iam-014-to-admin-target-role]\n    B -->|AdministratorAccess Attached| C[Modified Target Role]\n    C -->|sts:AssumeRole| D[Effective Administrator]\n\n    style A fill:#ff9999,stroke:#333,stroke-width:2px\n    style B fill:#ffcc99,stroke:#333,stroke-width:2px\n    style C fill:#ffcc99,stroke:#333,stroke-width:2px\n    style D fill:#99ff99,stroke:#333,stroke-width:2px",
+    "attackSteps": "1. **Initial Access**: Start as `pl-prod-iam-014-to-admin-starting-user` (credentials provided via Terraform outputs)\n2. **Attach Admin Policy**: Use `iam:AttachRolePolicy` to attach the AWS-managed `AdministratorAccess` policy to `pl-prod-iam-014-to-admin-target-role`\n3. **Wait for Propagation**: Wait 15 seconds for IAM policy changes to propagate across AWS infrastructure\n4. **Assume Modified Role**: Use `sts:AssumeRole` to obtain temporary credentials for the now-privileged target role\n5. **Verification**: Verify administrator access using the assumed role credentials",
+    "resourcesCreated": "| ARN | Purpose |\n| -- | -- |\n| `arn:aws:iam::PROD_ACCOUNT:user/pl-prod-iam-014-to-admin-starting-user` | Scenario-specific starting user with access keys and inline policy granting iam:AttachRolePolicy and sts:AssumeRole |\n| `arn:aws:iam::PROD_ACCOUNT:role/pl-prod-iam-014-to-admin-target-role` | Target role with minimal permissions that can be modified and assumed |",
+    "attackLab": {
+      "prerequisites": "1. Install the `plabs` CLI:\n   ```bash\n   brew install pathfinding-labs/tap/plabs\n   ```\n2. Configure your AWS profiles in `~/.plabs/plabs.yaml` (or run `plabs init` if you haven't already)",
+      "deployNonInteractive": "```bash\nplabs enable enable_single_account_privesc_one_hop_to_admin_iam_014_iam_attachrolepolicy_sts_assumerole\nplabs apply\n```",
+      "deployTui": "1. Launch the TUI: `plabs`\n2. Navigate to this scenario in the scenarios list\n3. Press `space` to enable it\n4. Press `d` to deploy",
+      "demoAttack": {
+        "intro": "The script will:\n1. Display a step-by-step walkthrough with color-coded output\n2. Show the commands being executed and their results\n3. Verify successful privilege escalation\n4. Output standardized test results for automation",
+        "resourcesCreated": "- Managed policy attachment: `AdministratorAccess` attached to `pl-prod-iam-014-to-admin-target-role`",
+        "nonInteractive": "```bash\nplabs demo --list\nplabs demo iam-014-iam-attachrolepolicy+sts-assumerole\n```",
+        "tui": "1. Launch the TUI: `plabs`\n2. Navigate to this scenario in the scenarios list\n3. Press `r` to run the demo script"
+      },
+      "cleanup": {
+        "nonInteractive": "```bash\nplabs cleanup --list\nplabs cleanup iam-014-iam-attachrolepolicy+sts-assumerole\n```",
+        "tui": "1. Launch the TUI: `plabs`\n2. Navigate to this scenario in the scenarios list\n3. Press `c` to run the cleanup script"
+      },
+      "teardownNonInteractive": "```bash\nplabs disable enable_single_account_privesc_one_hop_to_admin_iam_014_iam_attachrolepolicy_sts_assumerole\nplabs apply\n```",
+      "teardownTui": "1. Launch the TUI: `plabs`\n2. Navigate to this scenario in the scenarios list\n3. Press `space` to disable it\n4. Press `D` to destroy"
+    },
+    "cspm": {
+      "whatToDetect": "- IAM principal (`pl-prod-iam-014-to-admin-starting-user`) has both `iam:AttachRolePolicy` and `sts:AssumeRole` on the same target role, creating a complete privilege escalation path\n- The target role (`pl-prod-iam-014-to-admin-target-role`) is assumable by a principal that can also modify its own attached policies\n- Privilege escalation path exists: starting user can elevate to admin by attaching `AdministratorAccess` and assuming the target role",
+      "prevention": "- **Implement SCPs to restrict policy attachment**: Use service control policies to prevent attachment of highly privileged managed policies like `AdministratorAccess` or `PowerUserAccess`\n- **Separate attachment and assumption permissions**: Avoid granting both `iam:AttachRolePolicy` and `sts:AssumeRole` to the same principal for the same role\n- **Use resource-based conditions on AttachRolePolicy**: Restrict which policies can be attached using the `iam:PolicyARN` condition key to prevent attachment of admin policies\n- **Implement permissions boundaries**: Use IAM permissions boundaries to limit the maximum permissions a role can have, even if admin policies are attached\n- **Enable MFA for sensitive operations**: Require MFA for both policy attachment operations and role assumption to add an additional security layer\n- **Use IAM Access Analyzer**: Regularly scan for privilege escalation paths involving policy modification and role assumption combinations\n- **Apply least privilege**: Grant `iam:AttachRolePolicy` only when absolutely necessary, and scope it to specific roles with resource ARN conditions\n- **Implement approval workflows**: Require manual approval for attaching managed policies to roles, especially AWS-managed policies with broad permissions"
+    },
+    "cloudSiem": {
+      "cloudTrailEvents": "- `IAM: AttachRolePolicy` \u2014 Managed policy attached to a role; critical when the attached policy is `AdministratorAccess` or similarly broad, especially when followed by a role assumption\n- `STS: AssumeRole` \u2014 Role assumption event; high severity when the assumed role was recently modified via `AttachRolePolicy` within the same session or time window",
+      "detonationLogs": "_Detonation log integration (Stratus Red Team / Grimoire) is planned for a future release._"
+    }
+  },
+  "slug": "iam-014"
+}

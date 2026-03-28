@@ -1,0 +1,91 @@
+{
+  "displayName": "Privilege Escalation via iam:CreateAccessKey",
+  "name": "iam-002-iam-createaccesskey",
+  "description": "Creating access keys for privileged users to gain administrative access",
+  "costEstimate": "$0/mo",
+  "pathfindingCloudId": "iam-002",
+  "interactiveDemo": false,
+  "category": "Privilege Escalation",
+  "subCategory": "credential-access",
+  "pathType": "one-hop",
+  "target": "to-admin",
+  "environments": [
+    "prod"
+  ],
+  "attackPath": {
+    "principals": [
+      "arn:aws:iam::{account_id}:user/pl-prod-iam-002-to-admin-starting-user",
+      "arn:aws:iam::{account_id}:user/pl-prod-iam-002-to-admin-target-user"
+    ],
+    "summary": "starting_user \u2192 (iam:CreateAccessKey) \u2192 admin_user credentials \u2192 admin access"
+  },
+  "permissions": {
+    "required": [
+      {
+        "permission": "iam:CreateAccessKey",
+        "resource": "arn:aws:iam::*:user/pl-prod-iam-002-to-admin-target-user"
+      }
+    ],
+    "helpful": [
+      {
+        "permission": "iam:ListUsers",
+        "purpose": "Discover privileged users to target"
+      },
+      {
+        "permission": "iam:GetUser",
+        "purpose": "View user details and attached policies"
+      },
+      {
+        "permission": "iam:ListAttachedUserPolicies",
+        "purpose": "Identify users with admin permissions"
+      }
+    ]
+  },
+  "mitreAttack": {
+    "tactics": [
+      "TA0004 - Privilege Escalation",
+      "TA0003 - Persistence"
+    ],
+    "techniques": [
+      "T1098.001 - Account Manipulation: Additional Cloud Credentials"
+    ]
+  },
+  "terraform": {
+    "variableName": "enable_single_account_privesc_one_hop_to_admin_iam_002_iam_createaccesskey",
+    "modulePath": "modules/scenarios/single-account/privesc-one-hop/to-admin/iam-002-iam-createaccesskey"
+  },
+  "githubUrl": "https://github.com/DataDog/pathfinding-labs/tree/main/modules/scenarios/single-account/privesc-one-hop/to-admin/iam-002-iam-createaccesskey",
+  "readme": {
+    "overview": "This scenario demonstrates a critical privilege escalation vulnerability where a user has permission to create access keys for other IAM users, including those with administrative privileges. The `iam:CreateAccessKey` permission allows an attacker to generate new programmatic credentials for any user they have permission to target, effectively assuming that user's identity and permissions.\n\nIn many environments, IAM users with administrative access are created for emergency access or legacy purposes. If a less privileged user has `iam:CreateAccessKey` permission on these admin accounts, they can bypass all intended access controls by simply creating new credentials and authenticating as the privileged user. This is particularly dangerous because it allows complete identity takeover without requiring the victim's existing credentials.\n\nThis attack is straightforward to execute, difficult to prevent through traditional IAM boundaries, and can provide instant administrative access to an entire AWS environment. Organizations often overlook this privilege escalation path because it doesn't modify permissions directly - instead, it exploits the ability to generate new authentication credentials for existing privileged accounts.",
+    "mitreAttack": "- **Tactic**: TA0004 - Privilege Escalation, TA0003 - Persistence\n- **Technique**: T1098.001 - Account Manipulation: Additional Cloud Credentials",
+    "attackDiagram": "graph LR\n    A[pl-prod-iam-002-to-admin-starting-user] -->|iam:CreateAccessKey| B[pl-prod-iam-002-to-admin-target-user]\n    B -->|Administrator Access| C[Effective Administrator]\n\n    style A fill:#ff9999,stroke:#333,stroke-width:2px\n    style B fill:#ffcc99,stroke:#333,stroke-width:2px\n    style C fill:#99ff99,stroke:#333,stroke-width:2px",
+    "attackSteps": "1. **Initial Access**: Start as `pl-prod-iam-002-to-admin-starting-user` (credentials provided via Terraform outputs)\n2. **Create Access Keys**: Use `iam:CreateAccessKey` to create new programmatic credentials for the admin user `pl-prod-iam-002-to-admin-target-user`\n3. **Switch Context**: Configure AWS CLI with the newly created access key and secret key\n4. **Verification**: Verify administrator access by listing IAM users or performing other admin-level actions",
+    "resourcesCreated": "| ARN | Purpose |\n| -- | -- |\n| `arn:aws:iam::PROD_ACCOUNT:user/pl-prod-iam-002-to-admin-starting-user` | Scenario-specific starting user with access keys and iam:CreateAccessKey permission |\n| `arn:aws:iam::PROD_ACCOUNT:user/pl-prod-iam-002-to-admin-target-user` | Target admin user with AdministratorAccess managed policy attached |",
+    "attackLab": {
+      "prerequisites": "1. Install the `plabs` CLI:\n   ```bash\n   brew install pathfinding-labs/tap/plabs\n   ```\n2. Configure your AWS profiles in `~/.plabs/plabs.yaml` (or run `plabs init` if you haven't already)",
+      "deployNonInteractive": "```bash\nplabs enable enable_single_account_privesc_one_hop_to_admin_iam_002_iam_createaccesskey\nplabs apply\n```",
+      "deployTui": "1. Launch the TUI: `plabs`\n2. Navigate to this scenario in the scenarios list\n3. Press `space` to enable it\n4. Press `d` to deploy",
+      "demoAttack": {
+        "intro": "The script will:\n1. Display a step-by-step walkthrough with color-coded output\n2. Show the commands being executed and their results\n3. Verify successful privilege escalation\n4. Output standardized test results for automation",
+        "resourcesCreated": "- Access keys for `pl-prod-iam-002-to-admin-target-user` (permanent IAM access key pair)",
+        "nonInteractive": "```bash\nplabs demo --list\nplabs demo iam-002-iam-createaccesskey\n```",
+        "tui": "1. Launch the TUI: `plabs`\n2. Navigate to this scenario in the scenarios list\n3. Press `r` to run the demo script"
+      },
+      "cleanup": {
+        "nonInteractive": "```bash\nplabs cleanup --list\nplabs cleanup iam-002-iam-createaccesskey\n```",
+        "tui": "1. Launch the TUI: `plabs`\n2. Navigate to this scenario in the scenarios list\n3. Press `c` to run the cleanup script"
+      },
+      "teardownNonInteractive": "```bash\nplabs disable enable_single_account_privesc_one_hop_to_admin_iam_002_iam_createaccesskey\nplabs apply\n```",
+      "teardownTui": "1. Launch the TUI: `plabs`\n2. Navigate to this scenario in the scenarios list\n3. Press `space` to disable it\n4. Press `D` to destroy"
+    },
+    "cspm": {
+      "whatToDetect": "- IAM user (`pl-prod-iam-002-to-admin-starting-user`) has `iam:CreateAccessKey` permission scoped to a privileged IAM user\n- IAM user (`pl-prod-iam-002-to-admin-target-user`) with `AdministratorAccess` is targetable for credential creation by a less-privileged principal\n- Privilege escalation path exists: non-admin user can generate persistent credentials for an admin user without modifying any policies",
+      "prevention": "- Implement least privilege principles - avoid granting `iam:CreateAccessKey` permissions unless absolutely necessary\n- Use resource-based conditions to restrict which users can have access keys created: `\"Condition\": {\"StringNotEquals\": {\"aws:username\": [\"admin-user\"]}}`\n- Implement Service Control Policies (SCPs) at the organization level to prevent access key creation on privileged accounts\n- Monitor CloudTrail for `CreateAccessKey` API calls, especially on users with elevated permissions\n- Enable MFA requirements for sensitive IAM operations using condition keys like `aws:MultiFactorAuthPresent`\n- Use IAM Access Analyzer to identify and remediate privilege escalation paths involving `iam:CreateAccessKey`\n- Consider using IAM roles instead of IAM users for administrative access, as roles cannot have access keys created by other principals\n- Implement automated alerting on access key creation events for admin accounts using CloudWatch Events or EventBridge"
+    },
+    "cloudSiem": {
+      "cloudTrailEvents": "- `IAM: CreateAccessKey` \u2014 New access keys were created for an IAM user; critical when the target user has elevated permissions",
+      "detonationLogs": "_Detonation log integration (Stratus Red Team / Grimoire) is planned for a future release._"
+    }
+  },
+  "slug": "iam-002"
+}

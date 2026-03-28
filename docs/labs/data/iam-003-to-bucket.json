@@ -1,0 +1,99 @@
+{
+  "displayName": "Privilege Escalation via iam:DeleteAccessKey + iam:CreateAccessKey",
+  "name": "iam-003-iam-deleteaccesskey+createaccesskey",
+  "description": "Bypassing AWS 2-key limit by deleting an existing access key before creating a new one for a user with S3 bucket access",
+  "costEstimate": "$0/mo",
+  "pathfindingCloudId": "iam-003",
+  "interactiveDemo": false,
+  "category": "Privilege Escalation",
+  "subCategory": "credential-access",
+  "pathType": "one-hop",
+  "target": "to-bucket",
+  "environments": [
+    "prod"
+  ],
+  "attackPath": {
+    "principals": [
+      "arn:aws:iam::{account_id}:user/pl-prod-iam-003-to-bucket-starting-user",
+      "arn:aws:iam::{account_id}:user/pl-prod-iam-003-to-bucket-target-user"
+    ],
+    "summary": "starting_user \u2192 (iam:ListAccessKeys) \u2192 list existing keys \u2192 (iam:DeleteAccessKey) \u2192 delete one key \u2192 (iam:CreateAccessKey) \u2192 create new key for target_user \u2192 S3 bucket access"
+  },
+  "permissions": {
+    "required": [
+      {
+        "permission": "iam:DeleteAccessKey",
+        "resource": "arn:aws:iam::*:user/pl-prod-iam-003-to-bucket-target-user"
+      },
+      {
+        "permission": "iam:CreateAccessKey",
+        "resource": "arn:aws:iam::*:user/pl-prod-iam-003-to-bucket-target-user"
+      }
+    ],
+    "helpful": [
+      {
+        "permission": "iam:ListAccessKeys",
+        "purpose": "List existing access keys to identify which one to delete"
+      },
+      {
+        "permission": "iam:ListUsers",
+        "purpose": "Discover users with S3 bucket access to target"
+      },
+      {
+        "permission": "iam:GetUser",
+        "purpose": "View user details and attached policies"
+      },
+      {
+        "permission": "iam:ListAttachedUserPolicies",
+        "purpose": "Identify users with S3 permissions"
+      }
+    ]
+  },
+  "mitreAttack": {
+    "tactics": [
+      "TA0004 - Privilege Escalation",
+      "TA0003 - Persistence"
+    ],
+    "techniques": [
+      "T1098.001 - Account Manipulation: Additional Cloud Credentials"
+    ]
+  },
+  "terraform": {
+    "variableName": "enable_single_account_privesc_one_hop_to_bucket_iam_003_iam_deleteaccesskey_createaccesskey",
+    "modulePath": "modules/scenarios/single-account/privesc-one-hop/to-bucket/iam-003-iam-deleteaccesskey+createaccesskey"
+  },
+  "githubUrl": "https://github.com/DataDog/pathfinding-labs/tree/main/modules/scenarios/single-account/privesc-one-hop/to-bucket/iam-003-iam-deleteaccesskey+createaccesskey",
+  "readme": {
+    "overview": "This scenario demonstrates a sophisticated variation of the `iam:CreateAccessKey` privilege escalation technique that overcomes AWS's built-in security control limiting users to a maximum of two access keys. When an attacker has both `iam:DeleteAccessKey` and `iam:CreateAccessKey` permissions on a target user who already has two active access keys, the standard key creation approach would fail. However, by first deleting one of the existing keys and then creating a new one, the attacker bypasses this limit and gains access to the target user's credentials.\n\nThis attack pattern is particularly dangerous because it targets users who already have S3 bucket access permissions. In real-world environments, service accounts and automation users often have both access keys actively in use for different applications or services. The deletion of an existing key might cause a service disruption, but it also provides the attacker with fresh credentials that can be used to access sensitive data stored in S3 buckets.\n\nThe combination of these two permissions creates a powerful privilege escalation path that CSPM tools must detect. While many security tools flag `iam:CreateAccessKey` as a risk, fewer recognize that the pairing with `iam:DeleteAccessKey` enables an attacker to bypass AWS's native control mechanism. Detection systems should specifically monitor for sequential DeleteAccessKey/CreateAccessKey operations on the same user, as this pattern indicates potential credential theft in progress.",
+    "mitreAttack": "- **Tactic**: TA0004 - Privilege Escalation, TA0003 - Persistence\n- **Technique**: T1098.001 - Account Manipulation: Additional Cloud Credentials",
+    "attackDiagram": "graph LR\n    A[pl-prod-iam-003-to-bucket-starting-user] -->|iam:ListAccessKeys| B[List Existing Keys]\n    B -->|iam:DeleteAccessKey| C[Delete One Key]\n    C -->|iam:CreateAccessKey| D[pl-prod-iam-003-to-bucket-target-user]\n    D -->|New Credentials| E[S3 Bucket Access]\n\n    style A fill:#ff9999,stroke:#333,stroke-width:2px\n    style B fill:#ffcc99,stroke:#333,stroke-width:2px\n    style C fill:#ffcc99,stroke:#333,stroke-width:2px\n    style D fill:#ffcc99,stroke:#333,stroke-width:2px\n    style E fill:#99ff99,stroke:#333,stroke-width:2px",
+    "attackSteps": "1. **Initial Access**: Start as `pl-prod-iam-003-to-bucket-starting-user` (credentials provided via Terraform outputs)\n2. **List Access Keys**: Use `iam:ListAccessKeys` to discover that the target user already has 2 active access keys (AWS maximum)\n3. **Delete Access Key**: Use `iam:DeleteAccessKey` to delete one of the existing access keys, freeing up a slot\n4. **Create Access Key**: Use `iam:CreateAccessKey` to create a new access key for the target user (which would have failed without the deletion step)\n5. **Switch Context**: Configure AWS CLI with the newly created access key and secret key\n6. **Verification**: Verify S3 bucket access by listing objects and reading sensitive data from the bucket",
+    "resourcesCreated": "| ARN | Purpose |\n| -- | -- |\n| `arn:aws:iam::PROD_ACCOUNT:user/pl-prod-iam-003-to-bucket-starting-user` | Scenario-specific starting user with iam:DeleteAccessKey and iam:CreateAccessKey permissions |\n| `arn:aws:iam::PROD_ACCOUNT:user/pl-prod-iam-003-to-bucket-target-user` | Target user with 2 pre-existing access keys and S3 bucket read permissions |\n| `arn:aws:iam::PROD_ACCOUNT:policy/pl-prod-iam-003-to-bucket-starting-policy` | Policy granting DeleteAccessKey and CreateAccessKey permissions on target user |\n| `arn:aws:s3:::pl-sensitive-data-PROD_ACCOUNT-SUFFIX` | Target S3 bucket containing sensitive data |",
+    "attackLab": {
+      "prerequisites": "1. Install the `plabs` CLI:\n   ```bash\n   brew install pathfinding-labs/tap/plabs\n   ```\n2. Configure your AWS profiles in `~/.plabs/plabs.yaml` (or run `plabs init` if you haven't already)",
+      "deployNonInteractive": "```bash\nplabs enable enable_single_account_privesc_one_hop_to_bucket_iam_003_iam_deleteaccesskey_createaccesskey\nplabs apply\n```",
+      "deployTui": "1. Launch the TUI: `plabs`\n2. Navigate to this scenario in the scenarios list\n3. Press `space` to enable it\n4. Press `d` to deploy",
+      "demoAttack": {
+        "intro": "The script will:\n1. Display a step-by-step walkthrough with color-coded output\n2. Show the commands being executed and their results\n3. Demonstrate the 2-key limit and bypass technique\n4. Verify successful privilege escalation to bucket access\n5. Output standardized test results for automation",
+        "resourcesCreated": "- New access key for `pl-prod-iam-003-to-bucket-target-user` (created after deleting one of the two pre-existing keys)",
+        "nonInteractive": "```bash\nplabs demo --list\nplabs demo iam-003-iam-deleteaccesskey+createaccesskey\n```",
+        "tui": "1. Launch the TUI: `plabs`\n2. Navigate to this scenario in the scenarios list\n3. Press `r` to run the demo script"
+      },
+      "cleanup": {
+        "nonInteractive": "```bash\nplabs cleanup --list\nplabs cleanup iam-003-iam-deleteaccesskey+createaccesskey\n```",
+        "tui": "1. Launch the TUI: `plabs`\n2. Navigate to this scenario in the scenarios list\n3. Press `c` to run the cleanup script"
+      },
+      "teardownNonInteractive": "```bash\nplabs disable enable_single_account_privesc_one_hop_to_bucket_iam_003_iam_deleteaccesskey_createaccesskey\nplabs apply\n```",
+      "teardownTui": "1. Launch the TUI: `plabs`\n2. Navigate to this scenario in the scenarios list\n3. Press `space` to disable it\n4. Press `D` to destroy"
+    },
+    "cspm": {
+      "whatToDetect": "- IAM user `pl-prod-iam-003-to-bucket-starting-user` has both `iam:DeleteAccessKey` and `iam:CreateAccessKey` permissions on `pl-prod-iam-003-to-bucket-target-user`, enabling bypass of the AWS 2-key limit\n- A privilege escalation path exists: starting user can create credentials for a user with S3 bucket read access\n- The target user `pl-prod-iam-003-to-bucket-target-user` has both active access keys at maximum capacity, increasing the impact of a delete-then-create attack\n- The combination of `iam:DeleteAccessKey` + `iam:CreateAccessKey` on the same target resource should be flagged as a credential theft risk, distinct from either permission alone",
+      "prevention": "- Implement least privilege principles - avoid granting both `iam:DeleteAccessKey` and `iam:CreateAccessKey` permissions unless absolutely necessary for legitimate key rotation workflows\n- Use resource-based conditions to restrict which users can have access keys manipulated: `\"Condition\": {\"StringNotEquals\": {\"aws:username\": [\"service-account-1\", \"service-account-2\"]}}`\n- Implement Service Control Policies (SCPs) to prevent access key deletion and creation on privileged accounts or sensitive service accounts\n- Monitor CloudTrail for sequential `DeleteAccessKey` followed by `CreateAccessKey` API calls on the same user within a short time window - this is a strong indicator of malicious activity\n- Enable MFA requirements for sensitive IAM operations using condition keys like `aws:MultiFactorAuthPresent` to require MFA for access key management operations\n- Use IAM Access Analyzer to identify principals with permissions to manipulate access keys for users with sensitive permissions (S3 access, admin access, etc.)\n- Implement automated alerting on access key deletion events, especially for service accounts and users with data access permissions, using CloudWatch Events or EventBridge\n- Consider using IAM roles with temporary credentials instead of IAM users with long-lived access keys for S3 bucket access\n- Deploy CSPM rules that specifically detect the combination of DeleteAccessKey + CreateAccessKey permissions on the same resource, as this combination enables bypassing the 2-key limit\n- Implement automated key rotation procedures that use a controlled service with audit logging rather than granting key management permissions to individual users"
+    },
+    "cloudSiem": {
+      "cloudTrailEvents": "- `IAM: DeleteAccessKey` \u2014 Existing access key deleted for a user; when followed immediately by CreateAccessKey on the same user, indicates 2-key limit bypass and potential credential theft\n- `IAM: CreateAccessKey` \u2014 New access key created for an IAM user; critical when the target user has S3 bucket access permissions\n- `S3: GetObject` \u2014 Object retrieved from the sensitive S3 bucket; indicates the newly created credentials were used for data access\n- `S3: ListBucket` \u2014 Bucket contents listed; used to enumerate sensitive data after gaining target user credentials",
+      "detonationLogs": "_Detonation log integration (Stratus Red Team / Grimoire) is planned for a future release._"
+    }
+  },
+  "slug": "iam-003-to-bucket"
+}

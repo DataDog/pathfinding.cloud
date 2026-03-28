@@ -1,0 +1,110 @@
+{
+  "displayName": "Privilege Escalation via iam:PassRole + AWS Data Pipeline",
+  "name": "iam-passrole+datapipeline-pipeline-to-admin",
+  "description": "Creating a Data Pipeline with an admin role to execute commands with elevated privileges",
+  "costEstimate": "$0/mo",
+  "pathfindingCloudId": "datapipeline-001",
+  "interactiveDemo": false,
+  "category": "Privilege Escalation",
+  "subCategory": "new-passrole",
+  "pathType": "one-hop",
+  "target": "to-admin",
+  "environments": [
+    "prod"
+  ],
+  "attackPath": {
+    "principals": [
+      "arn:aws:iam::{account_id}:user/pl-prod-datapipeline-001-to-admin-starting-user",
+      "arn:aws:iam::{account_id}:role/pl-prod-datapipeline-001-to-admin-pipeline-role",
+      "arn:aws:ec2:{region}:{account_id}:instance/i-xxxxxxxxx"
+    ],
+    "summary": "starting_user \u2192 (datapipeline:CreatePipeline + PutPipelineDefinition + ActivatePipeline) \u2192 EC2 with admin role \u2192 (aws iam attach-user-policy AdministratorAccess) \u2192 admin access"
+  },
+  "permissions": {
+    "required": [
+      {
+        "permission": "iam:PassRole",
+        "resource": "arn:aws:iam::*:role/pl-prod-datapipeline-001-to-admin-pipeline-role"
+      },
+      {
+        "permission": "datapipeline:CreatePipeline",
+        "resource": "*"
+      },
+      {
+        "permission": "datapipeline:PutPipelineDefinition",
+        "resource": "*"
+      },
+      {
+        "permission": "datapipeline:ActivatePipeline",
+        "resource": "*"
+      }
+    ],
+    "helpful": [
+      {
+        "permission": "datapipeline:DescribePipelines",
+        "purpose": "Monitor pipeline status and verify activation"
+      },
+      {
+        "permission": "datapipeline:GetPipelineDefinition",
+        "purpose": "View pipeline configuration for verification"
+      },
+      {
+        "permission": "iam:ListRoles",
+        "purpose": "Discover available privileged roles to pass"
+      },
+      {
+        "permission": "iam:GetUser",
+        "purpose": "Verify policy attachment after escalation"
+      }
+    ]
+  },
+  "mitreAttack": {
+    "tactics": [
+      "TA0004 - Privilege Escalation",
+      "TA0003 - Persistence"
+    ],
+    "techniques": [
+      "T1098.001 - Account Manipulation: Additional Cloud Credentials",
+      "T1578 - Modify Cloud Compute Infrastructure"
+    ]
+  },
+  "terraform": {
+    "variableName": "enable_single_account_privesc_one_hop_to_admin_iam_passrole_datapipeline_pipeline",
+    "modulePath": "modules/scenarios/end-of-life-privesc-paths/iam-passrole+datapipeline-pipeline-to-admin"
+  },
+  "githubUrl": "https://github.com/DataDog/pathfinding-labs/tree/main/modules/scenarios/end-of-life-privesc-paths/iam-passrole+datapipeline-pipeline-to-admin",
+  "readme": {
+    "overview": "This scenario demonstrates a sophisticated privilege escalation vulnerability where an attacker with `iam:PassRole` and AWS Data Pipeline permissions can gain administrator access. AWS Data Pipeline is a web service designed to reliably process and move data between different AWS compute and storage services. However, when misconfigured, it can be weaponized for privilege escalation.\n\nThe attack works by creating a Data Pipeline that launches an EC2 instance with an administrative IAM role. The pipeline definition includes a ShellCommandActivity that executes AWS CLI commands with the elevated permissions of the attached role. In this scenario, the malicious command attaches the AdministratorAccess managed policy to the attacker's starting user, granting full administrative privileges.\n\nThis technique is particularly dangerous because Data Pipeline operations are legitimate AWS services that may not trigger immediate security alerts. The privilege escalation occurs through infrastructure-as-code patterns that appear normal in many AWS environments, making it difficult to distinguish from legitimate automation workflows.",
+    "mitreAttack": "- **Tactic**: TA0004 - Privilege Escalation, TA0003 - Persistence\n- **Technique**: T1098.001 - Account Manipulation: Additional Cloud Credentials\n- **Technique**: T1578 - Modify Cloud Compute Infrastructure\n- **Sub-technique**: Using cloud services to launch compute resources with elevated privileges",
+    "attackDiagram": "graph LR\n    A[pl-prod-datapipeline-001-to-admin-starting-user] -->|datapipeline:CreatePipeline| B[Data Pipeline]\n    B -->|datapipeline:PutPipelineDefinition| C[Pipeline Definition]\n    C -->|iam:PassRole| D[pl-prod-datapipeline-001-to-admin-pipeline-role]\n    D -->|datapipeline:ActivatePipeline| E[EC2 Instance with Admin Role]\n    E -->|Execute ShellCommandActivity| F[aws iam attach-user-policy]\n    F -->|AdministratorAccess| G[Starting User becomes Admin]\n\n    style A fill:#ff9999,stroke:#333,stroke-width:2px\n    style B fill:#ffcc99,stroke:#333,stroke-width:2px\n    style C fill:#ffcc99,stroke:#333,stroke-width:2px\n    style D fill:#ffcc99,stroke:#333,stroke-width:2px\n    style E fill:#ffcc99,stroke:#333,stroke-width:2px\n    style F fill:#ffcc99,stroke:#333,stroke-width:2px\n    style G fill:#99ff99,stroke:#333,stroke-width:2px",
+    "attackSteps": "1. **Initial Access**: Start as `pl-prod-datapipeline-001-to-admin-starting-user` (credentials provided via Terraform outputs)\n2. **Create Pipeline**: Use `datapipeline:CreatePipeline` to create a new Data Pipeline\n3. **Define Pipeline with Malicious Payload**: Use `datapipeline:PutPipelineDefinition` to configure:\n   - EC2Resource that will launch an EC2 instance\n   - ShellCommandActivity containing: `aws iam attach-user-policy --user-name pl-prod-datapipeline-001-to-admin-starting-user --policy-arn arn:aws:iam::aws:policy/AdministratorAccess`\n   - Pass the admin role `pl-prod-datapipeline-001-to-admin-pipeline-role` to the EC2 resource using `iam:PassRole`\n4. **Activate Pipeline**: Use `datapipeline:ActivatePipeline` to start pipeline execution\n5. **Wait for Execution**: The pipeline launches an EC2 instance with the admin role attached\n6. **Command Execution**: The ShellCommandActivity executes, attaching AdministratorAccess to the starting user\n7. **Verification**: Verify administrator access as the starting user (now with AdministratorAccess)",
+    "resourcesCreated": "| ARN | Purpose |\n| -- | -- |\n| `arn:aws:iam::PROD_ACCOUNT:user/pl-prod-datapipeline-001-to-admin-starting-user` | Scenario-specific starting user with access keys |\n| `arn:aws:iam::PROD_ACCOUNT:role/pl-prod-datapipeline-001-to-admin-pipeline-role` | Administrative role that can be passed to Data Pipeline EC2 instances |\n| `arn:aws:iam::PROD_ACCOUNT:policy/pl-prod-datapipeline-001-to-admin-starting-policy` | Policy granting Data Pipeline permissions and iam:PassRole |\n| `arn:aws:datapipeline:REGION:PROD_ACCOUNT:pipeline/df-*` | Data Pipeline created during attack (ephemeral) |",
+    "attackLab": {
+      "prerequisites": "1. Install the `plabs` CLI:\n   ```bash\n   brew install pathfinding-labs/tap/plabs\n   ```\n2. Configure your AWS profiles in `~/.plabs/plabs.yaml` (or run `plabs init` if you haven't already)",
+      "deployNonInteractive": "```bash\nplabs enable enable_single_account_privesc_one_hop_to_admin_iam_passrole_datapipeline_pipeline\nplabs apply\n```",
+      "deployTui": "1. Launch the TUI: `plabs`\n2. Navigate to this scenario in the scenarios list\n3. Press `space` to enable it\n4. Press `d` to deploy",
+      "demoAttack": {
+        "intro": "The script will:\n1. Display a step-by-step walkthrough with color-coded output\n2. Show the commands being executed and their results\n3. Create and activate a Data Pipeline with an admin role\n4. Wait for the pipeline to execute the privilege escalation command\n5. Verify successful privilege escalation to administrator access\n6. Output standardized test results for automation",
+        "resourcesCreated": "- Data Pipeline (`datapipeline:CreatePipeline`) with a ShellCommandActivity payload\n- EC2 instance launched by the pipeline with the admin role attached\n- `AdministratorAccess` managed policy attachment on the starting user",
+        "nonInteractive": "```bash\nplabs demo --list\nplabs demo iam-passrole+datapipeline-pipeline-to-admin\n```",
+        "tui": "1. Launch the TUI: `plabs`\n2. Navigate to this scenario in the scenarios list\n3. Press `r` to run the demo script"
+      },
+      "cleanup": {
+        "nonInteractive": "```bash\nplabs cleanup --list\nplabs cleanup iam-passrole+datapipeline-pipeline-to-admin\n```",
+        "tui": "1. Launch the TUI: `plabs`\n2. Navigate to this scenario in the scenarios list\n3. Press `c` to run the cleanup script"
+      },
+      "teardownNonInteractive": "```bash\nplabs disable enable_single_account_privesc_one_hop_to_admin_iam_passrole_datapipeline_pipeline\nplabs apply\n```",
+      "teardownTui": "1. Launch the TUI: `plabs`\n2. Navigate to this scenario in the scenarios list\n3. Press `space` to disable it\n4. Press `D` to destroy"
+    },
+    "cspm": {
+      "whatToDetect": "A properly configured Cloud Security Posture Management (CSPM) tool should detect this vulnerability by identifying:\n\n- **IAM Role with PassRole Permissions**: Identify roles/users with `iam:PassRole` permissions on administrative roles\n- **Data Pipeline Permissions**: Flag principals with both `iam:PassRole` and Data Pipeline creation permissions (`datapipeline:CreatePipeline`, `datapipeline:PutPipelineDefinition`, `datapipeline:ActivatePipeline`)\n- **Administrative Role Usage**: Detect when administrative roles are configured as EC2 instance profiles that can be passed to services\n- **Privilege Escalation Path**: Graph-based analysis showing path from low-privilege user to admin access via Data Pipeline",
+      "prevention": "- **Restrict iam:PassRole**: Implement strict resource-based conditions on `iam:PassRole` permissions to prevent passing administrative roles to services:\n  ```json\n  {\n    \"Effect\": \"Allow\",\n    \"Action\": \"iam:PassRole\",\n    \"Resource\": \"arn:aws:iam::*:role/LimitedServiceRole\",\n    \"Condition\": {\n      \"StringEquals\": {\n        \"iam:PassedToService\": \"datapipeline.amazonaws.com\"\n      }\n    }\n  }\n  ```\n\n- **Service Control Policies (SCPs)**: Use AWS Organizations SCPs to prevent Data Pipeline creation in accounts where it's not needed:\n  ```json\n  {\n    \"Effect\": \"Deny\",\n    \"Action\": [\n      \"datapipeline:CreatePipeline\",\n      \"datapipeline:PutPipelineDefinition\",\n      \"datapipeline:ActivatePipeline\"\n    ],\n    \"Resource\": \"*\",\n    \"Condition\": {\n      \"StringNotLike\": {\n        \"aws:PrincipalArn\": \"arn:aws:iam::*:role/ApprovedAutomationRole\"\n      }\n    }\n  }\n  ```\n\n- **Least Privilege for Roles**: Avoid granting administrative permissions to roles that can be passed to AWS services. Create service-specific roles with minimal permissions required for the task.\n\n- **IAM Access Analyzer**: Enable IAM Access Analyzer to continuously evaluate IAM policies and identify privilege escalation paths through service integrations.\n\n- **Resource Tagging and Monitoring**: Tag all Data Pipeline resources and monitor for untagged or improperly tagged pipelines that may indicate unauthorized creation.\n\n- **VPC and Network Controls**: Configure Data Pipeline EC2 instances to launch in private subnets without internet access when possible, limiting the attack surface for command execution."
+    },
+    "cloudSiem": {
+      "cloudTrailEvents": "- `DataPipeline: CreatePipeline` \u2014 New pipeline created; suspicious when followed immediately by PutPipelineDefinition and ActivatePipeline\n- `DataPipeline: PutPipelineDefinition` \u2014 Pipeline definition set; high severity when the definition contains a ShellCommandActivity with IAM-related commands\n- `DataPipeline: ActivatePipeline` \u2014 Pipeline activated; alert when called by non-automation principals\n- `IAM: AttachUserPolicy` \u2014 Managed policy attached to a user; critical when the source is an EC2 instance launched by Data Pipeline\n- `IAM: AttachRolePolicy` \u2014 Managed policy attached to a role; critical when originating from Data Pipeline-launched EC2 instances\n- `EC2: RunInstances` \u2014 EC2 instance launched; monitor for instances launched with administrative instance profiles by Data Pipeline service principals\n- `IAM: PassRole` \u2014 Role passed to a service; alert when an administrative role is passed to `datapipeline.amazonaws.com`",
+      "detonationLogs": "_Detonation log integration (Stratus Red Team / Grimoire) is planned for a future release._"
+    },
+    "references": "- [AWS Data Pipeline Documentation](https://docs.aws.amazon.com/datapipeline/)\n- [Bishop Fox - Privilege Escalation via Data Pipeline](https://bishopfox.com/blog/privilege-escalation-in-aws)\n- [Rhino Security Labs - AWS IAM Privilege Escalation Techniques](https://rhinosecuritylabs.com/aws/aws-privilege-escalation-methods-mitigation/)\n- [MITRE ATT&CK - T1098.001](https://attack.mitre.org/techniques/T1098/001/)\n- [MITRE ATT&CK - T1578](https://attack.mitre.org/techniques/T1578/)"
+  },
+  "slug": "datapipeline-001"
+}

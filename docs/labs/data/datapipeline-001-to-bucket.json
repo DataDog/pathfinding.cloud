@@ -1,0 +1,114 @@
+{
+  "displayName": "Privilege Escalation via iam:PassRole + Data Pipeline with Resource Policy Bypass",
+  "name": "iam-passrole+datapipeline-pipeline-to-bucket",
+  "description": "Create Data Pipeline with passed role to exfiltrate S3 data, bypassing IAM restrictions via overly permissive bucket resource policy",
+  "costEstimate": "$0/mo",
+  "pathfindingCloudId": "datapipeline-001",
+  "interactiveDemo": false,
+  "category": "Privilege Escalation",
+  "subCategory": "new-passrole",
+  "pathType": "one-hop",
+  "target": "to-bucket",
+  "environments": [
+    "prod"
+  ],
+  "attackPath": {
+    "principals": [
+      "arn:aws:iam::{account_id}:user/pl-prod-datapipeline-001-to-bucket-starting-user",
+      "arn:aws:iam::{account_id}:role/pl-prod-datapipeline-001-to-bucket-pipeline-role",
+      "arn:aws:ec2:{region}:{account_id}:instance/i-xxxxxxxxx",
+      "arn:aws:s3:::pl-sensitive-data-datapipeline-001-{account_id}-{suffix}",
+      "arn:aws:s3:::pl-exfil-bucket-datapipeline-001-{account_id}-{suffix}"
+    ],
+    "summary": "starting_user \u2192 (datapipeline:CreatePipeline + PutPipelineDefinition + ActivatePipeline) \u2192 EC2 with S3 read-only role \u2192 (aws s3 cp from sensitive bucket to exfil bucket) \u2192 resource policy allows write \u2192 starting_user reads exfiltrated data \u2192 bucket access"
+  },
+  "permissions": {
+    "required": [
+      {
+        "permission": "iam:PassRole",
+        "resource": "arn:aws:iam::*:role/pl-prod-datapipeline-001-to-bucket-pipeline-role"
+      },
+      {
+        "permission": "datapipeline:CreatePipeline",
+        "resource": "*"
+      },
+      {
+        "permission": "datapipeline:PutPipelineDefinition",
+        "resource": "*"
+      },
+      {
+        "permission": "datapipeline:ActivatePipeline",
+        "resource": "*"
+      },
+      {
+        "permission": "s3:GetObject",
+        "resource": "arn:aws:s3:::pl-exfil-bucket-datapipeline-001-{account_id}-{suffix}/*"
+      }
+    ],
+    "helpful": [
+      {
+        "permission": "datapipeline:DescribePipelines",
+        "purpose": "View pipeline status and configuration"
+      },
+      {
+        "permission": "datapipeline:GetPipelineDefinition",
+        "purpose": "Retrieve pipeline definition for verification"
+      },
+      {
+        "permission": "s3:ListBucket",
+        "purpose": "List objects in buckets for verification"
+      }
+    ]
+  },
+  "mitreAttack": {
+    "tactics": [
+      "TA0004 - Privilege Escalation",
+      "TA0009 - Collection",
+      "TA0010 - Exfiltration"
+    ],
+    "techniques": [
+      "T1098.001 - Account Manipulation: Additional Cloud Credentials",
+      "T1578 - Modify Cloud Compute Infrastructure",
+      "T1530 - Data from Cloud Storage Object"
+    ]
+  },
+  "terraform": {
+    "variableName": "enable_single_account_privesc_one_hop_to_bucket_iam_passrole_datapipeline_pipeline",
+    "modulePath": "modules/scenarios/end-of-life-privesc-paths/iam-passrole+datapipeline-pipeline-to-bucket"
+  },
+  "githubUrl": "https://github.com/DataDog/pathfinding-labs/tree/main/modules/scenarios/end-of-life-privesc-paths/iam-passrole+datapipeline-pipeline-to-bucket",
+  "readme": {
+    "overview": "This scenario demonstrates a sophisticated privilege escalation and data exfiltration technique using AWS Data Pipeline combined with an overly permissive S3 bucket resource policy. An attacker with `iam:PassRole` and Data Pipeline permissions can create a pipeline that executes arbitrary shell commands on EC2 instances, allowing them to access and exfiltrate sensitive S3 data.\n\nThe critical vulnerability in this scenario is the combination of two security weaknesses: (1) the ability to pass roles to Data Pipeline and execute arbitrary commands, and (2) an overly permissive bucket resource policy that allows writes from any principal. Even though the pipeline role only has `s3:GetObject` permissions (read-only), the write operation succeeds because the destination bucket's resource policy grants `s3:PutObject` to `Principal: \"*\"`, effectively bypassing IAM restrictions.\n\nThis attack pattern is particularly dangerous because it demonstrates how resource policies can override restrictive IAM policies, creating unexpected privilege escalation paths. Security teams often focus on IAM policies while overlooking permissive resource policies, making this a common blind spot in cloud security posture. The scenario highlights the importance of analyzing both IAM and resource-based policies together to identify true access paths.",
+    "mitreAttack": "- **Tactics**:\n  - Privilege Escalation (TA0004)\n  - Collection (TA0009)\n  - Exfiltration (TA0010)\n- **Techniques**:\n  - T1098.001 - Account Manipulation: Additional Cloud Credentials\n  - T1578 - Modify Cloud Compute Infrastructure\n  - T1530 - Data from Cloud Storage Object",
+    "attackDiagram": "graph LR\n    A[Starting User] -->|datapipeline:CreatePipeline<br/>PutPipelineDefinition<br/>ActivatePipeline<br/>iam:PassRole| B[Data Pipeline]\n    B -->|Launches EC2 with| C[Pipeline Role<br/>s3:GetObject only]\n    C -->|aws s3 cp| D[Sensitive Bucket]\n    C -->|Write via Resource Policy| E[Exfil Bucket<br/>Principal: '*' allows s3:PutObject]\n    E -->|s3:GetObject| A\n\n    style A fill:#ff9999,stroke:#333,stroke-width:2px\n    style B fill:#ffcc99,stroke:#333,stroke-width:2px\n    style C fill:#ffcc99,stroke:#333,stroke-width:2px\n    style D fill:#ffcccc,stroke:#333,stroke-width:2px\n    style E fill:#99ff99,stroke:#333,stroke-width:2px",
+    "attackSteps": "1. **Initial Access**: Start as `pl-prod-datapipeline-001-to-bucket-starting-user` (credentials provided via Terraform outputs)\n2. **Create Data Pipeline**: Use `datapipeline:CreatePipeline` to create a new pipeline with a unique pipeline ID\n3. **Define Pipeline Activity**: Use `datapipeline:PutPipelineDefinition` to define a `ShellCommandActivity` that executes: `aws s3 cp s3://pl-sensitive-data-datapipeline-001-ACCOUNT-SUFFIX/secret-data.txt s3://pl-exfil-bucket-datapipeline-001-ACCOUNT-SUFFIX/exfiltrated.txt`\n4. **Pass Read-Only Role**: Pass the `pl-prod-datapipeline-001-to-bucket-pipeline-role` which only has `s3:GetObject` permissions on the sensitive bucket\n5. **Activate Pipeline**: Use `datapipeline:ActivatePipeline` to launch the pipeline, which spins up an EC2 instance\n6. **Execute Shell Command**: The EC2 instance runs the shell command, reading from the sensitive bucket (allowed by IAM) and writing to the exfil bucket (allowed by resource policy, despite no IAM write permissions)\n7. **Resource Policy Bypass**: The write succeeds because the exfil bucket has a resource policy granting `s3:PutObject` to `Principal: \"*\"`\n8. **Retrieve Exfiltrated Data**: Use `s3:GetObject` to read the exfiltrated data from the exfil bucket\n9. **Verification**: Confirm successful data exfiltration from the sensitive bucket",
+    "resourcesCreated": "| ARN | Purpose |\n| -- | -- |\n| `arn:aws:iam::PROD_ACCOUNT:user/pl-prod-datapipeline-001-to-bucket-starting-user` | Scenario-specific starting user with access keys |\n| `arn:aws:iam::PROD_ACCOUNT:role/pl-prod-datapipeline-001-to-bucket-pipeline-role` | Read-only pipeline role with s3:GetObject on sensitive bucket |\n| `arn:aws:iam::PROD_ACCOUNT:policy/pl-prod-datapipeline-001-to-bucket-starting-user-policy` | Policy granting Data Pipeline and iam:PassRole permissions |\n| `arn:aws:iam::PROD_ACCOUNT:policy/pl-prod-datapipeline-001-to-bucket-pipeline-policy` | Policy granting s3:GetObject on sensitive bucket |\n| `arn:aws:s3:::pl-sensitive-data-datapipeline-001-PROD_ACCOUNT-SUFFIX` | Sensitive data bucket containing secret data |\n| `arn:aws:s3:::pl-exfil-bucket-datapipeline-001-PROD_ACCOUNT-SUFFIX` | Exfiltration bucket with overly permissive resource policy |",
+    "attackLab": {
+      "prerequisites": "1. Install the `plabs` CLI:\n   ```bash\n   brew install pathfinding-labs/tap/plabs\n   ```\n2. Configure your AWS profiles in `~/.plabs/plabs.yaml` (or run `plabs init` if you haven't already)",
+      "deployNonInteractive": "```bash\nplabs enable enable_single_account_privesc_one_hop_to_bucket_iam_passrole_datapipeline_pipeline\nplabs apply\n```",
+      "deployTui": "1. Launch the TUI: `plabs`\n2. Navigate to this scenario in the scenarios list\n3. Press `space` to enable it\n4. Press `d` to deploy",
+      "demoAttack": {
+        "intro": "The script will:\n1. Display a step-by-step walkthrough with color-coded output\n2. Show the commands being executed and their results\n3. Create the Data Pipeline with shell command activity\n4. Activate the pipeline and wait for EC2 instance launch\n5. Verify successful data exfiltration from the sensitive bucket\n6. Output standardized test results for automation",
+        "resourcesCreated": "- Data Pipeline with ShellCommandActivity\n- Ephemeral EC2 instance launched by the pipeline\n- Exfiltrated data file written to the exfil bucket",
+        "nonInteractive": "```bash\nplabs demo --list\nplabs demo iam-passrole+datapipeline-pipeline-to-bucket\n```",
+        "tui": "1. Launch the TUI: `plabs`\n2. Navigate to this scenario in the scenarios list\n3. Press `r` to run the demo script"
+      },
+      "cleanup": {
+        "nonInteractive": "```bash\nplabs cleanup --list\nplabs cleanup iam-passrole+datapipeline-pipeline-to-bucket\n```",
+        "tui": "1. Launch the TUI: `plabs`\n2. Navigate to this scenario in the scenarios list\n3. Press `c` to run the cleanup script"
+      },
+      "teardownNonInteractive": "```bash\nplabs disable enable_single_account_privesc_one_hop_to_bucket_iam_passrole_datapipeline_pipeline\nplabs apply\n```",
+      "teardownTui": "1. Launch the TUI: `plabs`\n2. Navigate to this scenario in the scenarios list\n3. Press `space` to disable it\n4. Press `D` to destroy"
+    },
+    "cspm": {
+      "whatToDetect": "A properly configured Cloud Security Posture Management (CSPM) tool should identify:\n\n1. **Data Pipeline Privilege Escalation Path**:\n   - User/role has `iam:PassRole` permission on roles with sensitive permissions\n   - User/role has `datapipeline:CreatePipeline`, `datapipeline:PutPipelineDefinition`, and `datapipeline:ActivatePipeline` permissions\n   - Roles that can be passed to Data Pipeline have access to sensitive S3 buckets\n   - Potential for arbitrary command execution via ShellCommandActivity\n\n2. **Overly Permissive S3 Bucket Resource Policy**:\n   - S3 bucket resource policy grants permissions to `Principal: \"*\"` (any AWS principal)\n   - S3 bucket allows `s3:PutObject` from all principals without restrictive conditions\n   - Resource policy effectively bypasses IAM policy restrictions\n   - Public or overly broad write access to buckets\n\n3. **Resource Policy Bypass Vulnerability**:\n   - IAM policies restrict write access, but resource policies grant it\n   - Potential for privilege escalation through resource policy exploitation\n   - Mismatch between IAM and resource-based policy intent\n\n4. **High-Risk Permission Combinations**:\n   - Combination of `iam:PassRole` with compute service creation permissions\n   - Ability to execute arbitrary code through AWS services\n   - Access to sensitive data buckets through compute services",
+      "prevention": "1. **Implement Least Privilege for iam:PassRole**:\n   - Restrict `iam:PassRole` to specific roles using resource-level conditions: `\"Resource\": \"arn:aws:iam::ACCOUNT:role/specific-role\"`\n   - Use `iam:PassedToService` condition key to limit which services can receive roles: `\"Condition\": {\"StringEquals\": {\"iam:PassedToService\": \"datapipeline.amazonaws.com\"}}`\n   - Avoid granting broad `iam:PassRole` on `Resource: \"*\"`\n\n2. **Restrict Data Pipeline Permissions**:\n   - Limit `datapipeline:CreatePipeline`, `datapipeline:PutPipelineDefinition`, and `datapipeline:ActivatePipeline` to specific users/roles\n   - Require MFA for Data Pipeline creation: `\"Condition\": {\"BoolIfExists\": {\"aws:MultiFactorAuthPresent\": \"true\"}}`\n   - Use Service Control Policies (SCPs) to block Data Pipeline in production accounts if not needed\n\n3. **Eliminate Overly Permissive S3 Bucket Resource Policies**:\n   - NEVER use `Principal: \"*\"` in production bucket policies without restrictive conditions\n   - If public access is required, use specific conditions like `aws:PrincipalOrgID`, `aws:SourceIp`, or `aws:SourceVpc`\n   - Enable S3 Block Public Access at the account and bucket level\n   - Use `aws:PrincipalArn` or `aws:PrincipalAccount` conditions to restrict access to known principals\n\n4. **Implement Defense in Depth for Sensitive Buckets**:\n   - Require encryption for all data at rest and in transit\n   - Enable S3 Object Lock for critical data to prevent deletion/modification\n   - Use VPC Endpoints with policies to restrict bucket access to specific VPCs: `\"Condition\": {\"StringEquals\": {\"aws:SourceVpc\": \"vpc-xxxxx\"}}`\n   - Apply bucket policies that explicitly deny non-compliant access patterns\n\n5. **Regular Security Audits**:\n   - Periodically review all S3 bucket policies for overly permissive statements\n   - Use IAM Access Analyzer to identify resources shared with external entities or with overly broad access\n   - Audit all principals with `iam:PassRole` permissions and validate necessity\n   - Review roles that can be passed to compute services for least privilege compliance\n   - Test for resource policy bypass vulnerabilities using tools like Pathfinding Labs\n\n6. **Implement SCPs for Organizational Guardrails**:\n   ```json\n   {\n     \"Version\": \"2012-10-17\",\n     \"Statement\": [\n       {\n         \"Effect\": \"Deny\",\n         \"Action\": [\n           \"datapipeline:CreatePipeline\",\n           \"datapipeline:PutPipelineDefinition\"\n         ],\n         \"Resource\": \"*\",\n         \"Condition\": {\n           \"StringNotEquals\": {\n             \"aws:PrincipalAccount\": \"APPROVED_ACCOUNT_ID\"\n           }\n         }\n       }\n     ]\n   }\n   ```"
+    },
+    "cloudSiem": {
+      "cloudTrailEvents": "- `IAM: PassRole` \u2014 Role passed to Data Pipeline service; high severity when the role has access to sensitive S3 buckets\n- `DataPipeline: CreatePipeline` \u2014 New Data Pipeline created; investigate when combined with PassRole and PutPipelineDefinition\n- `DataPipeline: PutPipelineDefinition` \u2014 Pipeline definition set, potentially including ShellCommandActivity with arbitrary commands\n- `DataPipeline: ActivatePipeline` \u2014 Pipeline activated, triggering EC2 instance launch and command execution\n- `EC2: RunInstances` \u2014 EC2 instance launched by the Data Pipeline service role\n- `S3: GetObject` \u2014 Objects read from the sensitive data bucket by the pipeline EC2 instance\n- `S3: PutObject` \u2014 Objects written to the exfil bucket via resource policy bypass; critical when destination has permissive bucket policy",
+      "detonationLogs": "_Detonation log integration (Stratus Red Team / Grimoire) is planned for a future release._"
+    },
+    "references": "This scenario is based on privilege escalation techniques documented by:\n- [Bishop Fox - AWS IAM Privilege Escalation Techniques](https://bishopfox.com/blog/privilege-escalation-in-aws) - Documented by Rhino Security Labs\n- [AWS Data Pipeline Security Best Practices](https://docs.aws.amazon.com/datapipeline/latest/DeveloperGuide/dp-security-best-practices.html)"
+  },
+  "slug": "datapipeline-001-to-bucket"
+}

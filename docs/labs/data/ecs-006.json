@@ -1,0 +1,96 @@
+{
+  "displayName": "Privilege Escalation via ecs:ExecuteCommand + ecs:DescribeTasks",
+  "name": "ecs-006-ecs-executecommand+describetasks",
+  "description": "Shelling into a running ECS task with an admin role to retrieve credentials from the container metadata service",
+  "costEstimate": "$9/mo",
+  "pathfindingCloudId": "ecs-006",
+  "interactiveDemo": false,
+  "category": "Privilege Escalation",
+  "subCategory": "existing-passrole",
+  "pathType": "one-hop",
+  "target": "to-admin",
+  "environments": [
+    "prod"
+  ],
+  "attackPath": {
+    "principals": [
+      "arn:aws:iam::{account_id}:user/pl-prod-ecs-006-to-admin-starting-user",
+      "arn:aws:iam::{account_id}:role/pl-prod-ecs-006-to-admin-target-role"
+    ],
+    "summary": "starting_user \u2192 (ecs:ExecuteCommand + ecs:DescribeTasks) \u2192 ECS task with admin role \u2192 curl metadata \u2192 admin credentials"
+  },
+  "permissions": {
+    "required": [
+      {
+        "permission": "ecs:ExecuteCommand",
+        "resource": "arn:aws:ecs:*:*:task/pl-prod-ecs-006-to-admin-cluster/*"
+      },
+      {
+        "permission": "ecs:DescribeTasks",
+        "resource": "arn:aws:ecs:*:*:task/pl-prod-ecs-006-to-admin-cluster/*"
+      }
+    ],
+    "helpful": [
+      {
+        "permission": "ecs:ListTasks",
+        "purpose": "Discover task ARNs in the cluster"
+      },
+      {
+        "permission": "ecs:DescribeTaskDefinition",
+        "purpose": "Get task definition to discover task role ARN"
+      },
+      {
+        "permission": "ecs:ListClusters",
+        "purpose": "Discover ECS clusters in the account"
+      }
+    ]
+  },
+  "mitreAttack": {
+    "tactics": [
+      "TA0004 - Privilege Escalation",
+      "TA0006 - Credential Access"
+    ],
+    "techniques": [
+      "T1552.005 - Unsecured Credentials: Cloud Instance Metadata API",
+      "T1059 - Command and Scripting Interpreter"
+    ]
+  },
+  "terraform": {
+    "variableName": "enable_single_account_privesc_one_hop_to_admin_ecs_006_ecs_executecommand_describetasks",
+    "modulePath": "modules/scenarios/single-account/privesc-one-hop/to-admin/ecs-006-ecs-executecommand+describetasks"
+  },
+  "githubUrl": "https://github.com/DataDog/pathfinding-labs/tree/main/modules/scenarios/single-account/privesc-one-hop/to-admin/ecs-006-ecs-executecommand+describetasks",
+  "readme": {
+    "overview": "This scenario demonstrates a privilege escalation vulnerability where a user has permission to execute commands in running ECS containers (`ecs:ExecuteCommand`) and describe tasks (`ecs:DescribeTasks`). Both permissions are required because the AWS CLI internally calls `DescribeTasks` to retrieve the container runtime ID needed to establish the SSM session. When a container is running with a privileged task role attached, an attacker can shell into the container and retrieve the role's temporary credentials from the container metadata service, gaining administrative access.\n\nUnlike new-passrole scenarios where attackers create new resources and pass roles to them, this attack exploits access to an **existing** running ECS task that already has an admin role attached. This represents a common real-world scenario where ECS Exec is enabled for debugging purposes on tasks that run with elevated privileges. The attacker doesn't need to create anything - they simply access what's already running.\n\nThe attack works by using `ecs:ExecuteCommand` (powered by AWS Systems Manager Session Manager) to establish an interactive shell session in the running container. Once inside, the attacker queries the container metadata service at `169.254.170.2$AWS_CONTAINER_CREDENTIALS_RELATIVE_URI` to retrieve the temporary credentials for the task role. These credentials can then be used outside the container to perform administrative actions. This technique is particularly dangerous because ECS Exec is commonly enabled for legitimate troubleshooting purposes, but the security implications of combining it with privileged task roles are often overlooked.",
+    "mitreAttack": "- **Tactic**: TA0004 - Privilege Escalation\n- **Tactic**: TA0006 - Credential Access\n- **Technique**: T1552.005 - Unsecured Credentials: Cloud Instance Metadata API\n- **Technique**: T1059 - Command and Scripting Interpreter",
+    "attackDiagram": "graph LR\n    A[pl-prod-ecs-006-to-admin-starting-user] -->|ecs:ExecuteCommand + ecs:DescribeTasks| B[ECS Task Container]\n    B -->|curl metadata service| C[Task Role Credentials]\n    C -->|Use credentials| D[pl-prod-ecs-006-to-admin-target-role]\n    D -->|Administrator Access| E[Effective Administrator]\n\n    style A fill:#ff9999,stroke:#333,stroke-width:2px\n    style B fill:#ffcc99,stroke:#333,stroke-width:2px\n    style C fill:#ffcc99,stroke:#333,stroke-width:2px\n    style D fill:#ffcc99,stroke:#333,stroke-width:2px\n    style E fill:#99ff99,stroke:#333,stroke-width:2px",
+    "attackSteps": "1. **Initial Access**: Start as `pl-prod-ecs-006-to-admin-starting-user` (credentials provided via Terraform outputs)\n2. **Discover Tasks**: Use `ecs:ListClusters` and `ecs:ListTasks` to identify running tasks with ECS Exec enabled\n3. **Execute Command**: Use `ecs:ExecuteCommand` to establish an interactive shell session in the running container\n4. **Retrieve Credentials**: Inside the container, query the metadata service: `curl 169.254.170.2$AWS_CONTAINER_CREDENTIALS_RELATIVE_URI`\n5. **Extract Credentials**: Parse the JSON response to extract `AccessKeyId`, `SecretAccessKey`, and `Token`\n6. **Verification**: Use the extracted credentials to verify administrator access by listing IAM users",
+    "resourcesCreated": "| ARN | Purpose |\n| -- | -- |\n| `arn:aws:iam::PROD_ACCOUNT:user/pl-prod-ecs-006-to-admin-starting-user` | Scenario-specific starting user with access keys and ecs:ExecuteCommand permission |\n| `arn:aws:iam::PROD_ACCOUNT:role/pl-prod-ecs-006-to-admin-target-role` | Admin task role with AdministratorAccess attached to the running ECS task |\n| `arn:aws:iam::PROD_ACCOUNT:role/pl-prod-ecs-006-to-admin-execution-role` | ECS execution role for pulling images and CloudWatch logging |\n| `arn:aws:ecs:REGION:PROD_ACCOUNT:cluster/pl-prod-ecs-006-to-admin-cluster` | ECS cluster hosting the vulnerable task |\n| `arn:aws:ecs:REGION:PROD_ACCOUNT:service/pl-prod-ecs-006-to-admin-cluster/pl-prod-ecs-006-to-admin-service` | ECS service that maintains the running task with ECS Exec enabled |",
+    "attackLab": {
+      "prerequisites": "1. Install the `plabs` CLI:\n   ```bash\n   brew install pathfinding-labs/tap/plabs\n   ```\n2. Configure your AWS profiles in `~/.plabs/plabs.yaml` (or run `plabs init` if you haven't already)",
+      "deployNonInteractive": "```bash\nplabs enable enable_single_account_privesc_one_hop_to_admin_ecs_006_ecs_executecommand_describetasks\nplabs apply\n```",
+      "deployTui": "1. Launch the TUI: `plabs`\n2. Navigate to this scenario in the scenarios list\n3. Press `space` to enable it\n4. Press `d` to deploy",
+      "demoAttack": {
+        "intro": "The script will:\n1. Display a step-by-step walkthrough with color-coded output\n2. Show the commands being executed and their results\n3. Verify successful privilege escalation\n4. Output standardized test results for automation",
+        "resourcesCreated": "- No persistent resources are created; the attack only reads credentials from the container metadata service",
+        "nonInteractive": "```bash\nplabs demo --list\nplabs demo ecs-006-ecs-executecommand+describetasks\n```",
+        "tui": "1. Launch the TUI: `plabs`\n2. Navigate to this scenario in the scenarios list\n3. Press `r` to run the demo script"
+      },
+      "cleanup": {
+        "nonInteractive": "```bash\nplabs cleanup --list\nplabs cleanup ecs-006-ecs-executecommand+describetasks\n```",
+        "tui": "1. Launch the TUI: `plabs`\n2. Navigate to this scenario in the scenarios list\n3. Press `c` to run the cleanup script"
+      },
+      "teardownNonInteractive": "```bash\nplabs disable enable_single_account_privesc_one_hop_to_admin_ecs_006_ecs_executecommand_describetasks\nplabs apply\n```",
+      "teardownTui": "1. Launch the TUI: `plabs`\n2. Navigate to this scenario in the scenarios list\n3. Press `space` to disable it\n4. Press `D` to destroy"
+    },
+    "cspm": {
+      "whatToDetect": "- ECS services with `enable_execute_command = true` that have task definitions using privileged task roles\n- Task roles with administrative or highly privileged permissions attached to tasks in clusters where ECS Exec is enabled\n- IAM users or roles with both `ecs:ExecuteCommand` and `ecs:DescribeTasks` permissions on clusters/tasks running with sensitive roles (both are required for exploitation)\n- Privilege escalation paths from low-privileged principals through ECS Exec to administrative task roles",
+      "prevention": "- Disable ECS Exec on production tasks unless absolutely necessary for debugging; use it only on demand and disable immediately after troubleshooting\n- Follow the principle of least privilege for ECS task roles - avoid attaching administrative permissions to task roles, even for \"internal\" services\n- Restrict both `ecs:ExecuteCommand` and `ecs:DescribeTasks` permissions using IAM conditions to limit which clusters, services, or tasks can be accessed (both are required for ECS Exec to work)\n- Use resource tags and condition keys like `aws:ResourceTag` to control which tasks allow execute command access\n- Implement Service Control Policies (SCPs) at the organization level to prevent ECS Exec on sensitive workloads\n- Monitor CloudTrail for `ExecuteCommand` API calls and alert on executions targeting tasks with privileged roles\n- Enable CloudWatch logging for ECS Exec sessions to capture commands executed within containers\n- Use IAM Access Analyzer to identify principals with ecs:ExecuteCommand access to tasks running with elevated permissions\n- Implement network segmentation to limit what credentials obtained from ECS tasks can access\n- Consider using separate ECS clusters for debugging (with ECS Exec enabled) and production (with ECS Exec disabled)\n- Use VPC endpoints for ECS and SSM to ensure Exec traffic doesn't traverse the public internet"
+    },
+    "cloudSiem": {
+      "cloudTrailEvents": "- `ECS: ExecuteCommand` \u2014 Interactive shell session established in a running ECS container; critical when the target task has an elevated task role attached\n- `ECS: DescribeTasks` \u2014 Task details retrieved; required internally by the AWS CLI to establish the SSM session for ECS Exec; correlate with subsequent ExecuteCommand calls",
+      "detonationLogs": "_Detonation log integration (Stratus Red Team / Grimoire) is planned for a future release._"
+    }
+  },
+  "slug": "ecs-006"
+}

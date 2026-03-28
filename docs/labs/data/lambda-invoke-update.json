@@ -1,0 +1,97 @@
+{
+  "displayName": "Cross-Account Lambda Function Code Update Attack",
+  "name": "lambda-invoke-update",
+  "description": "Cross-account Lambda function code injection to extract admin credentials",
+  "costEstimate": "$0/mo",
+  "pathfindingCloudId": null,
+  "interactiveDemo": false,
+  "category": "Privilege Escalation",
+  "subCategory": "privilege-chaining",
+  "pathType": "cross-account",
+  "target": "to-admin",
+  "environments": [
+    "dev",
+    "prod"
+  ],
+  "attackPath": {
+    "principals": [
+      "arn:aws:iam::{dev_account_id}:user/pl-pathfinding-starting-user-dev",
+      "arn:aws:iam::{dev_account_id}:role/pl-dev-lambda-invoke-role",
+      "arn:aws:lambda:{region}:{prod_account_id}:function:pl-prod-hello-world",
+      "arn:aws:iam::{prod_account_id}:role/pl-prod-lambda-execution-role"
+    ],
+    "summary": "starting_user_dev \u2192 (AssumeRole) \u2192 dev_lambda_role \u2192 (lambda:UpdateFunctionCode cross-account) \u2192 prod_lambda \u2192 (credential extraction) \u2192 prod_lambda_execution_role (admin)"
+  },
+  "permissions": {
+    "required": [
+      {
+        "permission": "lambda:UpdateFunctionCode",
+        "resource": "arn:aws:lambda:*:{prod_account_id}:function/*"
+      },
+      {
+        "permission": "lambda:InvokeFunction",
+        "resource": "arn:aws:lambda:*:{prod_account_id}:function/*"
+      }
+    ],
+    "helpful": [
+      {
+        "permission": "lambda:ListFunctions",
+        "purpose": "Discover Lambda functions in prod account"
+      },
+      {
+        "permission": "lambda:GetFunction",
+        "purpose": "View Lambda function configuration and role"
+      }
+    ]
+  },
+  "mitreAttack": {
+    "tactics": [
+      "TA0004 - Privilege Escalation",
+      "TA0006 - Credential Access",
+      "TA0008 - Lateral Movement"
+    ],
+    "techniques": [
+      "T1078.004 - Valid Accounts: Cloud Accounts",
+      "T1648 - Serverless Execution",
+      "T1552.005 - Cloud Instance Metadata API"
+    ]
+  },
+  "terraform": {
+    "variableName": "enable_cross_account_dev_to_prod_multi_hop_lambda_invoke_update",
+    "modulePath": "modules/scenarios/cross-account/dev-to-prod/multi-hop/lambda-invoke-update"
+  },
+  "githubUrl": "https://github.com/DataDog/pathfinding-labs/tree/main/modules/scenarios/cross-account/dev-to-prod/multi-hop/lambda-invoke-update",
+  "readme": {
+    "overview": "This module demonstrates a cross-account privilege escalation attack where a dev role can update and invoke a prod Lambda function to extract credentials from the Lambda execution role.\n\nThe attack path shows how a dev role with Lambda invoke and update permissions can modify a prod Lambda function to extract credentials and gain administrative access to the prod account. This is a critical cross-account vulnerability because it allows code injection into prod Lambda functions, and Lambda execution roles often have high privileges. The attack appears as normal Lambda function operations, making it stealthy relative to more overt IAM manipulation techniques.\n\nThis configuration appears in real environments when shared-service Lambda functions are deployed in prod but managed by dev teams, or when cross-account CI/CD pipelines are granted broad Lambda permissions without scoping to specific deployment functions.",
+    "mitreAttack": "- **Tactics**: TA0004 - Privilege Escalation, TA0006 - Credential Access, TA0008 - Lateral Movement\n- **Techniques**: T1078.004 - Valid Accounts: Cloud Accounts, T1648 - Serverless Execution, T1552.005 - Cloud Instance Metadata API",
+    "attackDiagram": "graph LR\n    %% Nodes\n    DevUser[dev:iam:pl-pathfinding-starting-user-dev]\n    DevRole[dev:iam:pl-dev-lambda-invoke-role]\n    ProdLambda[prod:lambda:pl-prod-hello-world]\n    LambdaRole[prod:iam:pl-prod-lambda-execution-role]\n    AdminAccess[prod:admin:full-access]\n\n    %% Edges\n    DevUser -->|sts:AssumeRole| DevRole\n    DevRole -->|lambda:UpdateFunctionCode| ProdLambda\n    DevRole -->|lambda:InvokeFunction| ProdLambda\n    ProdLambda -->|uses| LambdaRole\n    LambdaRole -->|admin:full-access| AdminAccess\n\n    %% Styling\n    classDef startNode fill:#ff9999,stroke:#333,stroke-width:2px\n    classDef intermediateNode fill:#ffcc99,stroke:#333,stroke-width:2px\n    classDef targetNode fill:#99ff99,stroke:#333,stroke-width:2px\n\n    class DevUser startNode\n    class DevRole,ProdLambda intermediateNode\n    class LambdaRole,AdminAccess targetNode",
+    "attackSteps": "1. **Initial Access**: Dev user `pl-pathfinding-starting-user-dev` authenticates in the dev account\n2. **Hop 1 - Role Assumption**: Dev user assumes the `pl-dev-lambda-invoke-role` in the dev account via `sts:AssumeRole`\n3. **Hop 2 - Function Update**: The dev role uses `lambda:UpdateFunctionCode` to replace the prod Lambda function code with credential-extracting malicious code\n4. **Hop 2 - Function Invocation**: The dev role uses `lambda:InvokeFunction` to execute the malicious code in the prod Lambda function\n5. **Credential Extraction**: The malicious Lambda function extracts its execution role credentials from the Lambda runtime environment\n6. **Admin Access**: The extracted credentials for `pl-prod-lambda-execution-role` provide full administrative access to the prod account\n7. **Verification**: Run `aws sts get-caller-identity` with the extracted credentials to confirm admin access in prod",
+    "resourcesCreated": "| ARN | Purpose |\n|-----|---------|\n| `arn:aws:iam::{DEV_ACCOUNT}:role/pl-dev-lambda-invoke-role` | Dev role with cross-account Lambda invoke and update permissions |\n| `arn:aws:lambda:{REGION}:{PROD_ACCOUNT}:function:pl-prod-hello-world` | Prod Lambda function vulnerable to code injection |\n| `arn:aws:iam::{PROD_ACCOUNT}:role/pl-prod-lambda-execution-role` | Prod Lambda execution role with AdministratorAccess |",
+    "attackLab": {
+      "prerequisites": "1. Install the `plabs` CLI:\n   ```bash\n   brew install pathfinding-labs/tap/plabs\n   ```\n2. Configure your AWS profiles in `~/.plabs/plabs.yaml` (or run `plabs init` if you haven't already)",
+      "deployNonInteractive": "```bash\nplabs enable enable_cross_account_dev_to_prod_multi_hop_lambda_invoke_update\nplabs apply\n```",
+      "deployTui": "1. Launch the TUI: `plabs`\n2. Navigate to this scenario in the scenarios list\n3. Press `space` to enable it\n4. Press `d` to deploy",
+      "demoAttack": {
+        "intro": "The script will:\n\n1. Assume the dev Lambda invoke role (`pl-dev-lambda-invoke-role`) in the dev account\n2. Discover the prod Lambda function (`pl-prod-hello-world`)\n3. Create malicious Python code for credential extraction\n4. Update the prod Lambda function with the malicious code using `lambda:UpdateFunctionCode`\n5. Invoke the malicious function using `lambda:InvokeFunction`\n6. Display the extracted prod Lambda execution role credentials and confirm admin access",
+        "resourcesCreated": "- Temporary malicious Lambda deployment package (zip file on disk, removed after upload)\n- Modified prod Lambda function code (restored by cleanup script)",
+        "nonInteractive": "```bash\nplabs demo --list\nplabs demo lambda-invoke-update\n```",
+        "tui": "1. Launch the TUI: `plabs`\n2. Navigate to this scenario in the scenarios list\n3. Press `r` to run the demo script"
+      },
+      "cleanup": {
+        "nonInteractive": "```bash\nplabs cleanup --list\nplabs cleanup lambda-invoke-update\n```",
+        "tui": "1. Launch the TUI: `plabs`\n2. Navigate to this scenario in the scenarios list\n3. Press `c` to run the cleanup script"
+      },
+      "teardownNonInteractive": "```bash\nplabs disable enable_cross_account_dev_to_prod_multi_hop_lambda_invoke_update\nplabs apply\n```",
+      "teardownTui": "1. Launch the TUI: `plabs`\n2. Navigate to this scenario in the scenarios list\n3. Press `space` to disable it\n4. Press `D` to destroy"
+    },
+    "cspm": {
+      "whatToDetect": "- Dev account IAM role (`pl-dev-lambda-invoke-role`) has `lambda:UpdateFunctionCode` permission on prod account Lambda functions \u2014 this is a cross-account code injection vector\n- Dev account IAM role has `lambda:InvokeFunction` permission on prod account Lambda functions with no condition restricting invocation context\n- Prod Lambda function (`pl-prod-hello-world`) has a resource policy granting the entire dev account (`arn:aws:iam::DEV_ACCOUNT:root`) the ability to invoke and update function code\n- Prod Lambda execution role (`pl-prod-lambda-execution-role`) has `AdministratorAccess` attached \u2014 high-privilege execution role reachable via code injection\n- Cross-account Lambda resource policy allows broad principal (`*` or `:root`) rather than a specific role ARN",
+      "prevention": "- **Principle of Least Privilege**: Avoid granting `lambda:UpdateFunctionCode` to cross-account principals; restrict Lambda update permissions to CI/CD pipeline roles with narrow scope conditions\n- **Cross-Account Restrictions**: Scope Lambda resource policies to a specific trusted role ARN (e.g., `arn:aws:iam::DEV_ACCOUNT:role/ci-deploy-role`) rather than the entire dev account root\n- **Resource Policy Auditing**: Regularly audit Lambda resource policies using `aws lambda get-policy` and alert on policies granting broad cross-account access\n- **Execution Role Restrictions**: Limit Lambda execution role permissions to only what the function needs; never attach `AdministratorAccess` to a Lambda execution role\n- **Code Review and Signing**: Implement Lambda code signing with AWS Signer to prevent unauthorized code from being deployed\n- **Monitoring**: Alert on `Lambda: UpdateFunctionCode20150331v2` events, especially when the caller is from a different account than the function"
+    },
+    "cloudSiem": {
+      "cloudTrailEvents": "- `STS: AssumeRole` \u2014 Dev user assumes the `pl-dev-lambda-invoke-role`; monitor cross-account role assumptions from dev to roles with Lambda permissions\n- `Lambda: UpdateFunctionCode20150331v2` \u2014 Lambda function code modified cross-account; high severity when caller account differs from function account\n- `Lambda: Invoke` \u2014 Lambda function invoked shortly after a code update; correlate with `UpdateFunctionCode` events from the same session\n- `STS: GetCallerIdentity` \u2014 Often called to confirm identity after credential extraction; monitor for calls using Lambda execution role temporary credentials from unexpected source IPs",
+      "detonationLogs": "_Detonation log integration (Stratus Red Team / Grimoire) is planned for a future release._"
+    }
+  },
+  "slug": "lambda-invoke-update"
+}

@@ -1,0 +1,100 @@
+{
+  "displayName": "Privilege Escalation via ec2-instance-connect:SendSSHPublicKey to S3 Bucket",
+  "name": "ec2-003-ec2-instance-connect-sendsshpublickey",
+  "description": "SSH into EC2 instance via Instance Connect and extract IAM role credentials from IMDS for S3 bucket access",
+  "costEstimate": "$8/mo",
+  "pathfindingCloudId": "ec2-003",
+  "interactiveDemo": false,
+  "category": "Privilege Escalation",
+  "subCategory": "existing-passrole",
+  "pathType": "one-hop",
+  "target": "to-bucket",
+  "environments": [
+    "prod"
+  ],
+  "attackPath": {
+    "principals": [
+      "arn:aws:iam::{account_id}:user/pl-prod-ec2-003-to-bucket-starting-user",
+      "arn:aws:ec2:{region}:{account_id}:instance/i-xxxxxxxxx",
+      "arn:aws:iam::{account_id}:role/pl-prod-ec2-003-to-bucket-ec2-bucket-role",
+      "arn:aws:s3:::pl-sensitive-data-ec2-003-{account_id}-{suffix}"
+    ],
+    "summary": "starting_user \u2192 (ec2-instance-connect:SendSSHPublicKey) \u2192 EC2 instance \u2192 (IMDS credential extraction) \u2192 S3 bucket access"
+  },
+  "permissions": {
+    "required": [
+      {
+        "permission": "ec2-instance-connect:SendSSHPublicKey",
+        "resource": "arn:aws:ec2:*:{account_id}:instance/{target_instance_id}"
+      }
+    ],
+    "helpful": [
+      {
+        "permission": "ec2:DescribeInstances",
+        "purpose": "Discover EC2 instances with S3 bucket access"
+      },
+      {
+        "permission": "iam:GetInstanceProfile",
+        "purpose": "View instance profile to determine attached role permissions"
+      },
+      {
+        "permission": "iam:GetRole",
+        "purpose": "View role permissions and S3 bucket access"
+      },
+      {
+        "permission": "s3:ListBucket",
+        "purpose": "Verify S3 access after credential extraction"
+      }
+    ]
+  },
+  "mitreAttack": {
+    "tactics": [
+      "TA0004 - Privilege Escalation",
+      "TA0006 - Credential Access",
+      "TA0009 - Collection"
+    ],
+    "techniques": [
+      "T1552.005 - Unsecured Credentials: Cloud Instance Metadata API",
+      "T1078.004 - Valid Accounts: Cloud Accounts",
+      "T1530 - Data from Cloud Storage Object"
+    ]
+  },
+  "terraform": {
+    "variableName": "enable_single_account_privesc_one_hop_to_bucket_ec2_003_ec2_instance_connect_sendsshpublickey",
+    "modulePath": "modules/scenarios/single-account/privesc-one-hop/to-bucket/ec2-003-ec2-instance-connect-sendsshpublickey"
+  },
+  "githubUrl": "https://github.com/DataDog/pathfinding-labs/tree/main/modules/scenarios/single-account/privesc-one-hop/to-bucket/ec2-003-ec2-instance-connect-sendsshpublickey",
+  "readme": {
+    "overview": "EC2 Instance Connect provides a secure way to connect to EC2 instances by pushing temporary SSH public keys that remain valid for 60 seconds. However, if a user has the `ec2-instance-connect:SendSSHPublicKey` permission on an instance with a privileged IAM role attached, they can SSH into the instance and extract the role's temporary credentials from the Instance Metadata Service (IMDS).\n\nThis scenario demonstrates a privilege escalation path where a low-privileged user leverages EC2 Instance Connect to access an EC2 instance that has an IAM role with S3 bucket access. Once on the instance, the attacker extracts the role credentials via IMDSv2 and uses them to access sensitive data in an S3 bucket. This technique is particularly dangerous because it combines legitimate AWS services (EC2 Instance Connect and IMDS) to bypass IAM restrictions, and the 60-second window for the SSH key makes detection challenging.\n\nThe attack highlights the importance of restricting `ec2-instance-connect:SendSSHPublicKey` permissions and carefully evaluating which IAM roles are attached to EC2 instances, especially those accessible via Instance Connect. Organizations should treat EC2 Instance Connect permissions with the same scrutiny as direct IAM role assumption permissions, as they provide an indirect path to role credentials.",
+    "mitreAttack": "- **Tactic**: TA0004 - Privilege Escalation, TA0006 - Credential Access, TA0009 - Collection\n- **Technique**: T1552.005 - Unsecured Credentials: Cloud Instance Metadata API\n- **Technique**: T1078.004 - Valid Accounts: Cloud Accounts\n- **Technique**: T1530 - Data from Cloud Storage Object",
+    "attackDiagram": "graph LR\n    A[pl-prod-ec2-003-to-bucket-starting-user] -->|ec2-instance-connect:SendSSHPublicKey| B[EC2 Instance]\n    B -->|SSH Connection<br/>60-second window| C[Instance Shell Access]\n    C -->|IMDSv2 Query| D[pl-prod-ec2-003-to-bucket-ec2-bucket-role<br/>Credentials]\n    D -->|s3:GetObject<br/>s3:ListBucket| E[S3 Bucket:<br/>pl-sensitive-data-ec2-003]\n\n    style A fill:#ff9999,stroke:#333,stroke-width:2px\n    style B fill:#ffcc99,stroke:#333,stroke-width:2px\n    style C fill:#ffcc99,stroke:#333,stroke-width:2px\n    style D fill:#ffcc99,stroke:#333,stroke-width:2px\n    style E fill:#99ff99,stroke:#333,stroke-width:2px",
+    "attackSteps": "1. **Initial Access**: Start as `pl-prod-ec2-003-to-bucket-starting-user` with `ec2-instance-connect:SendSSHPublicKey` permission (credentials provided via Terraform outputs)\n2. **Generate SSH Key Pair**: Create a temporary SSH key pair for authentication\n3. **Push Public Key**: Use `ec2-instance-connect:SendSSHPublicKey` to push the public key to the target EC2 instance (valid for 60 seconds)\n4. **Establish SSH Connection**: Connect to the EC2 instance via SSH within the 60-second window\n5. **Extract Role Credentials**: Query the Instance Metadata Service (IMDSv2) from within the instance to retrieve temporary IAM role credentials\n6. **Configure AWS CLI**: Use the extracted credentials (AccessKeyId, SecretAccessKey, SessionToken) to configure AWS CLI\n7. **Access S3 Bucket**: Use the role credentials to list and download objects from the sensitive S3 bucket\n8. **Verification**: Verify successful S3 bucket access and data exfiltration",
+    "resourcesCreated": "| ARN | Purpose |\n| -- | -- |\n| `arn:aws:iam::PROD_ACCOUNT:user/pl-prod-ec2-003-to-bucket-starting-user` | Scenario-specific starting user with access keys and ec2-instance-connect:SendSSHPublicKey permission |\n| `arn:aws:iam::PROD_ACCOUNT:policy/pl-prod-ec2-003-to-bucket-starting-user-policy` | Policy granting SendSSHPublicKey, DescribeInstances, GetInstanceProfile, and GetRole permissions |\n| `arn:aws:ec2:REGION:PROD_ACCOUNT:instance/i-xxxxxxxxx` | EC2 instance (Amazon Linux 2023) with Instance Connect enabled and bucket access role attached |\n| `arn:aws:iam::PROD_ACCOUNT:role/pl-prod-ec2-003-to-bucket-ec2-bucket-role` | IAM role attached to EC2 instance with S3 bucket read access |\n| `arn:aws:iam::PROD_ACCOUNT:instance-profile/pl-prod-ec2-003-to-bucket-ec2-bucket-profile` | Instance profile linking the IAM role to the EC2 instance |\n| `arn:aws:s3:::pl-sensitive-data-ec2-003-PROD_ACCOUNT-SUFFIX` | Target S3 bucket containing sensitive data files |",
+    "attackLab": {
+      "prerequisites": "1. Install the `plabs` CLI:\n   ```bash\n   brew install pathfinding-labs/tap/plabs\n   ```\n2. Configure your AWS profiles in `~/.plabs/plabs.yaml` (or run `plabs init` if you haven't already)",
+      "deployNonInteractive": "```bash\nplabs enable enable_single_account_privesc_one_hop_to_bucket_ec2_003_ec2_instance_connect_sendsshpublickey\nplabs apply\n```",
+      "deployTui": "1. Launch the TUI: `plabs`\n2. Navigate to this scenario in the scenarios list\n3. Press `space` to enable it\n4. Press `d` to deploy",
+      "demoAttack": {
+        "intro": "The script will:\n1. Display a step-by-step walkthrough with color-coded output\n2. Generate a temporary SSH key pair\n3. Push the public key to the EC2 instance using EC2 Instance Connect\n4. Establish SSH connection within the 60-second window\n5. Extract IAM role credentials from IMDSv2\n6. Use the extracted credentials to access the S3 bucket\n7. Verify successful data exfiltration\n8. Output standardized test results for automation",
+        "resourcesCreated": "- Temporary SSH key pair (private key written to local disk during demo)\n- Downloaded S3 objects from the sensitive data bucket",
+        "nonInteractive": "```bash\nplabs demo --list\nplabs demo ec2-003-ec2-instance-connect-sendsshpublickey\n```",
+        "tui": "1. Launch the TUI: `plabs`\n2. Navigate to this scenario in the scenarios list\n3. Press `r` to run the demo script"
+      },
+      "cleanup": {
+        "nonInteractive": "```bash\nplabs cleanup --list\nplabs cleanup ec2-003-ec2-instance-connect-sendsshpublickey\n```",
+        "tui": "1. Launch the TUI: `plabs`\n2. Navigate to this scenario in the scenarios list\n3. Press `c` to run the cleanup script"
+      },
+      "teardownNonInteractive": "```bash\nplabs disable enable_single_account_privesc_one_hop_to_bucket_ec2_003_ec2_instance_connect_sendsshpublickey\nplabs apply\n```",
+      "teardownTui": "1. Launch the TUI: `plabs`\n2. Navigate to this scenario in the scenarios list\n3. Press `space` to disable it\n4. Press `D` to destroy"
+    },
+    "cspm": {
+      "whatToDetect": "A properly configured Cloud Security Posture Management (CSPM) tool should identify:\n\n1. **Overly Permissive EC2 Instance Connect Permissions**: User with `ec2-instance-connect:SendSSHPublicKey` on instances with privileged IAM roles\n2. **Sensitive Instance Profiles**: EC2 instances with IAM roles that have broad S3 access (especially `s3:GetObject` on sensitive buckets)\n3. **Missing Resource Constraints**: SendSSHPublicKey permissions without resource ARN restrictions or condition keys\n4. **Lack of OS User Restrictions**: SendSSHPublicKey permissions without `ec2:osuser` condition constraints\n5. **IMDSv1 Enabled**: Instances using IMDSv1 instead of IMDSv2 (makes credential theft easier)\n6. **Missing Network Restrictions**: Security groups allowing SSH (port 22) from broad IP ranges on instances with privileged roles\n7. **Privilege Escalation Path**: One-hop path from low-privileged user to S3 bucket access via EC2 Instance Connect",
+      "prevention": "- **Restrict SendSSHPublicKey with resource-based constraints**:\n  ```json\n  {\n    \"Effect\": \"Allow\",\n    \"Action\": \"ec2-instance-connect:SendSSHPublicKey\",\n    \"Resource\": \"arn:aws:ec2:REGION:ACCOUNT_ID:instance/i-specificinstance\",\n    \"Condition\": {\n      \"StringEquals\": {\n        \"ec2:osuser\": \"ec2-user\"\n      }\n    }\n  }\n  ```\n- **Use security groups to restrict SSH access** to known IP ranges or VPN endpoints, not 0.0.0.0/0\n- **Monitor CloudTrail for SendSSHPublicKey events**, especially to instances with privileged roles attached\n- **Implement IMDSv2** (session-oriented metadata service) to make credential theft more difficult by requiring a session token\n- **Use AWS Systems Manager Session Manager instead of SSH** for remote access - it provides better auditing and doesn't expose ports\n- **Alert on unusual SSH connections** to sensitive instances, especially those with S3 or admin access roles\n- **Consider disabling EC2 Instance Connect** on instances with privileged roles if SSH access is not required\n- **Use VPC endpoints for S3** to restrict which instances can access specific buckets\n- **Apply least privilege to instance profiles** - instances should only have access to the specific S3 buckets and objects they need\n- **Implement S3 bucket policies** that restrict access based on source VPC or VPC endpoints\n- **Use SCPs to prevent overly broad SendSSHPublicKey permissions** across your AWS Organization\n- **Enable GuardDuty** to detect unusual API activity from EC2 instances, including anomalous S3 access patterns"
+    },
+    "cloudSiem": {
+      "cloudTrailEvents": "- `EC2: SendSSHPublicKey` \u2014 SSH public key pushed to an instance via EC2 Instance Connect; critical when the target instance has a privileged IAM role attached\n- `EC2: DescribeInstances` \u2014 Reconnaissance call to list instances; suspicious when followed immediately by `SendSSHPublicKey`\n- `IAM: GetInstanceProfile` \u2014 Retrieval of instance profile details; used to identify roles attached to EC2 instances\n- `IAM: GetRole` \u2014 Role permission lookup; used to confirm the instance role has S3 or other privileged access\n- `S3: ListBucket` \u2014 Bucket listing from EC2 instance role credentials; suspicious when the instance does not normally access that bucket\n- `S3: GetObject` \u2014 Object download from the sensitive data bucket; high severity when accessed via extracted IMDS credentials",
+      "detonationLogs": "_Detonation log integration (Stratus Red Team / Grimoire) is planned for a future release._"
+    }
+  },
+  "slug": "ec2-003-to-bucket"
+}

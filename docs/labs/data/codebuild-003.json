@@ -1,0 +1,97 @@
+{
+  "displayName": "One-Hop Privilege Escalation: codebuild:StartBuildBatch",
+  "name": "codebuild-003-codebuild-startbuildbatch",
+  "description": "Exploit existing CodeBuild project with buildspec-override to execute privileged commands",
+  "costEstimate": "$0/mo",
+  "pathfindingCloudId": "codebuild-003",
+  "interactiveDemo": false,
+  "category": "Privilege Escalation",
+  "subCategory": "existing-passrole",
+  "pathType": "one-hop",
+  "target": "to-admin",
+  "environments": [
+    "prod"
+  ],
+  "attackPath": {
+    "principals": [
+      "arn:aws:iam::{account_id}:user/pl-prod-codebuild-003-to-admin-starting-user",
+      "arn:aws:codebuild:{region}:{account_id}:project/pl-prod-codebuild-003-to-admin-target-project",
+      "arn:aws:iam::{account_id}:role/pl-prod-codebuild-003-to-admin-target-role"
+    ],
+    "summary": "starting_user \u2192 (codebuild:StartBuildBatch with buildspec-override) \u2192 existing CodeBuild project \u2192 buildspec executes with admin role \u2192 grants admin to starting_user \u2192 admin access"
+  },
+  "permissions": {
+    "required": [
+      {
+        "permission": "codebuild:StartBuildBatch",
+        "resource": "*"
+      }
+    ],
+    "helpful": [
+      {
+        "permission": "codebuild:ListProjects",
+        "purpose": "Discover existing CodeBuild projects to exploit"
+      },
+      {
+        "permission": "codebuild:BatchGetProjects",
+        "purpose": "View project details including attached service role"
+      },
+      {
+        "permission": "codebuild:BatchGetBuildBatches",
+        "purpose": "Monitor build batch execution status"
+      },
+      {
+        "permission": "iam:ListUsers",
+        "purpose": "Verify admin access after escalation"
+      }
+    ]
+  },
+  "mitreAttack": {
+    "tactics": [
+      "TA0004 - Privilege Escalation",
+      "TA0002 - Execution"
+    ],
+    "techniques": [
+      "T1078.004 - Valid Accounts: Cloud Accounts",
+      "T1651 - Cloud Administration Command"
+    ]
+  },
+  "terraform": {
+    "variableName": "enable_single_account_privesc_one_hop_to_admin_codebuild_003_codebuild_startbuildbatch",
+    "modulePath": "modules/scenarios/single-account/privesc-one-hop/to-admin/codebuild-003-codebuild-startbuildbatch"
+  },
+  "githubUrl": "https://github.com/DataDog/pathfinding-labs/tree/main/modules/scenarios/single-account/privesc-one-hop/to-admin/codebuild-003-codebuild-startbuildbatch",
+  "readme": {
+    "overview": "This scenario demonstrates a privilege escalation vulnerability where a user has permission to start CodeBuild batch builds using `codebuild:StartBuildBatch`. Unlike PassRole scenarios that require creating new resources, this attack exploits an existing CodeBuild project that already has an attached service role with administrative permissions.\n\nThe key vulnerability is that `codebuild:StartBuildBatch` allows the attacker to use the `--buildspec-override` parameter to inject a malicious buildspec. This means they can execute arbitrary commands within the context of the existing project's privileged service role without needing `iam:PassRole` or `codebuild:CreateProject` permissions. The attacker can use this to grant themselves administrative access by having the build attach an AdministratorAccess policy to their own user account.\n\nThis is particularly dangerous in environments where CodeBuild projects are created with overly permissive service roles (such as IAM modification permissions) and users are given access to start builds without proper oversight of buildspec overrides.",
+    "mitreAttack": "- **Tactic**: TA0004 - Privilege Escalation, TA0002 - Execution\n- **Technique**: T1078.004 - Valid Accounts: Cloud Accounts\n- **Technique**: T1651 - Cloud Administration Command",
+    "attackDiagram": "graph LR\n    A[pl-prod-codebuild-003-to-admin-starting-user] -->|codebuild:ListProjects| B[Discovery]\n    B -->|codebuild:BatchGetProjects| C[pl-prod-codebuild-003-to-admin-target-project]\n    C -->|codebuild:StartBuildBatch<br/>with --buildspec-override| D[Malicious Buildspec Execution]\n    D -->|Executes with| E[pl-prod-codebuild-003-to-admin-target-role]\n    E -->|iam:AttachUserPolicy| F[AdministratorAccess attached to starting-user]\n    F -->|New permissions| G[Effective Administrator]\n\n    style A fill:#ff9999,stroke:#333,stroke-width:2px\n    style C fill:#ffcc99,stroke:#333,stroke-width:2px\n    style E fill:#ffcc99,stroke:#333,stroke-width:2px\n    style G fill:#99ff99,stroke:#333,stroke-width:2px",
+    "attackSteps": "1. **Initial Access**: Start as `pl-prod-codebuild-003-to-admin-starting-user` (credentials provided via Terraform outputs)\n2. **Discovery**: Use `codebuild:ListProjects` to enumerate existing CodeBuild projects\n3. **Reconnaissance**: Use `codebuild:BatchGetProjects` to identify projects with privileged service roles\n4. **Inject Malicious Buildspec**: Use `codebuild:StartBuildBatch` with `--buildspec-override` to inject a buildspec that attaches AdministratorAccess to the starting user\n5. **Monitor Execution**: Use `codebuild:BatchGetBuildBatches` to monitor build batch completion\n6. **Verification**: Verify administrative access with `iam:ListUsers`",
+    "resourcesCreated": "| ARN | Purpose |\n| -- | -- |\n| `arn:aws:iam::PROD_ACCOUNT:user/pl-prod-codebuild-003-to-admin-starting-user` | Scenario-specific starting user with access keys and codebuild:StartBuildBatch permission |\n| `arn:aws:codebuild:REGION:PROD_ACCOUNT:project/pl-prod-codebuild-003-to-admin-target-project` | Existing CodeBuild project configured for batch builds |\n| `arn:aws:iam::PROD_ACCOUNT:role/pl-prod-codebuild-003-to-admin-target-role` | Service role with iam:AttachUserPolicy permission, attached to CodeBuild project |\n| `arn:aws:iam::PROD_ACCOUNT:policy/pl-prod-codebuild-003-to-admin-starting-user-policy` | Grants codebuild:StartBuildBatch, ListProjects, BatchGetProjects, and BatchGetBuildBatches permissions |\n| `arn:aws:iam::PROD_ACCOUNT:policy/pl-prod-codebuild-003-to-admin-target-role-policy` | Grants iam:AttachUserPolicy permission to the service role |",
+    "attackLab": {
+      "prerequisites": "1. Install the `plabs` CLI:\n   ```bash\n   brew install pathfinding-labs/tap/plabs\n   ```\n2. Configure your AWS profiles in `~/.plabs/plabs.yaml` (or run `plabs init` if you haven't already)",
+      "deployNonInteractive": "```bash\nplabs enable enable_single_account_privesc_one_hop_to_admin_codebuild_003_codebuild_startbuildbatch\nplabs apply\n```",
+      "deployTui": "1. Launch the TUI: `plabs`\n2. Navigate to this scenario in the scenarios list\n3. Press `space` to enable it\n4. Press `d` to deploy",
+      "demoAttack": {
+        "intro": "The script will:\n1. Display a step-by-step walkthrough with color-coded output\n2. Show the commands being executed and their results\n3. Demonstrate buildspec-override injection\n4. Verify successful privilege escalation to administrator\n5. Output standardized test results for automation",
+        "resourcesCreated": "- `AdministratorAccess` managed policy attached to `pl-prod-codebuild-003-to-admin-starting-user`",
+        "nonInteractive": "```bash\nplabs demo --list\nplabs demo codebuild-003-codebuild-startbuildbatch\n```",
+        "tui": "1. Launch the TUI: `plabs`\n2. Navigate to this scenario in the scenarios list\n3. Press `r` to run the demo script"
+      },
+      "cleanup": {
+        "nonInteractive": "```bash\nplabs cleanup --list\nplabs cleanup codebuild-003-codebuild-startbuildbatch\n```",
+        "tui": "1. Launch the TUI: `plabs`\n2. Navigate to this scenario in the scenarios list\n3. Press `c` to run the cleanup script"
+      },
+      "teardownNonInteractive": "```bash\nplabs disable enable_single_account_privesc_one_hop_to_admin_codebuild_003_codebuild_startbuildbatch\nplabs apply\n```",
+      "teardownTui": "1. Launch the TUI: `plabs`\n2. Navigate to this scenario in the scenarios list\n3. Press `space` to disable it\n4. Press `D` to destroy"
+    },
+    "cspm": {
+      "whatToDetect": "A properly configured Cloud Security Posture Management (CSPM) tool should detect:\n\n1. **Overly Permissive Service Roles**: CodeBuild service roles with IAM modification permissions (iam:AttachUserPolicy, iam:PutUserPolicy, iam:AttachRolePolicy)\n2. **Buildspec Override Risk**: Users or roles with codebuild:StartBuildBatch permission on projects with privileged service roles\n3. **Privilege Escalation Path**: Detection of the complete attack path from StartBuildBatch \u2192 privileged service role \u2192 IAM modification\n4. **IAM Policy Attachments from CodeBuild**: Unusual IAM policy modifications originating from CodeBuild service role sessions",
+      "prevention": "- **Restrict StartBuildBatch Permissions**: Limit `codebuild:StartBuildBatch` to trusted administrators only, or use resource-based conditions to restrict which projects can be accessed\n- **Enforce Buildspec Source**: Configure CodeBuild projects to require buildspecs from source control (GitHub, CodeCommit) and disable buildspec overrides\n- **Apply Least Privilege to Service Roles**: CodeBuild service roles should never have IAM modification permissions unless absolutely required for legitimate CI/CD operations\n- **Use SCPs**: Implement Service Control Policies to prevent CodeBuild service roles from modifying IAM policies or attaching policies to principals\n- **IAM Access Analyzer**: Use IAM Access Analyzer to identify privilege escalation paths involving CodeBuild and service roles\n- **Resource Tagging**: Tag CodeBuild projects with privilege levels and enforce tag-based conditional access policies\n- **Implement Approval Workflows**: Require manual approval for buildspec overrides on sensitive CodeBuild projects with privileged service roles"
+    },
+    "cloudSiem": {
+      "cloudTrailEvents": "- `CodeBuild: StartBuildBatch` \u2014 Batch build started; critical when `buildspec-override` parameter is present on projects with privileged service roles\n- `IAM: AttachUserPolicy` \u2014 Managed policy attached to an IAM user; high severity when originating from a CodeBuild service role session",
+      "detonationLogs": "_Detonation log integration (Stratus Red Team / Grimoire) is planned for a future release._"
+    }
+  },
+  "slug": "codebuild-003"
+}

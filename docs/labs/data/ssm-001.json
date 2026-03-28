@@ -1,0 +1,93 @@
+{
+  "displayName": "One-Hop Privilege Escalation: ssm:StartSession to EC2 with Admin Role",
+  "name": "ssm-001-ssm-startsession",
+  "description": "Start interactive session on EC2 instances with privileged roles to extract credentials via SSM StartSession",
+  "costEstimate": "$5/mo",
+  "pathfindingCloudId": "ssm-001",
+  "interactiveDemo": false,
+  "category": "Privilege Escalation",
+  "subCategory": "existing-passrole",
+  "pathType": "one-hop",
+  "target": "to-admin",
+  "environments": [
+    "prod"
+  ],
+  "attackPath": {
+    "principals": [
+      "arn:aws:iam::{account_id}:user/pl-prod-ssm-001-to-admin-starting-user",
+      "arn:aws:ec2:{region}:{account_id}:instance/i-xxxxxxxxx",
+      "arn:aws:iam::{account_id}:role/pl-prod-ssm-001-to-admin-ec2-role"
+    ],
+    "summary": "starting_user \u2192 (ssm:StartSession) \u2192 EC2 instance \u2192 (curl IMDS) \u2192 EC2 instance role credentials \u2192 admin access"
+  },
+  "permissions": {
+    "required": [
+      {
+        "permission": "ssm:StartSession",
+        "resource": "arn:aws:ec2:*:{account_id}:instance/{target_instance_id} and arn:aws:ssm:*:*:document/SSM-SessionManagerRunShell"
+      }
+    ],
+    "helpful": [
+      {
+        "permission": "ec2:DescribeInstances",
+        "purpose": "Discover target EC2 instances"
+      },
+      {
+        "permission": "ssm:DescribeInstanceInformation",
+        "purpose": "Identify SSM-enabled instances"
+      },
+      {
+        "permission": "sts:GetCallerIdentity",
+        "purpose": "Verify credentials after exfiltration"
+      }
+    ]
+  },
+  "mitreAttack": {
+    "tactics": [
+      "TA0004 - Privilege Escalation",
+      "TA0006 - Credential Access"
+    ],
+    "techniques": [
+      "T1552.005 - Unsecured Credentials: Cloud Instance Metadata API",
+      "T1078.004 - Valid Accounts: Cloud Accounts"
+    ]
+  },
+  "terraform": {
+    "variableName": "enable_single_account_privesc_one_hop_to_admin_ssm_001_ssm_startsession",
+    "modulePath": "modules/scenarios/single-account/privesc-one-hop/to-admin/ssm-001-ssm-startsession"
+  },
+  "githubUrl": "https://github.com/DataDog/pathfinding-labs/tree/main/modules/scenarios/single-account/privesc-one-hop/to-admin/ssm-001-ssm-startsession",
+  "readme": {
+    "overview": "This scenario demonstrates a privilege escalation vulnerability where an IAM user has permission to start interactive sessions on EC2 instances via AWS Systems Manager (SSM) Session Manager. The attacker can establish an interactive shell session on an EC2 instance that has an administrative IAM role attached, extract the temporary credentials from the EC2 instance metadata service (IMDS), and then use those credentials locally to gain full administrator access.\n\nThis attack vector is particularly dangerous because SSM Session Manager provides SSH-like access through the AWS API without requiring any network connectivity, open SSH ports, or SSH keys. The access is completely API-driven, making it attractive for attackers and often granted broadly across engineering teams for legitimate troubleshooting purposes. Unlike traditional SSH, SSM sessions can be initiated from anywhere with valid AWS credentials, bypassing traditional network security controls like security groups and NACLs.\n\nThe attack leaves minimal forensic evidence if SSM Session Manager logging is not properly configured, and the extracted credentials are time-limited but fully functional AWS credentials that can be used from any location to perform any action the instance role permits.",
+    "mitreAttack": "- **Tactic**: TA0004 - Privilege Escalation, TA0006 - Credential Access\n- **Technique**: T1552.005 - Unsecured Credentials: Cloud Instance Metadata API\n- **Technique**: T1078.004 - Valid Accounts: Cloud Accounts",
+    "attackDiagram": "graph LR\n    A[pl-prod-ssm-001-to-admin-starting-user] -->|ssm:StartSession| B[EC2 Instance]\n    B -->|Interactive Shell| C[Shell Access on Instance]\n    C -->|curl IMDS| D[Extract Admin Role Credentials]\n    D -->|Use Locally| E[Effective Administrator]\n\n    style A fill:#ff9999,stroke:#333,stroke-width:2px\n    style B fill:#ffcc99,stroke:#333,stroke-width:2px\n    style C fill:#ffcc99,stroke:#333,stroke-width:2px\n    style D fill:#ffcc99,stroke:#333,stroke-width:2px\n    style E fill:#99ff99,stroke:#333,stroke-width:2px",
+    "attackSteps": "1. **Initial Access**: Start as `pl-prod-ssm-001-to-admin-starting-user` (credentials provided via Terraform outputs)\n2. **Discover Target Instances**: Use `ec2:DescribeInstances` to identify EC2 instances with privileged IAM roles\n3. **Start Interactive Session**: Use `ssm:StartSession` to establish an interactive shell session on the target EC2 instance with the admin role attached\n4. **Extract Credentials from IMDS**: Within the interactive session, query the instance metadata endpoint at `http://169.254.169.254/latest/meta-data/iam/security-credentials/ROLE_NAME` to retrieve temporary AWS credentials (access key, secret key, session token)\n5. **Configure Local Credentials**: Export the extracted credentials as environment variables in your local shell or configure them in the AWS CLI\n6. **Verification**: Verify administrator access by executing privileged AWS API calls (e.g., `iam:ListUsers`)",
+    "resourcesCreated": "| ARN | Purpose |\n| -- | -- |\n| `arn:aws:iam::PROD_ACCOUNT:user/pl-prod-ssm-001-to-admin-starting-user` | Scenario-specific starting user with access keys and SSM permissions |\n| `arn:aws:iam::PROD_ACCOUNT:policy/pl-prod-ssm-001-to-admin-policy` | Allows `ssm:StartSession`, `ssm:TerminateSession`, `ssm:ResumeSession`, `ssm:DescribeInstanceInformation`, and `ec2:DescribeInstances` |\n| `arn:aws:iam::PROD_ACCOUNT:role/pl-prod-ssm-001-to-admin-ec2-role` | Administrative role attached to the EC2 instance (target for credential extraction) |\n| `arn:aws:iam::PROD_ACCOUNT:instance-profile/pl-prod-ssm-001-to-admin-ec2-profile` | Instance profile associating the admin role with the EC2 instance |\n| `arn:aws:ec2:REGION:PROD_ACCOUNT:instance/i-xxxxxxxxx` | EC2 instance with SSM agent and admin role attached |",
+    "attackLab": {
+      "prerequisites": "1. Install the `plabs` CLI:\n   ```bash\n   brew install pathfinding-labs/tap/plabs\n   ```\n2. Configure your AWS profiles in `~/.plabs/plabs.yaml` (or run `plabs init` if you haven't already)",
+      "deployNonInteractive": "```bash\nplabs enable enable_single_account_privesc_one_hop_to_admin_ssm_001_ssm_startsession\nplabs apply\n```",
+      "deployTui": "1. Launch the TUI: `plabs`\n2. Navigate to this scenario in the scenarios list\n3. Press `space` to enable it\n4. Press `d` to deploy",
+      "demoAttack": {
+        "intro": "The script will:\n1. Display a step-by-step walkthrough with color-coded output\n2. Show the commands being executed and their results\n3. Verify successful privilege escalation\n4. Output standardized test results for automation",
+        "resourcesCreated": "- Temporary AWS credential environment variables extracted from the EC2 instance metadata service",
+        "nonInteractive": "```bash\nplabs demo --list\nplabs demo ssm-001-ssm-startsession\n```",
+        "tui": "1. Launch the TUI: `plabs`\n2. Navigate to this scenario in the scenarios list\n3. Press `r` to run the demo script"
+      },
+      "cleanup": {
+        "nonInteractive": "```bash\nplabs cleanup --list\nplabs cleanup ssm-001-ssm-startsession\n```",
+        "tui": "1. Launch the TUI: `plabs`\n2. Navigate to this scenario in the scenarios list\n3. Press `c` to run the cleanup script"
+      },
+      "teardownNonInteractive": "```bash\nplabs disable enable_single_account_privesc_one_hop_to_admin_ssm_001_ssm_startsession\nplabs apply\n```",
+      "teardownTui": "1. Launch the TUI: `plabs`\n2. Navigate to this scenario in the scenarios list\n3. Press `space` to disable it\n4. Press `D` to destroy"
+    },
+    "cspm": {
+      "whatToDetect": "A properly configured Cloud Security Posture Management (CSPM) tool should identify the following security issues:\n\n1. **EC2 instances with overly privileged IAM roles**: Instances should follow the principle of least privilege. An EC2 instance with `AdministratorAccess` or similar broad permissions represents a significant risk, especially when combined with SSM access.\n\n2. **Principals with ssm:StartSession on wildcard resources**: The ability to start interactive sessions on any EC2 instance in the account should be restricted to specific instances using resource ARNs or IAM condition keys.\n\n3. **Lack of IAM condition keys restricting SSM access**: Policies should use conditions like `ssm:resourceTag/Environment` to limit which instances can be accessed via Session Manager.\n\n4. **Missing AWS Systems Manager Session Manager logging**: SSM sessions should be logged to CloudWatch Logs or S3 for audit and forensic purposes. Interactive sessions can be particularly risky without proper logging.\n\n5. **EC2 instances without IMDSv2 enforcement**: The Instance Metadata Service should be configured to require IMDSv2, which provides protection against SSRF attacks and makes metadata extraction more difficult. IMDSv2 requires session tokens before accessing metadata.\n\n6. **Session Manager access without MFA requirements**: Sensitive operations like starting sessions on instances with privileged roles should require multi-factor authentication.",
+      "prevention": "- **Restrict ssm:StartSession with resource conditions**: Use IAM policy conditions to limit SSM session access to specific instances or instances with specific tags:\n  ```json\n  {\n    \"Effect\": \"Allow\",\n    \"Action\": \"ssm:StartSession\",\n    \"Resource\": \"arn:aws:ec2:*:*:instance/*\",\n    \"Condition\": {\n      \"StringEquals\": {\n        \"ssm:resourceTag/Environment\": \"dev\",\n        \"ssm:resourceTag/SSMAccess\": \"Allowed\"\n      }\n    }\n  }\n  ```\n\n- **Apply least privilege to EC2 instance roles**: EC2 instances should only have the minimum permissions necessary for their function. Avoid attaching `AdministratorAccess` or other broad policies to instance profiles. If an instance needs administrative access, consider using more granular permissions or temporary credential vending mechanisms.\n\n- **Enforce IMDSv2 on all EC2 instances**: Require Instance Metadata Service Version 2 (IMDSv2), which uses session-based authentication and provides protection against SSRF attacks:\n  ```bash\n  aws ec2 modify-instance-metadata-options \\\n    --instance-id i-1234567890abcdef0 \\\n    --http-tokens required \\\n    --http-put-response-hop-limit 1\n  ```\n\n- **Enable SSM Session Manager logging**: Configure AWS Systems Manager to log all session activity to CloudWatch Logs or S3 for audit and forensic analysis. This is critical for detecting and investigating unauthorized access:\n  ```json\n  {\n    \"sessionLogging\": {\n      \"cloudWatchLogGroupName\": \"/aws/ssm/session-logs\",\n      \"cloudWatchEncryptionEnabled\": true,\n      \"s3BucketName\": \"my-session-logs-bucket\",\n      \"s3EncryptionEnabled\": true\n    }\n  }\n  ```\n\n- **Require MFA for sensitive SSM operations**: Use IAM policy conditions to require multi-factor authentication for starting sessions on instances with privileged roles:\n  ```json\n  {\n    \"Effect\": \"Allow\",\n    \"Action\": \"ssm:StartSession\",\n    \"Resource\": \"arn:aws:ec2:*:*:instance/*\",\n    \"Condition\": {\n      \"BoolIfExists\": {\n        \"aws:MultiFactorAuthPresent\": \"true\"\n      },\n      \"StringEquals\": {\n        \"ssm:resourceTag/RequiresMFA\": \"true\"\n      }\n    }\n  }\n  ```\n\n- **Monitor CloudTrail for suspicious SSM activity**: Create CloudWatch alarms or SIEM rules for:\n  - `ssm:StartSession` events targeting instances with privileged roles\n  - Extended session durations on sensitive instances\n  - Unusual API activity patterns from instance role credentials\n  - Instance role credentials used from non-EC2 IP addresses\n\n- **Implement Service Control Policies (SCPs)**: Use AWS Organizations SCPs to prevent overly broad SSM permissions at the organization level and ensure consistent security controls:\n  ```json\n  {\n    \"Version\": \"2012-10-17\",\n    \"Statement\": [{\n      \"Effect\": \"Deny\",\n      \"Action\": \"ssm:StartSession\",\n      \"Resource\": \"*\",\n      \"Condition\": {\n        \"StringNotEquals\": {\n          \"ssm:resourceTag/SSMAccess\": \"Allowed\"\n        }\n      }\n    }]\n  }\n  ```\n\n- **Use VPC endpoints for SSM**: Configure VPC endpoints for Systems Manager to keep SSM traffic within your VPC and enable more granular network-level controls through security groups and VPC endpoint policies.\n\n- **Implement credential guard mechanisms**: Consider using tools or scripts on EC2 instances to detect and alert on unusual IMDS access patterns, such as repeated queries to the credentials endpoint or access from unexpected processes.\n\n- **Use IAM Access Analyzer**: Regularly scan for privilege escalation paths involving SSM and EC2 instance roles using AWS IAM Access Analyzer or third-party tools like Pathfinding.cloud to identify these attack vectors before they can be exploited."
+    },
+    "cloudSiem": {
+      "cloudTrailEvents": "- `SSM: StartSession` \u2014 Interactive session started on an EC2 instance; high severity when the target instance has a privileged IAM role attached\n- `SSM: TerminateSession` \u2014 Session terminated; correlate with StartSession events to measure session duration and flag unusually long sessions\n- `SSM: ResumeSession` \u2014 Session resumed; may indicate persistent interactive access to a sensitive instance\n- `STS: GetCallerIdentity` \u2014 Caller identity verified; commonly used after extracting credentials to confirm the level of access obtained\n- `EC2: DescribeInstances` \u2014 EC2 instance enumeration; when followed by StartSession, may indicate reconnaissance to identify high-value targets",
+      "detonationLogs": "_Detonation log integration (Stratus Red Team / Grimoire) is planned for a future release._"
+    }
+  },
+  "slug": "ssm-001"
+}

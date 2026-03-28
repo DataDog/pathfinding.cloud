@@ -1,0 +1,92 @@
+{
+  "displayName": "Privilege Escalation via iam:UpdateAssumeRolePolicy",
+  "name": "iam-012-iam-updateassumerolepolicy",
+  "description": "Modifying admin role trust policy to grant self-access",
+  "costEstimate": "$0/mo",
+  "pathfindingCloudId": "iam-012",
+  "interactiveDemo": false,
+  "category": "Privilege Escalation",
+  "subCategory": "principal-access",
+  "pathType": "one-hop",
+  "target": "to-admin",
+  "environments": [
+    "prod"
+  ],
+  "attackPath": {
+    "principals": [
+      "arn:aws:iam::{account_id}:user/pl-prod-iam-012-to-admin-starting-user",
+      "arn:aws:iam::{account_id}:role/pl-prod-iam-012-to-admin-target-role"
+    ],
+    "summary": "starting_user \u2192 (iam:UpdateAssumeRolePolicy) \u2192 modify admin role trust \u2192 (sts:AssumeRole) \u2192 admin access"
+  },
+  "permissions": {
+    "required": [
+      {
+        "permission": "iam:UpdateAssumeRolePolicy",
+        "resource": "arn:aws:iam::*:role/pl-prod-iam-012-to-admin-target-role"
+      },
+      {
+        "permission": "sts:AssumeRole",
+        "resource": "arn:aws:iam::*:role/pl-prod-iam-012-to-admin-target-role"
+      }
+    ],
+    "helpful": [
+      {
+        "permission": "iam:ListRoles",
+        "purpose": "Discover privileged roles to target"
+      },
+      {
+        "permission": "iam:GetRole",
+        "purpose": "View current trust policy before modification"
+      }
+    ]
+  },
+  "mitreAttack": {
+    "tactics": [
+      "TA0004 - Privilege Escalation",
+      "TA0003 - Persistence"
+    ],
+    "techniques": [
+      "T1098 - Account Manipulation",
+      "T1078.004 - Valid Accounts: Cloud Accounts"
+    ]
+  },
+  "terraform": {
+    "variableName": "enable_single_account_privesc_one_hop_to_admin_iam_012_iam_updateassumerolepolicy",
+    "modulePath": "modules/scenarios/single-account/privesc-one-hop/to-admin/iam-012-iam-updateassumerolepolicy"
+  },
+  "githubUrl": "https://github.com/DataDog/pathfinding-labs/tree/main/modules/scenarios/single-account/privesc-one-hop/to-admin/iam-012-iam-updateassumerolepolicy",
+  "readme": {
+    "overview": "This scenario demonstrates a powerful privilege escalation vulnerability where a user with `iam:UpdateAssumeRolePolicy` permission can modify the trust policy (AssumeRole policy) of a privileged role to grant themselves access. Trust policies control who can assume a role - by modifying this policy, an attacker can inject their own principal as a trusted entity, then immediately assume the role to gain its elevated permissions.\n\nThis attack is particularly dangerous because trust policies are often overlooked in security reviews. Organizations may carefully audit identity-based policies attached to roles but forget that trust policies are equally critical for access control. A user with `iam:UpdateAssumeRolePolicy` permission on an admin role can effectively grant themselves admin access in just two API calls.\n\nThe scenario creates a user with permission to update the trust policy of an admin role that initially trusts only the EC2 service. The attacker modifies the trust policy to add their own user as a trusted principal, then assumes the role to gain full administrative access.",
+    "mitreAttack": "- **Tactic**: TA0004 - Privilege Escalation, TA0003 - Persistence\n- **Technique**: T1098 - Account Manipulation\n- **Technique**: T1078.004 - Valid Accounts: Cloud Accounts",
+    "attackDiagram": "graph LR\n    A[pl-prod-iam-012-to-admin-starting-user] -->|iam:UpdateAssumeRolePolicy| B[pl-prod-iam-012-to-admin-target-role]\n    B -->|Modify Trust Policy| C[Trust Policy Updated]\n    C -->|sts:AssumeRole| D[Assumed Admin Role]\n    D -->|Administrator Access| E[Effective Administrator]\n\n    style A fill:#ff9999,stroke:#333,stroke-width:2px\n    style B fill:#ffcc99,stroke:#333,stroke-width:2px\n    style C fill:#ffcc99,stroke:#333,stroke-width:2px\n    style D fill:#ffcc99,stroke:#333,stroke-width:2px\n    style E fill:#99ff99,stroke:#333,stroke-width:2px",
+    "attackSteps": "1. **Initial Access**: Start as `pl-prod-iam-012-to-admin-starting-user` (credentials provided via Terraform outputs)\n2. **Examine Target**: Inspect the current trust policy of the target admin role to understand who can currently assume it\n3. **Modify Trust Policy**: Use `iam:UpdateAssumeRolePolicy` to update the role's trust policy, adding the attacker's user ARN as a trusted principal\n4. **Wait for Propagation**: Allow 15 seconds for IAM changes to propagate across AWS infrastructure\n5. **Assume Admin Role**: Use `sts:AssumeRole` to assume the now-accessible admin role\n6. **Verification**: Verify administrator access by listing IAM users or performing other admin actions",
+    "resourcesCreated": "| ARN | Purpose |\n| -- | -- |\n| `arn:aws:iam::PROD_ACCOUNT:user/pl-prod-iam-012-to-admin-starting-user` | Scenario-specific starting user with access keys and UpdateAssumeRolePolicy permission |\n| `arn:aws:iam::PROD_ACCOUNT:role/pl-prod-iam-012-to-admin-target-role` | Admin role with AdministratorAccess policy, initially trusts only EC2 service |\n| `arn:aws:iam::PROD_ACCOUNT:policy/pl-prod-iam-012-to-admin-starting-user-policy` | User policy granting UpdateAssumeRolePolicy and AssumeRole permissions on target role |",
+    "attackLab": {
+      "prerequisites": "1. Install the `plabs` CLI:\n   ```bash\n   brew install pathfinding-labs/tap/plabs\n   ```\n2. Configure your AWS profiles in `~/.plabs/plabs.yaml` (or run `plabs init` if you haven't already)",
+      "deployNonInteractive": "```bash\nplabs enable enable_single_account_privesc_one_hop_to_admin_iam_012_iam_updateassumerolepolicy\nplabs apply\n```",
+      "deployTui": "1. Launch the TUI: `plabs`\n2. Navigate to this scenario in the scenarios list\n3. Press `space` to enable it\n4. Press `d` to deploy",
+      "demoAttack": {
+        "intro": "The script will:\n1. Display a step-by-step walkthrough with color-coded output\n2. Show the commands being executed and their results\n3. Verify successful privilege escalation\n4. Output standardized test results for automation",
+        "resourcesCreated": "- Modified trust policy on `pl-prod-iam-012-to-admin-target-role` (attacker's user ARN added as trusted principal)\n- Temporary STS session credentials from assuming the admin role",
+        "nonInteractive": "```bash\nplabs demo --list\nplabs demo iam-012-iam-updateassumerolepolicy\n```",
+        "tui": "1. Launch the TUI: `plabs`\n2. Navigate to this scenario in the scenarios list\n3. Press `r` to run the demo script"
+      },
+      "cleanup": {
+        "nonInteractive": "```bash\nplabs cleanup --list\nplabs cleanup iam-012-iam-updateassumerolepolicy\n```",
+        "tui": "1. Launch the TUI: `plabs`\n2. Navigate to this scenario in the scenarios list\n3. Press `c` to run the cleanup script"
+      },
+      "teardownNonInteractive": "```bash\nplabs disable enable_single_account_privesc_one_hop_to_admin_iam_012_iam_updateassumerolepolicy\nplabs apply\n```",
+      "teardownTui": "1. Launch the TUI: `plabs`\n2. Navigate to this scenario in the scenarios list\n3. Press `space` to disable it\n4. Press `D` to destroy"
+    },
+    "cspm": {
+      "whatToDetect": "- IAM user has `iam:UpdateAssumeRolePolicy` permission on a privileged/admin role \u2014 direct privilege escalation path\n- Role trust policy allows modification by non-privileged principals\n- Privilege escalation path detected: `pl-prod-iam-012-to-admin-starting-user` can assume `pl-prod-iam-012-to-admin-target-role` via trust policy manipulation\n- IAM user has both `iam:UpdateAssumeRolePolicy` and `sts:AssumeRole` on the same admin role resource",
+      "prevention": "- **Restrict UpdateAssumeRolePolicy permissions**: Avoid granting `iam:UpdateAssumeRolePolicy` permission except to highly trusted automation or security teams\n- **Implement resource conditions**: Use IAM condition keys like `aws:RequestedRegion` or `aws:SourceVpc` to limit where trust policy modifications can originate\n- **Use SCPs for protection**: Create Service Control Policies (SCPs) that prevent modification of trust policies on critical roles:\n  ```json\n  {\n    \"Effect\": \"Deny\",\n    \"Action\": \"iam:UpdateAssumeRolePolicy\",\n    \"Resource\": \"arn:aws:iam::*:role/Admin*\",\n    \"Condition\": {\n      \"StringNotEquals\": {\n        \"aws:PrincipalOrgID\": \"o-yourorgid\"\n      }\n    }\n  }\n  ```\n- **Require MFA for sensitive operations**: Enforce MFA for any actions that modify role trust relationships using condition keys like `aws:MultiFactorAuthPresent`\n- **Use IAM Access Analyzer**: Regularly run IAM Access Analyzer to identify privilege escalation paths involving trust policy modifications\n- **Implement least privilege**: Never grant wildcard permissions on `iam:UpdateAssumeRolePolicy` - always specify exact role resources if this permission is needed\n- **Audit trust policies regularly**: Include role trust policies in regular security audits, not just identity-based policies"
+    },
+    "cloudSiem": {
+      "cloudTrailEvents": "- `IAM: UpdateAssumeRolePolicy` \u2014 Trust policy modified on a role; critical when the target role has elevated permissions, indicates potential privilege escalation setup\n- `STS: AssumeRole` \u2014 Role assumption event; high severity when preceded by a trust policy modification on the same role within a short time window",
+      "detonationLogs": "_Detonation log integration (Stratus Red Team / Grimoire) is planned for a future release._"
+    }
+  },
+  "slug": "iam-012"
+}

@@ -1,0 +1,95 @@
+{
+  "displayName": "Privilege Escalation via iam:PassRole + glue:CreateDevEndpoint",
+  "name": "glue-001-iam-passrole+glue-createdevendpoint",
+  "description": "Pass privileged role to AWS Glue dev endpoint for SSH-based command execution",
+  "costEstimate": "$0/mo",
+  "pathfindingCloudId": "glue-001",
+  "interactiveDemo": false,
+  "category": "Privilege Escalation",
+  "subCategory": "new-passrole",
+  "pathType": "one-hop",
+  "target": "to-admin",
+  "environments": [
+    "prod"
+  ],
+  "attackPath": {
+    "principals": [
+      "arn:aws:iam::{account_id}:user/pl-prod-glue-001-to-admin-starting-user",
+      "arn:aws:iam::{account_id}:role/pl-prod-glue-001-to-admin-target-role"
+    ],
+    "summary": "starting_user \u2192 (iam:PassRole + glue:CreateDevEndpoint) \u2192 Glue dev endpoint with admin role \u2192 SSH access \u2192 (aws iam list-users) \u2192 admin access"
+  },
+  "permissions": {
+    "required": [
+      {
+        "permission": "iam:PassRole",
+        "resource": "arn:aws:iam::*:role/pl-prod-glue-001-to-admin-target-role"
+      },
+      {
+        "permission": "glue:CreateDevEndpoint",
+        "resource": "*"
+      }
+    ],
+    "helpful": [
+      {
+        "permission": "glue:GetDevEndpoint",
+        "purpose": "Check endpoint status and retrieve SSH connection details"
+      },
+      {
+        "permission": "iam:ListRoles",
+        "purpose": "Discover available privileged roles to pass to Glue"
+      },
+      {
+        "permission": "glue:DeleteDevEndpoint",
+        "purpose": "Clean up created endpoints after demonstration"
+      }
+    ]
+  },
+  "mitreAttack": {
+    "tactics": [
+      "TA0004 - Privilege Escalation"
+    ],
+    "techniques": [
+      "T1098.001 - Account Manipulation: Additional Cloud Credentials",
+      "T1578 - Modify Cloud Compute Infrastructure"
+    ]
+  },
+  "terraform": {
+    "variableName": "enable_single_account_privesc_one_hop_to_admin_glue_001_iam_passrole_glue_createdevendpoint",
+    "modulePath": "modules/scenarios/single-account/privesc-one-hop/to-admin/glue-001-iam-passrole+glue-createdevendpoint"
+  },
+  "githubUrl": "https://github.com/DataDog/pathfinding-labs/tree/main/modules/scenarios/single-account/privesc-one-hop/to-admin/glue-001-iam-passrole+glue-createdevendpoint",
+  "readme": {
+    "overview": "This scenario demonstrates a privilege escalation vulnerability where a user with `iam:PassRole` and `glue:CreateDevEndpoint` permissions can create an AWS Glue development endpoint with an administrative role attached. Once the endpoint is provisioned, the attacker can SSH into the endpoint and execute AWS CLI commands with the administrative role's permissions.\n\nAWS Glue development endpoints provide interactive environments for developing and testing ETL scripts. When created, these endpoints can be assigned an IAM role that grants permissions to the underlying compute resources. If an attacker can pass a privileged role to a Glue dev endpoint, they can SSH into the endpoint and leverage the role's permissions to perform administrative actions.\n\nThis is a classic \"PassRole + Service\" privilege escalation pattern, similar to PassRole with Lambda or EC2, but using AWS Glue's development endpoint feature. The attack is particularly powerful because Glue dev endpoints provide direct SSH access, allowing for interactive command execution with the passed role's credentials.\n\n**Important Note:** Glue development endpoints only support Glue versions **0.9** and **1.0** (legacy versions). Newer Glue versions (2.0, 3.0, 4.0) are not supported for dev endpoints. This scenario uses Glue 1.0.",
+    "mitreAttack": "- **Tactic**: Privilege Escalation (TA0004)\n- **Technique**: T1098.001 - Account Manipulation: Additional Cloud Credentials\n- **Technique**: T1578 - Modify Cloud Compute Infrastructure\n- **Sub-technique**: Creating cloud compute resources with elevated privileges",
+    "attackDiagram": "graph LR\n    A[pl-prod-glue-001-to-admin-starting-user] -->|iam:PassRole + glue:CreateDevEndpoint| B[Glue Dev Endpoint]\n    B -->|Assigned Role| C[pl-prod-glue-001-to-admin-target-role]\n    C -->|SSH Access| D[Execute AWS CLI Commands]\n    D -->|Administrator Permissions| E[Effective Administrator]\n\n    style A fill:#ff9999,stroke:#333,stroke-width:2px\n    style B fill:#ffcc99,stroke:#333,stroke-width:2px\n    style C fill:#ffcc99,stroke:#333,stroke-width:2px\n    style D fill:#ffcc99,stroke:#333,stroke-width:2px\n    style E fill:#99ff99,stroke:#333,stroke-width:2px",
+    "attackSteps": "1. **Initial Access**: Start as `pl-prod-glue-001-to-admin-starting-user` (credentials provided via Terraform outputs)\n2. **Create Glue Dev Endpoint**: Use `glue:CreateDevEndpoint` to create a development endpoint, passing the admin role via `iam:PassRole`\n3. **Wait for Provisioning**: Wait for the Glue dev endpoint to become available (typically 5-10 minutes)\n4. **Retrieve SSH Details**: Use `glue:GetDevEndpoint` to obtain the public SSH key and endpoint address\n5. **SSH Access**: Connect to the Glue dev endpoint using SSH with the provided key\n6. **Execute Commands**: Run AWS CLI commands from within the endpoint, leveraging the admin role's credentials\n7. **Verification**: Verify administrator access by executing privileged operations (e.g., `aws iam list-users`)",
+    "resourcesCreated": "| ARN | Purpose |\n| -- | -- |\n| `arn:aws:iam::PROD_ACCOUNT:user/pl-prod-glue-001-to-admin-starting-user` | Scenario-specific starting user with access keys |\n| `arn:aws:iam::PROD_ACCOUNT:role/pl-prod-glue-001-to-admin-target-role` | Administrative role passed to Glue dev endpoint |\n| `arn:aws:iam::PROD_ACCOUNT:policy/pl-prod-glue-001-to-admin-passrole-policy` | Policy allowing PassRole on target role and glue:CreateDevEndpoint |",
+    "attackLab": {
+      "prerequisites": "1. Install the `plabs` CLI:\n   ```bash\n   brew install pathfinding-labs/tap/plabs\n   ```\n2. Configure your AWS profiles in `~/.plabs/plabs.yaml` (or run `plabs init` if you haven't already)",
+      "deployNonInteractive": "```bash\nplabs enable enable_single_account_privesc_one_hop_to_admin_glue_001_iam_passrole_glue_createdevendpoint\nplabs apply\n```",
+      "deployTui": "1. Launch the TUI: `plabs`\n2. Navigate to this scenario in the scenarios list\n3. Press `space` to enable it\n4. Press `d` to deploy",
+      "demoAttack": {
+        "intro": "The script will:\n1. Display a step-by-step walkthrough with color-coded output\n2. Show the commands being executed and their results\n3. Create a Glue development endpoint with the admin role\n4. Wait for the endpoint to become available (5-10 minutes)\n5. Retrieve SSH connection details\n6. Verify successful privilege escalation by demonstrating admin access\n7. Output standardized test results for automation\n\n**Note:** The demo script demonstrates the attack conceptually but does not actually SSH into the endpoint, as this would require additional SSH key setup. The script shows how an attacker would proceed with SSH access to execute privileged commands.",
+        "resourcesCreated": "- Glue development endpoint with admin role attached",
+        "nonInteractive": "```bash\nplabs demo --list\nplabs demo glue-001-iam-passrole+glue-createdevendpoint\n```",
+        "tui": "1. Launch the TUI: `plabs`\n2. Navigate to this scenario in the scenarios list\n3. Press `r` to run the demo script"
+      },
+      "cleanup": {
+        "nonInteractive": "```bash\nplabs cleanup --list\nplabs cleanup glue-001-iam-passrole+glue-createdevendpoint\n```",
+        "tui": "1. Launch the TUI: `plabs`\n2. Navigate to this scenario in the scenarios list\n3. Press `c` to run the cleanup script"
+      },
+      "teardownNonInteractive": "```bash\nplabs disable enable_single_account_privesc_one_hop_to_admin_glue_001_iam_passrole_glue_createdevendpoint\nplabs apply\n```",
+      "teardownTui": "1. Launch the TUI: `plabs`\n2. Navigate to this scenario in the scenarios list\n3. Press `space` to disable it\n4. Press `D` to destroy"
+    },
+    "cspm": {
+      "whatToDetect": "A properly configured CSPM solution should identify:\n- IAM user with `iam:PassRole` permission on privileged roles\n- IAM user with `glue:CreateDevEndpoint` permission\n- Combination of PassRole and Glue permissions enabling privilege escalation\n- IAM role with administrative permissions that can be passed to Glue services\n- Glue trust policy allowing the Glue service to assume privileged roles\n- Privilege escalation path from user to admin via Glue dev endpoint creation",
+      "prevention": "- **Restrict PassRole permissions**: Limit `iam:PassRole` to only the specific roles and services needed. Use resource-level restrictions:\n  ```json\n  {\n    \"Effect\": \"Allow\",\n    \"Action\": \"iam:PassRole\",\n    \"Resource\": \"arn:aws:iam::*:role/specific-glue-role\",\n    \"Condition\": {\n      \"StringEquals\": {\n        \"iam:PassedToService\": \"glue.amazonaws.com\"\n      }\n    }\n  }\n  ```\n\n- **Implement SCPs to prevent privilege escalation**: Use Service Control Policies to deny PassRole on administrative roles:\n  ```json\n  {\n    \"Effect\": \"Deny\",\n    \"Action\": \"iam:PassRole\",\n    \"Resource\": \"arn:aws:iam::*:role/*admin*\",\n    \"Condition\": {\n      \"StringEquals\": {\n        \"iam:PassedToService\": \"glue.amazonaws.com\"\n      }\n    }\n  }\n  ```\n\n- **Restrict glue:CreateDevEndpoint permissions**: Only grant this permission to users who legitimately need to create Glue development endpoints (data engineers, ETL developers). This is a powerful permission that should be tightly controlled.\n\n- **Use IAM Access Analyzer**: Enable IAM Access Analyzer to automatically detect privilege escalation paths involving PassRole and Glue services. Review findings regularly and remediate identified risks.\n\n- **Implement least privilege for Glue roles**: When creating IAM roles for Glue services, grant only the minimum permissions required for the specific ETL tasks. Avoid using administrative policies like `AdministratorAccess` or `PowerUserAccess` on Glue service roles.\n\n- **Require MFA for sensitive operations**: Implement MFA requirements for operations like `glue:CreateDevEndpoint` and `iam:PassRole` to add an additional layer of security against compromised credentials.\n\n- **Use VPC endpoints for Glue**: Configure Glue dev endpoints to run within private VPCs without public SSH access, reducing the attack surface even if an endpoint is created with elevated privileges.\n\n- **Tag and monitor Glue resources**: Apply mandatory tagging to Glue dev endpoints and monitor for endpoints created without proper tags or by unauthorized users. Use AWS Config rules to enforce tagging policies.\n\n- **Set up billing alerts**: Configure AWS Budgets to alert when Glue costs exceed expected thresholds, helping detect unauthorized dev endpoint creation based on unexpected charges."
+    },
+    "cloudSiem": {
+      "cloudTrailEvents": "- `IAM: PassRole` \u2014 IAM role passed to a Glue service; high severity when the passed role has administrative permissions\n- `Glue: CreateDevEndpoint` \u2014 Glue development endpoint created; critical when combined with PassRole on a privileged role\n- `Glue: GetDevEndpoint` \u2014 Attacker retrieves endpoint details (SSH key, endpoint address) for interactive access",
+      "detonationLogs": "_Detonation log integration (Stratus Red Team / Grimoire) is planned for a future release._"
+    }
+  },
+  "slug": "glue-001"
+}

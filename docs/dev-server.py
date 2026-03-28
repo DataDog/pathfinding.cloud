@@ -52,6 +52,8 @@ class SPAHTTPRequestHandler(http.server.SimpleHTTPRequestHandler):
             # If URL starts with /paths/, serve /paths/index.html
             if url_path.startswith('/paths/'):
                 self.path = '/paths/index.html'
+            elif url_path.startswith('/labs/'):
+                self.path = '/labs/index.html'
             else:
                 # Otherwise serve root index.html
                 self.path = '/index.html'
