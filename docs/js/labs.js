@@ -152,6 +152,110 @@ function isV3Schema(lab) {
     return lab.schemaVersion?.startsWith('3') || !!lab.readme?.objective;
 }
 
+// Determine if an ARN represents a principal (IAM user/role) or a resource
+function classifyArn(arn) {
+    if (!arn) return { type: 'resource', label: 'Resource' };
+    // IAM users and roles are principals
+    if (arn.includes(':user/')) return { type: 'principal', label: 'IAM User', icon: 'user' };
+    if (arn.includes(':role/')) return { type: 'principal', label: 'IAM Role', icon: 'role' };
+    if (arn.includes(':group/')) return { type: 'principal', label: 'IAM Group', icon: 'group' };
+    // Everything else is a resource
+    return { type: 'resource', label: formatArnServiceLabel(arn), icon: 'resource' };
+}
+
+// Extract a human-readable service label from an ARN
+function formatArnServiceLabel(arn) {
+    if (!arn) return 'Resource';
+    const arnParts = arn.split(':');
+    if (arnParts.length < 6) return 'Resource';
+    const service = arnParts[2]; // e.g. 'ec2', 'lambda', 's3'
+    const resourcePart = arnParts.slice(5).join(':'); // e.g. 'instance/*', 'function/foo'
+    const resourceType = resourcePart.split('/')[0]; // e.g. 'instance', 'function'
+    const serviceLabels = {
+        'ec2': 'EC2',
+        'lambda': 'Lambda',
+        's3': 'S3',
+        'iam': 'IAM',
+        'cloudformation': 'CloudFormation',
+        'ssm': 'SSM',
+        'ecs': 'ECS',
+        'sagemaker': 'SageMaker',
+        'bedrock': 'Bedrock',
+        'glue': 'Glue',
+        'codebuild': 'CodeBuild',
+    };
+    const svcLabel = serviceLabels[service] || service.toUpperCase();
+    const typeLabel = resourceType.replace(/-/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
+    return `${svcLabel} ${typeLabel}`;
+}
+
+// Extract the short resource name from an ARN (last segment after /)
+function getArnShortName(arn) {
+    if (!arn) return '';
+    const parts = arn.split('/');
+    return parts[parts.length - 1] || arn;
+}
+
+// Format an ARN with the service and resource-type segments highlighted
+// ARN format: arn:partition:service:region:account:resource-type/resource-name
+function formatArnHighlighted(arn) {
+    if (!arn) return '';
+    const parts = arn.split(':');
+    if (parts.length < 6) return escapeHtml(arn);
+
+    // parts: [arn, partition, service, region, account, ...resource]
+    const prefix = escapeHtml(parts.slice(0, 2).join(':') + ':');   // arn:aws:
+    const service = escapeHtml(parts[2]);                            // iam, ec2, etc.
+    const middle = escapeHtml(':' + parts[3] + ':' + parts[4] + ':'); // :region:account:
+    const resourceFull = parts.slice(5).join(':');                   // e.g. role/my-role-name or instance/i-xxx
+
+    // Split resource into type and name (on first /)
+    const slashIdx = resourceFull.indexOf('/');
+    if (slashIdx > 0) {
+        const resourceType = escapeHtml(resourceFull.substring(0, slashIdx));
+        const resourceName = escapeHtml(resourceFull.substring(slashIdx));
+        return `${prefix}<span class="lab-arn-service">${service}</span>${middle}<span class="lab-arn-resource-type">${resourceType}</span>${resourceName}`;
+    }
+
+    // No slash -- just highlight the whole resource segment as type
+    return `${prefix}<span class="lab-arn-service">${service}</span>${middle}<span class="lab-arn-resource-type">${escapeHtml(resourceFull)}</span>`;
+}
+
+// Build start/destination card data from attackMap nodes
+function getStartDestination(lab) {
+    const nodes = lab.attackMap?.nodes;
+    const edges = lab.attackMap?.edges;
+    if (!nodes?.length) return null;
+
+    // Start node: first node (no incoming edges or explicitly the first)
+    const incomingCount = {};
+    nodes.forEach(n => { incomingCount[n.id] = 0; });
+    if (edges) {
+        edges.forEach(e => { incomingCount[e.to] = (incomingCount[e.to] || 0) + 1; });
+    }
+    const startNode = nodes.find(n => incomingCount[n.id] === 0) || nodes[0];
+
+    // Destination node: last reachable node following edges
+    let destNode = startNode;
+    if (edges?.length) {
+        const visited = new Set();
+        let current = startNode.id;
+        while (current && !visited.has(current)) {
+            visited.add(current);
+            const outEdge = edges.find(e => e.from === current && !visited.has(e.to));
+            if (outEdge) {
+                current = outEdge.to;
+            } else {
+                break;
+            }
+        }
+        const found = nodes.find(n => n.id === current);
+        if (found && found.id !== startNode.id) destNode = found;
+    }
+
+    return { start: startNode, destination: destNode };
+}
+
 // Extract unique AWS services from required permissions by splitting on ':'
 function parseServicesFromPermissions(permissions) {
     if (!permissions?.required?.length) return [];
@@ -832,6 +936,91 @@ function renderSidebarPermissions(permissions, labSlug) {
     return html;
 }
 
+// Render permissions as horizontal pill layout (used in guided v2 main content)
+function renderPermissionsPills(permissions, labSlug) {
+    if (!permissions) return '';
+    const hasRequired = permissions.required && permissions.required.length > 0;
+    const hasHelpful = permissions.helpful && permissions.helpful.length > 0;
+    if (!hasRequired && !hasHelpful) return '';
+
+    let html = '';
+
+    if (hasRequired) {
+        html += `<div class="lab-perms-pills-section">
+            <div class="lab-perms-pills-label">Required</div>
+            <div class="lab-perms-pills-row">
+                ${permissions.required.map(p =>
+                    `<code class="lab-perm-pill">${escapeHtml(p.permission)}</code>`
+                ).join('')}
+            </div>
+        </div>`;
+    }
+
+    if (hasHelpful) {
+        html += `<div class="lab-perms-pills-section">
+            <button class="lab-perms-pills-toggle" onclick="this.classList.toggle('open'); this.nextElementSibling.classList.toggle('open');">
+                Helpful (${permissions.helpful.length})
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
+            </button>
+            <div class="lab-perms-pills-row lab-perms-pills-collapsible">
+                ${permissions.helpful.map(p =>
+                    `<code class="lab-perm-pill">${escapeHtml(p.permission)}</code>`
+                ).join('')}
+            </div>
+        </div>`;
+    }
+
+    return html;
+}
+
+// ---- Resource Cards ----
+
+// Parse a markdown table of resources (ARN | Purpose) and render as compact cards
+function renderResourceCards(markdownTable) {
+    if (!markdownTable) return '';
+    // Parse table rows: | `arn:...` | description |
+    const rows = [];
+    const lines = markdownTable.split('\n');
+    for (const line of lines) {
+        if (!line.includes('|')) continue;
+        // Skip header row and separator row
+        if (line.match(/^\|\s*ARN\s*\|/i)) continue;
+        if (line.match(/^\|\s*-+/)) continue;
+
+        const cells = line.split('|').map(c => c.trim()).filter(c => c);
+        if (cells.length >= 2) {
+            // Strip backticks from ARN
+            const arn = cells[0].replace(/`/g, '');
+            const purpose = cells[1].replace(/`/g, '');
+            rows.push({ arn, purpose });
+        }
+    }
+
+    if (rows.length === 0) {
+        // Fallback to regular markdown rendering if we can't parse the table
+        return renderLabMarkdown(markdownTable);
+    }
+
+    let html = `<table class="lab-resource-table">
+        <thead>
+            <tr>
+                <th>ARN</th>
+                <th>Purpose</th>
+            </tr>
+        </thead>
+        <tbody>`;
+
+    for (const row of rows) {
+        html += `<tr>
+            <td><code class="lab-resource-arn">${formatArnHighlighted(row.arn)}</code></td>
+            <td class="lab-resource-purpose">${escapeHtml(row.purpose)}</td>
+        </tr>`;
+    }
+
+    html += '</tbody></table>';
+    return html;
+}
+
 // ---- Tabs ----
 
 // Renders a set of inner tabs (e.g. Non-Interactive | TUI, CSPM | CloudSIEM).
@@ -953,8 +1142,12 @@ function renderLabMarkdown(text) {
     let html = escapeHtml(text);
 
     // Convert ```language\ncode\n``` to <pre><code>code</code></pre>
+    // Stash code blocks to protect their contents from further transformations
+    const codeBlocks = [];
     html = html.replace(/```(\w+)?\n([\s\S]*?)```/g, function(match, lang, code) {
-        return `<pre><code>${code.trim()}</code></pre>`;
+        const placeholder = `\x00CODEBLOCK${codeBlocks.length}\x00`;
+        codeBlocks.push(`<pre><code>${code.trim()}</code></pre>`);
+        return placeholder;
     });
 
     // Convert inline `code` to <code>code</code>
@@ -969,8 +1162,10 @@ function renderLabMarkdown(text) {
     // Convert [text](url) to <a href="url">text</a>
     html = html.replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2" target="_blank" rel="noopener noreferrer">$1</a>');
 
-    // Convert ### headings
+    // Convert headings (order matters: ### before ## before #)
     html = html.replace(/^### (.+)$/gm, '<h4>$1</h4>');
+    html = html.replace(/^## (.+)$/gm, '<div class="lab-md-h2">$1</div>');
+    html = html.replace(/^# (.+)$/gm, '<div class="lab-md-h1">$1</div>');
 
     // Convert markdown tables
     html = convertMarkdownTables(html);
@@ -985,8 +1180,8 @@ function renderLabMarkdown(text) {
     html = html.replace(/\n(?![<])/g, '<br>');
 
     // Clean up breaks around block elements
-    html = html.replace(/<br>\s*<(ul|ol|pre|h[1-6]|table|\/p|p)/g, '<$1');
-    html = html.replace(/<\/(ul|ol|pre|h[1-6]|table)>\s*<br>/g, '</$1>');
+    html = html.replace(/<br>\s*<(ul|ol|pre|h[1-6]|table|div|\/p|p)/g, '<$1');
+    html = html.replace(/<\/(ul|ol|pre|h[1-6]|table|div)>\s*<br>/g, '</$1>');
     html = html.replace(/<br>\s*<li>/g, '<li>');
     html = html.replace(/<\/li>\s*<br>/g, '</li>');
     html = html.replace(/<br>\s*<h4>/g, '<h4>');
@@ -995,12 +1190,17 @@ function renderLabMarkdown(text) {
     html = html.replace(/<\/tr>\s*<br>/g, '</tr>');
 
     // Wrap in paragraph if not starting with a block element
-    if (!html.match(/^\s*<(ul|ol|pre|h[1-6]|table|div)/)) {
+    if (!html.match(/^\s*<(ul|ol|pre|h[1-6]|table|div|section)/)) {
         html = `<p>${html}</p>`;
     }
 
     // Clean up empty paragraphs
     html = html.replace(/<p>\s*<\/p>/g, '');
+
+    // Restore stashed code blocks
+    codeBlocks.forEach((block, i) => {
+        html = html.replace(`\x00CODEBLOCK${i}\x00`, block);
+    });
 
     return html;
 }
@@ -1126,11 +1326,42 @@ function buildGuidedV2Sections(lab) {
                     ${renderServiceIcons(lab.permissions) ? `<span class="lab-service-icons-right">${renderServiceIcons(lab.permissions)}</span>` : ''}
                 </div>`;
 
-                if (overview && overview !== lab.description) {
-                    html += `<div class="lab-tab-prose">${renderLabMarkdown(overview)}</div>`;
-                } else {
-                    html += `<div class="lab-tab-prose"><p>${escapeHtml(lab.description)}</p></div>`;
+                // Strip start/destination lines from overview text since we show them as cards
+                let overviewText = overview || lab.description || '';
+                overviewText = overviewText.replace(/^-\s*\*\*Start:\*\*.*$/gm, '').replace(/^-\s*\*\*Destination.*?\*\*.*$/gm, '').trim();
+
+                if (overviewText) {
+                    html += `<div class="lab-tab-prose">${renderLabMarkdown(overviewText)}</div>`;
                 }
+
+                // Start/Destination cards from attackMap
+                const sd = getStartDestination(lab);
+                if (sd) {
+                    const startClassify = classifyArn(sd.start.arn);
+                    const destClassify = classifyArn(sd.destination.arn);
+                    const startName = getArnShortName(sd.start.arn);
+                    const destName = getArnShortName(sd.destination.arn);
+
+                    html += `<div class="lab-objective-flow">
+                        <div class="lab-objective-card lab-objective-card-${startClassify.type}">
+                            <div class="lab-objective-card-type">${escapeHtml(startClassify.label)}</div>
+                            <div class="lab-objective-card-label">${escapeHtml(sd.start.label || sd.start.id)}</div>
+                            <div class="lab-objective-card-arn" title="${escapeHtml(sd.start.arn || '')}">${escapeHtml(startName)}</div>
+                        </div>
+                        <div class="lab-objective-arrow">
+                            <svg width="32" height="24" viewBox="0 0 32 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <line x1="0" y1="12" x2="26" y2="12"/>
+                                <polyline points="20 6 26 12 20 18"/>
+                            </svg>
+                        </div>
+                        <div class="lab-objective-card lab-objective-card-${destClassify.type}">
+                            <div class="lab-objective-card-type">${escapeHtml(destClassify.label)}</div>
+                            <div class="lab-objective-card-label">${escapeHtml(sd.destination.label || sd.destination.id)}</div>
+                            <div class="lab-objective-card-arn" title="${escapeHtml(sd.destination.arn || '')}">${escapeHtml(destName)}</div>
+                        </div>
+                    </div>`;
+                }
+
                 return html;
             }
         });
@@ -1147,7 +1378,7 @@ function buildGuidedV2Sections(lab) {
             });
         }
 
-        // Starting Permissions sub-section
+        // Starting Permissions sub-section (rendered as horizontal pills)
         if (lab.permissions && (lab.permissions.required?.length || lab.permissions.helpful?.length)) {
             sections.push({
                 id: `gv2-permissions-${slug}`,
@@ -1155,7 +1386,7 @@ function buildGuidedV2Sections(lab) {
                 title: 'Starting Permissions',
                 level: 3,
                 colorClass: sectionColors['Objective'],
-                renderContent: () => renderSidebarPermissions(lab.permissions, slug),
+                renderContent: () => renderPermissionsPills(lab.permissions, slug),
             });
         }
     }
@@ -1186,20 +1417,24 @@ function buildGuidedV2Sections(lab) {
                 ]),
             });
         }
+
+        // Scenario Specific Resources Created (under Setup, collapsed by default)
+        const resourcesCreated = getResourcesCreated(lab);
+        if (resourcesCreated) {
+            sections.push({
+                id: `gv2-resources-${slug}`,
+                h2Section: 'Self-hosted Lab Setup',
+                title: 'Scenario Specific Resources Created',
+                level: 3,
+                colorClass: sectionColors['Self-hosted Lab Setup'],
+                collapsed: true,
+                collapsedSummary: 'Show Scenario Specific Resources — collapsed by default as viewing resource names may reveal parts of the challenge.',
+                renderContent: () => renderResourceCards(resourcesCreated),
+            });
+        }
     }
 
     // --- Attack ---
-    const resourcesCreated = getResourcesCreated(lab);
-    if (resourcesCreated) {
-        sections.push({
-            id: `gv2-resources-${slug}`,
-            h2Section: 'Attack',
-            title: 'Scenario Specific Resources Created',
-            level: 3,
-            colorClass: sectionColors['Attack'],
-            renderContent: () => `<div class="lab-tab-prose">${renderLabMarkdown(resourcesCreated)}</div>`,
-        });
-    }
 
     // CTF Challenge from attackMap
     if (lab.attackMap?.nodes?.length && lab.attackMap?.edges?.length) {
@@ -1209,20 +1444,30 @@ function buildGuidedV2Sections(lab) {
             title: 'CTF Challenge',
             level: 3,
             colorClass: sectionColors['Attack'],
-            renderContent: () => renderGuidedV2CTFChallenge(lab.attackMap, slug),
+            renderContent: () => {
+                let html = '<p class="lab-section-intro">Try to complete the attack path on your own using only the hints below. Each step reveals progressively more detail.</p>';
+                html += renderGuidedV2CTFChallenge(lab.attackMap, slug);
+                return html;
+            },
         });
     }
 
     // Guided Walkthrough from companion file
     const walkthrough = getGuidedWalkthrough(lab);
     if (walkthrough) {
+        // Strip the leading H1 title line (e.g. "# Guided Walkthrough: ...") since it
+        // duplicates the section heading already shown on the page
+        // Strip leading H1, then prepend a "Summary" section heading so the
+        // introductory paragraphs have a visible header matching the ## style
+        const walkthroughCleaned = '## Summary\n\n' + walkthrough.replace(/^# [^\n]+\n+/, '');
         sections.push({
             id: `gv2-walkthrough-${slug}`,
             h2Section: 'Attack',
             title: 'Guided Walkthrough',
             level: 3,
             colorClass: sectionColors['Attack'],
-            renderContent: () => `<div class="lab-tab-prose">${renderLabMarkdown(walkthrough)}</div>`,
+            collapsed: true,
+            renderContent: () => `<div class="lab-walkthrough-container"><div class="lab-tab-prose">${renderLabMarkdown(walkthroughCleaned)}</div></div>`,
         });
     }
 
@@ -1252,6 +1497,8 @@ function buildGuidedV2Sections(lab) {
             },
         });
     }
+
+    // (Resources Created section is under Self-hosted Lab Setup, not here)
 
     // Cleanup
     const cleanupData = getCleanup(lab);
@@ -1399,11 +1646,26 @@ function renderLabDetailContentGuidedV2(lab, container) {
             prevH2 = sec.h2Section;
         }
         const headingTag = sec.level === 2 ? 'h2' : 'h3';
-        mainHtml += `
-            <div class="lab-gv2-section" id="${sec.id}" data-gv2-h2="${sec.h2Section}">
-                <${headingTag} class="lab-gv2-heading ${sec.colorClass || ''}">${escapeHtml(sec.title)}</${headingTag}>
-                <div class="lab-gv2-body">${sec.renderContent()}</div>
-            </div>`;
+        if (sec.collapsed) {
+            const summaryText = sec.collapsedSummary || `Show ${escapeHtml(sec.title)}`;
+            mainHtml += `
+                <div class="lab-gv2-section" id="${sec.id}" data-gv2-h2="${sec.h2Section}">
+                    <${headingTag} class="lab-gv2-heading ${sec.colorClass || ''}">${escapeHtml(sec.title)}</${headingTag}>
+                    <details class="lab-gv2-collapsible">
+                        <summary class="lab-gv2-collapsible-summary">
+                            ${summaryText}
+                            <svg class="lab-gv2-collapsible-chevron" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
+                        </summary>
+                        <div class="lab-gv2-body">${sec.renderContent()}</div>
+                    </details>
+                </div>`;
+        } else {
+            mainHtml += `
+                <div class="lab-gv2-section" id="${sec.id}" data-gv2-h2="${sec.h2Section}">
+                    <${headingTag} class="lab-gv2-heading ${sec.colorClass || ''}">${escapeHtml(sec.title)}</${headingTag}>
+                    <div class="lab-gv2-body">${sec.renderContent()}</div>
+                </div>`;
+        }
     });
 
     container.innerHTML = `
