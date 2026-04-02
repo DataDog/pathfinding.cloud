@@ -31,7 +31,7 @@ const cloudSprites = {
         if (!this.images.length) return;
         const rng = mapRng(seed || 99);
         const hudTop = 52;               // generous buffer below top HUD bar
-        const cloudMaxY = h * 0.35;      // clouds confined to top ~35%
+        const cloudMaxY = h * 0.20;      // clouds confined to top ~20%
         const count = Math.max(7, Math.floor(w / 100)); // more clouds
         for (let i = 0; i < count; i++) {
             const img = this.images[Math.floor(rng() * this.images.length)];
@@ -45,6 +45,53 @@ const cloudSprites = {
             ctx.drawImage(img, x - drawW / 2, y - drawH / 2, drawW, drawH);
         }
         ctx.globalAlpha = 1;
+    },
+};
+
+// AWS icon sprite loader -- maps node subTypes to official AWS architecture/resource icons
+const awsIconSprites = {
+    cache: {},  // subType -> Image (or null if failed)
+    loading: new Set(),
+    onLoadCallbacks: [], // callbacks to invoke when any icon finishes loading
+    // Map of subType to icon path (relative to site root)
+    iconPaths: {
+        'iam-role':              '/img/aws-icons/Resource-Icons_01302026/Res_Security-Identity/Res_AWS-Identity-Access-Management_Role_48.png',
+        'iam-user':              '/img/aws-icons/Resource-Icons_01302026/Res_Security-Identity/Res_AWS-Identity-Access-Management_Long-Term-Security-Credential_48.png',
+        'iam-policy':            '/img/aws-icons/Resource-Icons_01302026/Res_Security-Identity/Res_AWS-Identity-Access-Management_Permissions_48.png',
+        'iam-group':             '/img/aws-icons/Architecture-Service-Icons_01302026/Arch_Security-Identity/48/Arch_AWS-IAM-Identity-Center_48.png',
+        'ec2-instance':          '/img/aws-icons/Resource-Icons_01302026/Res_Compute/Res_Amazon-EC2_Instance_48.png',
+        'lambda-function':       '/img/aws-icons/Resource-Icons_01302026/Res_Compute/Res_AWS-Lambda_Lambda-Function_48.png',
+        'codebuild-project':     '/img/aws-icons/Architecture-Service-Icons_01302026/Arch_Developer-Tools/48/Arch_AWS-CodeBuild_48.png',
+        'cloudformation-stack':  '/img/aws-icons/Resource-Icons_01302026/Res_Management-Governance/Res_AWS-CloudFormation_Stack_48.png',
+        's3-bucket':             '/img/aws-icons/Resource-Icons_01302026/Res_Storage/Res_Amazon-Simple-Storage-Service_Bucket_48.png',
+        'sagemaker-notebook':    '/img/aws-icons/Resource-Icons_01302026/Res_Artificial-Intelligence/Res_Amazon-SageMaker-AI_Notebook_48.png',
+        'glue-job':              '/img/aws-icons/Architecture-Service-Icons_01302026/Arch_Analytics/48/Arch_AWS-Glue_48.png',
+        'ecs-task':              '/img/aws-icons/Resource-Icons_01302026/Res_Containers/Res_Amazon-Elastic-Container-Service_Task_48.png',
+        'dynamodb-table':        '/img/aws-icons/Resource-Icons_01302026/Res_Databases/Res_Amazon-DynamoDB_Table_48.png',
+        'bedrock-agent':         '/img/aws-icons/Architecture-Service-Icons_01302026/Arch_Artificial-Intelligence/48/Arch_Amazon-Bedrock_48.png',
+        'apprunner-service':     '/img/aws-icons/Architecture-Service-Icons_01302026/Arch_Compute/48/Arch_AWS-App-Runner_48.png',
+        'mwaa-environment':      '/img/aws-icons/Architecture-Service-Icons_01302026/Arch_Application-Integration/48/Arch_Amazon-Managed-Workflows-for-Apache-Airflow_48.png',
+    },
+    // Get (or start loading) the icon for a given subType. Returns Image if ready, null otherwise.
+    get(subType) {
+        if (!subType) return null;
+        if (this.cache[subType] !== undefined) return this.cache[subType];
+        const path = this.iconPaths[subType];
+        if (!path) { this.cache[subType] = null; return null; }
+        if (this.loading.has(subType)) return null; // still loading
+        this.loading.add(subType);
+        const img = new Image();
+        img.onload = () => { this.cache[subType] = img; this.loading.delete(subType); this.onLoadCallbacks.forEach(cb => cb()); };
+        img.onerror = () => { this.cache[subType] = null; this.loading.delete(subType); };
+        img.src = path;
+        return null;
+    },
+    // Preload all icons for a set of nodes (call once at init)
+    preload(nodes) {
+        if (!nodes) return;
+        const subTypes = new Set();
+        nodes.forEach(n => { if (n.subType) subTypes.add(n.subType); });
+        subTypes.forEach(st => this.get(st));
     },
 };
 
@@ -346,8 +393,16 @@ function drawGameIslandLabels(ctx, w, h, state) {
         }
         if (!label) return;
 
-        const labelY = pos.y + 24;
+        // Position label below the island's bottom edge (ellipse Y-radius is ~0.42 * islandRadius)
+        const ir = state.islandRadius || 52;
+        const labelY = pos.y + ir * 0.42 + 10;
         ctx.save();
+
+        // Check if below-label icon mode applies to this node
+        const belowLabelIcon = (state.iconStyle === 'below-label')
+            ? awsIconSprites.get(nodes[i]?.subType || '')
+            : null;
+        const belowIconSize = 32; // prominent icon size for below-label mode
 
         if (isFirst || isLast) {
             // Extract principal identifier from ARN (e.g., "user/my-user" or "role/my-role")
@@ -356,121 +411,353 @@ function drawGameIslandLabels(ctx, w, h, state) {
             const arnSuffix = arn.includes(':') ? arn.substring(arn.lastIndexOf(':') + 1) : '';
             const nameColor = isFirst ? (p.startFill || '#4ade80') : (p.endFill || '#f59e0b');
 
-            // Name plate below island with ARN identifier underneath in same box
+            // Measure text widths
             ctx.font = 'bold 13px -apple-system, BlinkMacSystemFont, sans-serif';
             const tw = ctx.measureText(label).width;
             ctx.font = '500 9px -apple-system, BlinkMacSystemFont, sans-serif';
             const idTw = arnSuffix ? ctx.measureText(arnSuffix).width : 0;
-            const contentW = Math.max(tw + 16, idTw + 12);
-            const plateH = arnSuffix ? 36 : 20;
-            drawRoundedRect(ctx, pos.x - contentW / 2, labelY - 4, contentW, plateH, 5);
+
+            // Calculate total content height to center vertically in plate
+            const nameH = 13;  // font size
+            const iconGap = belowLabelIcon ? 4 : 0;
+            const iconH = belowLabelIcon ? belowIconSize : 0;
+            const arnGap = arnSuffix ? (belowLabelIcon ? 4 : 8) : 0;
+            const arnH = arnSuffix ? 9 : 0;
+            const contentH = nameH + iconGap + iconH + arnGap + arnH;
+            const pad = 8; // equal top and bottom padding
+            const plateH = contentH + pad * 2;
+            const contentW = Math.max(tw + 16, idTw + 12, belowLabelIcon ? belowIconSize + 12 : 0);
+
+            const plateTop = labelY - 2;
+            drawRoundedRect(ctx, pos.x - contentW / 2, plateTop, contentW, plateH, 5);
             ctx.fillStyle = p.parchCenter || 'rgba(245, 230, 200, 0.9)';
             ctx.fill();
             ctx.strokeStyle = p.borderDecor || 'rgba(120, 80, 20, 0.3)';
             ctx.lineWidth = 0.8;
             ctx.stroke();
+
+            // Draw content centered in plate
+            let cursorY = plateTop + pad + nameH / 2;
+
             // Island name
             ctx.font = 'bold 13px -apple-system, BlinkMacSystemFont, sans-serif';
             ctx.fillStyle = nameColor;
             ctx.textAlign = 'center';
             ctx.textBaseline = 'middle';
-            ctx.fillText(label, pos.x, labelY + 6);
+            ctx.fillText(label, pos.x, cursorY);
+            cursorY += nameH / 2;
+
+            // Icon between name and ARN
+            if (belowLabelIcon) {
+                cursorY += iconGap;
+                ctx.drawImage(belowLabelIcon, pos.x - belowIconSize / 2, cursorY, belowIconSize, belowIconSize);
+                cursorY += iconH;
+            }
+
             // ARN identifier below
             if (arnSuffix) {
+                cursorY += arnGap + arnH / 2;
                 ctx.font = '500 9px -apple-system, BlinkMacSystemFont, sans-serif';
                 ctx.fillStyle = p.mutedText || 'rgba(180, 160, 120, 0.9)';
-                ctx.fillText(arnSuffix, pos.x, labelY + 22);
+                ctx.fillText(arnSuffix, pos.x, cursorY);
             }
         } else {
+            // Middle islands: label + optional icon below
             ctx.font = '600 12px -apple-system, BlinkMacSystemFont, sans-serif';
             const tw = ctx.measureText(label).width;
-            const plateW = tw + 14;
-            const plateH = 18;
-            drawRoundedRect(ctx, pos.x - plateW / 2, labelY - 3, plateW, plateH, 4);
+
+            const nameH = 12; // font size
+            const iconGap = belowLabelIcon ? 4 : 0;
+            const iconH = belowLabelIcon ? belowIconSize : 0;
+            const contentH = nameH + iconGap + iconH;
+            const pad = 6;
+            const plateH = contentH + pad * 2;
+            const plateW = Math.max(tw + 14, belowLabelIcon ? belowIconSize + 12 : 0);
+
+            const plateTop = labelY - 2;
+            drawRoundedRect(ctx, pos.x - plateW / 2, plateTop, plateW, plateH, 4);
             ctx.fillStyle = p.parchCenter || 'rgba(245, 230, 200, 0.9)';
             ctx.fill();
             ctx.strokeStyle = p.borderDecor || 'rgba(120, 80, 20, 0.2)';
             ctx.lineWidth = 0.6;
             ctx.stroke();
+
+            let cursorY = plateTop + pad + nameH / 2;
             ctx.fillStyle = p.labelFill || '#e4e4e8';
             ctx.textAlign = 'center';
             ctx.textBaseline = 'middle';
-            ctx.fillText(label, pos.x, labelY + 6);
+            ctx.fillText(label, pos.x, cursorY);
+            cursorY += nameH / 2;
+
+            // Icon below label
+            if (belowLabelIcon) {
+                cursorY += iconGap;
+                ctx.drawImage(belowLabelIcon, pos.x - belowIconSize / 2, cursorY, belowIconSize, belowIconSize);
+            }
         }
         ctx.restore();
     });
 }
 
-// Draw the plane indicator at a given position
-// angle: rotation in radians (0 = pointing right, negative = tilted up-right)
-function drawPlaneIndicator(ctx, x, y, palette) {
+// ---- Plane Indicator Styles ----
+// Multiple visual styles toggled with P key: 'jet', 'biplane', 'seaplane', 'helicopter'
+
+function drawPlaneJet(ctx, x, y, palette) {
     const p = palette;
     ctx.save();
-    ctx.translate(x + 10, y - 34);
-    ctx.rotate(-0.35); // slight upward tilt toward top-right
+    ctx.translate(x + 12, y - 36);
+    ctx.rotate(-0.30);
 
-    // Shadow
-    ctx.save();
-    ctx.translate(2, 3);
-    ctx.globalAlpha = 0.15;
-    ctx.fillStyle = '#000';
-    ctx.beginPath();
-    ctx.ellipse(0, 0, 18, 5, 0, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.restore();
-
-    // Fuselage
+    // Fuselage -- sleek tapered body
     ctx.fillStyle = '#e8e8ec';
     ctx.strokeStyle = '#888';
     ctx.lineWidth = 0.8;
     ctx.beginPath();
-    ctx.ellipse(0, 0, 16, 4.5, 0, 0, Math.PI * 2);
+    ctx.moveTo(18, 0);
+    ctx.quadraticCurveTo(20, -3, 16, -3.5);
+    ctx.lineTo(-14, -3);
+    ctx.quadraticCurveTo(-18, -1.5, -18, 0);
+    ctx.quadraticCurveTo(-18, 1.5, -14, 3);
+    ctx.lineTo(16, 3.5);
+    ctx.quadraticCurveTo(20, 3, 18, 0);
+    ctx.closePath();
     ctx.fill();
     ctx.stroke();
+
     // Cockpit windshield
     ctx.fillStyle = '#5bc0eb';
     ctx.beginPath();
-    ctx.ellipse(10, -1, 4, 2.5, 0.2, 0, Math.PI * 2);
+    ctx.ellipse(14, -0.5, 4, 2.2, 0.15, 0, Math.PI * 2);
     ctx.fill();
-    // Wings (top)
+
+    // Swept wings (top)
+    ctx.fillStyle = p.startFill || '#4ade80';
+    ctx.strokeStyle = 'rgba(0,0,0,0.25)';
+    ctx.lineWidth = 0.6;
+    ctx.beginPath();
+    ctx.moveTo(-2, -3);
+    ctx.lineTo(-8, -16);
+    ctx.lineTo(6, -12);
+    ctx.lineTo(4, -3);
+    ctx.closePath();
+    ctx.fill(); ctx.stroke();
+    // Swept wings (bottom)
+    ctx.beginPath();
+    ctx.moveTo(-2, 3);
+    ctx.lineTo(-8, 16);
+    ctx.lineTo(6, 12);
+    ctx.lineTo(4, 3);
+    ctx.closePath();
+    ctx.fill(); ctx.stroke();
+
+    // Tail fin (vertical)
+    ctx.fillStyle = p.startFill || '#4ade80';
+    ctx.beginPath();
+    ctx.moveTo(-14, -2);
+    ctx.lineTo(-22, -12);
+    ctx.lineTo(-16, -10);
+    ctx.lineTo(-12, -2);
+    ctx.closePath();
+    ctx.fill(); ctx.stroke();
+
+    // Horizontal stabilizers
+    ctx.fillStyle = '#d4d4d8';
+    ctx.beginPath();
+    ctx.moveTo(-14, -1.5);
+    ctx.lineTo(-20, -7);
+    ctx.lineTo(-16, -5);
+    ctx.lineTo(-12, -1);
+    ctx.closePath();
+    ctx.fill();
+    ctx.beginPath();
+    ctx.moveTo(-14, 1.5);
+    ctx.lineTo(-20, 7);
+    ctx.lineTo(-16, 5);
+    ctx.lineTo(-12, 1);
+    ctx.closePath();
+    ctx.fill();
+
+    // Engine exhaust glow
+    ctx.fillStyle = 'rgba(255, 160, 50, 0.4)';
+    ctx.beginPath();
+    ctx.ellipse(-19, 0, 4, 1.5, 0, 0, Math.PI * 2);
+    ctx.fill();
+
+    ctx.restore();
+}
+
+function drawPlaneBiplane(ctx, x, y, palette) {
+    const p = palette;
+    ctx.save();
+    ctx.translate(x + 10, y - 34);
+    ctx.rotate(-0.35);
+
+    // Fuselage -- rounder, vintage
+    ctx.fillStyle = '#f5e6c8';
+    ctx.strokeStyle = '#8B7355';
+    ctx.lineWidth = 0.8;
+    ctx.beginPath();
+    ctx.ellipse(0, 0, 15, 4, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.stroke();
+
+    // Cockpit (open)
+    ctx.fillStyle = '#5bc0eb';
+    ctx.beginPath();
+    ctx.ellipse(6, -1, 3, 2, 0.2, 0, Math.PI * 2);
+    ctx.fill();
+    // Pilot head
+    ctx.fillStyle = '#8B7355';
+    ctx.beginPath();
+    ctx.arc(6, -3.5, 2.5, 0, Math.PI * 2);
+    ctx.fill();
+    // Goggles
+    ctx.fillStyle = '#fbbf24';
+    ctx.beginPath();
+    ctx.ellipse(7.5, -4, 1.2, 0.8, 0, 0, Math.PI * 2);
+    ctx.fill();
+
+    // Upper wing
+    ctx.fillStyle = p.startFill || '#4ade80';
+    ctx.strokeStyle = 'rgba(0,0,0,0.25)';
+    ctx.lineWidth = 0.5;
+    ctx.beginPath();
+    ctx.moveTo(-8, -5);
+    ctx.lineTo(-6, -16);
+    ctx.lineTo(10, -16);
+    ctx.lineTo(8, -5);
+    ctx.closePath();
+    ctx.fill(); ctx.stroke();
+
+    // Lower wing
+    ctx.beginPath();
+    ctx.moveTo(-8, 4);
+    ctx.lineTo(-6, 14);
+    ctx.lineTo(10, 14);
+    ctx.lineTo(8, 4);
+    ctx.closePath();
+    ctx.fill(); ctx.stroke();
+
+    // Wing struts (connecting upper and lower wings)
+    ctx.strokeStyle = '#8B7355';
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(-4, -15); ctx.lineTo(-4, 13);
+    ctx.moveTo(5, -15); ctx.lineTo(5, 13);
+    ctx.stroke();
+
+    // Tail fin
     ctx.fillStyle = p.startFill || '#4ade80';
     ctx.strokeStyle = 'rgba(0,0,0,0.2)';
     ctx.lineWidth = 0.5;
     ctx.beginPath();
-    ctx.moveTo(-6, -2);
-    ctx.lineTo(4, -14);
-    ctx.lineTo(10, -11);
-    ctx.lineTo(2, -1);
-    ctx.closePath();
-    ctx.fill(); ctx.stroke();
-    // Wings (bottom)
-    ctx.beginPath();
-    ctx.moveTo(-6, 2);
-    ctx.lineTo(4, 14);
-    ctx.lineTo(10, 11);
-    ctx.lineTo(2, 1);
-    ctx.closePath();
-    ctx.fill(); ctx.stroke();
-    // Tail fin
-    ctx.fillStyle = p.startFill || '#4ade80';
-    ctx.beginPath();
-    ctx.moveTo(-14, -1);
-    ctx.lineTo(-20, -9);
+    ctx.moveTo(-13, -1);
+    ctx.lineTo(-19, -9);
     ctx.lineTo(-11, -2);
     ctx.closePath();
     ctx.fill(); ctx.stroke();
-    // Small vertical stabilizer
-    ctx.fillStyle = '#e8e8ec';
+
+    // Propeller hub
+    ctx.fillStyle = '#666';
     ctx.beginPath();
-    ctx.moveTo(-14, 0);
-    ctx.lineTo(-18, -5);
-    ctx.lineTo(-12, 0);
-    ctx.closePath();
+    ctx.arc(15, 0, 2, 0, Math.PI * 2);
     ctx.fill();
+    // Propeller blades (spinning disc)
+    ctx.strokeStyle = '#555';
+    ctx.lineWidth = 1.8;
+    ctx.beginPath();
+    ctx.moveTo(15, -7); ctx.lineTo(15, 7);
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.moveTo(12, -5); ctx.lineTo(18, 5);
+    ctx.stroke();
+
+    ctx.restore();
+}
+
+function drawPlaneSeaplane(ctx, x, y, palette) {
+    const p = palette;
+    ctx.save();
+    ctx.translate(x + 10, y - 32);
+    ctx.rotate(-0.25);
+
+    // Pontoons (floats)
+    ctx.fillStyle = '#a3a3a3';
+    ctx.strokeStyle = '#666';
+    ctx.lineWidth = 0.6;
+    // Left pontoon
+    ctx.beginPath();
+    ctx.ellipse(-2, 7, 14, 2.5, 0, 0, Math.PI * 2);
+    ctx.fill(); ctx.stroke();
+    // Right pontoon (slightly behind due to angle)
+    ctx.beginPath();
+    ctx.ellipse(-2, -8, 14, 2.5, 0, 0, Math.PI * 2);
+    ctx.fill(); ctx.stroke();
+
+    // Struts connecting pontoons to fuselage
+    ctx.strokeStyle = '#888';
+    ctx.lineWidth = 0.8;
+    ctx.beginPath();
+    ctx.moveTo(-4, 4.5); ctx.lineTo(-4, 2);
+    ctx.moveTo(4, 4.5); ctx.lineTo(4, 2);
+    ctx.moveTo(-4, -5.5); ctx.lineTo(-4, -2);
+    ctx.moveTo(4, -5.5); ctx.lineTo(4, -2);
+    ctx.stroke();
+
+    // Fuselage -- boat-like hull
+    ctx.fillStyle = '#e8e8ec';
+    ctx.strokeStyle = '#888';
+    ctx.lineWidth = 0.8;
+    ctx.beginPath();
+    ctx.moveTo(16, 0);
+    ctx.quadraticCurveTo(18, -3, 14, -3);
+    ctx.lineTo(-12, -3);
+    ctx.quadraticCurveTo(-16, 0, -12, 3);
+    ctx.lineTo(14, 3);
+    ctx.quadraticCurveTo(18, 3, 16, 0);
+    ctx.closePath();
+    ctx.fill(); ctx.stroke();
+
+    // Cockpit
+    ctx.fillStyle = '#5bc0eb';
+    ctx.beginPath();
+    ctx.ellipse(10, -0.5, 4, 2.2, 0.15, 0, Math.PI * 2);
+    ctx.fill();
+
+    // High-mounted wing (single wing above fuselage)
+    ctx.fillStyle = p.startFill || '#4ade80';
+    ctx.strokeStyle = 'rgba(0,0,0,0.25)';
+    ctx.lineWidth = 0.5;
+    ctx.beginPath();
+    ctx.moveTo(-6, -3);
+    ctx.lineTo(-10, -15);
+    ctx.lineTo(10, -15);
+    ctx.lineTo(8, -3);
+    ctx.closePath();
+    ctx.fill(); ctx.stroke();
+
+    // Wing strut
+    ctx.strokeStyle = '#888';
+    ctx.lineWidth = 0.8;
+    ctx.beginPath();
+    ctx.moveTo(0, -3); ctx.lineTo(0, -14);
+    ctx.stroke();
+
+    // Tail fin
+    ctx.fillStyle = p.startFill || '#4ade80';
+    ctx.strokeStyle = 'rgba(0,0,0,0.2)';
+    ctx.lineWidth = 0.5;
+    ctx.beginPath();
+    ctx.moveTo(-12, -1);
+    ctx.lineTo(-18, -9);
+    ctx.lineTo(-10, -2);
+    ctx.closePath();
+    ctx.fill(); ctx.stroke();
+
     // Propeller
     ctx.fillStyle = '#666';
     ctx.beginPath();
-    ctx.arc(16, 0, 2.5, 0, Math.PI * 2);
+    ctx.arc(16, 0, 2, 0, Math.PI * 2);
     ctx.fill();
     ctx.strokeStyle = '#555';
     ctx.lineWidth = 1.5;
@@ -478,6 +765,145 @@ function drawPlaneIndicator(ctx, x, y, palette) {
     ctx.moveTo(16, -6); ctx.lineTo(16, 6);
     ctx.stroke();
 
+    ctx.restore();
+}
+
+function drawPlaneHelicopter(ctx, x, y, palette) {
+    const p = palette;
+    ctx.save();
+    ctx.translate(x + 6, y - 30);
+
+    // Tail boom
+    ctx.fillStyle = '#d4d4d8';
+    ctx.strokeStyle = '#888';
+    ctx.lineWidth = 0.7;
+    ctx.beginPath();
+    ctx.moveTo(-4, -1);
+    ctx.lineTo(-22, -3);
+    ctx.lineTo(-22, 1);
+    ctx.lineTo(-4, 2);
+    ctx.closePath();
+    ctx.fill(); ctx.stroke();
+
+    // Tail rotor disc
+    ctx.fillStyle = p.startFill || '#4ade80';
+    ctx.strokeStyle = 'rgba(0,0,0,0.2)';
+    ctx.lineWidth = 0.5;
+    ctx.beginPath();
+    ctx.ellipse(-22, -1, 2, 7, 0, 0, Math.PI * 2);
+    ctx.fill(); ctx.stroke();
+
+    // Main body (cabin)
+    ctx.fillStyle = '#e8e8ec';
+    ctx.strokeStyle = '#888';
+    ctx.lineWidth = 0.8;
+    drawRoundedRect(ctx, -8, -6, 20, 12, 5);
+    ctx.fill(); ctx.stroke();
+
+    // Cockpit glass
+    ctx.fillStyle = '#5bc0eb';
+    ctx.beginPath();
+    ctx.moveTo(8, -4);
+    ctx.quadraticCurveTo(14, -4, 14, 0);
+    ctx.quadraticCurveTo(14, 4, 8, 4);
+    ctx.lineTo(8, -4);
+    ctx.closePath();
+    ctx.fill();
+
+    // Accent stripe
+    ctx.fillStyle = p.startFill || '#4ade80';
+    ctx.fillRect(-7, -1, 15, 2);
+
+    // Landing skids
+    ctx.strokeStyle = '#666';
+    ctx.lineWidth = 1.2;
+    // Left skid
+    ctx.beginPath();
+    ctx.moveTo(-6, 6); ctx.lineTo(-6, 10);
+    ctx.moveTo(8, 6); ctx.lineTo(8, 10);
+    ctx.moveTo(-8, 10); ctx.lineTo(10, 10);
+    ctx.stroke();
+
+    // Rotor mast
+    ctx.strokeStyle = '#666';
+    ctx.lineWidth = 1.5;
+    ctx.beginPath();
+    ctx.moveTo(2, -6); ctx.lineTo(2, -14);
+    ctx.stroke();
+
+    // Rotor hub
+    ctx.fillStyle = '#555';
+    ctx.beginPath();
+    ctx.arc(2, -14, 2, 0, Math.PI * 2);
+    ctx.fill();
+
+    // Main rotor blades (spinning disc)
+    ctx.strokeStyle = p.startFill || '#4ade80';
+    ctx.lineWidth = 2;
+    ctx.globalAlpha = 0.7;
+    ctx.beginPath();
+    ctx.moveTo(-20, -14); ctx.lineTo(24, -14);
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.moveTo(-10, -18); ctx.lineTo(14, -10);
+    ctx.stroke();
+    ctx.globalAlpha = 1;
+
+    ctx.restore();
+}
+
+// Dispatch table for plane styles
+const planeStyleRenderers = {
+    jet: drawPlaneJet,
+    biplane: drawPlaneBiplane,
+    seaplane: drawPlaneSeaplane,
+    helicopter: drawPlaneHelicopter,
+};
+
+// Draw the plane indicator using the selected style, with glow ring + drop shadow for visibility.
+// The plane is offset to the top-right of the island so the shadow doesn't overlap the AWS icon.
+// The plane is drawn at 1.5x scale for better visibility.
+function drawPlaneIndicator(ctx, x, y, palette, style) {
+    const renderer = planeStyleRenderers[style] || drawPlaneJet;
+    const accentColor = palette.startFill || '#4ade80';
+    const liftY = 25; // vertical pixels to raise the plane above its offset position
+    const scale = 1.5;
+    // Offset the plane to the top-right corner of the island
+    const offsetX = 30;
+    const offsetY = -18;
+    const baseX = x + offsetX;
+    const baseY = y + offsetY;
+
+    // Drop shadow at the offset position on the island surface
+    ctx.save();
+    ctx.globalAlpha = 0.25;
+    ctx.fillStyle = '#000';
+    ctx.beginPath();
+    ctx.ellipse(baseX + 4, baseY - 6, 27, 8, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
+
+    // Glow ring around the lifted plane
+    const liftedY = baseY - liftY;
+    ctx.save();
+    const glowX = baseX + 4;
+    const glowY = liftedY - 28 * scale;
+    const grad = ctx.createRadialGradient(glowX, glowY, 5, glowX, glowY, 40);
+    grad.addColorStop(0, accentColor + 'aa');
+    grad.addColorStop(0.5, accentColor + '44');
+    grad.addColorStop(1, accentColor + '00');
+    ctx.fillStyle = grad;
+    ctx.beginPath();
+    ctx.ellipse(glowX, glowY, 40, 28, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
+
+    // Draw the plane at 1.5x scale at the offset+lifted position
+    ctx.save();
+    ctx.translate(baseX, liftedY);
+    ctx.scale(scale, scale);
+    ctx.translate(-baseX, -liftedY);
+    renderer(ctx, baseX, liftedY, palette);
     ctx.restore();
 }
 
@@ -523,7 +949,7 @@ function drawMapWithGameLabels(ctx, w, h, state) {
     // Draw plane at current position (on top of everything)
     if (state.screen === 'playing' || state.screen === 'complete') {
         const planePos = getPlanePosition(state);
-        drawPlaneIndicator(ctx, planePos.x, planePos.y, state.palette);
+        drawPlaneIndicator(ctx, planePos.x, planePos.y, state.palette, state.planeStyle);
     }
 }
 
@@ -667,7 +1093,10 @@ function drawCompanionIslet(ctx, pos, companion, isSelected, state) {
     const p = state.palette;
     const x = pos.x;
     const y = pos.y;
-    const islandRadius = 28; // ~55% of main island's 52px radius
+    // Scale companion islets proportionally with main islands
+    const baseCompanionRadius = 56;
+    const companionShrinkSteps = Math.max(0, (state.nodes?.length || 0) - 3);
+    const islandRadius = baseCompanionRadius * Math.pow(0.8, companionShrinkSteps);
     const seed = Math.round(x * 7 + y * 13);
 
     ctx.save();
@@ -712,6 +1141,19 @@ function drawCompanionIslet(ctx, pos, companion, isSelected, state) {
     ctx.fillStyle = isLight ? '#b8a898' : '#6a5a48';
     drawSmoothShape(ctx, innerShape);
     ctx.fill();
+
+    // AWS icon centered on companion islet (max 50% of islet radius) -- only in 'on-island' mode
+    if (state.iconStyle === 'on-island') {
+        const companionSubType = companion.subType || '';
+        const companionIcon = awsIconSprites.get(companionSubType);
+        if (companionIcon) {
+            const maxIconSize = islandRadius * 0.5; // 50% of companion island radius = 14px
+            const iconSize = Math.min(maxIconSize, companionIcon.width);
+            ctx.globalAlpha = 0.85;
+            ctx.drawImage(companionIcon, x - iconSize / 2, y - iconSize / 2 - 1, iconSize, iconSize);
+            ctx.globalAlpha = 1;
+        }
+    }
 
     // Resource-type tint ring
     const tint = p.typeTintResource || '#f59e0b';
@@ -785,11 +1227,18 @@ function drawCompanionLabel(ctx, x, y, companion, state) {
     const label = companion.label || '';
     const displayLabel = label;
 
+    // Check for below-label icon
+    const belowIcon = (state.iconStyle === 'below-label')
+        ? awsIconSprites.get(companion.subType || '')
+        : null;
+    const iconSize = 24; // slightly smaller for companions
+    const iconRowH = belowIcon ? (iconSize + 4) : 0;
+
     ctx.save();
     ctx.font = '600 10px -apple-system, BlinkMacSystemFont, sans-serif';
     const tw = ctx.measureText(displayLabel).width;
-    const plateW = tw + 10;
-    const plateH = 16;
+    const plateW = Math.max(tw + 10, belowIcon ? iconSize + 10 : 0);
+    const plateH = 16 + iconRowH;
 
     drawRoundedRect(ctx, x - plateW / 2, y - 2, plateW, plateH, 3);
     ctx.fillStyle = p.parchCenter || 'rgba(245, 230, 200, 0.9)';
@@ -802,6 +1251,12 @@ function drawCompanionLabel(ctx, x, y, companion, state) {
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
     ctx.fillText(displayLabel, x, y + 6);
+
+    // Icon below label text
+    if (belowIcon) {
+        ctx.drawImage(belowIcon, x - iconSize / 2, y + 14, iconSize, iconSize);
+    }
+
     ctx.restore();
 }
 
@@ -1306,16 +1761,7 @@ function renderGamePanelCSPM(panelEl, state) {
         </div>`;
     }
 
-    const cspmPrevention = cspm?.prevention;
-    if (cspmPrevention) {
-        html += `
-        <div class="mg-panel-section">
-            <span class="mg-section-label">PREVENTION RECOMMENDATIONS</span>
-            <div class="mg-panel-body">${markdownToSimpleHtml(cspmPrevention)}</div>
-        </div>`;
-    }
-
-    if (!cspmDetect && !cspmPrevention) {
+    if (!cspmDetect) {
         html += `<div class="mg-panel-section"><p class="mg-panel-body mg-muted">No CSPM detection data available for this lab.</p></div>`;
     }
 
@@ -1566,7 +2012,7 @@ function drawStartOverlay(ctx, w, h, state) {
     ctx.fillStyle = p.mutedText;
     ctx.font = '11px -apple-system, BlinkMacSystemFont, sans-serif';
     ctx.textBaseline = 'middle';
-    ctx.fillText('Esc = Pause  |  Click island = View details', w / 2, lastBtn.y + lastBtn.h + 24);
+    ctx.fillText('Esc = Pause  |  T = Island style  |  P = Plane style  |  Click island = View details', w / 2, lastBtn.y + lastBtn.h + 24);
 
     // Highlight deploy button when active
     if (state.showDeploy && deployBtn) {
@@ -2082,7 +2528,7 @@ function buildCompleteButtons(w, h, state) {
 
     const cspm = state.lab?.readme?.defend?.cspm || state.lab?.readme?.cspm;
     const cloudSiem = state.lab?.readme?.defend?.cloudSiem || state.lab?.readme?.cloudSiem;
-    const hasCSPM = !!(cspm?.whatToDetect || cspm?.prevention);
+    const hasCSPM = !!cspm?.whatToDetect;
     const hasCloudSIEM = !!(cloudSiem?.cloudTrailEvents);
 
     const buttons = [
@@ -2518,55 +2964,44 @@ function mapRng(seed) {
     };
 }
 
-// Compute island positions: bottom-left to top-right diagonal with equal spacing.
-// Islands live in the bottom 2/3 of the canvas, leaving top 1/3 for clouds.
-// Safe margins keep islands clear of the HUD bars (top ~44px, bottom ~52px).
+// Compute island positions: spread equidistantly left-to-right across the island zone.
+// First island is leftmost, last island is rightmost. Y positions vary freely
+// with a zig-zag pattern and jitter so the layout feels organic, not linear.
+// Islands live in the bottom 80% of the canvas, leaving top 20% for clouds.
 function computeMapLayout(count, w, h) {
     const positions = [];
     if (count === 0) return positions;
 
     const hudTop = 48;          // below top HUD bar
     const hudBottom = 80;       // above bottom action bar + label space
-    const cloudBottom = h * 0.38; // clouds end here -- islands start BELOW this
+    const cloudBottom = h * 0.22; // clouds end here -- islands start BELOW this
     const padX = w * 0.15;     // 15% margin each side so islands stay central
 
     // Island zone: entirely below cloud bottom, above bottom HUD
-    const minY = cloudBottom + 20;  // Targetlandia (top-right) sits below clouds
-    const maxY = h - hudBottom - 30; // Startington (bottom-left) above bottom bar
-
-    // For 2-island layouts, pull them closer to center so they're not at extreme corners
-    const spreadFactor = count <= 2 ? 0.8 : 1.0; // pull 2-island layouts slightly toward center
-    const centerX = w / 2;
+    const minY = cloudBottom + 20;
+    const maxY = h - hudBottom - 30;
     const centerY = (minY + maxY) / 2;
+    const rangeY = (maxY - minY) / 2;
 
-    // Start bottom-left, end top-right
-    // For 4+ islands, use a zig-zag perpendicular to the diagonal so islands
-    // spread across the canvas instead of sitting on a straight line.
     const rng = mapRng(count * 31);
-    const zigzagAmplitude = count >= 4 ? Math.min(w, h) * 0.12 : 0;
+
     for (let i = 0; i < count; i++) {
-        const t = count === 1 ? 0.5 : i / (count - 1); // 0..1 progress
-        const fullX = padX + t * (w - padX * 2);
-        const fullY = maxY - t * (maxY - minY);
-        // Lerp toward center based on spreadFactor
-        let x = centerX + (fullX - centerX) * spreadFactor;
-        let baseY = centerY + (fullY - centerY) * spreadFactor;
-        // Zig-zag: alternate islands left/right of the diagonal.
-        // Skip first and last islands so start/end stay at the corners.
-        if (zigzagAmplitude > 0 && i > 0 && i < count - 1) {
-            // Perpendicular to the diagonal (which goes bottom-left → top-right)
-            // Diagonal direction is roughly (1, -1) normalized → perp is (1, 1) normalized
-            const sign = (i % 2 === 1) ? 1 : -1;
-            const perpX = sign * zigzagAmplitude * 0.707;  // cos(45)
-            const perpY = sign * zigzagAmplitude * 0.707;  // sin(45)
-            x += perpX;
-            baseY += perpY;
-        }
-        // Small jitter to avoid a perfectly regular pattern
-        const jitterY = (rng() - 0.5) * 20;
-        const jitterX = (rng() - 0.5) * 15;
-        const clampedY = Math.max(minY, Math.min(maxY, baseY + jitterY));
+        // Evenly spaced left-to-right
+        const t = count === 1 ? 0.5 : i / (count - 1);
+        const x = padX + t * (w - padX * 2);
+
+        // Zig-zag Y: alternate above/below center, amplitude scales with zone height
+        // First and last islands get moderate offsets; middle islands get full amplitude
+        const zigzagSign = (i % 2 === 0) ? 1 : -1;
+        const amplitude = rangeY * 0.6;
+        let baseY = centerY + zigzagSign * amplitude;
+
+        // Jitter for organic feel
+        const jitterX = (rng() - 0.5) * 30;
+        const jitterY = (rng() - 0.5) * 40;
+
         const clampedX = Math.max(padX, Math.min(w - padX, x + jitterX));
+        const clampedY = Math.max(minY, Math.min(maxY, baseY + jitterY));
         positions.push({ x: clampedX, y: clampedY });
     }
     return positions;
@@ -2669,6 +3104,361 @@ function drawSmoothShape(ctx, points) {
     ctx.closePath();
 }
 
+// ---- Island style renderers ----
+// Each takes (ctx, pos, islandRadius, seed, p, isFirst, isLast) and draws the terrain layers only.
+
+function drawIslandClassic(ctx, pos, islandRadius, seed, p, isFirst, isLast) {
+    const shore = generateIslandShape(pos.x, pos.y, islandRadius * 1.1, islandRadius * 0.42, seed, 20);
+    const rock = generateIslandShape(pos.x, pos.y, islandRadius * 0.9, islandRadius * 0.35, seed + 1, 20);
+    const inner = generateIslandShape(pos.x, pos.y - 1, islandRadius * 0.65, islandRadius * 0.24, seed + 2, 16);
+
+    // Cliff shadow
+    ctx.fillStyle = 'rgba(0,0,0,0.18)';
+    drawSmoothShape(ctx, shore.map(pt => ({ x: pt.x + 3, y: pt.y + 8 })));
+    ctx.fill();
+    // Cliff face
+    ctx.fillStyle = p.cliffDark;
+    drawSmoothShape(ctx, shore.map(pt => ({ x: pt.x, y: pt.y + 4 })));
+    ctx.fill();
+    // Shore ring
+    ctx.fillStyle = p.sandLight;
+    drawSmoothShape(ctx, shore);
+    ctx.fill();
+    // Green layer
+    ctx.fillStyle = isFirst ? p.islandGreenA : isLast ? p.islandGreenC : p.islandGreenB;
+    drawSmoothShape(ctx, rock);
+    ctx.fill();
+    // Inner highlight
+    ctx.fillStyle = p.grassHighlight;
+    drawSmoothShape(ctx, inner);
+    ctx.fill();
+}
+
+function drawIslandWooded(ctx, pos, islandRadius, seed, p, isFirst, isLast) {
+    // Recreates the old look: thicker cliff for depth, scattered round trees with shadows
+    const shore = generateIslandShape(pos.x, pos.y, islandRadius * 1.12, islandRadius * 0.44, seed, 22);
+    const rock = generateIslandShape(pos.x, pos.y, islandRadius * 0.92, islandRadius * 0.36, seed + 1, 22);
+    const inner = generateIslandShape(pos.x, pos.y - 1, islandRadius * 0.68, islandRadius * 0.26, seed + 2, 18);
+
+    // Deep shadow for pronounced 3D depth
+    ctx.fillStyle = 'rgba(0,0,0,0.22)';
+    drawSmoothShape(ctx, shore.map(pt => ({ x: pt.x + 4, y: pt.y + 11 })));
+    ctx.fill();
+    // Thick cliff face -- two layers for more depth
+    ctx.fillStyle = '#5a4a30';
+    drawSmoothShape(ctx, shore.map(pt => ({ x: pt.x + 1, y: pt.y + 7 })));
+    ctx.fill();
+    ctx.fillStyle = p.cliffDark;
+    drawSmoothShape(ctx, shore.map(pt => ({ x: pt.x, y: pt.y + 4 })));
+    ctx.fill();
+    // Shore ring
+    ctx.fillStyle = p.sandLight;
+    drawSmoothShape(ctx, shore);
+    ctx.fill();
+    // Dark green edge for depth
+    ctx.fillStyle = isFirst ? '#3a7a2a' : isLast ? '#2a6a1a' : '#327226';
+    drawSmoothShape(ctx, rock);
+    ctx.fill();
+    // Lighter green center
+    ctx.fillStyle = isFirst ? p.islandGreenA : isLast ? p.islandGreenC : p.islandGreenB;
+    drawSmoothShape(ctx, inner);
+    ctx.fill();
+    // Inner grass highlight
+    const highlight = generateIslandShape(pos.x, pos.y - 2, islandRadius * 0.45, islandRadius * 0.16, seed + 3, 14);
+    ctx.fillStyle = p.grassHighlight;
+    drawSmoothShape(ctx, highlight);
+    ctx.fill();
+
+    // Scattered round trees -- each island gets a unique arrangement from seed
+    // Trees avoid the center zone so AWS icons and the plane remain visible
+    const rng = mapRng(seed + 50);
+    const treeCount = 4 + Math.floor(rng() * 4); // 4-7 trees
+    ctx.save();
+    for (let t = 0; t < treeCount; t++) {
+        // Place trees in an outer ring (70-95% from center), keeping the middle clear
+        const angle = rng() * Math.PI * 2;
+        const dist = 0.7 + rng() * 0.25; // 70-95% of the way from center to edge
+        const tx = pos.x + Math.cos(angle) * islandRadius * 0.7 * dist;
+        const ty = pos.y + Math.sin(angle) * islandRadius * 0.28 * dist;
+        const treeSize = 4 + rng() * 5; // 4-9px radius
+
+        // Tree shadow
+        ctx.globalAlpha = 0.2;
+        ctx.fillStyle = '#1a3a10';
+        ctx.beginPath();
+        ctx.ellipse(tx + 1, ty + 2, treeSize * 1.1, treeSize * 0.5, 0, 0, Math.PI * 2);
+        ctx.fill();
+
+        // Tree canopy -- darker outer ring
+        ctx.globalAlpha = 0.9;
+        const treeGreen = rng() > 0.5 ? '#2e7a22' : '#3a8a2e';
+        ctx.fillStyle = treeGreen;
+        ctx.beginPath();
+        ctx.ellipse(tx, ty - 1, treeSize, treeSize * 0.65, 0, 0, Math.PI * 2);
+        ctx.fill();
+
+        // Tree canopy highlight (lighter center blob)
+        ctx.fillStyle = rng() > 0.5 ? '#5aaa42' : '#4a9a38';
+        ctx.beginPath();
+        ctx.ellipse(tx - 1, ty - 2, treeSize * 0.6, treeSize * 0.4, 0, 0, Math.PI * 2);
+        ctx.fill();
+    }
+    ctx.restore();
+}
+
+function drawIslandTropical(ctx, pos, islandRadius, seed, p, isFirst, isLast) {
+    // Tropical style: sandy patches, palm trees with visible trunks and fan canopies
+    const shore = generateIslandShape(pos.x, pos.y, islandRadius * 1.1, islandRadius * 0.42, seed, 20);
+    const rock = generateIslandShape(pos.x, pos.y, islandRadius * 0.9, islandRadius * 0.35, seed + 1, 20);
+    const inner = generateIslandShape(pos.x, pos.y - 1, islandRadius * 0.65, islandRadius * 0.24, seed + 2, 16);
+
+    // Shadow
+    ctx.fillStyle = 'rgba(0,0,0,0.20)';
+    drawSmoothShape(ctx, shore.map(pt => ({ x: pt.x + 3, y: pt.y + 10 })));
+    ctx.fill();
+    // Cliff -- warm brown tone
+    ctx.fillStyle = '#6a5038';
+    drawSmoothShape(ctx, shore.map(pt => ({ x: pt.x + 1, y: pt.y + 6 })));
+    ctx.fill();
+    ctx.fillStyle = '#7a6048';
+    drawSmoothShape(ctx, shore.map(pt => ({ x: pt.x, y: pt.y + 3 })));
+    ctx.fill();
+    // Wide sandy shore
+    ctx.fillStyle = '#f0e0a0';
+    drawSmoothShape(ctx, shore);
+    ctx.fill();
+    // Green interior
+    ctx.fillStyle = isFirst ? '#48a038' : isLast ? '#38902a' : '#409830';
+    drawSmoothShape(ctx, rock);
+    ctx.fill();
+    // Lighter green center
+    ctx.fillStyle = isFirst ? '#60b850' : isLast ? '#50a840' : '#58b048';
+    drawSmoothShape(ctx, inner);
+    ctx.fill();
+
+    // Sandy beach patches along the shore
+    const rng = mapRng(seed + 60);
+    ctx.save();
+    for (let b = 0; b < 3; b++) {
+        const angle = rng() * Math.PI * 2;
+        const bx = pos.x + Math.cos(angle) * islandRadius * 0.85;
+        const by = pos.y + Math.sin(angle) * islandRadius * 0.33;
+        ctx.globalAlpha = 0.5;
+        ctx.fillStyle = '#f0dca0';
+        ctx.beginPath();
+        ctx.ellipse(bx, by, 6 + rng() * 4, 3 + rng() * 2, angle, 0, Math.PI * 2);
+        ctx.fill();
+    }
+    ctx.restore();
+
+    // Palm trees with trunks -- placed in outer ring to keep center clear for icons and plane
+    const palmCount = 2 + Math.floor(rng() * 3); // 2-4 palms
+    ctx.save();
+    for (let t = 0; t < palmCount; t++) {
+        const angle = rng() * Math.PI * 2;
+        const dist = 0.7 + rng() * 0.25; // 70-95% from center
+        const tx = pos.x + Math.cos(angle) * islandRadius * 0.65 * dist;
+        const ty = pos.y + Math.sin(angle) * islandRadius * 0.25 * dist;
+        const trunkHeight = 12 + rng() * 10; // 12-22px tall
+        const lean = (rng() - 0.5) * 8; // trunk leans left or right
+
+        // Trunk shadow
+        ctx.globalAlpha = 0.15;
+        ctx.strokeStyle = '#1a2a10';
+        ctx.lineWidth = 3;
+        ctx.beginPath();
+        ctx.moveTo(tx + 2, ty + 2);
+        ctx.quadraticCurveTo(tx + lean * 0.5 + 2, ty - trunkHeight * 0.5 + 2, tx + lean + 2, ty - trunkHeight + 2);
+        ctx.stroke();
+
+        // Trunk -- brown, slightly curved
+        ctx.globalAlpha = 1;
+        ctx.strokeStyle = '#6a5030';
+        ctx.lineWidth = 2.5;
+        ctx.beginPath();
+        ctx.moveTo(tx, ty);
+        ctx.quadraticCurveTo(tx + lean * 0.5, ty - trunkHeight * 0.5, tx + lean, ty - trunkHeight);
+        ctx.stroke();
+        // Trunk highlight
+        ctx.strokeStyle = '#8a6a40';
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        ctx.moveTo(tx - 0.5, ty);
+        ctx.quadraticCurveTo(tx + lean * 0.5 - 0.5, ty - trunkHeight * 0.5, tx + lean - 0.5, ty - trunkHeight);
+        ctx.stroke();
+
+        // Palm fronds -- 4-5 drooping leaf shapes radiating from trunk top
+        const crownX = tx + lean;
+        const crownY = ty - trunkHeight;
+        const frondCount = 4 + Math.floor(rng() * 2);
+        for (let f = 0; f < frondCount; f++) {
+            const frondAngle = (f / frondCount) * Math.PI * 2 + rng() * 0.4;
+            const frondLen = 8 + rng() * 6;
+            const endX = crownX + Math.cos(frondAngle) * frondLen;
+            const endY = crownY + Math.sin(frondAngle) * frondLen * 0.5 + 3; // droop down
+            const cpX = crownX + Math.cos(frondAngle) * frondLen * 0.6;
+            const cpY = crownY + Math.sin(frondAngle) * frondLen * 0.2 - 2;
+
+            // Frond shadow
+            ctx.globalAlpha = 0.12;
+            ctx.strokeStyle = '#1a3a10';
+            ctx.lineWidth = 3;
+            ctx.beginPath();
+            ctx.moveTo(crownX + 1, crownY + 1);
+            ctx.quadraticCurveTo(cpX + 1, cpY + 1, endX + 1, endY + 1);
+            ctx.stroke();
+
+            // Frond
+            ctx.globalAlpha = 0.9;
+            ctx.strokeStyle = rng() > 0.5 ? '#2a8a1e' : '#35951e';
+            ctx.lineWidth = 2.5;
+            ctx.beginPath();
+            ctx.moveTo(crownX, crownY);
+            ctx.quadraticCurveTo(cpX, cpY, endX, endY);
+            ctx.stroke();
+        }
+        // Coconut cluster at crown
+        ctx.globalAlpha = 0.8;
+        ctx.fillStyle = '#8a6a30';
+        for (let c = 0; c < 2; c++) {
+            ctx.beginPath();
+            ctx.arc(crownX + (rng() - 0.5) * 3, crownY + rng() * 2, 1.5, 0, Math.PI * 2);
+            ctx.fill();
+        }
+    }
+    ctx.restore();
+}
+
+function drawIslandRuins(ctx, pos, islandRadius, seed, p, isFirst, isLast) {
+    // Ancient stone ruins: weathered stone platform with broken pillars and moss
+    const shore = generateIslandShape(pos.x, pos.y, islandRadius * 1.1, islandRadius * 0.42, seed, 20);
+    const stoneBase = generateIslandShape(pos.x, pos.y, islandRadius * 0.92, islandRadius * 0.36, seed + 1, 20);
+    const innerMoss = generateIslandShape(pos.x, pos.y - 1, islandRadius * 0.6, islandRadius * 0.22, seed + 2, 16);
+
+    // Shadow -- heavier for stone structures
+    ctx.fillStyle = 'rgba(0,0,0,0.25)';
+    drawSmoothShape(ctx, shore.map(pt => ({ x: pt.x + 4, y: pt.y + 10 })));
+    ctx.fill();
+    // Stone cliff face
+    ctx.fillStyle = '#4a4a50';
+    drawSmoothShape(ctx, shore.map(pt => ({ x: pt.x + 1, y: pt.y + 7 })));
+    ctx.fill();
+    ctx.fillStyle = '#5a5a62';
+    drawSmoothShape(ctx, shore.map(pt => ({ x: pt.x, y: pt.y + 4 })));
+    ctx.fill();
+    // Weathered stone shore
+    ctx.fillStyle = '#a0a098';
+    drawSmoothShape(ctx, shore);
+    ctx.fill();
+    // Stone platform -- slightly different shade per island position
+    ctx.fillStyle = isFirst ? '#8a8a82' : isLast ? '#7a7a72' : '#82827a';
+    drawSmoothShape(ctx, stoneBase);
+    ctx.fill();
+    // Moss/vegetation patches growing through cracks
+    ctx.fillStyle = 'rgba(70, 130, 50, 0.4)';
+    drawSmoothShape(ctx, innerMoss);
+    ctx.fill();
+
+    // Stone tile pattern on the platform surface
+    const rng = mapRng(seed + 40);
+    ctx.save();
+    ctx.globalAlpha = 0.12;
+    ctx.strokeStyle = '#3a3a3a';
+    ctx.lineWidth = 0.8;
+    for (let line = 0; line < 4; line++) {
+        const ly = pos.y - 6 + line * 4 + rng() * 2;
+        ctx.beginPath();
+        ctx.moveTo(pos.x - islandRadius * 0.5, ly);
+        ctx.lineTo(pos.x + islandRadius * 0.5, ly);
+        ctx.stroke();
+    }
+    ctx.restore();
+
+    // Broken stone pillars scattered on the island
+    const pillarCount = 3 + Math.floor(rng() * 3); // 3-5 pillars
+    ctx.save();
+    for (let pi = 0; pi < pillarCount; pi++) {
+        const angle = rng() * Math.PI * 2;
+        const dist = 0.15 + rng() * 0.55;
+        const px = pos.x + Math.cos(angle) * islandRadius * 0.65 * dist;
+        const py = pos.y + Math.sin(angle) * islandRadius * 0.25 * dist;
+        const pillarHeight = 8 + rng() * 14; // 8-22px -- varied heights for "broken" look
+        const pillarWidth = 3 + rng() * 2.5;
+        const isBroken = rng() > 0.4; // 60% are broken/shorter
+
+        const actualHeight = isBroken ? pillarHeight * (0.3 + rng() * 0.4) : pillarHeight;
+
+        // Pillar shadow
+        ctx.globalAlpha = 0.15;
+        ctx.fillStyle = '#1a1a1a';
+        ctx.fillRect(px - pillarWidth / 2 + 2, py - actualHeight + 2, pillarWidth, actualHeight);
+
+        // Pillar body -- stone gray
+        ctx.globalAlpha = 0.9;
+        ctx.fillStyle = '#b0a898';
+        ctx.fillRect(px - pillarWidth / 2, py - actualHeight, pillarWidth, actualHeight);
+
+        // Pillar highlight (left edge)
+        ctx.fillStyle = '#c8c0b8';
+        ctx.fillRect(px - pillarWidth / 2, py - actualHeight, 1.5, actualHeight);
+
+        // Pillar dark edge (right)
+        ctx.fillStyle = '#8a8278';
+        ctx.fillRect(px + pillarWidth / 2 - 1, py - actualHeight, 1, actualHeight);
+
+        // Broken top -- jagged edge for broken pillars
+        if (isBroken) {
+            const topY = py - actualHeight;
+            ctx.fillStyle = '#9a928a';
+            ctx.beginPath();
+            ctx.moveTo(px - pillarWidth / 2, topY);
+            ctx.lineTo(px - pillarWidth / 4, topY - 2 - rng() * 2);
+            ctx.lineTo(px + pillarWidth / 4, topY - 1);
+            ctx.lineTo(px + pillarWidth / 2, topY - rng() * 2);
+            ctx.lineTo(px + pillarWidth / 2, topY + 2);
+            ctx.lineTo(px - pillarWidth / 2, topY + 2);
+            ctx.closePath();
+            ctx.fill();
+        } else {
+            // Intact pillar gets a small capital (top piece)
+            const topY = py - actualHeight;
+            ctx.fillStyle = '#c0b8a8';
+            ctx.fillRect(px - pillarWidth / 2 - 1.5, topY - 2, pillarWidth + 3, 3);
+        }
+
+        // Moss growing on some pillars
+        if (rng() > 0.4) {
+            ctx.globalAlpha = 0.5;
+            ctx.fillStyle = '#4a8a30';
+            const mossY = py - actualHeight * rng() * 0.5;
+            ctx.beginPath();
+            ctx.ellipse(px + (rng() - 0.5) * pillarWidth, mossY, 2 + rng() * 2, 1.5 + rng(), 0, 0, Math.PI * 2);
+            ctx.fill();
+        }
+    }
+    ctx.restore();
+
+    // Scattered small moss/vine patches on ground
+    ctx.save();
+    for (let m = 0; m < 5; m++) {
+        const mx = pos.x + (rng() - 0.5) * islandRadius * 1.2;
+        const my = pos.y + (rng() - 0.5) * islandRadius * 0.4;
+        ctx.globalAlpha = 0.3 + rng() * 0.2;
+        ctx.fillStyle = rng() > 0.5 ? '#4a9a32' : '#3a7a28';
+        ctx.beginPath();
+        ctx.ellipse(mx, my, 2 + rng() * 3, 1 + rng() * 1.5, rng() * Math.PI, 0, Math.PI * 2);
+        ctx.fill();
+    }
+    ctx.restore();
+}
+
+const islandStyleRenderers = {
+    classic: drawIslandClassic,
+    wooded: drawIslandWooded,
+    tropical: drawIslandTropical,
+    ruins: drawIslandRuins,
+};
+
 // Draw the full base map: ocean/sky, clouds, paths between islands, and islands
 function drawGameMap(ctx, w, h, state) {
     const p = state.palette;
@@ -2733,7 +3523,11 @@ function drawGameMap(ctx, w, h, state) {
     }
 
     // Islands -- always draw all islands fully (no fog/locked state)
-    const islandRadius = 52;
+    // Shrink islands by 20% for each main island beyond 3 to avoid crowding
+    const baseIslandRadius = 104;
+    const shrinkSteps = Math.max(0, nodes.length - 3);
+    const islandRadius = baseIslandRadius * Math.pow(0.8, shrinkSteps);
+    state.islandRadius = islandRadius; // store for label positioning
     positions.forEach((pos, i) => {
         const isFirst = i === 0;
         const isLast = i === lastIdx;
@@ -2754,36 +3548,23 @@ function drawGameMap(ctx, w, h, state) {
             ctx.setLineDash([]);
         }
 
-        // Island layers
-        const shore = generateIslandShape(pos.x, pos.y, islandRadius * 1.1, islandRadius * 0.42, seed, 20);
-        const rock = generateIslandShape(pos.x, pos.y, islandRadius * 0.9, islandRadius * 0.35, seed + 1, 20);
-        const inner = generateIslandShape(pos.x, pos.y - 1, islandRadius * 0.65, islandRadius * 0.24, seed + 2, 16);
+        // Island terrain layers -- dispatched by style
+        const drawIslandTerrain = islandStyleRenderers[state.islandStyle] || drawIslandClassic;
+        drawIslandTerrain(ctx, pos, islandRadius, seed, p, isFirst, isLast);
 
-        // Cliff shadow
-        const shadow = shore.map(pt => ({ x: pt.x + 3, y: pt.y + 8 }));
-        ctx.fillStyle = 'rgba(0,0,0,0.18)';
-        drawSmoothShape(ctx, shadow);
-        ctx.fill();
-
-        // Cliff face
-        ctx.fillStyle = p.cliffDark;
-        drawSmoothShape(ctx, shore.map(pt => ({ x: pt.x, y: pt.y + 4 })));
-        ctx.fill();
-
-        // Shore ring
-        ctx.fillStyle = p.sandLight;
-        drawSmoothShape(ctx, shore);
-        ctx.fill();
-
-        // Rock/green layer
-        ctx.fillStyle = isFirst ? p.islandGreenA : isLast ? p.islandGreenC : p.islandGreenB;
-        drawSmoothShape(ctx, rock);
-        ctx.fill();
-
-        // Inner highlight
-        ctx.fillStyle = p.grassHighlight;
-        drawSmoothShape(ctx, inner);
-        ctx.fill();
+        // AWS icon centered on the island (max 50% of island diameter) -- only in 'on-island' mode
+        if (state.iconStyle === 'on-island') {
+            const nodeSubType = nodes[i]?.subType || '';
+            const iconImg = awsIconSprites.get(nodeSubType);
+            if (iconImg) {
+                const maxIconSize = islandRadius * 0.5; // 50% of island radius = 26px
+                const iconSize = Math.min(maxIconSize, iconImg.width);
+                ctx.save();
+                ctx.globalAlpha = 0.85;
+                ctx.drawImage(iconImg, pos.x - iconSize / 2, pos.y - iconSize / 2 - 2, iconSize, iconSize);
+                ctx.restore();
+            }
+        }
 
         // Start island glow + small plane graphic
         if (isFirst) {
@@ -2841,18 +3622,19 @@ function drawGameMap(ctx, w, h, state) {
             ctx.fill();
         }
 
-        // Label
+        // Label -- positioned below the island bottom edge
         const label = nodes[i]?.label || '';
         if (label) {
             const displayLabel = label.length > 20 ? label.substring(0, 18) + '..' : label;
+            const labelOffsetY = islandRadius * 0.42 + 10;
             ctx.font = '600 11px -apple-system, BlinkMacSystemFont, sans-serif';
             ctx.fillStyle = p.labelFill;
             ctx.strokeStyle = p.labelStroke;
             ctx.lineWidth = 3;
             ctx.textAlign = 'center';
             ctx.textBaseline = 'middle';
-            ctx.strokeText(displayLabel, pos.x, pos.y + 24);
-            ctx.fillText(displayLabel, pos.x, pos.y + 24);
+            ctx.strokeText(displayLabel, pos.x, pos.y + labelOffsetY);
+            ctx.fillText(displayLabel, pos.x, pos.y + labelOffsetY);
         }
 
         ctx.restore();
@@ -2934,6 +3716,10 @@ function initMapGame(mapId, nodes, edges, companions, lab) {
     const ctx = canvas.getContext('2d');
     ctx.scale(dpr, dpr);
 
+    // Preload AWS icons for all nodes so they're ready when we draw
+    awsIconSprites.preload(nodes);
+    if (companions) awsIconSprites.preload(companions);
+
     const positions = computeMapLayout(nodes.length, w, h);
     // Compute companion positions offset from their parent edge midpoints
     const companionPositions = computeCompanionPositions(companions, edges, positions);
@@ -2958,6 +3744,9 @@ function initMapGame(mapId, nodes, edges, companions, lab) {
         companionPositions,
         companions: companions || [],
         companionStyle: 'islet', // 'ship' | 'islet' | 'note'
+        iconStyle: 'on-island',  // 'on-island' | 'below-label' | 'off' -- toggled with I key
+        islandStyle: 'wooded', // 'classic' | 'wooded' | 'tropical' | 'ruins' -- toggled with T key
+        planeStyle: 'helicopter',    // 'jet' | 'biplane' | 'seaplane' | 'helicopter' -- toggled with P key
         nodes,
         edges: edges || [],
         decorations,
@@ -2983,6 +3772,8 @@ function initMapGame(mapId, nodes, edges, companions, lab) {
     state.buttons = buildPlayingButtons(w, h, state);
 
     cloudSprites.load().then(() => redraw());
+    // Redraw when AWS icons finish loading so they appear on islands
+    awsIconSprites.onLoadCallbacks.push(() => redraw());
     redraw();
     updateGamePanel(state);
 
@@ -3199,6 +3990,27 @@ function initMapGame(mapId, nodes, edges, companions, lab) {
             state.companionStyle = styles[(currentIdx + 1) % styles.length];
             redraw();
         }
+        // I key toggles AWS icon display style (on-island -> below-label -> off)
+        if ((e.key === 'i' || e.key === 'I') && (state.screen === 'playing' || state.screen === 'complete')) {
+            const iconStyles = ['on-island', 'below-label', 'off'];
+            const currentIdx = iconStyles.indexOf(state.iconStyle);
+            state.iconStyle = iconStyles[(currentIdx + 1) % iconStyles.length];
+            redraw();
+        }
+        // T key toggles island visual style (classic -> wooded -> tropical -> ruins)
+        if ((e.key === 't' || e.key === 'T') && (state.screen === 'playing' || state.screen === 'complete')) {
+            const islandStyles = ['classic', 'wooded', 'tropical', 'ruins'];
+            const currentIdx = islandStyles.indexOf(state.islandStyle);
+            state.islandStyle = islandStyles[(currentIdx + 1) % islandStyles.length];
+            redraw();
+        }
+        // P key toggles plane visual style (jet -> biplane -> seaplane -> helicopter)
+        if ((e.key === 'p' || e.key === 'P') && (state.screen === 'playing' || state.screen === 'complete')) {
+            const planeStyles = ['jet', 'biplane', 'seaplane', 'helicopter'];
+            const currentIdx = planeStyles.indexOf(state.planeStyle);
+            state.planeStyle = planeStyles[(currentIdx + 1) % planeStyles.length];
+            redraw();
+        }
     }
 
     canvas.addEventListener('pointermove', onPointerMove);
@@ -3294,6 +4106,9 @@ function renderStaticMapPreview(containerEl, lab) {
         companionPositions,
         companions: mapCompanions,
         companionStyle: 'islet',
+        iconStyle: 'on-island',
+        islandStyle: 'wooded',
+        planeStyle: 'helicopter',
         nodes: mapNodes,
         edges: mapEdges,
         decorations,
@@ -3317,7 +4132,10 @@ function renderStaticMapPreview(containerEl, lab) {
         ctx.restore();
     }
 
+    awsIconSprites.preload(mapNodes);
+    if (mapCompanions) awsIconSprites.preload(mapCompanions);
     cloudSprites.load().then(() => draw());
+    awsIconSprites.onLoadCallbacks.push(() => draw());
     draw();
 }
 

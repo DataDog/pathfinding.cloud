@@ -31,7 +31,9 @@ const viewTableBtn = document.getElementById('view-table');
 const categoryConfig = {
     'Privilege Escalation': { label: 'Priv Esc', cssClass: 'lab-badge-privesc' },
     'CSPM Misconfiguration': { label: 'CSPM', cssClass: 'lab-badge-cspm' },
+    'CSPM: Misconfig': { label: 'CSPM', cssClass: 'lab-badge-cspm' },
     'Toxic Combination': { label: 'Toxic Combo', cssClass: 'lab-badge-toxic' },
+    'CSPM: Toxic Combination': { label: 'Toxic Combo', cssClass: 'lab-badge-toxic' },
     'Tool Testing': { label: 'Tool Testing', cssClass: 'lab-badge-tooltest' },
 };
 
@@ -39,7 +41,9 @@ const categoryConfig = {
 const categoryBannerConfig = {
     'Privilege Escalation': { bannerClass: 'lab-banner-privesc', bannerText: 'PRIVILEGE ESCALATION' },
     'CSPM Misconfiguration': { bannerClass: 'lab-banner-cspm', bannerText: 'CSPM MISCONFIGURATION' },
+    'CSPM: Misconfig': { bannerClass: 'lab-banner-cspm', bannerText: 'CSPM MISCONFIGURATION' },
     'Toxic Combination': { bannerClass: 'lab-banner-toxic', bannerText: 'TOXIC COMBINATION' },
+    'CSPM: Toxic Combination': { bannerClass: 'lab-banner-toxic', bannerText: 'TOXIC COMBINATION' },
     'Tool Testing': { bannerClass: 'lab-banner-tooltest', bannerText: 'TOOL TESTING' },
 };
 
@@ -1543,16 +1547,6 @@ function buildGuidedV2Sections(lab) {
                 level: 3,
                 colorClass: sectionColors['Defend'],
                 renderContent: () => `<div class="lab-tab-prose">${renderLabMarkdown(cspmData.whatToDetect)}</div>`,
-            });
-        }
-        if (cspmData.prevention) {
-            sections.push({
-                id: `gv2-cspm-prevent-${slug}`,
-                h2Section: 'Defend',
-                title: 'Prevention Recommendations',
-                level: 3,
-                colorClass: sectionColors['Defend'],
-                renderContent: () => `<div class="lab-tab-prose">${renderLabMarkdown(cspmData.prevention)}</div>`,
             });
         }
     }
