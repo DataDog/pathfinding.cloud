@@ -98,6 +98,60 @@ const awsServiceConfig = {
     'elasticache':    { label: 'ElastiCache',    color: '#2E73B8' },
 };
 
+// ---------------------------------------------------------------------------
+// Compatibility accessors: work with both v2 and v3 data structures
+// ---------------------------------------------------------------------------
+
+function getOverview(lab) {
+    return lab.readme?.objective || lab.readme?.overview || lab.description;
+}
+
+function getSetup(lab) {
+    return lab.readme?.setup || lab.readme?.attackLab || {};
+}
+
+function getAttackDemo(lab) {
+    return lab.readme?.attack?.demoAttack || lab.readme?.attackLab?.demoAttack;
+}
+
+function getCleanup(lab) {
+    return lab.readme?.attack?.cleanup || lab.readme?.attackLab?.cleanup;
+}
+
+function getTeardown(lab) {
+    const setup = getSetup(lab);
+    const teardown = lab.readme?.teardown;
+    if (teardown) return teardown;
+    // v2 stored teardown inside attackLab
+    if (setup.teardownNonInteractive || setup.teardownTui) {
+        return {
+            nonInteractive: setup.teardownNonInteractive,
+            tui: setup.teardownTui,
+        };
+    }
+    return {};
+}
+
+function getDefendCspm(lab) {
+    return lab.readme?.defend?.cspm || lab.readme?.cspm;
+}
+
+function getDefendSiem(lab) {
+    return lab.readme?.defend?.cloudSiem || lab.readme?.cloudSiem;
+}
+
+function getResourcesCreated(lab) {
+    return lab.readme?.attack?.resourcesCreated || lab.readme?.resourcesCreated;
+}
+
+function getGuidedWalkthrough(lab) {
+    return lab.readme?.guidedWalkthrough;
+}
+
+function isV3Schema(lab) {
+    return lab.schemaVersion?.startsWith('3') || !!lab.readme?.objective;
+}
+
 // Extract unique AWS services from required permissions by splitting on ':'
 function parseServicesFromPermissions(permissions) {
     if (!permissions?.required?.length) return [];
@@ -167,6 +221,30 @@ function initMobileMenu() {
         }
     });
 }
+
+// Keyboard navigation for walkthrough (V3) and guided mode - left/right arrow keys
+document.addEventListener('keydown', (e) => {
+    if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
+        // Don't intercept if user is typing in an input
+        if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
+
+        const direction = e.key === 'ArrowRight' ? 1 : -1;
+
+        // Check for guided mode container first
+        const activeGuided = document.querySelector('.lab-guided-container');
+        if (activeGuided) {
+            guidedNav(activeGuided.id, direction);
+            return;
+        }
+
+        // Check if a walkthrough is visible
+        const activeWt = document.querySelector('.ov-wt-container:not([style*="display: none"])');
+        if (!activeWt) return;
+        const wtId = activeWt.id;
+        if (!wtId) return;
+        walkthroughNav(wtId, direction);
+    }
+});
 
 // View toggle
 function switchView(view) {
@@ -295,7 +373,12 @@ function routeFromURL() {
     }
 }
 
-function navigateToLab(slug) {
+function navigateToLab(slug, e) {
+    // Ctrl+click or Cmd+click opens in a new tab
+    if (e && (e.ctrlKey || e.metaKey)) {
+        window.open(`/labs/${slug}`, '_blank');
+        return;
+    }
     const lab = allLabs.find(l => l.slug === slug);
     if (!lab) return;
 
@@ -469,7 +552,7 @@ function renderLabTable() {
         html += `
             <tr class="lab-row" data-slug="${lab.slug}">
                 <td class="lab-name-desc-cell">
-                    <a href="/labs/${lab.slug}" class="lab-name-link" onclick="event.preventDefault(); navigateToLab('${lab.slug}')">${escapeHtml(lab.name)}</a>
+                    <a href="/labs/${lab.slug}" class="lab-name-link" onclick="if (event.ctrlKey || event.metaKey) return; event.preventDefault(); navigateToLab('${lab.slug}')">${escapeHtml(lab.name)}</a>
                     <div class="lab-table-description">${escapeHtml(truncate(lab.description, 120))}</div>
                 </td>
                 <td><span class="lab-badge ${catConfig.cssClass}">${catConfig.label}</span></td>
@@ -521,7 +604,7 @@ function renderLabCards() {
             // Don't navigate if clicking a link
             if (e.target.closest('a')) return;
             const slug = card.dataset.slug;
-            if (slug) navigateToLab(slug);
+            if (slug) navigateToLab(slug, e);
         });
         card.addEventListener('mousedown', (e) => {
             // Middle-click opens in new tab
@@ -666,121 +749,51 @@ function renderDetailSkeleton(labName) {
 }
 
 function renderLabDetailContent(lab, container) {
-    const catConfig = categoryConfig[lab.category] || { label: lab.category, cssClass: '' };
-    const pathTypeLabel = pathTypeLabels[lab.pathType] || lab.pathType;
-    const pathTypeClass = pathTypeColors[lab.pathType] || 'lab-badge-pathtype';
-    const isFree = lab.costEstimate === 'free' || lab.costEstimate === '$0/mo';
-    const targetLabel = lab.target === 'to-admin' ? 'Admin' : lab.target === 'to-bucket' ? 'Bucket' : lab.target;
-    const targetClass = targetColors[lab.target] || 'lab-badge-target';
-
-    // Find matching path for cross-link
-    const matchingPath = lab.pathfindingCloudId
-        ? pathsData.find(p => p.id === lab.pathfindingCloudId)
-        : null;
-
     const hasReadme = lab.readme && Object.keys(lab.readme).length > 0;
+    const hasRichContent = hasReadme || isV3Schema(lab);
+
+    // Two modes: Guided v2 (default) and Game
+    const savedMode = localStorage.getItem('labs-detail-mode') || 'guidedv2';
+    const currentMode = hasRichContent ? savedMode : 'guidedv2';
+
+    // Mode toggle
+    const modeToggle = hasRichContent ? `
+        <div class="lab-mode-toggle">
+            <button class="lab-mode-btn ${currentMode === 'mapgame' ? 'active' : ''}" data-mode="mapgame"
+                onclick="switchDetailMode('mapgame', window._currentLabDetail)">Game Mode</button>
+            <button class="lab-mode-btn ${currentMode === 'guidedv2' ? 'active' : ''}" data-mode="guidedv2"
+                onclick="switchDetailMode('guidedv2', window._currentLabDetail)">Single Page Mode</button>
+        </div>` : '';
+
+    // Store lab reference for mode switching
+    window._currentLabDetail = lab;
 
     let html = `
         <div class="detail-sticky-header">
             <nav class="breadcrumb">
-                <a href="/labs/" onclick="event.preventDefault(); navigateToList();">All Labs</a>
-                <span class="breadcrumb-separator">></span>
-                <span class="breadcrumb-current">${escapeHtml(lab.name)}</span>
+                <span class="breadcrumb-links">
+                    <a href="/labs/" onclick="event.preventDefault(); navigateToList();">All Labs</a>
+                    <span class="breadcrumb-separator">></span>
+                    <span class="breadcrumb-current">${escapeHtml(lab.name)}</span>
+                </span>
+                ${modeToggle}
             </nav>
         </div>
 
-        <div class="detail-scrollable-content">
-            <div class="lab-detail-header">
-                <h1 class="detail-title">${escapeHtml(lab.name)}</h1>
-                <div class="lab-detail-badges">
-                    <span class="lab-badge ${catConfig.cssClass}">${catConfig.label}</span>
-                    ${lab.pathType ? `<span class="lab-badge ${pathTypeClass}">${pathTypeLabel}</span>` : ''}
-                    ${targetLabel ? `<span class="lab-badge ${targetClass}">${targetLabel}</span>` : ''}
-                    <span class="lab-badge ${isFree ? 'lab-cost-free' : 'lab-cost-paid'}">${isFree ? 'Free' : lab.costEstimate}</span>
-                    ${lab.environments && lab.environments.length > 0 ? lab.environments.map(env =>
-                        `<span class="lab-badge lab-badge-env">${escapeHtml(env)}</span>`
-                    ).join('') : ''}
-                    ${renderServiceIcons(lab.permissions) ? `<span class="lab-service-icons-right">${renderServiceIcons(lab.permissions)}</span>` : ''}
-                </div>
-            </div>
+        <div class="detail-scrollable-content">`;
 
-            <div class="lab-detail-layout">
-                ${renderSidebar(lab, matchingPath)}
-                <div class="lab-detail-main">
-                    ${renderDetailTabs(lab, hasReadme, matchingPath)}
-                </div>
-            </div>
-        </div>`;
-
+    html += '</div>'; // close detail-scrollable-content (mode fills it after render)
     container.innerHTML = html;
-    setupTabListeners();
-
-    // Activate the first tab
-    const firstTab = container.querySelector('.lab-detail-tab-btn');
-    if (firstTab) firstTab.click();
+    const scrollableContent = container.querySelector('.detail-scrollable-content');
+    if (currentMode === 'mapgame') {
+        renderLabDetailContentMapGame(lab, scrollableContent);
+    } else {
+        renderLabDetailContentGuidedV2(lab, scrollableContent);
+    }
 }
 
-// ---- Sidebar ----
 
-function renderSidebar(lab, matchingPath) {
-    let html = '<div class="lab-detail-sidebar">';
-
-    // Attack path summary
-    if (lab.attackPath && lab.attackPath.summary) {
-        html += `
-            <div class="lab-sidebar-section">
-                <h3 class="lab-sidebar-heading">Attack Path</h3>
-                <div class="lab-attack-summary">${escapeHtml(lab.attackPath.summary)}</div>
-            </div>`;
-    }
-
-    // Permissions
-    html += renderSidebarPermissions(lab.permissions, lab.slug);
-
-    // MITRE ATT&CK
-    if (lab.mitreAttack && (lab.mitreAttack.tactics.length > 0 || lab.mitreAttack.techniques.length > 0)) {
-        html += `
-            <div class="lab-sidebar-section">
-                <h3 class="lab-sidebar-heading">MITRE ATT&CK</h3>
-                <div class="lab-mitre-tags">
-                    ${lab.mitreAttack.tactics.map(t => {
-                        const tacticId = t.split(' - ')[0];
-                        return `<a href="https://attack.mitre.org/tactics/${tacticId}/" target="_blank" rel="noopener noreferrer" class="lab-mitre-tag lab-mitre-tactic">${escapeHtml(t)}</a>`;
-                    }).join('')}
-                    ${lab.mitreAttack.techniques.map(t => {
-                        const techId = t.split(' - ')[0].replace('.', '/');
-                        return `<a href="https://attack.mitre.org/techniques/${techId}/" target="_blank" rel="noopener noreferrer" class="lab-mitre-tag">${escapeHtml(t)}</a>`;
-                    }).join('')}
-                </div>
-            </div>`;
-    }
-
-    // Links
-    html += `
-        <div class="lab-sidebar-section">
-            <h3 class="lab-sidebar-heading">Links</h3>
-            <div class="lab-sidebar-links">
-                <a href="${lab.githubUrl}" target="_blank" rel="noopener noreferrer" class="lab-sidebar-link">
-                    <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor">
-                        <path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/>
-                    </svg>
-                    View on GitHub
-                </a>
-                ${matchingPath ? `
-                <a href="/paths/${lab.pathfindingCloudId}" class="lab-sidebar-link">
-                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                        <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/>
-                        <polyline points="15 3 21 3 21 9"/>
-                        <line x1="10" y1="14" x2="21" y2="3"/>
-                    </svg>
-                    Docs: ${escapeHtml(lab.pathfindingCloudId.toUpperCase())}
-                </a>` : ''}
-            </div>
-        </div>`;
-
-    html += '</div>';
-    return html;
-}
+// ---- Permissions ----
 
 function renderSidebarPermissions(permissions, labSlug) {
     if (!permissions) return '';
@@ -848,607 +861,88 @@ function renderInnerTabSection(groupId, tabs) {
     return `<div class="lab-inner-tabs"><div class="lab-inner-tab-bar">${buttons}</div>${panels}</div>`;
 }
 
-function renderDetailTabs(lab, hasReadme, matchingPath) {
-    const tabGroup = 'lab-detail-tabs';
-    const tabs = [];
+// ---- Helper Parsers (used by Game mode in map-game.js) ----
 
-    // V1 schema: tabs map directly to ## sections in the README
-    const isV1 = hasReadme && lab.readme?.attackLab;
+function parseAttackStepsToCards(markdown) {
+    if (!markdown) return [];
+    const steps = [];
+    const regex = /(\d+)\.\s+\*\*([^*]+)\*\*:?\s*(.*)/g;
+    let match;
+    while ((match = regex.exec(markdown)) !== null) {
+        steps.push({ num: parseInt(match[1]), title: match[2].trim(), desc: match[3].trim() });
+    }
+    return steps;
+}
 
-    if (isV1) {
-        // ## Attack Overview
-        tabs.push({ id: 'overview', label: 'Attack Overview', content: renderOverviewTabV1(lab) });
-        // ## Attack Lab
-        tabs.push({ id: 'lab', label: 'Attack Lab', content: renderLabTabV1(lab, hasReadme, matchingPath) });
-        // ## Detecting Misconfiguration (CSPM)
-        if (lab.readme?.cspm) {
-            tabs.push({ id: 'cspm', label: 'Detecting Misconfiguration (CSPM)', content: renderCspmTab(lab) });
+// Parse mermaid graph into ordered steps: [{fromNode, toNode, edgeLabel}]
+function parseMermaidToSteps(mermaidCode) {
+    if (!mermaidCode) return { nodes: [], edges: [], steps: [] };
+    const parsed = parseMermaidGraph(mermaidCode);
+    // Build ordered step list by following edges from root
+    const nodeMap = new Map(parsed.nodes.map(n => [n.id, n]));
+    const incomingCount = {};
+    parsed.nodes.forEach(n => incomingCount[n.id] = 0);
+    parsed.edges.forEach(e => { incomingCount[e.to] = (incomingCount[e.to] || 0) + 1; });
+    // Find root (no incoming edges)
+    let current = parsed.nodes.find(n => incomingCount[n.id] === 0);
+    const steps = [];
+    const visited = new Set();
+    while (current && !visited.has(current.id)) {
+        visited.add(current.id);
+        const outEdge = parsed.edges.find(e => e.from === current.id && !visited.has(e.to));
+        if (outEdge) {
+            const toNode = nodeMap.get(outEdge.to);
+            steps.push({ fromNode: current, toNode, edgeLabel: outEdge.label || '' });
+            current = toNode;
+        } else {
+            // Check for multiple outgoing (branching) - add all remaining
+            const remaining = parsed.edges.filter(e => e.from === current.id && !visited.has(e.to));
+            remaining.forEach(e => {
+                const toNode = nodeMap.get(e.to);
+                steps.push({ fromNode: current, toNode, edgeLabel: e.label || '' });
+                visited.add(e.to);
+            });
+            break;
         }
-        // ## Detection Abuse (CloudSIEM)
-        if (lab.readme?.cloudSiem) {
-            tabs.push({ id: 'siem', label: 'Detection Abuse (CloudSIEM)', content: renderCloudSiemTab(lab) });
-        }
+    }
+    return { nodes: parsed.nodes, edges: parsed.edges, steps };
+}
+
+// Get node type color from its vis.js color object
+function getNodeTypeFromColor(colorObj) {
+    let bg = '#e8f4f8';
+    if (typeof colorObj === 'string') bg = colorObj;
+    else if (colorObj?.background) bg = colorObj.background;
+    else if (colorObj?.color?.background) bg = colorObj.color.background;
+    const colorMap = {
+        '#ff9999': { type: 'principal', label: 'Principal', cssClass: 'ov-type-principal' },
+        '#ffcc99': { type: 'resource', label: 'Resource', cssClass: 'ov-type-resource' },
+        '#99ccff': { type: 'payload', label: 'Payload', cssClass: 'ov-type-payload' },
+        '#99ff99': { type: 'outcome', label: 'Outcome', cssClass: 'ov-type-outcome' },
+        '#ffeb99': { type: 'outcome', label: 'Partial', cssClass: 'ov-type-partial' },
+        '#cccccc': { type: 'outcome', label: 'Dead End', cssClass: 'ov-type-deadend' }
+    };
+    return colorMap[bg] || { type: 'unknown', label: 'Node', cssClass: 'ov-type-unknown' };
+}
+
+// ---- Mode Switching ----
+
+function switchDetailMode(mode, lab) {
+    localStorage.setItem('labs-detail-mode', mode);
+
+    // Update toggle buttons
+    document.querySelectorAll('.lab-mode-btn').forEach(btn => {
+        btn.classList.toggle('active', btn.dataset.mode === mode);
+    });
+
+    const container = document.querySelector('.detail-scrollable-content');
+    if (!container) return;
+
+    if (mode === 'mapgame') {
+        renderLabDetailContentMapGame(lab, container);
     } else {
-        // Legacy schema: existing tab structure
-        tabs.push({ id: 'overview', label: 'Overview', content: renderOverviewTab(lab, hasReadme) });
-        tabs.push({ id: 'lab', label: 'Lab', content: renderLabTab(lab, hasReadme, matchingPath) });
-
-        const hasAttackContent = (hasReadme && (lab.readme?.attackSteps || lab.readme?.accessPathDetails))
-            || (lab.attackPath && lab.attackPath.principals && lab.attackPath.principals.length > 0);
-        if (hasAttackContent) {
-            tabs.push({ id: 'attack', label: 'Attack', content: renderAttackTab(lab, hasReadme) });
-        }
-
-        const hasDetectionContent = lab.cspmDetection || lab.risk
-            || (hasReadme && (lab.readme?.cspm || lab.readme?.cloudSiem));
-        if (hasDetectionContent) {
-            tabs.push({ id: 'detection', label: 'Detection', content: renderDetectionTab(lab, hasReadme) });
-        }
-
-        const hasPreventionContent = (hasReadme && (lab.readme?.prevention || lab.readme?.cspm?.prevention))
-            || lab.remediation;
-        if (hasPreventionContent) {
-            tabs.push({ id: 'prevent', label: 'Prevention', content: renderPreventionTab(lab, hasReadme) });
-        }
+        renderLabDetailContentGuidedV2(lab, container);
     }
-
-    // Build tab buttons
-    const tabButtons = tabs.map((tab, idx) =>
-        `<button class="lab-detail-tab-btn ${idx === 0 ? 'active' : ''}"
-                data-tab-target="${tabGroup}-${tab.id}"
-                data-tab-group="${tabGroup}">${tab.label}</button>`
-    ).join('');
-
-    // Build tab content panels
-    const tabPanels = tabs.map((tab, idx) =>
-        `<div id="${tabGroup}-${tab.id}" class="tab-content ${idx === 0 ? 'active' : ''}" data-tab-group="${tabGroup}">
-            ${tab.content}
-        </div>`
-    ).join('');
-
-    return `
-        <div class="lab-detail-tabs-container">
-            <div class="lab-detail-tab-bar">${tabButtons}</div>
-            <div class="lab-detail-tab-panels">${tabPanels}</div>
-        </div>`;
-}
-
-// ---- Tab Content Renderers ----
-
-function renderOverviewTab(lab, hasReadme) {
-    let html = '';
-
-    // Rich overview from README, or fall back to description
-    if (hasReadme && lab.readme.overview) {
-        html += `<div class="lab-tab-prose">${renderLabMarkdown(lab.readme.overview)}</div>`;
-    } else {
-        html += `<div class="lab-tab-prose"><p>${escapeHtml(lab.description)}</p></div>`;
-    }
-
-    // Attack diagram (mermaid source as code block)
-    if (hasReadme && lab.readme.attackDiagram) {
-        html += `
-            <div class="lab-tab-section">
-                <h3>Attack Diagram</h3>
-                <div class="lab-diagram-block">
-                    <div class="lab-diagram-header">
-                        <span>Mermaid</span>
-                        <button class="lab-copy-btn" onclick="copyToClipboard(\`${escapeAttr(lab.readme.attackDiagram)}\`, this)" title="Copy diagram source">
-                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                                <rect x="9" y="9" width="13" height="13" rx="2" ry="2"/>
-                                <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>
-                            </svg>
-                        </button>
-                    </div>
-                    <pre><code>${escapeHtml(lab.readme.attackDiagram)}</code></pre>
-                </div>
-            </div>`;
-    }
-
-    // Security implications
-    if (hasReadme && lab.readme.securityImplications) {
-        html += `
-            <div class="lab-tab-section">
-                <h3>Security Implications</h3>
-                <div class="lab-tab-prose">${renderLabMarkdown(lab.readme.securityImplications)}</div>
-            </div>`;
-    }
-
-    // CSPM-specific sections on overview if no separate prevention tab content
-    if (lab.testGroups) {
-        html += `
-            <div class="lab-tab-section">
-                <h3>Test Groups</h3>
-                ${lab.adminDefinition ? `<p><strong>Admin Definition:</strong> ${escapeHtml(lab.adminDefinition)}</p>` : ''}
-                <pre class="lab-code-block-pre"><code>${escapeHtml(JSON.stringify(lab.testGroups, null, 2))}</code></pre>
-            </div>`;
-    }
-
-    return html;
-}
-
-// V1 schema Overview tab: renders ## Attack Overview H3 subsections
-function renderOverviewTabV1(lab) {
-    let html = '';
-    const readme = lab.readme;
-
-    // Overview prose (content before first ###)
-    if (readme?.overview) {
-        html += `<div class="lab-tab-prose">${renderLabMarkdown(readme.overview)}</div>`;
-    } else {
-        html += `<div class="lab-tab-prose"><p>${escapeHtml(lab.description)}</p></div>`;
-    }
-
-    // ### Attack Path Diagram
-    if (readme?.attackDiagram) {
-        html += `
-            <div class="lab-tab-section">
-                <h3>Attack Path Diagram</h3>
-                <div class="lab-diagram-block">
-                    <div class="lab-diagram-header">
-                        <span>Mermaid</span>
-                        <button class="lab-copy-btn" onclick="copyToClipboard(\`${escapeAttr(readme.attackDiagram)}\`, this)" title="Copy diagram source">
-                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                                <rect x="9" y="9" width="13" height="13" rx="2" ry="2"/>
-                                <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>
-                            </svg>
-                        </button>
-                    </div>
-                    <pre><code>${escapeHtml(readme.attackDiagram)}</code></pre>
-                </div>
-            </div>`;
-    }
-
-    // ### Attack Steps
-    if (readme?.attackSteps) {
-        html += `
-            <div class="lab-tab-section">
-                <h3>Attack Steps</h3>
-                <div class="lab-tab-prose">${renderLabMarkdown(readme.attackSteps)}</div>
-            </div>`;
-    }
-
-    // ### Scenario specific resources created
-    if (readme?.resourcesCreated) {
-        html += `
-            <div class="lab-tab-section">
-                <h3>Scenario Resources</h3>
-                <div class="lab-tab-prose">${renderLabMarkdown(readme.resourcesCreated)}</div>
-            </div>`;
-    }
-
-    // ### MITRE ATT&CK Mapping
-    if (readme?.mitreAttack) {
-        html += `
-            <div class="lab-tab-section">
-                <h3>MITRE ATT&amp;CK Mapping</h3>
-                <div class="lab-tab-prose">${renderLabMarkdown(readme.mitreAttack)}</div>
-            </div>`;
-    }
-
-    // Principals (from metadata)
-    if (lab.attackPath?.principals?.length > 0) {
-        html += `
-            <div class="lab-tab-section">
-                <h3>Principals</h3>
-                <div class="lab-principals-compact">
-                    ${lab.attackPath.principals.map(p => `<code class="lab-principal-arn">${escapeHtml(p)}</code>`).join('')}
-                </div>
-            </div>`;
-    }
-
-    return html;
-}
-
-// V1 schema CSPM tab: renders ## Detecting Misconfiguration (CSPM) H3 subsections
-function renderCspmTab(lab) {
-    let html = '';
-    const cspm = lab.readme?.cspm;
-
-    // ### What CSPM tools should detect
-    if (cspm?.whatToDetect) {
-        html += `
-            <div class="lab-tab-section">
-                <h3>What CSPM Tools Should Detect</h3>
-                <div class="lab-tab-prose">${renderLabMarkdown(cspm.whatToDetect)}</div>
-            </div>`;
-    }
-
-    // ### Prevention recommendations
-    if (cspm?.prevention) {
-        html += `
-            <div class="lab-tab-section">
-                <h3>Prevention Recommendations</h3>
-                <div class="lab-tab-prose">${renderLabMarkdown(cspm.prevention)}</div>
-            </div>`;
-    }
-
-    // Legacy CSPM metadata (rule ID, severity, etc.)
-    if (lab.cspmDetection) {
-        html += `<div class="lab-tab-section"><h3>CSPM Detection Rule</h3>${renderCspmDetection(lab.cspmDetection)}</div>`;
-    }
-
-    if (lab.risk) {
-        html += `<div class="lab-tab-section"><h3>Risk</h3>${renderRisk(lab.risk)}</div>`;
-    }
-
-    return html;
-}
-
-// V1 schema CloudSIEM tab: renders ## Detection Abuse (CloudSIEM) H3 subsections
-function renderCloudSiemTab(lab) {
-    let html = '';
-    const siem = lab.readme?.cloudSiem;
-
-    // ### CloudTrail events to monitor
-    if (siem?.cloudTrailEvents) {
-        html += `
-            <div class="lab-tab-section">
-                <h3>CloudTrail Events to Monitor</h3>
-                <div class="lab-tab-prose">${renderLabMarkdown(siem.cloudTrailEvents)}</div>
-            </div>`;
-    }
-
-    // ### Detonation logs
-    if (siem?.detonationLogs) {
-        html += `
-            <div class="lab-tab-section">
-                <h3>Detonation Logs</h3>
-                <div class="lab-tab-prose">${renderLabMarkdown(siem.detonationLogs)}</div>
-            </div>`;
-    }
-
-    return html;
-}
-
-function renderAttackTab(lab, hasReadme) {
-    let html = '';
-
-    // Attack steps from README
-    if (hasReadme && lab.readme.attackSteps) {
-        html += `<div class="lab-tab-prose">${renderLabMarkdown(lab.readme.attackSteps)}</div>`;
-    }
-
-    // Access path details from README
-    if (hasReadme && lab.readme.accessPathDetails) {
-        html += `
-            <div class="lab-tab-section">
-                <h3>Access Path Details</h3>
-                <div class="lab-tab-prose">${renderLabMarkdown(lab.readme.accessPathDetails)}</div>
-            </div>`;
-    }
-
-    // Resources created
-    if (hasReadme && lab.readme.resourcesCreated) {
-        html += `
-            <div class="lab-tab-section">
-                <h3>Resources Created</h3>
-                <div class="lab-tab-prose">${renderLabMarkdown(lab.readme.resourcesCreated)}</div>
-            </div>`;
-    }
-
-    // Principals
-    if (lab.attackPath && lab.attackPath.principals && lab.attackPath.principals.length > 0) {
-        html += `
-            <div class="lab-tab-section">
-                <h3>Principals</h3>
-                <div class="lab-principals-compact">
-                    ${lab.attackPath.principals.map(p => `<code class="lab-principal-arn">${escapeHtml(p)}</code>`).join('')}
-                </div>
-            </div>`;
-    }
-
-    // Attack path summary (fallback if no README attack steps)
-    if (!hasReadme || !lab.readme.attackSteps) {
-        if (lab.attackPath && lab.attackPath.summary) {
-            html += `
-                <div class="lab-tab-section">
-                    <h3>Attack Path Summary</h3>
-                    <div class="lab-attack-summary">${escapeHtml(lab.attackPath.summary)}</div>
-                </div>`;
-        }
-    }
-
-    return html;
-}
-
-function buildCspmContent(lab, hasReadme) {
-    let content = '';
-    if (hasReadme && lab.readme?.cspm?.whatToDetect) {
-        content += `<div class="lab-tab-prose">${renderLabMarkdown(lab.readme.cspm.whatToDetect)}</div>`;
-    }
-    if (lab.cspmDetection) {
-        content += `<div class="lab-tab-section"><h3>CSPM Detection</h3>${renderCspmDetection(lab.cspmDetection)}</div>`;
-    }
-    if (lab.risk) {
-        content += `<div class="lab-tab-section"><h3>Risk</h3>${renderRisk(lab.risk)}</div>`;
-    }
-    return content;
-}
-
-function buildSiemContent(lab) {
-    let content = '';
-    if (lab.readme?.cloudSiem?.cloudTrailEvents) {
-        content += `<div class="lab-tab-section"><h3>CloudTrail Events</h3>
-            <div class="lab-tab-prose">${renderLabMarkdown(lab.readme.cloudSiem.cloudTrailEvents)}</div>
-        </div>`;
-    }
-    if (lab.readme?.cloudSiem?.detonationLogs) {
-        content += `<div class="lab-tab-section"><h3>Detonation Logs</h3>
-            <div class="lab-tab-prose">${renderLabMarkdown(lab.readme.cloudSiem.detonationLogs)}</div>
-        </div>`;
-    }
-    return content;
-}
-
-function renderDetectionTab(lab, hasReadme) {
-    const hasNewCspm = hasReadme && lab.readme?.cspm;
-    const hasNewSiem = hasReadme && lab.readme?.cloudSiem;
-
-    if (hasNewCspm || hasNewSiem) {
-        const group = `lab-detection-${lab.slug}`;
-        return renderInnerTabSection(group, [
-            { id: 'cspm', label: 'CSPM', show: !!hasNewCspm, content: buildCspmContent(lab, hasReadme) },
-            { id: 'siem', label: 'CloudSIEM', show: !!hasNewSiem, content: buildSiemContent(lab) },
-        ]);
-    }
-
-    // Legacy fallback
-    let html = '';
-    if (lab.cspmDetection) {
-        html += `<div class="lab-tab-section"><h3>CSPM Detection</h3>${renderCspmDetection(lab.cspmDetection)}</div>`;
-    }
-    if (lab.risk) {
-        html += `<div class="lab-tab-section"><h3>Risk</h3>${renderRisk(lab.risk)}</div>`;
-    }
-    return html;
-}
-
-function renderPreventionTab(lab, hasReadme) {
-    let html = '';
-
-    // Prefer new-schema cspm.prevention, fall back to legacy readme.prevention
-    const preventionContent = (hasReadme && lab.readme?.cspm?.prevention)
-        || (hasReadme && lab.readme?.prevention);
-    if (preventionContent) {
-        html += `<div class="lab-tab-prose">${renderLabMarkdown(preventionContent)}</div>`;
-    }
-
-    // Remediation (from scenario.yaml)
-    if (lab.remediation) {
-        html += `<div class="lab-tab-section"><h3>Remediation</h3>${renderRemediation(lab.remediation)}</div>`;
-    }
-
-    return html;
-}
-
-// Extract the source links block — reused by both lab tab renderers
-function renderLabSourceLinks(lab, matchingPath) {
-    return `
-        <div class="lab-tab-section">
-            <h3>Source</h3>
-            <div class="lab-deploy-actions">
-                <a href="${lab.githubUrl}" target="_blank" rel="noopener noreferrer" class="lab-action-link">
-                    <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor">
-                        <path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/>
-                    </svg>
-                    View Source on GitHub
-                </a>
-                ${matchingPath ? `
-                <a href="/paths/${lab.pathfindingCloudId}" class="lab-action-link">
-                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                        <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/>
-                        <polyline points="15 3 21 3 21 9"/>
-                        <line x1="10" y1="14" x2="21" y2="3"/>
-                    </svg>
-                    Full Documentation: ${escapeHtml(matchingPath.name)}
-                </a>` : ''}
-            </div>
-        </div>`;
-}
-
-// Dispatcher: use V1 renderer when new schema data is present, otherwise legacy
-function renderLabTab(lab, hasReadme, matchingPath) {
-    if (hasReadme && lab.readme?.attackLab) {
-        return renderLabTabV1(lab, hasReadme, matchingPath);
-    }
-    return renderLabTabLegacy(lab, hasReadme, matchingPath);
-}
-
-// V1 schema lab tab: Prerequisites, Deploy, Demo, Manual Attack, Cleanup, Teardown, Source
-function renderLabTabV1(lab, hasReadme, matchingPath) {
-    let html = '';
-    const attackLab = lab.readme.attackLab;
-    const slug = lab.slug;
-
-    // Prerequisites
-    if (attackLab.prerequisites) {
-        html += `
-            <div class="lab-tab-section">
-                <h3>Prerequisites</h3>
-                <div class="lab-tab-prose">${renderLabMarkdown(attackLab.prerequisites)}</div>
-            </div>`;
-    }
-
-    // Deploy this lab — Non-Interactive | TUI inner tabs
-    html += `
-        <div class="lab-tab-section">
-            <h3>Deploy this lab</h3>
-            ${renderInnerTabSection(`${slug}-deploy`, [
-                { id: 'cli', label: 'Non-Interactive', show: !!attackLab.deployNonInteractive, content: attackLab.deployNonInteractive },
-                { id: 'tui', label: 'TUI', show: !!attackLab.deployTui, content: attackLab.deployTui },
-            ])}
-        </div>`;
-
-    // Executing the Attack with the Automated Script
-    if (attackLab.demoAttack) {
-        const demo = attackLab.demoAttack;
-        html += `<div class="lab-tab-section"><h3>Executing the Attack with the Automated Script</h3>`;
-        html += renderInnerTabSection(`${slug}-demo`, [
-            { id: 'cli', label: 'Non-Interactive', show: !!demo.nonInteractive, content: demo.nonInteractive },
-            { id: 'tui', label: 'TUI', show: !!demo.tui, content: demo.tui },
-        ]);
-        if (demo.resourcesCreated) {
-            html += `
-                <div class="lab-tab-subsection">
-                    <h4>Resources created by attack script</h4>
-                    <div class="lab-tab-prose">${renderLabMarkdown(demo.resourcesCreated)}</div>
-                </div>`;
-        }
-        html += '</div>';
-    }
-
-    // Executing the Attack Manually (optional)
-    if (attackLab.manualAttack) {
-        html += `
-            <div class="lab-tab-section">
-                <h3>Executing the Attack Manually</h3>
-                <div class="lab-tab-prose">${renderLabMarkdown(attackLab.manualAttack)}</div>
-            </div>`;
-    }
-
-    // Remove Attack Artifacts — Non-Interactive | TUI inner tabs
-    if (attackLab.cleanup) {
-        const cleanup = attackLab.cleanup;
-        html += `
-            <div class="lab-tab-section">
-                <h3>Remove Attack Artifacts</h3>
-                ${renderInnerTabSection(`${slug}-cleanup`, [
-                    { id: 'cli', label: 'Non-Interactive', show: !!cleanup.nonInteractive, content: cleanup.nonInteractive },
-                    { id: 'tui', label: 'TUI', show: !!cleanup.tui, content: cleanup.tui },
-                ])}
-            </div>`;
-    }
-
-    // Teardown this lab — Non-Interactive | TUI inner tabs
-    const hasTeardownCli = !!attackLab.teardownNonInteractive;
-    const hasTeardownTui = !!attackLab.teardownTui;
-    if (hasTeardownCli || hasTeardownTui) {
-        html += `
-            <div class="lab-tab-section">
-                <h3>Teardown this lab</h3>
-                ${renderInnerTabSection(`${slug}-teardown`, [
-                    { id: 'cli', label: 'Non-Interactive', show: hasTeardownCli, content: attackLab.teardownNonInteractive },
-                    { id: 'tui', label: 'TUI', show: hasTeardownTui, content: attackLab.teardownTui },
-                ])}
-            </div>`;
-    }
-
-    // Source links
-    html += renderLabSourceLinks(lab, matchingPath);
-
-    return html;
-}
-
-// Legacy lab tab: plabs CLI/TUI quickstart + execution guide from README
-function renderLabTabLegacy(lab, hasReadme, matchingPath) {
-    let html = '';
-
-    // plabs CLI sub-section
-    html += `
-        <div class="lab-tab-section">
-            <h3>plabs cli</h3>
-            <p class="lab-tab-prose">Deploy this scenario from the command line using the <a href="https://github.com/DataDog/pathfinding-labs" target="_blank" rel="noopener noreferrer">pathfinding-labs</a> CLI.</p>
-            <div class="lab-code-block">
-                <code>plabs deploy ${escapeHtml(lab.slug)}</code>
-                <button class="lab-copy-btn" onclick="copyToClipboard('plabs deploy ${escapeAttr(lab.slug)}', this)" title="Copy to clipboard">
-                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                        <rect x="9" y="9" width="13" height="13" rx="2" ry="2"/>
-                        <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>
-                    </svg>
-                </button>
-            </div>
-            <p class="lab-deploy-tf-var">Terraform variable: <code>${escapeHtml(lab.terraform.variableName)}</code></p>
-        </div>`;
-
-    // plabs TUI sub-section
-    html += `
-        <div class="lab-tab-section">
-            <h3>plabs tui</h3>
-            <p class="lab-tab-prose">Launch the interactive terminal UI to browse and deploy scenarios visually.</p>
-            <div class="lab-code-block">
-                <code>plabs tui</code>
-                <button class="lab-copy-btn" onclick="copyToClipboard('plabs tui', this)" title="Copy to clipboard">
-                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                        <rect x="9" y="9" width="13" height="13" rx="2" ry="2"/>
-                        <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>
-                    </svg>
-                </button>
-            </div>
-        </div>`;
-
-    // Execution guide from README
-    if (hasReadme && lab.readme.executionGuide) {
-        html += `
-            <div class="lab-tab-section">
-                <h3>Execution Guide</h3>
-                <div class="lab-tab-prose">${renderLabMarkdown(lab.readme.executionGuide)}</div>
-            </div>`;
-    }
-
-    html += renderLabSourceLinks(lab, matchingPath);
-
-    return html;
-}
-
-// ---- CSPM / Risk / Remediation renderers (reused from before, inline format) ----
-
-function renderCspmDetection(cspmDetection) {
-    if (typeof cspmDetection === 'string') {
-        return `<p>${escapeHtml(cspmDetection)}</p>`;
-    }
-
-    let content = '';
-    if (cspmDetection.description) {
-        content += `<p>${escapeHtml(cspmDetection.description)}</p>`;
-    }
-    if (cspmDetection.rule_id) {
-        content += `<p><strong>Rule ID:</strong> <code>${escapeHtml(cspmDetection.rule_id)}</code></p>`;
-    }
-    if (cspmDetection.severity) {
-        content += `<p><strong>Severity:</strong> ${escapeHtml(cspmDetection.severity)}</p>`;
-    }
-    if (cspmDetection.expected_finding) {
-        const ef = cspmDetection.expected_finding;
-        content += `<div style="margin-top: 12px;"><strong>Expected Finding:</strong></div>`;
-        if (ef.resource_type) content += `<p style="margin-left: 16px;"><strong>Resource Type:</strong> <code>${escapeHtml(ef.resource_type)}</code></p>`;
-        if (ef.resource_id) content += `<p style="margin-left: 16px;"><strong>Resource ID:</strong> <code>${escapeHtml(ef.resource_id)}</code></p>`;
-        if (ef.finding) content += `<p style="margin-left: 16px;"><strong>Finding:</strong> ${escapeHtml(ef.finding)}</p>`;
-    }
-    return content;
-}
-
-function renderRisk(risk) {
-    if (typeof risk === 'string') {
-        return `<p>${escapeHtml(risk)}</p>`;
-    }
-
-    let content = '';
-    if (risk.summary) {
-        content += `<p>${escapeHtml(risk.summary)}</p>`;
-    }
-    if (risk.impact && risk.impact.length > 0) {
-        content += `<div style="margin-top: 12px;"><strong>Impact:</strong></div><ul>${risk.impact.map(i => `<li>${escapeHtml(i)}</li>`).join('')}</ul>`;
-    }
-    if (risk.access_vectors && risk.access_vectors.length > 0) {
-        content += `<div style="margin-top: 12px;"><strong>Access Vectors:</strong></div><ul>${risk.access_vectors.map(v => `<li>${escapeHtml(v)}</li>`).join('')}</ul>`;
-    }
-    return content;
-}
-
-function renderRemediation(remediation) {
-    if (typeof remediation === 'string') {
-        return `<p>${escapeHtml(remediation)}</p>`;
-    }
-
-    let content = '';
-    if (remediation.summary) {
-        content += `<p>${escapeHtml(remediation.summary)}</p>`;
-    }
-    if (remediation.recommendations && remediation.recommendations.length > 0) {
-        content += `<ul>${remediation.recommendations.map(r => `<li>${escapeHtml(r)}</li>`).join('')}</ul>`;
-    }
-    return content;
 }
 
 // ---- Markdown Rendering ----
@@ -1585,6 +1079,502 @@ function convertMarkdownLists(html) {
     return result.join('\n');
 }
 
+// ---------------------------------------------------------------------------
+// Guided v2 Mode: Continuous scroll with scroll-spy TOC
+// ---------------------------------------------------------------------------
+
+function buildGuidedV2Sections(lab) {
+    const slug = lab.slug || 'default';
+    const sections = [];
+
+    // Color mapping for H2 sections
+    const sectionColors = {
+        'Objective': 'lab-guided-section-overview',
+        'Self-hosted Lab Setup': 'lab-guided-section-setup',
+        'Attack': 'lab-guided-section-attack',
+        'Teardown': 'lab-guided-section-teardown',
+        'Defend': 'lab-guided-section-conclusion',
+    };
+
+    // --- Objective ---
+    const overview = getOverview(lab);
+    if (overview || lab.description) {
+        sections.push({
+            id: `gv2-objective-${slug}`,
+            h2Section: 'Objective',
+            title: 'Objective',
+            level: 2,
+            colorClass: sectionColors['Objective'],
+            renderContent: () => {
+                let html = '';
+                // Title + informational badge pills
+                const catConfig2 = categoryConfig[lab.category] || { label: lab.category, cssClass: '' };
+                const pathTypeLabel = pathTypeLabels[lab.pathType] || lab.pathType;
+                const pathTypeClass = pathTypeColors[lab.pathType] || 'lab-badge-pathtype';
+                const isFree = lab.costEstimate === 'free' || lab.costEstimate === '$0/mo';
+                const targetLabel = lab.target === 'to-admin' ? 'Admin' : lab.target === 'to-bucket' ? 'Bucket' : lab.target;
+                const targetClass = targetColors[lab.target] || 'lab-badge-target';
+
+                html += `<div class="lab-detail-badges" style="margin-bottom:16px;">
+                    <span class="lab-badge ${catConfig2.cssClass}">${catConfig2.label}</span>
+                    ${lab.pathType ? `<span class="lab-badge ${pathTypeClass}">${pathTypeLabel}</span>` : ''}
+                    ${targetLabel ? `<span class="lab-badge ${targetClass}">${targetLabel}</span>` : ''}
+                    <span class="lab-badge ${isFree ? 'lab-cost-free' : 'lab-cost-paid'}">${isFree ? 'Free' : lab.costEstimate}</span>
+                    ${lab.environments && lab.environments.length > 0 ? lab.environments.map(env =>
+                        `<span class="lab-badge lab-badge-env">${escapeHtml(env)}</span>`
+                    ).join('') : ''}
+                    ${renderServiceIcons(lab.permissions) ? `<span class="lab-service-icons-right">${renderServiceIcons(lab.permissions)}</span>` : ''}
+                </div>`;
+
+                if (overview && overview !== lab.description) {
+                    html += `<div class="lab-tab-prose">${renderLabMarkdown(overview)}</div>`;
+                } else {
+                    html += `<div class="lab-tab-prose"><p>${escapeHtml(lab.description)}</p></div>`;
+                }
+                return html;
+            }
+        });
+
+        // Attack Map preview (static screenshot of start screen)
+        if (lab.attackMap?.nodes?.length || lab.readme?.attackDiagram) {
+            sections.push({
+                id: `gv2-map-preview-${slug}`,
+                h2Section: 'Objective',
+                title: 'Attack Map',
+                level: 3,
+                colorClass: sectionColors['Objective'],
+                renderContent: () => `<div class="lab-gv2-map-preview" id="gv2-map-preview-container-${slug}"></div>`,
+            });
+        }
+
+        // Starting Permissions sub-section
+        if (lab.permissions && (lab.permissions.required?.length || lab.permissions.helpful?.length)) {
+            sections.push({
+                id: `gv2-permissions-${slug}`,
+                h2Section: 'Objective',
+                title: 'Starting Permissions',
+                level: 3,
+                colorClass: sectionColors['Objective'],
+                renderContent: () => renderSidebarPermissions(lab.permissions, slug),
+            });
+        }
+    }
+
+    // --- Self-hosted Lab Setup ---
+    const setup = getSetup(lab);
+    if (setup.prerequisites || setup.deployNonInteractive || setup.deployTui) {
+        if (setup.prerequisites) {
+            sections.push({
+                id: `gv2-prereqs-${slug}`,
+                h2Section: 'Self-hosted Lab Setup',
+                title: 'Prerequisites',
+                level: 3,
+                colorClass: sectionColors['Self-hosted Lab Setup'],
+                renderContent: () => `<div class="lab-tab-prose">${renderLabMarkdown(setup.prerequisites)}</div>`,
+            });
+        }
+        if (setup.deployNonInteractive || setup.deployTui) {
+            sections.push({
+                id: `gv2-deploy-${slug}`,
+                h2Section: 'Self-hosted Lab Setup',
+                title: 'Deploy',
+                level: 3,
+                colorClass: sectionColors['Self-hosted Lab Setup'],
+                renderContent: () => renderInnerTabSection(`gv2-deploy-inner-${slug}`, [
+                    { id: 'cli', label: 'Non-Interactive', show: !!setup.deployNonInteractive, content: setup.deployNonInteractive },
+                    { id: 'tui', label: 'TUI', show: !!setup.deployTui, content: setup.deployTui },
+                ]),
+            });
+        }
+    }
+
+    // --- Attack ---
+    const resourcesCreated = getResourcesCreated(lab);
+    if (resourcesCreated) {
+        sections.push({
+            id: `gv2-resources-${slug}`,
+            h2Section: 'Attack',
+            title: 'Scenario Specific Resources Created',
+            level: 3,
+            colorClass: sectionColors['Attack'],
+            renderContent: () => `<div class="lab-tab-prose">${renderLabMarkdown(resourcesCreated)}</div>`,
+        });
+    }
+
+    // CTF Challenge from attackMap
+    if (lab.attackMap?.nodes?.length && lab.attackMap?.edges?.length) {
+        sections.push({
+            id: `gv2-ctf-${slug}`,
+            h2Section: 'Attack',
+            title: 'CTF Challenge',
+            level: 3,
+            colorClass: sectionColors['Attack'],
+            renderContent: () => renderGuidedV2CTFChallenge(lab.attackMap, slug),
+        });
+    }
+
+    // Guided Walkthrough from companion file
+    const walkthrough = getGuidedWalkthrough(lab);
+    if (walkthrough) {
+        sections.push({
+            id: `gv2-walkthrough-${slug}`,
+            h2Section: 'Attack',
+            title: 'Guided Walkthrough',
+            level: 3,
+            colorClass: sectionColors['Attack'],
+            renderContent: () => `<div class="lab-tab-prose">${renderLabMarkdown(walkthrough)}</div>`,
+        });
+    }
+
+    // Automated Demo
+    const demoAttack = getAttackDemo(lab);
+    if (demoAttack) {
+        sections.push({
+            id: `gv2-demo-${slug}`,
+            h2Section: 'Attack',
+            title: 'Automated Demo',
+            level: 3,
+            colorClass: sectionColors['Attack'],
+            renderContent: () => {
+                let html = '';
+                if (demoAttack.executing) {
+                    html += `<div class="lab-tab-prose">${renderLabMarkdown(demoAttack.executing)}</div>`;
+                }
+                html += renderInnerTabSection(`gv2-demo-inner-${slug}`, [
+                    { id: 'cli', label: 'Non-Interactive', show: !!demoAttack.nonInteractive, content: demoAttack.nonInteractive },
+                    { id: 'tui', label: 'TUI', show: !!demoAttack.tui, content: demoAttack.tui },
+                ]);
+                if (demoAttack.resourcesCreated) {
+                    html += `<div class="lab-tab-subsection"><h4>Resources Created by Attack Script</h4>
+                        <div class="lab-tab-prose">${renderLabMarkdown(demoAttack.resourcesCreated)}</div></div>`;
+                }
+                return html;
+            },
+        });
+    }
+
+    // Cleanup
+    const cleanupData = getCleanup(lab);
+    if (cleanupData) {
+        sections.push({
+            id: `gv2-cleanup-${slug}`,
+            h2Section: 'Attack',
+            title: 'Cleanup',
+            level: 3,
+            colorClass: sectionColors['Attack'],
+            renderContent: () => renderInnerTabSection(`gv2-cleanup-inner-${slug}`, [
+                { id: 'cli', label: 'Non-Interactive', show: !!cleanupData.nonInteractive, content: cleanupData.nonInteractive },
+                { id: 'tui', label: 'TUI', show: !!cleanupData.tui, content: cleanupData.tui },
+            ]),
+        });
+    }
+
+    // --- Teardown ---
+    const teardownData = getTeardown(lab);
+    if (teardownData.nonInteractive || teardownData.tui) {
+        sections.push({
+            id: `gv2-teardown-${slug}`,
+            h2Section: 'Teardown',
+            title: 'Teardown',
+            level: 3,
+            colorClass: sectionColors['Teardown'],
+            renderContent: () => renderInnerTabSection(`gv2-teardown-inner-${slug}`, [
+                { id: 'cli', label: 'Non-Interactive', show: !!teardownData.nonInteractive, content: teardownData.nonInteractive },
+                { id: 'tui', label: 'TUI', show: !!teardownData.tui, content: teardownData.tui },
+            ]),
+        });
+    }
+
+    // --- Defend ---
+    const cspmData = getDefendCspm(lab);
+    if (cspmData) {
+        if (cspmData.whatToDetect) {
+            sections.push({
+                id: `gv2-cspm-detect-${slug}`,
+                h2Section: 'Defend',
+                title: 'What CSPM Tools Should Detect',
+                level: 3,
+                colorClass: sectionColors['Defend'],
+                renderContent: () => `<div class="lab-tab-prose">${renderLabMarkdown(cspmData.whatToDetect)}</div>`,
+            });
+        }
+        if (cspmData.prevention) {
+            sections.push({
+                id: `gv2-cspm-prevent-${slug}`,
+                h2Section: 'Defend',
+                title: 'Prevention Recommendations',
+                level: 3,
+                colorClass: sectionColors['Defend'],
+                renderContent: () => `<div class="lab-tab-prose">${renderLabMarkdown(cspmData.prevention)}</div>`,
+            });
+        }
+    }
+    const siemData = getDefendSiem(lab);
+    if (siemData) {
+        if (siemData.cloudTrailEvents) {
+            sections.push({
+                id: `gv2-siem-events-${slug}`,
+                h2Section: 'Defend',
+                title: 'CloudTrail Events to Monitor',
+                level: 3,
+                colorClass: sectionColors['Defend'],
+                renderContent: () => `<div class="lab-tab-prose">${renderLabMarkdown(siemData.cloudTrailEvents)}</div>`,
+            });
+        }
+        if (siemData.detonationLogs) {
+            sections.push({
+                id: `gv2-siem-logs-${slug}`,
+                h2Section: 'Defend',
+                title: 'Detonation Logs',
+                level: 3,
+                colorClass: sectionColors['Defend'],
+                renderContent: () => `<div class="lab-tab-prose">${renderLabMarkdown(siemData.detonationLogs)}</div>`,
+            });
+        }
+    }
+
+    // References
+    if (lab.readme?.references) {
+        sections.push({
+            id: `gv2-references-${slug}`,
+            h2Section: 'Defend',
+            title: 'References',
+            level: 3,
+            colorClass: sectionColors['Defend'],
+            renderContent: () => `<div class="lab-tab-prose">${renderLabMarkdown(lab.readme.references)}</div>`,
+        });
+    }
+
+    return sections;
+}
+
+function renderLabDetailContentGuidedV2(lab, container) {
+    const sections = buildGuidedV2Sections(lab);
+    const gv2Id = `gv2-${lab.slug || 'default'}`;
+
+    if (sections.length === 0) {
+        container.innerHTML = '<div class="lab-tab-prose"><p>No content available for Guided v2 mode.</p></div>';
+        return;
+    }
+
+    // Build TOC from sections
+    let tocHtml = '';
+    let currentH2 = '';
+    const sectionColors = {
+        'Objective': 'lab-guided-section-overview',
+        'Self-hosted Lab Setup': 'lab-guided-section-setup',
+        'Attack': 'lab-guided-section-attack',
+        'Teardown': 'lab-guided-section-teardown',
+        'Defend': 'lab-guided-section-conclusion',
+    };
+
+    sections.forEach(sec => {
+        if (sec.h2Section !== currentH2) {
+            if (currentH2) tocHtml += '</div>';
+            currentH2 = sec.h2Section;
+            tocHtml += `<div class="lab-guided-index-section">
+                <div class="lab-guided-index-heading ${sectionColors[sec.h2Section] || ''}">${escapeHtml(sec.h2Section)}</div>`;
+        }
+        tocHtml += `<div class="lab-guided-index-item lab-gv2-toc-item" data-gv2-target="${sec.id}"
+            onclick="document.getElementById('${sec.id}').scrollIntoView({behavior:'smooth'})">${escapeHtml(sec.title)}</div>`;
+    });
+    if (currentH2) tocHtml += '</div>';
+
+    // Build main content from sections
+    const slug = lab.slug || 'default';
+    const labShareUrl = `https://pathfinding.cloud/labs/${slug}`;
+    let mainHtml = `<div class="lab-gv2-title-row">
+        <h1 class="lab-gv2-title">${escapeHtml(lab.name)}</h1>
+        <div class="lab-gv2-share-actions">
+            <button class="lab-gv2-share-btn" data-share-action="copy-link" data-share-url="${escapeHtml(labShareUrl)}" data-share-name="${escapeHtml(lab.name)}" title="Copy link">Copy Link</button>
+            <button class="lab-gv2-share-btn lab-gv2-share-btn-primary" data-share-action="linkedin" data-share-url="${escapeHtml(labShareUrl)}" data-share-name="${escapeHtml(lab.name)}" title="Share on LinkedIn">LinkedIn</button>
+            <button class="lab-gv2-share-btn" data-share-action="twitter" data-share-url="${escapeHtml(labShareUrl)}" data-share-name="${escapeHtml(lab.name)}" title="Share on X">X</button>
+            <button class="lab-gv2-share-btn" data-share-action="bluesky" data-share-url="${escapeHtml(labShareUrl)}" data-share-name="${escapeHtml(lab.name)}" title="Share on Bluesky">Bluesky</button>
+            <button class="lab-gv2-share-btn" data-share-action="mastodon" data-share-url="${escapeHtml(labShareUrl)}" data-share-name="${escapeHtml(lab.name)}" title="Share on Mastodon">Mastodon</button>
+        </div>
+    </div>`;
+    let prevH2 = '';
+    sections.forEach(sec => {
+        if (sec.h2Section !== prevH2) {
+            prevH2 = sec.h2Section;
+        }
+        const headingTag = sec.level === 2 ? 'h2' : 'h3';
+        mainHtml += `
+            <div class="lab-gv2-section" id="${sec.id}" data-gv2-h2="${sec.h2Section}">
+                <${headingTag} class="lab-gv2-heading ${sec.colorClass || ''}">${escapeHtml(sec.title)}</${headingTag}>
+                <div class="lab-gv2-body">${sec.renderContent()}</div>
+            </div>`;
+    });
+
+    container.innerHTML = `
+        <div class="lab-gv2-layout" id="${gv2Id}">
+            <div class="lab-gv2-toc">${tocHtml}</div>
+            <div class="lab-gv2-main">${mainHtml}</div>
+        </div>`;
+
+    setupTabListeners();
+    setupGuidedV2ScrollSpy(gv2Id);
+
+    // Initialize static map preview after DOM is ready
+    setTimeout(() => {
+        const previewContainer = document.getElementById(`gv2-map-preview-container-${slug}`);
+        if (previewContainer && typeof renderStaticMapPreview === 'function') {
+            renderStaticMapPreview(previewContainer, lab);
+        }
+    }, 60);
+
+    // Share button click handlers -- delegate to labShareAction for all platforms
+    // Grab the static preview canvas (if present) so social shares can download the map image
+    container.querySelectorAll('.lab-gv2-share-btn').forEach(btn => {
+        btn.addEventListener('click', () => {
+            const action = btn.dataset.shareAction;
+            if (action === 'copy-link') {
+                const url = btn.dataset.shareUrl;
+                navigator.clipboard.writeText(url).then(() => {
+                    const original = btn.textContent;
+                    btn.textContent = 'Copied!';
+                    setTimeout(() => { btn.textContent = original; }, 1500);
+                });
+            } else if (typeof labShareAction === 'function') {
+                const previewCanvas = document.querySelector(`#gv2-map-preview-container-${slug} canvas`);
+                labShareAction(action, previewCanvas, lab);
+            }
+        });
+    });
+}
+
+function setupGuidedV2ScrollSpy(containerId) {
+    const container = document.getElementById(containerId);
+    if (!container) return;
+
+    const tocItems = container.querySelectorAll('.lab-gv2-toc-item');
+    const sectionEls = container.querySelectorAll('.lab-gv2-section');
+
+    if (sectionEls.length === 0) return;
+
+    const observer = new IntersectionObserver((entries) => {
+        // Find the first visible section
+        let activeId = null;
+        for (const entry of entries) {
+            if (entry.isIntersecting) {
+                activeId = entry.target.id;
+                break;
+            }
+        }
+
+        if (activeId) {
+            tocItems.forEach(item => {
+                item.classList.toggle('active', item.dataset.gv2Target === activeId);
+            });
+        }
+    }, {
+        rootMargin: '-130px 0px -60% 0px',
+        threshold: 0,
+    });
+
+    sectionEls.forEach(el => observer.observe(el));
+}
+
+function renderGuidedV2CTFChallenge(attackMap, slug) {
+    if (!attackMap?.nodes?.length || !attackMap?.edges?.length) return '';
+
+    const nodeById = new Map(attackMap.nodes.map(n => [n.id, n]));
+
+    // Walk edges in order
+    const incomingCount = {};
+    attackMap.nodes.forEach(n => { incomingCount[n.id] = 0; });
+    attackMap.edges.forEach(e => { incomingCount[e.to] = (incomingCount[e.to] || 0) + 1; });
+    let rootId = attackMap.nodes.find(n => incomingCount[n.id] === 0)?.id || attackMap.nodes[0]?.id;
+
+    // Build ordered edge list
+    const orderedEdges = [];
+    const visited = new Set();
+    let currentId = rootId;
+    while (currentId && !visited.has(currentId)) {
+        visited.add(currentId);
+        const outEdge = attackMap.edges.find(e => e.from === currentId && !visited.has(e.to));
+        if (outEdge) {
+            orderedEdges.push(outEdge);
+            currentId = outEdge.to;
+        } else {
+            break;
+        }
+    }
+
+    if (orderedEdges.length === 0) return '<p>No attack edges found.</p>';
+
+    let html = '<div class="lab-gv2-ctf-container">';
+
+    // Show starting node
+    const startNode = nodeById.get(rootId);
+    if (startNode) {
+        html += `<div class="lab-gv2-ctf-start">
+            <span class="lab-gv2-ctf-node-label">${escapeHtml(startNode.label || startNode.id)}</span>
+            ${startNode.subType ? `<span class="lab-gv2-ctf-subtype">${escapeHtml(startNode.subType)}</span>` : ''}
+            ${startNode.description ? `<div class="lab-gv2-ctf-desc">${escapeHtml(startNode.description)}</div>` : ''}
+        </div>`;
+    }
+
+    orderedEdges.forEach((edge, i) => {
+        const edgeId = `gv2-ctf-edge-${slug}-${i}`;
+        const fromNode = nodeById.get(edge.from);
+        const toNode = nodeById.get(edge.to);
+        const hints = edge.hints || [];
+
+        html += `<div class="lab-gv2-ctf-edge" id="${edgeId}">
+            <div class="lab-gv2-ctf-action">${escapeHtml(edge.label || 'Action')}</div>
+            <div class="lab-gv2-ctf-to">
+                <span class="lab-gv2-ctf-node-label">${escapeHtml(toNode?.label || edge.to)}</span>
+                ${toNode?.subType ? `<span class="lab-gv2-ctf-subtype">${escapeHtml(toNode.subType)}</span>` : ''}
+                ${toNode?.description ? `<div class="lab-gv2-ctf-desc">${escapeHtml(toNode.description)}</div>` : ''}
+            </div>`;
+
+        // Progressive hint reveal
+        if (hints.length > 0) {
+            html += `<div class="lab-gv2-ctf-hints" data-edge-id="${edgeId}">
+                <button class="lab-gv2-ctf-hint-btn" onclick="guidedV2RevealHint('${edgeId}', 0)">
+                    Show Hint (1/${hints.length})
+                </button>`;
+            hints.forEach((hint, hIdx) => {
+                html += `<div class="lab-gv2-ctf-hint lab-gv2-ctf-hint-hidden" data-hint-idx="${hIdx}">
+                    ${escapeHtml(hint)}
+                </div>`;
+            });
+            html += '</div>';
+        }
+
+        html += '</div>';
+    });
+
+    html += '</div>';
+    return html;
+}
+
+function guidedV2RevealHint(edgeId, hintIdx) {
+    const edgeEl = document.getElementById(edgeId);
+    if (!edgeEl) return;
+
+    const hintsContainer = edgeEl.querySelector('.lab-gv2-ctf-hints');
+    if (!hintsContainer) return;
+
+    const allHints = hintsContainer.querySelectorAll('.lab-gv2-ctf-hint');
+    const btn = hintsContainer.querySelector('.lab-gv2-ctf-hint-btn');
+
+    // Reveal the hint at hintIdx
+    if (allHints[hintIdx]) {
+        allHints[hintIdx].classList.remove('lab-gv2-ctf-hint-hidden');
+    }
+
+    // Update button for next hint
+    const nextIdx = hintIdx + 1;
+    if (nextIdx < allHints.length) {
+        btn.textContent = `Show Hint (${nextIdx + 1}/${allHints.length})`;
+        btn.onclick = () => guidedV2RevealHint(edgeId, nextIdx);
+    } else {
+        btn.style.display = 'none';
+    }
+}
+
 // ---- Tab click handling ----
 
 function setupTabListeners() {
@@ -1613,6 +1603,15 @@ function handleTabClick(event) {
     const targetContent = document.getElementById(targetId);
     if (targetContent) {
         targetContent.classList.add('active');
+
+        // Refit any vis.js networks that were rendered while hidden
+        setTimeout(() => {
+            targetContent.querySelectorAll('.attack-viz-container, .lab-attack-viz-container').forEach(vizEl => {
+                if (vizEl._visNetwork) {
+                    vizEl._visNetwork.fit();
+                }
+            });
+        }, 50);
     }
 
     // Activate clicked button

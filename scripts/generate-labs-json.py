@@ -26,19 +26,24 @@ import sys
 from pathlib import Path
 
 import requests
+import yaml
 
 
 GITHUB_OWNER = "DataDog"
 GITHUB_REPO = "pathfinding-labs"
 SCENARIOS_ROOT = "modules/scenarios"
 
-# Required metadata fields in every README
-REQUIRED_README_METADATA = [
+# Required metadata fields -- base set required for all schema versions
+REQUIRED_README_METADATA_BASE = [
     "Category",
     "Path Type",
     "Target",
     "Environments",
     "Technique",
+]
+
+# Additional fields required only for v1/v2 schema (where they exist in metadata)
+REQUIRED_README_METADATA_V1_EXTRA = [
     "Cost Estimate",
     "Terraform Variable",
 ]
@@ -58,6 +63,7 @@ INDEX_FIELDS = [
     "pathfindingCloudId",
     "environments",
     "githubUrl",
+    "hasAttackMap",
 ]
 
 
@@ -91,7 +97,11 @@ def extract_h1_title(readme_text):
 
 def validate_readme_metadata(metadata, readme_path):
     """Validate that required metadata fields are present. Returns True if valid."""
-    missing = [f for f in REQUIRED_README_METADATA if f not in metadata]
+    required = list(REQUIRED_README_METADATA_BASE)
+    # v1/v2 schemas require additional metadata fields
+    if not is_v3_schema(metadata):
+        required.extend(REQUIRED_README_METADATA_V1_EXTRA)
+    missing = [f for f in required if f not in metadata]
     if missing:
         print(f"  ERROR: {readme_path} missing required metadata: {', '.join(missing)}")
         return False
@@ -192,6 +202,137 @@ def parse_cspm_expected_finding(raw):
 
 
 # ---------------------------------------------------------------------------
+# Attack Map parser
+# ---------------------------------------------------------------------------
+
+def extract_attack_map(section_text):
+    """Extract and parse the Attack Map YAML block from an H3 section.
+
+    Finds the ```yaml fenced code block, parses it with yaml.safe_load(),
+    and returns the attackMap dict. Returns None if not found or invalid.
+    """
+    if not section_text:
+        return None
+
+    yaml_match = re.search(r"```ya?ml\n(.*?)```", section_text, re.DOTALL)
+    if not yaml_match:
+        return None
+
+    try:
+        parsed = yaml.safe_load(yaml_match.group(1))
+    except yaml.YAMLError as e:
+        print(f"  WARNING: Failed to parse Attack Map YAML: {e}")
+        return None
+
+    if isinstance(parsed, dict) and "attackMap" in parsed:
+        return parsed["attackMap"]
+
+    return None
+
+
+def load_attack_map_file(readme_dir):
+    """Load attack_map.yaml companion file from the same directory as README.
+
+    Returns the attackMap dict, or None if not found or invalid.
+    """
+    attack_map_path = Path(readme_dir) / "attack_map.yaml"
+    if not attack_map_path.exists():
+        return None
+
+    try:
+        with open(attack_map_path, "r", encoding="utf-8") as f:
+            parsed = yaml.safe_load(f)
+    except yaml.YAMLError as e:
+        print(f"  WARNING: Failed to parse {attack_map_path}: {e}")
+        return None
+
+    if isinstance(parsed, dict) and "attackMap" in parsed:
+        return parsed["attackMap"]
+    if isinstance(parsed, dict) and ("nodes" in parsed or "edges" in parsed):
+        return parsed
+
+    return None
+
+
+def load_guided_walkthrough(readme_dir):
+    """Load guided_walkthrough.md companion file from the same directory as README.
+
+    Returns the markdown text, or None if not found.
+    """
+    walkthrough_path = Path(readme_dir) / "guided_walkthrough.md"
+    if not walkthrough_path.exists():
+        return None
+
+    try:
+        return walkthrough_path.read_text(encoding="utf-8")
+    except Exception as e:
+        print(f"  WARNING: Failed to read {walkthrough_path}: {e}")
+        return None
+
+
+def parse_starting_permissions_section(section_text):
+    """Parse the ### Starting Permissions section from a v3 README.
+
+    Expected format:
+        **Required:**
+        - `permission` on `resource` -- description
+
+        **Helpful:**
+        - `permission` -- purpose
+
+    Returns {"required": [...], "helpful": [...]}.
+    """
+    result = {"required": [], "helpful": []}
+    if not section_text:
+        return result
+
+    current_group = None
+    for line in section_text.split("\n"):
+        stripped = line.strip()
+
+        if stripped.startswith("**Required"):
+            current_group = "required"
+            continue
+        elif stripped.startswith("**Helpful"):
+            current_group = "helpful"
+            continue
+
+        if not current_group or not stripped.startswith("- "):
+            continue
+
+        item_text = stripped[2:].strip()
+
+        if current_group == "required":
+            # Match: `permission` on `resource` -- description
+            # or:   `permission` on `resource`
+            # or:   `permission` -- description
+            # or:   `permission`
+            match = re.match(
+                r"`([^`]+)`(?:\s+on\s+`([^`]+)`)?(?:\s+--\s+(.+))?",
+                item_text,
+            )
+            if match:
+                entry = {"permission": match.group(1)}
+                if match.group(2):
+                    entry["resource"] = match.group(2)
+                if match.group(3):
+                    entry["description"] = match.group(3)
+                result["required"].append(entry)
+
+        elif current_group == "helpful":
+            # Match: `permission` -- purpose
+            # or:   `permission`
+            match = re.match(r"`([^`]+)`(?:\s+--\s+(.+))?", item_text)
+            if match:
+                entry = {"permission": match.group(1)}
+                if match.group(2):
+                    entry["purpose"] = match.group(2)
+                result["helpful"].append(entry)
+
+    return result
+
+
+# ---------------------------------------------------------------------------
 # README section parser (v1 schema: H2/H3/H4 hierarchy)
 # ---------------------------------------------------------------------------
 
@@ -252,6 +393,10 @@ def parse_readme_sections(readme_text):
                     result["attackDiagram"] = mermaid_match.group(1).strip()
             elif "attack steps" in low:
                 result["attackSteps"] = content
+            elif "attack map" in low:
+                attack_map = extract_attack_map(content)
+                if attack_map:
+                    result["attackMap"] = attack_map
             elif "resources created" in low or "scenario specific" in low:
                 result["resourcesCreated"] = content
 
@@ -360,6 +505,178 @@ def parse_readme_sections(readme_text):
     result = {k: v for k, v in result.items() if v}
 
     return result if result else None
+
+
+def parse_readme_sections_v3(readme_text):
+    """Parse a README.md using the v3 schema H2/H3/H4 heading hierarchy.
+
+    v3 restructures content into: Objective, Self-hosted Lab Setup, Attack,
+    Teardown, Defend sections with different sub-heading organization.
+
+    Returns a dict with structured content fields. Returns None if no recognized
+    sections are found.
+    """
+    if not readme_text:
+        return None
+
+    h2_sections = split_by_heading_level(readme_text, 2)
+    if not h2_sections:
+        return None
+
+    result = {}
+
+    # --- ## Objective ---
+    objective_text = next(
+        (h2_sections[k] for k in h2_sections if k.strip().lower() == "objective"), None
+    )
+    if objective_text:
+        h3 = split_by_heading_level(objective_text, 3)
+        # Prose before first H3 -> objective
+        if h3.get(""):
+            result["objective"] = h3[""]
+        # ### Starting Permissions -> parsed into permissions (handled separately in transform)
+        for key, content in h3.items():
+            if "starting permissions" in key.lower():
+                result["_startingPermissions"] = content
+
+    # --- ## Self-hosted Lab Setup ---
+    setup_text = next(
+        (h2_sections[k] for k in h2_sections if "self-hosted" in k.lower() or "lab setup" in k.lower()), None
+    )
+    if setup_text:
+        h3 = split_by_heading_level(setup_text, 3)
+        setup = {}
+        for key, content in h3.items():
+            low = key.lower()
+            if "prerequisites" in low:
+                setup["prerequisites"] = content
+            elif "non-interactive" in low and "deploy" in low:
+                setup["deployNonInteractive"] = content
+            elif "tui" in low and "deploy" in low:
+                setup["deployTui"] = content
+        if setup:
+            result["setup"] = setup
+
+    # --- ## Attack ---
+    attack_text = next(
+        (h2_sections[k] for k in h2_sections if k.strip().lower() == "attack"), None
+    )
+    if attack_text:
+        h3 = split_by_heading_level(attack_text, 3)
+        attack = {}
+        for key, content in h3.items():
+            low = key.lower()
+            if "scenario specific" in low or "resources created" in low and "demo" not in low and "attack script" not in low:
+                attack["resourcesCreated"] = content
+            elif "guided walkthrough" in low:
+                # Just a link in README; actual content from companion file
+                pass
+            elif "automated demo" in low or "demo_attack" in low:
+                h4 = split_by_heading_level(content, 4)
+                demo = {}
+                for h4_key, h4_content in h4.items():
+                    h4_low = h4_key.lower()
+                    if "resources created" in h4_low:
+                        demo["resourcesCreated"] = h4_content
+                    elif "non-interactive" in h4_low:
+                        demo["nonInteractive"] = h4_content
+                    elif "tui" in h4_low:
+                        demo["tui"] = h4_content
+                    elif "executing" in h4_low or "script" in h4_low:
+                        demo["executing"] = h4_content
+                    elif h4_key == "" and h4_content:
+                        demo["intro"] = h4_content
+                if demo:
+                    attack["demoAttack"] = demo
+            elif "cleanup" in low:
+                h4 = split_by_heading_level(content, 4)
+                cleanup = {}
+                for h4_key, h4_content in h4.items():
+                    h4_low = h4_key.lower()
+                    if "non-interactive" in h4_low:
+                        cleanup["nonInteractive"] = h4_content
+                    elif "tui" in h4_low:
+                        cleanup["tui"] = h4_content
+                if cleanup:
+                    attack["cleanup"] = cleanup
+        if attack:
+            result["attack"] = attack
+
+    # --- ## Teardown ---
+    teardown_text = next(
+        (h2_sections[k] for k in h2_sections if k.strip().lower() == "teardown"), None
+    )
+    if teardown_text:
+        h3 = split_by_heading_level(teardown_text, 3)
+        teardown = {}
+        for key, content in h3.items():
+            low = key.lower()
+            if "non-interactive" in low:
+                teardown["nonInteractive"] = content
+            elif "tui" in low:
+                teardown["tui"] = content
+        if teardown:
+            result["teardown"] = teardown
+
+    # --- ## Defend ---
+    defend_text = next(
+        (h2_sections[k] for k in h2_sections if k.strip().lower() == "defend"), None
+    )
+    if defend_text:
+        h3 = split_by_heading_level(defend_text, 3)
+        defend = {}
+        for key, content in h3.items():
+            low = key.lower()
+            if "cspm" in low or "detecting misconfiguration" in low:
+                h4 = split_by_heading_level(content, 4)
+                cspm = {}
+                for h4_key, h4_content in h4.items():
+                    h4_low = h4_key.lower()
+                    if "what cspm" in h4_low or "should detect" in h4_low:
+                        cspm["whatToDetect"] = h4_content
+                    elif "prevention" in h4_low:
+                        cspm["prevention"] = h4_content
+                    elif h4_key == "" and h4_content:
+                        cspm["intro"] = h4_content
+                if cspm:
+                    defend["cspm"] = cspm
+            elif "cloudsiem" in low or "detecting abuse" in low or "cloud siem" in low:
+                h4 = split_by_heading_level(content, 4)
+                cloud_siem = {}
+                for h4_key, h4_content in h4.items():
+                    h4_low = h4_key.lower()
+                    if "cloudtrail" in h4_low or "cloud trail" in h4_low:
+                        cloud_siem["cloudTrailEvents"] = h4_content
+                    elif "detonation" in h4_low:
+                        cloud_siem["detonationLogs"] = h4_content
+                if cloud_siem:
+                    defend["cloudSiem"] = cloud_siem
+        if defend:
+            result["defend"] = defend
+
+    # --- ## References ---
+    references_text = next(
+        (h2_sections[k] for k in h2_sections if "reference" in k.lower()), None
+    )
+    if references_text:
+        result["references"] = references_text
+
+    # Remove empty string values
+    result = {k: v for k, v in result.items() if v}
+
+    return result if result else None
+
+
+def get_schema_version(metadata):
+    """Extract schema version from metadata, defaulting to '1.0.0'."""
+    version_str = metadata.get("Schema Version", "1.0.0")
+    return version_str.strip()
+
+
+def is_v3_schema(metadata):
+    """Check if the README uses v3 schema (3.x.x)."""
+    version = get_schema_version(metadata)
+    return version.startswith("3")
 
 
 # ---------------------------------------------------------------------------
@@ -491,10 +808,11 @@ def disambiguate_slugs(labs):
 # Transform README data into output JSON
 # ---------------------------------------------------------------------------
 
-def transform_readme(readme_text, module_path):
+def transform_readme(readme_text, module_path, readme_dir=None):
     """Transform a README.md into the output JSON format.
 
     All display/content fields are sourced from README.md.
+    For v3 schema, also loads companion files (attack_map.yaml, guided_walkthrough.md).
     Returns (lab_dict, is_valid) tuple.
     """
     metadata = parse_readme_metadata(readme_text)
@@ -518,6 +836,8 @@ def transform_readme(readme_text, module_path):
     # Directory name as scenario name/id
     name = Path(module_path).name
 
+    use_v3 = is_v3_schema(metadata)
+
     result = {
         "displayName": display_name,
         "name": name,
@@ -534,10 +854,6 @@ def transform_readme(readme_text, module_path):
             "principals": parse_principals(metadata.get("Attack Principals", "")),
             "summary": metadata.get("Attack Path", ""),
         },
-        "permissions": {
-            "required": parse_required_permissions(metadata.get("Required Permissions", "")),
-            "helpful": parse_helpful_permissions(metadata.get("Helpful Permissions", "")),
-        },
         "mitreAttack": {
             "tactics": parse_comma_list(metadata.get("MITRE Tactics", "")),
             "techniques": parse_comma_list(metadata.get("MITRE Techniques", "")),
@@ -547,7 +863,18 @@ def transform_readme(readme_text, module_path):
             "modulePath": module_path,
         },
         "githubUrl": f"https://github.com/{GITHUB_OWNER}/{GITHUB_REPO}/tree/main/{module_path}",
+        "schemaVersion": get_schema_version(metadata),
     }
+
+    # Parse permissions: v3 reads from markdown section, v2/v1 from metadata
+    if use_v3:
+        # v3: permissions come from README sections, parsed below after section parsing
+        result["permissions"] = {"required": [], "helpful": []}
+    else:
+        result["permissions"] = {
+            "required": parse_required_permissions(metadata.get("Required Permissions", "")),
+            "helpful": parse_helpful_permissions(metadata.get("Helpful Permissions", "")),
+        }
 
     # CSPM-specific fields (only present in CSPM scenarios)
     cspm_rule_id = metadata.get("CSPM Rule ID")
@@ -574,9 +901,39 @@ def transform_readme(readme_text, module_path):
         }
 
     # Parse README sections for prose content
-    readme_sections = parse_readme_sections(readme_text)
+    if use_v3:
+        readme_sections = parse_readme_sections_v3(readme_text)
+    else:
+        readme_sections = parse_readme_sections(readme_text)
+
     if readme_sections:
+        # v3: extract permissions from the Starting Permissions section
+        if use_v3 and "_startingPermissions" in readme_sections:
+            result["permissions"] = parse_starting_permissions_section(
+                readme_sections.pop("_startingPermissions")
+            )
+
+        # Promote attackMap to top-level (structured data, not prose)
+        if "attackMap" in readme_sections:
+            result["attackMap"] = readme_sections.pop("attackMap")
+
         result["readme"] = readme_sections
+
+    # v3: Load companion files from the README directory
+    if use_v3 and readme_dir:
+        # Load attack_map.yaml
+        attack_map = load_attack_map_file(readme_dir)
+        if attack_map:
+            result["attackMap"] = attack_map
+
+        # Load guided_walkthrough.md
+        walkthrough = load_guided_walkthrough(readme_dir)
+        if walkthrough:
+            if "readme" not in result:
+                result["readme"] = {}
+            result["readme"]["guidedWalkthrough"] = walkthrough
+
+    result["hasAttackMap"] = "attackMap" in result
 
     return result, True
 
@@ -644,7 +1001,9 @@ def generate_labs_json(source_dir=None, output_file="docs/labs.json"):
         for readme_path in readme_files:
             try:
                 readme_text, module_path = load_local_readme(readme_path, source_dir)
-                lab, is_valid = transform_readme(readme_text, module_path)
+                lab, is_valid = transform_readme(
+                    readme_text, module_path, readme_dir=str(readme_path.parent)
+                )
                 if lab and is_valid:
                     lab["slug"] = generate_slug(
                         parse_readme_metadata(readme_text), module_path
@@ -675,6 +1034,29 @@ def generate_labs_json(source_dir=None, output_file="docs/labs.json"):
                         lab["slug"] = generate_slug(
                             parse_readme_metadata(readme_text), module_path
                         )
+                        # For v3 schema, fetch companion files from GitHub
+                        if is_v3_schema(parse_readme_metadata(readme_text)):
+                            attack_map_path = f"{module_path}/attack_map.yaml"
+                            attack_map_text = fetch_github_raw_file(attack_map_path, headers)
+                            if attack_map_text:
+                                try:
+                                    parsed = yaml.safe_load(attack_map_text)
+                                    if isinstance(parsed, dict):
+                                        if "attackMap" in parsed:
+                                            lab["attackMap"] = parsed["attackMap"]
+                                        elif "nodes" in parsed or "edges" in parsed:
+                                            lab["attackMap"] = parsed
+                                        lab["hasAttackMap"] = True
+                                except yaml.YAMLError as e:
+                                    print(f"  WARNING: Failed to parse remote attack_map.yaml: {e}")
+
+                            walkthrough_path = f"{module_path}/guided_walkthrough.md"
+                            walkthrough_text = fetch_github_raw_file(walkthrough_path, headers)
+                            if walkthrough_text:
+                                if "readme" not in lab:
+                                    lab["readme"] = {}
+                                lab["readme"]["guidedWalkthrough"] = walkthrough_text
+
                         labs.append(lab)
                         print(f"  Loaded: {lab['name']}")
                     elif not is_valid:
