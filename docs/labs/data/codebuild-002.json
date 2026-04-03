@@ -1,5 +1,5 @@
 {
-  "displayName": "Privilege Escalation via codebuild:StartBuild on Existing Project",
+  "displayName": "CodeBuild Build Start to Admin",
   "name": "codebuild-002-codebuild-startbuild",
   "description": "Exploit existing CodeBuild project with privileged role using buildspec-override",
   "costEstimate": "$0/mo",
@@ -31,11 +31,12 @@
     "modulePath": "modules/scenarios/single-account/privesc-one-hop/to-admin/codebuild-002-codebuild-startbuild"
   },
   "githubUrl": "https://github.com/DataDog/pathfinding-labs/tree/main/modules/scenarios/single-account/privesc-one-hop/to-admin/codebuild-002-codebuild-startbuild",
-  "schemaVersion": "3.0.0",
+  "schemaVersion": "4.0.0",
   "permissions": {
     "required": [
       {
         "permission": "codebuild:StartBuild",
+        "principal": "pl-prod-codebuild-002-to-admin-starting-user",
         "resource": "*",
         "description": "trigger a build on the existing project with a buildspec override"
       }
@@ -43,18 +44,22 @@
     "helpful": [
       {
         "permission": "codebuild:ListProjects",
+        "principal": "pl-prod-codebuild-002-to-admin-starting-user",
         "purpose": "discover existing CodeBuild projects with privileged roles"
       },
       {
         "permission": "codebuild:BatchGetProjects",
+        "principal": "pl-prod-codebuild-002-to-admin-starting-user",
         "purpose": "view project details including service role ARN"
       },
       {
         "permission": "codebuild:BatchGetBuilds",
+        "principal": "pl-prod-codebuild-002-to-admin-starting-user",
         "purpose": "monitor build execution status and verify success"
       },
       {
         "permission": "iam:ListUsers",
+        "principal": "pl-prod-codebuild-002-to-admin-starting-user",
         "purpose": "verify admin access after escalation"
       }
     ]
@@ -130,10 +135,11 @@
         "label": "codebuild:StartBuild",
         "description": "Trigger a build on the existing project using --buildspec-override to supply a malicious buildspec that attaches AdministratorAccess to the starting user.\n",
         "hints": [
-          "You can trigger builds on existing CodeBuild projects.",
-          "Look for CodeBuild projects whose service roles have IAM modification permissions.",
-          "Check what IAM role this project uses as its service role \u2014 use codebuild:BatchGetProjects to inspect the serviceRole field.",
-          "The --buildspec-override parameter lets you replace a project's build instructions without modifying the project itself.",
+          "Use codebuild:ListProjects to enumerate all CodeBuild projects in the account \u2014 look for any that sound privileged or prod-facing.",
+          "Once you have a project name, use codebuild:BatchGetProjects to inspect its details, particularly the serviceRole field.",
+          "A project whose service role name contains 'admin' or 'prod' is worth investigating \u2014 find out what policies that role has.",
+          "The codebuild:StartBuild API accepts a --buildspec-override parameter that completely replaces the project's build instructions for that single run \u2014 without modifying the project itself.",
+          "Your buildspec override only needs to run a single AWS CLI command using the project role's permissions.",
           "Browse to https://pathfinding.cloud/paths/codebuild-002 for technique details."
         ],
         "commands": [
@@ -160,6 +166,11 @@
         "to": "project-role",
         "label": "iam:AttachUserPolicy",
         "description": "The CodeBuild project executes the override buildspec using its attached service role. The malicious buildspec uses the project role's IAM permissions to attach AdministratorAccess directly to the starting user, completing the escalation.\n",
+        "hints": [
+          "The build runs under the project's service role \u2014 any AWS CLI command in your buildspec executes with that role's permissions.",
+          "After the build status reaches SUCCEEDED, wait 15 seconds for IAM policy propagation before testing your new permissions.",
+          "Verify the escalation succeeded by running an IAM operation that would have been denied before \u2014 such as listing IAM users."
+        ],
         "commands": [
           {
             "description": "Verify administrator access with original credentials",

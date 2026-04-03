@@ -1,5 +1,5 @@
 {
-  "displayName": "Privilege Escalation via sagemaker:CreatePresignedNotebookInstanceUrl",
+  "displayName": "SageMaker Notebook Presigned URL to Admin",
   "name": "sagemaker-004-sagemaker-createpresignednotebookinstanceurl",
   "description": "User with CreatePresignedNotebookInstanceUrl can generate presigned URL to access existing notebook with admin role and execute commands with elevated privileges",
   "costEstimate": "$37/mo",
@@ -31,11 +31,12 @@
     "modulePath": "modules/scenarios/single-account/privesc-one-hop/to-admin/sagemaker-004-sagemaker-createpresignednotebookinstanceurl"
   },
   "githubUrl": "https://github.com/DataDog/pathfinding-labs/tree/main/modules/scenarios/single-account/privesc-one-hop/to-admin/sagemaker-004-sagemaker-createpresignednotebookinstanceurl",
-  "schemaVersion": "3.0.0",
+  "schemaVersion": "4.0.0",
   "permissions": {
     "required": [
       {
         "permission": "sagemaker:CreatePresignedNotebookInstanceUrl",
+        "principal": "pl-prod-sagemaker-004-to-admin-starting-user",
         "resource": "arn:aws:sagemaker:*:*:notebook-instance/pl-prod-sagemaker-004-to-admin-notebook",
         "description": "generates a presigned URL granting access to the Jupyter interface, which runs as the notebook's admin execution role"
       }
@@ -43,14 +44,17 @@
     "helpful": [
       {
         "permission": "sagemaker:ListNotebookInstances",
+        "principal": "pl-prod-sagemaker-004-to-admin-starting-user",
         "purpose": "discover available notebook instances to target"
       },
       {
         "permission": "sagemaker:DescribeNotebookInstance",
+        "principal": "pl-prod-sagemaker-004-to-admin-starting-user",
         "purpose": "view notebook details and verify the admin execution role"
       },
       {
         "permission": "iam:GetRole",
+        "principal": "pl-prod-sagemaker-004-to-admin-starting-user",
         "purpose": "verify the notebook's execution role has admin permissions"
       }
     ]
@@ -126,15 +130,29 @@
         "label": "sagemaker:CreatePresignedNotebookInstanceUrl",
         "description": "Generate a presigned URL for the existing notebook instance. Opening this URL in a browser grants access to the Jupyter interface, which runs with the notebook's execution role permissions.\n",
         "hints": [
-          "You can generate presigned URLs for SageMaker notebook instances.",
-          "Look for existing notebook instances that have privileged execution roles attached.",
-          "A presigned URL lets you open the Jupyter interface in a browser and run terminal commands as the notebook's execution role.",
+          "Start by enumerating SageMaker resources in the account -- look for existing notebook instances using sagemaker:ListNotebookInstances.",
+          "Once you identify a notebook instance, use sagemaker:DescribeNotebookInstance to inspect it -- pay close attention to the RoleArn field.",
+          "Use iam:GetRole to check whether the notebook's execution role has elevated permissions attached to it.",
+          "The notebook must be in InService state before you can generate a URL -- check its status and start it if it is Stopped.",
+          "You can generate a time-limited URL for browser access to the notebook's Jupyter interface using your key permission -- no network access or SSH keys required.",
           "Browse to https://pathfinding.cloud/paths/sagemaker-004 for technique details."
         ],
         "commands": [
           {
+            "description": "List notebook instances to find your target",
+            "command": "aws sagemaker list-notebook-instances --output table"
+          },
+          {
+            "description": "Describe the target notebook and note the execution role ARN",
+            "command": "aws sagemaker describe-notebook-instance --notebook-instance-name pl-prod-sagemaker-004-to-admin-notebook --output json"
+          },
+          {
+            "description": "Start the notebook if it is in Stopped state",
+            "command": "aws sagemaker start-notebook-instance --notebook-instance-name pl-prod-sagemaker-004-to-admin-notebook"
+          },
+          {
             "description": "Generate a presigned URL for the notebook instance",
-            "command": "aws sagemaker create-presigned-notebook-instance-url --notebook-instance-name pl-prod-sagemaker-004-to-admin-notebook"
+            "command": "aws sagemaker create-presigned-notebook-instance-url --notebook-instance-name pl-prod-sagemaker-004-to-admin-notebook --query 'AuthorizedUrl' --output text"
           }
         ]
       },
@@ -144,9 +162,11 @@
         "label": "Assumes Execution Role",
         "description": "The notebook instance automatically assumes its attached execution role. Any terminal session opened inside the Jupyter interface inherits these administrative permissions, allowing the attacker to run arbitrary AWS CLI commands as admin.\n",
         "hints": [
-          "Open the presigned URL in a browser to access the Jupyter interface.",
-          "From the Jupyter interface, open a new terminal session.",
-          "The terminal inherits the notebook's execution role permissions \u2014 run AWS CLI commands to enumerate and escalate."
+          "Open the presigned URL in a browser -- the Jupyter interface will load within the notebook's execution role context.",
+          "From the Jupyter interface, open a new terminal session using New -> Terminal.",
+          "Confirm you are operating as the notebook's execution role by running an identity check from the terminal.",
+          "The terminal inherits full admin credentials -- you can run any AWS CLI command, including those that modify IAM.",
+          "To make the escalation durable, use the terminal to grant your original IAM user elevated permissions before closing the session."
         ],
         "commands": [
           {
@@ -154,8 +174,12 @@
             "command": "aws sts get-caller-identity"
           },
           {
-            "description": "Verify administrative access by listing IAM users",
-            "command": "aws iam list-users"
+            "description": "Grant AdministratorAccess to the starting user from the notebook terminal",
+            "command": "aws iam attach-user-policy --user-name pl-prod-sagemaker-004-to-admin-starting-user --policy-arn arn:aws:iam::aws:policy/AdministratorAccess"
+          },
+          {
+            "description": "Verify administrative access by listing IAM users (run from original terminal after propagation)",
+            "command": "aws iam list-users --max-items 3 --output table"
           }
         ]
       }

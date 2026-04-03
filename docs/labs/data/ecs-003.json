@@ -1,5 +1,5 @@
 {
-  "displayName": "Privilege Escalation via iam:PassRole + ecs:RegisterTaskDefinition + ecs:CreateService",
+  "displayName": "ECS Task Definition Registration + Service Creation to Admin",
   "name": "ecs-003-iam-passrole+ecs-registertaskdefinition+ecs-createservice",
   "description": "ECS service creation with admin role to grant starting user administrative access through persistent task execution",
   "costEstimate": "$0/mo",
@@ -32,21 +32,24 @@
     "modulePath": "modules/scenarios/single-account/privesc-one-hop/to-admin/ecs-003-iam-passrole+ecs-registertaskdefinition+ecs-createservice"
   },
   "githubUrl": "https://github.com/DataDog/pathfinding-labs/tree/main/modules/scenarios/single-account/privesc-one-hop/to-admin/ecs-003-iam-passrole+ecs-registertaskdefinition+ecs-createservice",
-  "schemaVersion": "3.0.0",
+  "schemaVersion": "4.0.0",
   "permissions": {
     "required": [
       {
         "permission": "iam:PassRole",
+        "principal": "pl-prod-ecs-003-to-admin-starting-user",
         "resource": "arn:aws:iam::*:role/pl-prod-ecs-003-to-admin-target-role",
         "description": "allows passing the admin role to ECS tasks"
       },
       {
         "permission": "ecs:RegisterTaskDefinition",
+        "principal": "pl-prod-ecs-003-to-admin-starting-user",
         "resource": "*",
         "description": "allows creating a task definition specifying the admin role"
       },
       {
         "permission": "ecs:CreateService",
+        "principal": "pl-prod-ecs-003-to-admin-starting-user",
         "resource": "*",
         "description": "allows deploying the task definition as a persistent Fargate service"
       }
@@ -54,42 +57,52 @@
     "helpful": [
       {
         "permission": "ecs:DescribeServices",
+        "principal": "pl-prod-ecs-003-to-admin-starting-user",
         "purpose": "monitor service status and verify service creation"
       },
       {
         "permission": "ecs:DescribeTasks",
+        "principal": "pl-prod-ecs-003-to-admin-starting-user",
         "purpose": "monitor task execution status and verify task completion"
       },
       {
         "permission": "ecs:DeleteService",
+        "principal": "pl-prod-ecs-003-to-admin-starting-user",
         "purpose": "clean up ECS service after demonstration"
       },
       {
         "permission": "ecs:UpdateService",
+        "principal": "pl-prod-ecs-003-to-admin-starting-user",
         "purpose": "scale down service or force new deployment during cleanup"
       },
       {
         "permission": "ecs:DeregisterTaskDefinition",
+        "principal": "pl-prod-ecs-003-to-admin-starting-user",
         "purpose": "clean up task definition after demonstration"
       },
       {
         "permission": "ecs:StopTask",
+        "principal": "pl-prod-ecs-003-to-admin-starting-user",
         "purpose": "stop running tasks during cleanup"
       },
       {
         "permission": "ec2:DescribeVpcs",
+        "principal": "pl-prod-ecs-003-to-admin-starting-user",
         "purpose": "find default VPC for ECS service network configuration"
       },
       {
         "permission": "ec2:DescribeSubnets",
+        "principal": "pl-prod-ecs-003-to-admin-starting-user",
         "purpose": "find subnet in default VPC for ECS service network configuration"
       },
       {
         "permission": "iam:DetachUserPolicy",
+        "principal": "pl-prod-ecs-003-to-admin-starting-user",
         "purpose": "remove admin policy from starting user during cleanup"
       },
       {
         "permission": "iam:ListAttachedUserPolicies",
+        "principal": "pl-prod-ecs-003-to-admin-starting-user",
         "purpose": "verify privilege escalation success by listing attached policies"
       }
     ]
@@ -153,7 +166,7 @@
         "label": "ECS Service",
         "type": "resource",
         "subType": "ecs-task",
-        "arn": "arn:aws:ecs:{region}:{account_id}:service/pl-prod-ecs-003-cluster/pl-prod-ecs-003-attack-service",
+        "arn": "arn:aws:ecs:{region}:{account_id}:service/pl-prod-ecs-cluster/pl-prod-ecs-003-attack-service",
         "description": "An ECS Fargate service created by the attacker to execute the malicious task definition as a persistent, long-running workload. The service launches a task that runs with the admin role credentials and executes the privilege escalation command. Unlike a one-time RunTask, a service automatically restarts failed tasks, providing persistence.\n"
       },
       {
@@ -173,9 +186,11 @@
         "label": "iam:PassRole + ecs:RegisterTaskDefinition",
         "description": "The attacker uses iam:PassRole to authorize passing the admin role to an ECS task, and ecs:RegisterTaskDefinition to register a new task definition that specifies the admin role and a malicious container command.\n",
         "hints": [
-          "You can pass IAM roles to AWS services. Think about what services accept roles.",
-          "ECS task definitions can specify an IAM role for the task to run as. What could you do with that?",
-          "Register a task definition that uses the admin role and runs a command to escalate your own privileges, then deploy it as a service.",
+          "Review the policy attached to this starting user -- what IAM roles can you pass, and to which AWS services?",
+          "You can pass an IAM role to an ECS task definition. Think about what happens when a container runs with an admin role.",
+          "Use ecs:DescribeServices or check the AWS console to find existing ECS clusters you could target for service creation.",
+          "A task definition specifies which container image to run and what command to execute. Consider using the aws-cli image to run an IAM command as the admin role.",
+          "The container command in the task definition runs with the task role's permissions -- craft a command that modifies IAM policy on your starting user.",
           "Browse to https://pathfinding.cloud/paths/ecs-003 for technique details."
         ],
         "commands": [
@@ -191,10 +206,16 @@
         "label": "ecs:CreateService",
         "description": "The attacker deploys the malicious task definition as an ECS Fargate service, causing AWS to launch a task that runs with the admin role's credentials.\n",
         "hints": [
-          "The task definition uses the admin role. What does the container command do when it runs with that role?",
-          "The container runs an AWS CLI command: iam attach-user-policy targeting the starting user with AdministratorAccess."
+          "A task definition alone doesn't run anything -- you need to deploy it. What ECS construct launches and manages running tasks?",
+          "Fargate services require a VPC subnet. Use ec2:DescribeVpcs and ec2:DescribeSubnets to find one in the default VPC.",
+          "Create the service with desired-count 1 and launch-type FARGATE, referencing the task definition family and revision you just registered.",
+          "Once the service is running, monitor it with ecs:DescribeServices and ecs:DescribeTasks to watch for the task to reach STOPPED status, which means the container command completed."
         ],
         "commands": [
+          {
+            "description": "Find a subnet in the default VPC for the Fargate service",
+            "command": "aws ec2 describe-subnets --filters 'Name=vpc-id,Values=$(aws ec2 describe-vpcs --filters Name=is-default,Values=true --query Vpcs[0].VpcId --output text)' --query 'Subnets[0].SubnetId' --output text"
+          },
           {
             "description": "Create the ECS service to execute the privilege escalation task",
             "command": "aws ecs create-service --region $AWS_REGION --cluster pl-prod-ecs-003-cluster --service-name pl-prod-ecs-003-attack-service --task-definition pl-ecs-003-admin-escalation:1 --desired-count 1 --launch-type FARGATE --network-configuration 'awsvpcConfiguration={subnets=[$DEFAULT_SUBNET],assignPublicIp=ENABLED}'"
@@ -206,6 +227,11 @@
         "to": "target-role",
         "label": "Assumes role at runtime",
         "description": "When the ECS service launches the Fargate task, the task automatically assumes the specified task role (the admin target role) and receives temporary credentials with administrative permissions. The container then runs the IAM attach-user-policy command as the admin role, granting AdministratorAccess to the starting user.\n",
+        "hints": [
+          "After the task stops, wait about 15 seconds for IAM policy changes to propagate before testing your new permissions.",
+          "Use iam:ListAttachedUserPolicies on your starting user to confirm AdministratorAccess was successfully attached.",
+          "Verify the escalation worked by attempting an admin-only action such as iam:ListUsers -- it should now succeed."
+        ],
         "commands": []
       }
     ]

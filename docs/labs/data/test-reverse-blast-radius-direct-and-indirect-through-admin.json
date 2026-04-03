@@ -1,5 +1,5 @@
 {
-  "displayName": "Reverse Blast Radius: Direct and Indirect S3 Access Through Admin",
+  "displayName": "Tool Testing: Direct and Indirect Access via Admin to Bucket",
   "name": "test-reverse-blast-radius-direct-and-indirect-through-admin",
   "description": "Validating security tool detection of both direct and indirect S3 bucket access via administrative permissions",
   "costEstimate": "$0/mo",
@@ -31,37 +31,43 @@
     "modulePath": "modules/scenarios/tool-testing/test-reverse-blast-radius-direct-and-indirect-through-admin"
   },
   "githubUrl": "https://github.com/DataDog/pathfinding-labs/tree/main/modules/scenarios/tool-testing/test-reverse-blast-radius-direct-and-indirect-through-admin",
-  "schemaVersion": "3.0.0",
+  "schemaVersion": "4.0.0",
   "permissions": {
     "required": [
       {
         "permission": "s3:GetObject",
+        "principal": "pl-prod-rbr-admin-user1",
         "resource": "arn:aws:s3:::pl-sensitive-data-rbr-admin-*/*",
-        "description": "user1 has explicit permission to read objects from the target bucket"
+        "description": "explicit permission to read objects from the target bucket"
       },
       {
         "permission": "s3:ListBucket",
+        "principal": "pl-prod-rbr-admin-user1",
         "resource": "arn:aws:s3:::pl-sensitive-data-rbr-admin-*",
-        "description": "user1 has explicit permission to list the target bucket"
+        "description": "explicit permission to list the target bucket"
       },
       {
         "permission": "sts:AssumeRole",
+        "principal": "pl-prod-rbr-admin-user2",
         "resource": "arn:aws:iam::{account_id}:role/pl-prod-rbr-admin-role3",
-        "description": "user2 can assume the administrative role"
+        "description": "can assume the administrative role"
       },
       {
         "permission": "*",
+        "principal": "pl-prod-rbr-admin-role3",
         "resource": "*",
-        "description": "role3 has AdministratorAccess, granting implicit access to all resources including the target S3 bucket"
+        "description": "AdministratorAccess policy grants implicit access to all resources including the target S3 bucket"
       }
     ],
     "helpful": [
       {
         "permission": "sts:GetCallerIdentity",
+        "principal": "pl-prod-rbr-admin-user1",
         "purpose": "verify current identity"
       },
       {
         "permission": "s3:ListAllMyBuckets",
+        "principal": "pl-prod-rbr-admin-user1",
         "purpose": "discover available buckets"
       }
     ]
@@ -145,22 +151,29 @@
         "label": "s3:GetObject / s3:ListBucket",
         "description": "User1 has an explicit IAM policy granting s3:ListAllMyBuckets, s3:ListBucket, and s3:GetObject on the sensitive bucket. This is the direct access path that most security tools successfully detect.\n",
         "hints": [
-          "This user has direct permissions to access an S3 bucket.",
-          "Check what S3 permissions are attached to this user's policies.",
-          "Use s3:ListAllMyBuckets to discover the target bucket, then s3:GetObject to read its contents."
+          "Start by confirming your identity and understanding what permissions this user has attached.",
+          "Use iam:ListAttachedUserPolicies and iam:ListUserPolicies to enumerate the policies on this user.",
+          "This user has direct S3 permissions -- look for s3: actions in the attached policy documents.",
+          "Use s3:ListAllMyBuckets to discover which buckets are accessible to this user, then look for the sensitive data bucket.",
+          "Once you've identified the target bucket, use the list and get permissions to enumerate its contents and retrieve objects.",
+          "This is the straightforward path -- the more interesting question is whether your security tooling detects it as part of a blast radius analysis starting from the bucket itself."
         ],
         "commands": [
           {
+            "description": "Confirm current identity",
+            "command": "aws sts get-caller-identity"
+          },
+          {
             "description": "List all S3 buckets to discover the target",
-            "command": "aws s3 ls"
+            "command": "aws s3api list-buckets --query 'Buckets[*].Name' --output text"
           },
           {
             "description": "List the contents of the sensitive bucket",
-            "command": "aws s3 ls s3://pl-sensitive-data-rbr-admin-{account_id}-{suffix}"
+            "command": "aws s3 ls s3://pl-sensitive-data-rbr-admin-{account_id}-{suffix}/"
           },
           {
             "description": "Read an object from the bucket",
-            "command": "aws s3 cp s3://pl-sensitive-data-rbr-admin-{account_id}-{suffix}/sensitive.txt -"
+            "command": "aws s3 cp s3://pl-sensitive-data-rbr-admin-{account_id}-{suffix}/sensitive-data.txt -"
           }
         ]
       },
@@ -170,14 +183,29 @@
         "label": "sts:AssumeRole",
         "description": "User2 has an IAM policy granting sts:AssumeRole on the administrative role. The role's trust policy allows user2 to assume it, granting full AdministratorAccess permissions.\n",
         "hints": [
-          "This user does not have direct S3 permissions but can still reach the bucket.",
-          "Look for role assumption permissions \u2014 what roles can this user assume?",
-          "Assume the administrative role to gain implicit access to all S3 buckets."
+          "Start by confirming your identity as user2, then enumerate what policies are attached to this user.",
+          "This user has no direct S3 permissions -- look for something else in the attached policies that could open doors.",
+          "Check for sts:AssumeRole permissions -- what role ARN is specified as the resource?",
+          "Before assuming the role, look up what managed policies are attached to the target role using iam:ListAttachedRolePolicies.",
+          "You'll find AdministratorAccess attached to the role -- that means wildcard (*:*) access to all resources, including S3.",
+          "Assume the administrative role and export the temporary credentials to your environment before proceeding to the bucket."
         ],
         "commands": [
           {
+            "description": "Confirm current identity as user2",
+            "command": "aws sts get-caller-identity"
+          },
+          {
+            "description": "Check what policies are attached to user2",
+            "command": "aws iam list-attached-user-policies --user-name pl-prod-rbr-admin-user2"
+          },
+          {
+            "description": "Check what managed policies the target role carries",
+            "command": "aws iam list-attached-role-policies --role-name pl-prod-rbr-admin-role3"
+          },
+          {
             "description": "Assume the administrative role",
-            "command": "aws sts assume-role --role-arn arn:aws:iam::{account_id}:role/pl-prod-rbr-admin-role3 --role-session-name rbr-admin-test"
+            "command": "aws sts assume-role --role-arn arn:aws:iam::{account_id}:role/pl-prod-rbr-admin-role3 --role-session-name rbr-admin-test --query 'Credentials' --output json"
           }
         ]
       },
@@ -187,18 +215,24 @@
         "label": "AdministratorAccess (*:*)",
         "description": "The admin role has AdministratorAccess, which grants wildcard permissions on all AWS resources. This implicitly includes full access to the sensitive S3 bucket, even though no explicit S3 policy is attached to the role.\n",
         "hints": [
-          "Check what managed policies are attached to this role.",
-          "AdministratorAccess grants access to all services and resources.",
-          "Use aws s3 ls and aws s3 cp after assuming this role to access the sensitive bucket."
+          "After assuming the role, confirm your new identity to verify the role assumption succeeded.",
+          "AdministratorAccess grants access to all services and all resources -- including every S3 bucket in the account.",
+          "No explicit S3 policy is needed on this role; the wildcard policy covers it implicitly.",
+          "List the buckets to discover the same sensitive bucket that user1 accesses directly, then retrieve its contents.",
+          "This indirect path is the critical test -- many tools detect user1's explicit grant but miss that user2 can reach the same bucket via this administrative role."
         ],
         "commands": [
           {
+            "description": "Confirm identity after role assumption",
+            "command": "aws sts get-caller-identity"
+          },
+          {
             "description": "List the sensitive bucket contents as admin",
-            "command": "aws s3 ls s3://pl-sensitive-data-rbr-admin-{account_id}-{suffix}"
+            "command": "aws s3 ls s3://pl-sensitive-data-rbr-admin-{account_id}-{suffix}/"
           },
           {
             "description": "Read an object from the bucket using admin credentials",
-            "command": "aws s3 cp s3://pl-sensitive-data-rbr-admin-{account_id}-{suffix}/sensitive.txt -"
+            "command": "aws s3 cp s3://pl-sensitive-data-rbr-admin-{account_id}-{suffix}/sensitive-data.txt -"
           }
         ]
       }

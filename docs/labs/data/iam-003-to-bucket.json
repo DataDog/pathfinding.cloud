@@ -1,5 +1,5 @@
 {
-  "displayName": "Privilege Escalation via iam:DeleteAccessKey + iam:CreateAccessKey",
+  "displayName": "IAM Access Key Rotation to Bucket",
   "name": "iam-003-iam-deleteaccesskey+createaccesskey",
   "description": "Bypassing AWS 2-key limit by deleting an existing access key before creating a new one for a user with S3 bucket access",
   "costEstimate": "$0/mo",
@@ -30,16 +30,18 @@
     "modulePath": "modules/scenarios/single-account/privesc-one-hop/to-bucket/iam-003-iam-deleteaccesskey+createaccesskey"
   },
   "githubUrl": "https://github.com/DataDog/pathfinding-labs/tree/main/modules/scenarios/single-account/privesc-one-hop/to-bucket/iam-003-iam-deleteaccesskey+createaccesskey",
-  "schemaVersion": "3.0.0",
+  "schemaVersion": "4.0.0",
   "permissions": {
     "required": [
       {
         "permission": "iam:DeleteAccessKey",
+        "principal": "pl-prod-iam-003-to-bucket-starting-user",
         "resource": "arn:aws:iam::*:user/pl-prod-iam-003-to-bucket-target-user",
         "description": "delete an existing key to free up a slot"
       },
       {
         "permission": "iam:CreateAccessKey",
+        "principal": "pl-prod-iam-003-to-bucket-starting-user",
         "resource": "arn:aws:iam::*:user/pl-prod-iam-003-to-bucket-target-user",
         "description": "create a new access key for the target user"
       }
@@ -47,18 +49,22 @@
     "helpful": [
       {
         "permission": "iam:ListAccessKeys",
+        "principal": "pl-prod-iam-003-to-bucket-starting-user",
         "purpose": "List existing access keys to identify which one to delete"
       },
       {
         "permission": "iam:ListUsers",
+        "principal": "pl-prod-iam-003-to-bucket-starting-user",
         "purpose": "Discover users with S3 bucket access to target"
       },
       {
         "permission": "iam:GetUser",
+        "principal": "pl-prod-iam-003-to-bucket-starting-user",
         "purpose": "View user details and attached policies"
       },
       {
         "permission": "iam:ListAttachedUserPolicies",
+        "principal": "pl-prod-iam-003-to-bucket-starting-user",
         "purpose": "Identify users with S3 permissions"
       }
     ]
@@ -134,9 +140,11 @@
         "label": "iam:DeleteAccessKey + iam:CreateAccessKey",
         "description": "First list the target user's existing access keys to identify which one to delete. Delete one key to free up a slot (AWS enforces a maximum of two access keys per user), then create a new access key to obtain the target user's credentials.\n",
         "hints": [
-          "You can manipulate access keys for other IAM users.",
-          "The target user is at the AWS 2-key limit \u2014 think about what you need to do first.",
-          "Delete an existing key to free up a slot, then create a new one.",
+          "Start by understanding what permissions you have and which users you can target \u2014 use your helpful IAM read permissions to enumerate users and their attached policies.",
+          "You can manipulate access keys for other IAM users \u2014 but there's a catch.",
+          "AWS limits each IAM user to a maximum of two active access keys. Use iam:ListAccessKeys to see the target user's current key count.",
+          "The target user is already at the 2-key limit. You need to clear a slot before you can create a new key.",
+          "Delete one of the existing keys to free up a slot, then create a new access key to obtain credentials for the target user.",
           "Browse to https://pathfinding.cloud/paths/iam-003 for technique details."
         ],
         "commands": [
@@ -160,8 +168,9 @@
         "label": "s3:GetObject, s3:ListBucket",
         "description": "Use the newly created access key credentials to authenticate as the target user and access the sensitive S3 bucket.\n",
         "hints": [
-          "Configure the new credentials in your environment.",
-          "The target user has S3 read permissions on the sensitive bucket."
+          "Export the new credentials into your shell environment and wait a few seconds for IAM propagation before testing.",
+          "The target user has S3 read permissions \u2014 use s3api list-buckets or s3 ls to discover the exact bucket name (it includes a random suffix).",
+          "Once you have the bucket name, list its contents and download any files to confirm you have read access."
         ],
         "commands": [
           {

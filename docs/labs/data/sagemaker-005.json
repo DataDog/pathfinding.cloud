@@ -1,5 +1,5 @@
 {
-  "displayName": "Privilege Escalation via SageMaker UpdateNotebook Lifecycle Config",
+  "displayName": "SageMaker Notebook Lifecycle Config Update to Admin",
   "name": "sagemaker-005-sagemaker-updatenotebook-lifecycle-config",
   "description": "User with SageMaker update permissions can inject malicious lifecycle config into existing notebook to execute code with notebook's admin role",
   "costEstimate": "$37/mo",
@@ -31,26 +31,30 @@
     "modulePath": "modules/scenarios/single-account/privesc-one-hop/to-admin/sagemaker-005-sagemaker-updatenotebook-lifecycle-config"
   },
   "githubUrl": "https://github.com/DataDog/pathfinding-labs/tree/main/modules/scenarios/single-account/privesc-one-hop/to-admin/sagemaker-005-sagemaker-updatenotebook-lifecycle-config",
-  "schemaVersion": "3.0.0",
+  "schemaVersion": "4.0.0",
   "permissions": {
     "required": [
       {
         "permission": "sagemaker:CreateNotebookInstanceLifecycleConfig",
+        "principal": "pl-prod-sagemaker-005-to-admin-starting-user",
         "resource": "*",
         "description": "create the malicious lifecycle config"
       },
       {
         "permission": "sagemaker:StopNotebookInstance",
+        "principal": "pl-prod-sagemaker-005-to-admin-starting-user",
         "resource": "arn:aws:sagemaker:*:*:notebook-instance/pl-prod-sagemaker-005-to-admin-notebook",
         "description": "stop the notebook so its config can be modified"
       },
       {
         "permission": "sagemaker:UpdateNotebookInstance",
+        "principal": "pl-prod-sagemaker-005-to-admin-starting-user",
         "resource": "arn:aws:sagemaker:*:*:notebook-instance/pl-prod-sagemaker-005-to-admin-notebook",
         "description": "attach the malicious lifecycle config"
       },
       {
         "permission": "sagemaker:StartNotebookInstance",
+        "principal": "pl-prod-sagemaker-005-to-admin-starting-user",
         "resource": "arn:aws:sagemaker:*:*:notebook-instance/pl-prod-sagemaker-005-to-admin-notebook",
         "description": "trigger lifecycle script execution"
       }
@@ -58,14 +62,17 @@
     "helpful": [
       {
         "permission": "sagemaker:DescribeNotebookInstance",
+        "principal": "pl-prod-sagemaker-005-to-admin-starting-user",
         "purpose": "view notebook details, status, and attached execution role"
       },
       {
         "permission": "sagemaker:ListNotebookInstances",
+        "principal": "pl-prod-sagemaker-005-to-admin-starting-user",
         "purpose": "discover available notebook instances to target"
       },
       {
         "permission": "iam:GetRole",
+        "principal": "pl-prod-sagemaker-005-to-admin-starting-user",
         "purpose": "verify the notebook's execution role has admin permissions"
       }
     ]
@@ -141,9 +148,12 @@
         "label": "sagemaker:StopNotebookInstance + sagemaker:CreateNotebookInstanceLifecycleConfig + sagemaker:UpdateNotebookInstance",
         "description": "Stop the notebook instance, create a malicious lifecycle configuration containing a script that grants AdministratorAccess to the starting user, then update the notebook to attach the malicious lifecycle config. The notebook must be stopped before its lifecycle configuration can be changed.\n",
         "hints": [
-          "You can manage SageMaker notebook instances. Think about what happens when a notebook starts.",
-          "Lifecycle configurations run scripts automatically when a notebook starts \u2014 and they run with the notebook's execution role.",
-          "Stop the notebook, inject a malicious lifecycle config, then start it again to execute code with the notebook's admin role.",
+          "Start by listing and describing the SageMaker notebook instances in this account -- look at the execution role ARN attached to the notebook.",
+          "Use iam:GetRole or iam:ListAttachedRolePolicies to check what permissions the notebook's execution role carries.",
+          "SageMaker lifecycle configurations are scripts that run automatically when a notebook starts up -- and they run as the notebook's execution role, not as you.",
+          "To change a notebook's lifecycle configuration, the notebook must first be in the Stopped state. Use sagemaker:StopNotebookInstance and poll until the status is Stopped.",
+          "Create a lifecycle configuration with an on-start script that performs a privileged action using the notebook role's permissions. The script content must be base64-encoded.",
+          "After creating your lifecycle config, attach it to the notebook using sagemaker:UpdateNotebookInstance with the --lifecycle-config-name parameter.",
           "Browse to https://pathfinding.cloud/paths/sagemaker-005 for technique details."
         ],
         "commands": [
@@ -166,6 +176,11 @@
         "to": "target-role",
         "label": "sagemaker:StartNotebookInstance",
         "description": "Start the notebook instance, triggering automatic execution of the malicious lifecycle configuration script. The script runs with the notebook's execution role credentials (AdministratorAccess), attaching the AdministratorAccess managed policy to the starting user and completing the privilege escalation.\n",
+        "hints": [
+          "Once the notebook's lifecycle config is attached and the notebook is stopped, start it with sagemaker:StartNotebookInstance to trigger the on-start script.",
+          "The lifecycle script can take 5-8 minutes to execute -- the notebook status will move from Pending to InService once startup completes.",
+          "After the notebook reaches InService, wait a few seconds for IAM policy changes to propagate before verifying the escalation worked."
+        ],
         "commands": [
           {
             "description": "Start the notebook instance, triggering the malicious lifecycle script",

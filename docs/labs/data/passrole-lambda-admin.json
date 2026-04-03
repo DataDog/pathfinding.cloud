@@ -1,5 +1,5 @@
 {
-  "displayName": "Cross-Account PassRole to Lambda Admin",
+  "displayName": "Dev to Prod via Lambda PassRole to Admin",
   "name": "passrole-lambda-admin",
   "description": "Multi-hop cross-account privilege escalation using PassRole to create Lambda with admin role",
   "costEstimate": "$0/mo",
@@ -33,21 +33,24 @@
     "modulePath": "modules/scenarios/cross-account/dev-to-prod/multi-hop/passrole-lambda-admin"
   },
   "githubUrl": "https://github.com/DataDog/pathfinding-labs/tree/main/modules/scenarios/cross-account/dev-to-prod/multi-hop/passrole-lambda-admin",
-  "schemaVersion": "3.0.0",
+  "schemaVersion": "4.0.0",
   "permissions": {
     "required": [
       {
         "permission": "iam:PassRole",
+        "principal": "pl-pathfinding-starting-user-dev",
         "resource": "arn:aws:iam::{prod_account_id}:role/pl-Lambda-admin",
         "description": "allows passing the admin role to the Lambda service when creating a function"
       },
       {
         "permission": "lambda:CreateFunction",
+        "principal": "pl-pathfinding-starting-user-dev",
         "resource": "*",
         "description": "allows creating the Lambda function with the passed admin role"
       },
       {
         "permission": "lambda:InvokeFunction",
+        "principal": "pl-pathfinding-starting-user-dev",
         "resource": "*",
         "description": "allows invoking the Lambda function to execute as the admin role"
       }
@@ -55,14 +58,17 @@
     "helpful": [
       {
         "permission": "iam:ListRoles",
+        "principal": "pl-pathfinding-starting-user-dev",
         "purpose": "discover roles that can be passed to Lambda"
       },
       {
         "permission": "lambda:ListFunctions",
+        "principal": "pl-pathfinding-starting-user-dev",
         "purpose": "view existing Lambda functions"
       },
       {
         "permission": "iam:GetRole",
+        "principal": "pl-pathfinding-starting-user-dev",
         "purpose": "view role permissions and trust policies"
       }
     ]
@@ -154,9 +160,11 @@
         "label": "sts:AssumeRole",
         "description": "The starting dev user assumes the dev role pl-lambda-prod-updater using sts:AssumeRole, gaining its permissions and cross-account access.\n",
         "hints": [
-          "You are operating in the dev account. Think about what roles this user can assume.",
-          "Look for roles in the dev account that have cross-account trust relationships.",
-          "This user can assume pl-lambda-prod-updater, which can then reach the prod account."
+          "Start by confirming your identity and enumerating what you can do as this dev account user.",
+          "Use iam:ListRoles to look for roles in the dev account whose trust policy references this user or the dev account.",
+          "Inspect the trust policy of any candidate role with iam:GetRole to confirm it trusts your current principal.",
+          "Once you identify a role you can assume, use sts:AssumeRole and export the returned session credentials.",
+          "After assuming the role, call sts:GetCallerIdentity to confirm you are now operating as the dev role."
         ],
         "commands": [
           {
@@ -171,9 +179,11 @@
         "label": "sts:AssumeRole (cross-account)",
         "description": "The dev role assumes the prod account role pl-lambda-updater cross-account. The prod role's trust policy explicitly allows assumption by the dev role.\n",
         "hints": [
-          "This role can cross the account boundary. Look at its trust relationships and permissions.",
-          "Check what roles this dev role can assume in the prod account.",
-          "Use sts:AssumeRole to assume pl-lambda-updater in the prod account."
+          "You are now operating as a dev account role. Look at what this role's policies allow -- specifically any cross-account permissions.",
+          "Use iam:ListRoles or iam:GetRole to inspect roles this principal is permitted to assume across account boundaries.",
+          "Look for a prod account role in the trust relationship of sts:AssumeRole grants -- the account ID in the ARN will differ from the dev account.",
+          "Assume the prod role using sts:AssumeRole and export the new session credentials, replacing the dev role credentials.",
+          "Confirm the cross-account hop succeeded by running sts:GetCallerIdentity and verifying the account ID matches the prod account."
         ],
         "commands": [
           {
@@ -188,9 +198,12 @@
         "label": "iam:PassRole + lambda:CreateFunction",
         "description": "The prod role creates a new Lambda function and passes the pl-Lambda-admin role as its execution role, exploiting iam:PassRole to attach an admin identity to attacker-controlled code.\n",
         "hints": [
-          "This role has iam:PassRole. Look at which role it can pass and to which service.",
-          "You can pass the pl-Lambda-admin role to the Lambda service when creating a function.",
-          "Create a Lambda function with the admin role, then invoke it to prove admin access."
+          "You are now in the prod account. Review the policies attached to this role -- look for iam:PassRole grants and Lambda permissions.",
+          "Use iam:ListRoles to find roles whose trust policy allows the Lambda service to assume them, and that this principal can pass.",
+          "The combination of iam:PassRole + lambda:CreateFunction lets you create a Lambda function that runs as any role you can pass -- including admin roles.",
+          "Write a minimal Lambda payload (e.g., a Python function that calls iam:ListUsers) and package it as a zip file before creating the function.",
+          "When calling lambda:CreateFunction, supply the admin role ARN as the --role parameter to attach it as the function's execution role.",
+          "After creating the function, wait a few seconds for it to become active before proceeding to invoke it."
         ],
         "commands": [
           {
@@ -205,8 +218,9 @@
         "label": "lambda:InvokeFunction",
         "description": "Invoking the Lambda function causes it to execute as the pl-Lambda-admin role, confirming full administrative access to the prod account.\n",
         "hints": [
-          "This Lambda runs as the admin role. Invoke it to execute commands as an administrator.",
-          "Use lambda:InvokeFunction to call the function and confirm admin identity."
+          "The Lambda function is now configured to run as the admin role. Invoke it to execute code with those privileges.",
+          "Use lambda:InvokeFunction and capture the response -- have the function call a privileged API (like iam:ListUsers) to confirm admin access.",
+          "Check the function response for evidence that the privileged API call succeeded; a non-empty user list confirms administrative access in the prod account."
         ],
         "commands": [
           {

@@ -1,5 +1,5 @@
 {
-  "displayName": "Cross-Account from Operations to Prod Simple Role Assumption",
+  "displayName": "Ops to Prod via Direct Role Assumption to Admin",
   "name": "simple-role-assumption",
   "description": "Cross-account role assumption from operations to prod",
   "costEstimate": "$0/mo",
@@ -31,22 +31,25 @@
     "modulePath": "modules/scenarios/cross-account/ops-to-prod/one-hop/simple-role-assumption"
   },
   "githubUrl": "https://github.com/DataDog/pathfinding-labs/tree/main/modules/scenarios/cross-account/ops-to-prod/one-hop/simple-role-assumption",
-  "schemaVersion": "3.0.0",
+  "schemaVersion": "4.0.0",
   "permissions": {
     "required": [
       {
         "permission": "sts:AssumeRole",
+        "principal": "pl-pathfinding-starting-user-operations",
         "resource": "*",
-        "description": "held by `pl-x-account-ops-role-with-assume-role-star`; enables cross-account role assumption into any prod role that trusts the operations account"
+        "description": "allows the starting user to assume `pl-x-account-ops-role-with-assume-role-star`, which itself carries an unrestricted `sts:AssumeRole` on `*` enabling cross-account role assumption into any prod role that trusts the operations account"
       }
     ],
     "helpful": [
       {
         "permission": "iam:ListRoles",
+        "principal": "pl-pathfinding-starting-user-operations",
         "purpose": "discover roles in the prod account to identify assumable targets"
       },
       {
         "permission": "iam:GetRole",
+        "principal": "pl-pathfinding-starting-user-operations",
         "purpose": "view role trust policies and permissions to select the most privileged target"
       }
     ]
@@ -81,7 +84,7 @@
         "prevention": "- Scope `sts:AssumeRole` in the operations role policy to specific prod role ARNs rather than `*`\n- Add `aws:PrincipalArn` or `aws:PrincipalAccount` conditions to prod role trust policies to restrict which principals may assume them\n- Require an `sts:ExternalId` condition on all cross-account trust relationships to prevent confused deputy attacks\n- Implement an SCP in AWS Organizations that denies `sts:AssumeRole` across account boundaries unless the request comes from an approved operations role ARN\n- Enforce MFA conditions (`aws:MultiFactorAuthPresent: true`) on cross-account role trust policies for any role with elevated privileges\n- Use AWS IAM Access Analyzer to continuously monitor cross-account trust relationships and alert on overly permissive configurations"
       },
       "cloudSiem": {
-        "cloudTrailEvents": "- `STS: AssumeRole` \u2014 Cross-account role assumption; alert when a principal in the operations account assumes a role in the prod account, especially admin-level roles\n- `IAM: ListRoles` \u2014 Enumeration of roles in the prod account; expected from legitimate ops tooling but suspicious if not from a known automation principal",
+        "cloudTrailEvents": "- `STS: AssumeRole` -- Cross-account role assumption; alert when a principal in the operations account assumes a role in the prod account, especially admin-level roles\n- `IAM: ListRoles` -- Enumeration of roles in the prod account; expected from legitimate ops tooling but suspicious if not from a known automation principal",
         "detonationLogs": "_Detonation log integration (Stratus Red Team / Grimoire) is planned for a future release._"
       }
     },
@@ -95,7 +98,7 @@
         "type": "principal",
         "subType": "iam-user",
         "arn": "arn:aws:iam::{operations_account_id}:user/pl-pathfinding-starting-user-operations",
-        "description": "You have gained access to this principal's AWS IAM credentials. These could have been obtained through many real-world vectors: phishing a developer and gaining access to their workstation, compromising a browser session, exploiting a vulnerable workload running in this AWS account, discovering credentials in a public S3 bucket, or finding them hardcoded in source code or a CI/CD pipeline.\nRegardless of how you obtained them, you are now operating as this principal. This IAM user in the operations account has permission to assume pl-x-account-ops-role-with-assume-role-star.\n"
+        "description": "You have gained access to this principal's AWS IAM credentials. These could have been obtained through many real-world vectors: phishing a developer and gaining access to their workstation, compromising a browser session, exploiting a vulnerable workload running in this AWS account, discovering credentials in a public S3 bucket, or finding them hardcoded in source code or a CI/CD pipeline.\nRegardless of how you obtained them, you are now operating as this principal. This IAM user in the operations account has permission to assume pl-x-account-ops-role-with-assume-role-star, which itself carries an unrestricted sts:AssumeRole on * permission.\n"
       },
       {
         "id": "ops-role",
@@ -103,7 +106,7 @@
         "type": "principal",
         "subType": "iam-role",
         "arn": "arn:aws:iam::{operations_account_id}:role/pl-x-account-ops-role-with-assume-role-star",
-        "description": "This IAM role in the operations account has sts:AssumeRole on * \u2014 it can assume any role in any account that trusts it. Once you hold credentials for this role, you can pivot into the production account by assuming any prod role whose trust policy allows the operations account.\n"
+        "description": "This IAM role in the operations account has sts:AssumeRole on * \u2014 it can attempt to assume any role in any account. Once you hold credentials for this role, you can pivot into the production account by assuming any prod role whose trust policy allows the operations account or this role's ARN.\n"
       },
       {
         "id": "prod-target-role",
@@ -120,16 +123,23 @@
         "from": "starting-user",
         "to": "ops-role",
         "label": "sts:AssumeRole",
-        "description": "The starting user assumes the operations role using sts:AssumeRole. The operations role trust policy allows the starting user to assume it.\n",
+        "description": "The starting user assumes the operations role using sts:AssumeRole. The operations role's trust policy allows the starting user to assume it.\n",
         "hints": [
-          "You are in the operations account. What roles can you assume from here?",
-          "Look for roles with sts:AssumeRole permissions on *.",
-          "Assume the ops role and then look for cross-account trust relationships."
+          "Start by confirming your identity and what account you are in using sts:GetCallerIdentity.",
+          "You are operating in the operations account. Check what roles exist in this account that you might be able to assume.",
+          "Use iam:ListRoles to list roles in the operations account and look for roles with trust policies that include your user.",
+          "Read the trust policy of the ops role to confirm whether your starting user principal is listed as a trusted entity.",
+          "Once you identify an assumable ops role, use sts:AssumeRole to assume it and export the returned credentials as environment variables.",
+          "Check the inline and attached policies on the ops role to understand what it can do \u2014 this will reveal your next move."
         ],
         "commands": [
           {
+            "description": "Confirm your starting identity",
+            "command": "aws sts get-caller-identity --profile pl-pathfinding-starting-user-operations"
+          },
+          {
             "description": "Assume the operations role",
-            "command": "aws sts assume-role --role-arn arn:aws:iam::{operations_account_id}:role/pl-x-account-ops-role-with-assume-role-star --role-session-name ops-session"
+            "command": "aws sts assume-role --role-arn arn:aws:iam::{operations_account_id}:role/pl-x-account-ops-role-with-assume-role-star --role-session-name ops-session --profile pl-pathfinding-starting-user-operations"
           }
         ]
       },
@@ -139,9 +149,13 @@
         "label": "sts:AssumeRole (cross-account)",
         "description": "Using the unrestricted sts:AssumeRole on * permission, the ops role assumes the privileged prod target role in the production account, completing the cross-account lateral movement and privilege escalation.\n",
         "hints": [
-          "This role can assume roles across account boundaries.",
-          "Enumerate roles in the prod account and check their trust policies.",
-          "Look for prod roles that trust the operations account or this role's ARN."
+          "Now that you hold ops role credentials, inspect the role's policies to understand what permissions you have.",
+          "The ops role has sts:AssumeRole on * \u2014 think about what that means across account boundaries.",
+          "Enumerate roles in the prod account using iam:ListRoles to find roles that might trust the operations account.",
+          "For each candidate prod role, use iam:GetRole to read its trust policy and check whether the operations account or this role's ARN is listed as a trusted principal.",
+          "Once you identify a prod role that trusts the operations account, attempt to assume it directly with sts:AssumeRole \u2014 no special conditions should block you.",
+          "After assuming the prod role, run sts:GetCallerIdentity to confirm you are now operating in the production account.",
+          "Browse to https://pathfinding.cloud/paths/sts-001 for technique details on cross-account role assumption."
         ],
         "commands": [
           {
@@ -149,11 +163,15 @@
             "command": "aws iam list-roles --query 'Roles[*].[RoleName,Arn]' --output table"
           },
           {
-            "description": "Assume the prod target role from the operations account",
+            "description": "Inspect the trust policy of a candidate prod role",
+            "command": "aws iam get-role --role-name pl-x-account-prod-target-role --query 'Role.AssumeRolePolicyDocument'"
+          },
+          {
+            "description": "Assume the prod target role from the operations role credentials",
             "command": "aws sts assume-role --role-arn arn:aws:iam::{prod_account_id}:role/pl-x-account-prod-target-role --role-session-name prod-session"
           },
           {
-            "description": "Verify admin access in the prod account",
+            "description": "Verify you are now operating in the production account",
             "command": "aws sts get-caller-identity"
           }
         ]

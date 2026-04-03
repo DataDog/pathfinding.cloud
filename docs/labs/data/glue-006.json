@@ -1,5 +1,5 @@
 {
-  "displayName": "Privilege Escalation via iam:PassRole + glue:UpdateJob + glue:CreateTrigger",
+  "displayName": "Glue Job Update + Trigger to Admin",
   "name": "glue-006-iam-passrole+glue-updatejob+glue-createtrigger",
   "description": "Update existing Glue job to use privileged role and malicious script, then create trigger for automated execution with persistence",
   "costEstimate": "$0/mo",
@@ -32,21 +32,24 @@
     "modulePath": "modules/scenarios/single-account/privesc-one-hop/to-admin/glue-006-iam-passrole+glue-updatejob+glue-createtrigger"
   },
   "githubUrl": "https://github.com/DataDog/pathfinding-labs/tree/main/modules/scenarios/single-account/privesc-one-hop/to-admin/glue-006-iam-passrole+glue-updatejob+glue-createtrigger",
-  "schemaVersion": "3.0.0",
+  "schemaVersion": "4.0.0",
   "permissions": {
     "required": [
       {
         "permission": "iam:PassRole",
+        "principal": "pl-prod-glue-006-to-admin-starting-user",
         "resource": "arn:aws:iam::{account_id}:role/pl-prod-glue-006-to-admin-target-role",
         "description": "pass the admin role to the Glue job during update"
       },
       {
         "permission": "glue:UpdateJob",
+        "principal": "pl-prod-glue-006-to-admin-starting-user",
         "resource": "*",
         "description": "update existing Glue job to use admin role and malicious script"
       },
       {
         "permission": "glue:CreateTrigger",
+        "principal": "pl-prod-glue-006-to-admin-starting-user",
         "resource": "*",
         "description": "create scheduled trigger with `--start-on-creation` to execute job immediately"
       }
@@ -54,26 +57,32 @@
     "helpful": [
       {
         "permission": "glue:GetJob",
+        "principal": "pl-prod-glue-006-to-admin-starting-user",
         "purpose": "retrieve job details and verify configuration"
       },
       {
         "permission": "glue:GetTrigger",
+        "principal": "pl-prod-glue-006-to-admin-starting-user",
         "purpose": "monitor trigger state and verify activation"
       },
       {
         "permission": "glue:GetJobRun",
+        "principal": "pl-prod-glue-006-to-admin-starting-user",
         "purpose": "get details about a specific job run"
       },
       {
         "permission": "glue:GetJobRuns",
+        "principal": "pl-prod-glue-006-to-admin-starting-user",
         "purpose": "list job runs to monitor execution status"
       },
       {
         "permission": "sts:GetCallerIdentity",
+        "principal": "pl-prod-glue-006-to-admin-starting-user",
         "purpose": "verify current identity and account ID"
       },
       {
         "permission": "iam:ListUsers",
+        "principal": "pl-prod-glue-006-to-admin-starting-user",
         "purpose": "verify admin access after privilege escalation"
       }
     ]
@@ -150,8 +159,11 @@
         "label": "iam:PassRole + glue:UpdateJob",
         "description": "Update the existing Glue job to use the admin target role as its execution role and replace the script location with a malicious Python script stored in S3. iam:PassRole authorises handing the privileged role to the Glue service.\n",
         "hints": [
-          "You can modify existing AWS Glue jobs, including their execution role and script.",
-          "Look for Glue jobs whose execution role can be swapped for a more privileged one.",
+          "Start by understanding what Glue jobs exist in the account and what role they currently run under.",
+          "Use glue:GetJob to inspect the existing job configuration -- pay attention to the Role and ScriptLocation fields.",
+          "You have iam:PassRole on a privileged role -- consider what would happen if you passed that role to a Glue job.",
+          "glue:UpdateJob lets you change both the execution role and script location of an existing job in a single API call.",
+          "The malicious script is already staged in the scenario's S3 bucket -- check the Terraform output for the script path.",
           "Browse to https://pathfinding.cloud/paths/glue-006 for technique details."
         ],
         "commands": [
@@ -171,8 +183,11 @@
         "label": "glue:CreateTrigger (--start-on-creation)",
         "description": "Create a SCHEDULED trigger with StartOnCreation=true so the job executes automatically (every minute via cron) without requiring glue:StartJobRun. The job runs under the admin role and attaches AdministratorAccess to the starting user, completing the privilege escalation.\n",
         "hints": [
-          "Creating a trigger with --start-on-creation eliminates the need for glue:StartJobRun.",
-          "A SCHEDULED trigger runs automatically at the defined cron interval."
+          "Now that the job is updated with the admin role, you need to execute it -- but you don't have glue:StartJobRun.",
+          "Look at what other Glue permissions you have. A trigger can run a job without StartJobRun.",
+          "A SCHEDULED trigger with --start-on-creation fires the job immediately upon trigger creation, then continues on the cron schedule.",
+          "Use glue:GetTrigger to verify the trigger reaches ACTIVATED state, then glue:GetJobRuns to watch for the job run to appear and complete.",
+          "Once the job run shows SUCCEEDED, wait ~15 seconds for IAM policy propagation before verifying the escalation with iam:ListUsers."
         ],
         "commands": [
           {

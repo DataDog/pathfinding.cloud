@@ -1,5 +1,5 @@
 {
-  "displayName": "One-Hop Privilege Escalation: iam:UpdateAssumeRolePolicy",
+  "displayName": "IAM Role Trust Policy Update to Bucket",
   "name": "iam-012-iam-updateassumerolepolicy",
   "description": "User with iam:UpdateAssumeRolePolicy can modify role trust policy to assume role with S3 access",
   "costEstimate": "$0/mo",
@@ -31,16 +31,18 @@
     "modulePath": "modules/scenarios/single-account/privesc-one-hop/to-bucket/iam-012-iam-updateassumerolepolicy"
   },
   "githubUrl": "https://github.com/DataDog/pathfinding-labs/tree/main/modules/scenarios/single-account/privesc-one-hop/to-bucket/iam-012-iam-updateassumerolepolicy",
-  "schemaVersion": "3.0.0",
+  "schemaVersion": "4.0.0",
   "permissions": {
     "required": [
       {
         "permission": "iam:UpdateAssumeRolePolicy",
+        "principal": "pl-prod-iam-012-to-bucket-starting-user",
         "resource": "arn:aws:iam::*:role/pl-prod-iam-012-to-bucket-target-role",
         "description": "modify the target role's trust policy to allow assumption by the starting role"
       },
       {
         "permission": "sts:AssumeRole",
+        "principal": "pl-prod-iam-012-to-bucket-starting-user",
         "resource": "arn:aws:iam::*:role/pl-prod-iam-012-to-bucket-target-role",
         "description": "assume the target role once its trust policy has been updated"
       }
@@ -48,10 +50,12 @@
     "helpful": [
       {
         "permission": "iam:ListRoles",
+        "principal": "pl-prod-iam-012-to-bucket-starting-user",
         "purpose": "discover roles with S3 access"
       },
       {
         "permission": "iam:GetRole",
+        "principal": "pl-prod-iam-012-to-bucket-starting-user",
         "purpose": "view the current trust policy before modification"
       }
     ]
@@ -127,9 +131,12 @@
         "label": "iam:UpdateAssumeRolePolicy",
         "description": "Modify the trust policy of the target role to allow the starting role to assume it. This grants the attacker a path to the S3 bucket.\n",
         "hints": [
-          "You have a permission that lets you change who can assume a role.",
-          "Look for roles with S3 bucket access whose trust policies you can modify.",
-          "Browse to https://pathfinding.cloud/paths/iam-012 for technique details."
+          "You have a permission that lets you change who is allowed to assume a role -- think about what that unlocks.",
+          "Use iam:ListRoles to discover which roles exist in the account and look for ones with S3 access.",
+          "Use iam:GetRole on the target role to read its current trust policy and understand why you cannot assume it yet.",
+          "The trust policy is just a JSON document -- you have a permission that lets you replace it entirely.",
+          "When writing the new trust policy, the Principal should be the ARN of your current role.",
+          "Browse to https://pathfinding.cloud/paths/iam-012 for technique details on this escalation path."
         ],
         "commands": [
           {
@@ -147,6 +154,12 @@
         "to": "target-bucket",
         "label": "sts:AssumeRole \u2192 s3:GetObject",
         "description": "Assume the target role using the now-modified trust policy, then use the role's S3 permissions to read sensitive data from the bucket.\n",
+        "hints": [
+          "IAM changes take time to propagate -- wait about 15 seconds before attempting to assume the role.",
+          "Use sts:AssumeRole with the target role ARN and export the returned credentials into your shell.",
+          "Once you have the target role's credentials, use aws s3 ls to confirm bucket access.",
+          "Download the sensitive file from the bucket with aws s3 cp."
+        ],
         "commands": [
           {
             "description": "Assume the target role",

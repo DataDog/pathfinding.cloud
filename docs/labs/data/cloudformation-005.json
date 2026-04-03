@@ -1,5 +1,5 @@
 {
-  "displayName": "Privilege Escalation via cloudformation:CreateChangeSet + ExecuteChangeSet",
+  "displayName": "CloudFormation Change Set Execution to Admin",
   "name": "cloudformation-005-cloudformation-createchangeset+executechangeset",
   "description": "Principal with cloudformation:CreateChangeSet and ExecuteChangeSet can inherit admin permissions from existing CloudFormation stack's service role",
   "costEstimate": "$0/mo",
@@ -29,16 +29,18 @@
     "modulePath": "modules/scenarios/single-account/privesc-one-hop/to-admin/cloudformation-005-cloudformation-createchangeset+executechangeset"
   },
   "githubUrl": "https://github.com/DataDog/pathfinding-labs/tree/main/modules/scenarios/single-account/privesc-one-hop/to-admin/cloudformation-005-cloudformation-createchangeset+executechangeset",
-  "schemaVersion": "3.0.0",
+  "schemaVersion": "4.0.0",
   "permissions": {
     "required": [
       {
         "permission": "cloudformation:CreateChangeSet",
+        "principal": "pl-prod-cloudformation-005-to-admin-starting-user",
         "resource": "*",
         "description": "create a change set against the target stack"
       },
       {
         "permission": "cloudformation:ExecuteChangeSet",
+        "principal": "pl-prod-cloudformation-005-to-admin-starting-user",
         "resource": "*",
         "description": "execute the change set, triggering the stack's service role to create resources"
       }
@@ -46,14 +48,17 @@
     "helpful": [
       {
         "permission": "cloudformation:DescribeChangeSet",
+        "principal": "pl-prod-cloudformation-005-to-admin-starting-user",
         "purpose": "view change set details and verify creation"
       },
       {
         "permission": "cloudformation:DescribeStacks",
+        "principal": "pl-prod-cloudformation-005-to-admin-starting-user",
         "purpose": "discover existing CloudFormation stacks to target"
       },
       {
         "permission": "cloudformation:DescribeStackResource",
+        "principal": "pl-prod-cloudformation-005-to-admin-starting-user",
         "purpose": "view stack resources and service role information"
       }
     ]
@@ -129,8 +134,11 @@
         "label": "cloudformation:CreateChangeSet",
         "description": "Create a malicious change set against the target stack. The change set template adds a new IAM role with AdministratorAccess to the stack. The change set itself is harmless until executed.\n",
         "hints": [
-          "You can create and execute change sets against CloudFormation stacks.",
-          "Look for stacks that have a privileged service role attached \u2014 the change set will execute under that role's permissions.",
+          "Start by discovering what CloudFormation stacks exist in this account and their current status.",
+          "Use cloudformation:DescribeStacks to inspect each stack \u2014 pay attention to whether a RoleARN is attached. A stack with a service role is a potential escalation target.",
+          "Once you find a stack with an admin service role, examine its current template with cloudformation:GetTemplate to understand what resources it manages.",
+          "A change set lets you propose template modifications without applying them immediately. Craft a new template that keeps all existing resources and adds a new IAM role with AdministratorAccess and a trust policy allowing your user to assume it.",
+          "You will need the CAPABILITY_NAMED_IAM capability flag when creating a change set that defines a named IAM role.",
           "Browse to https://pathfinding.cloud/paths/cloudformation-005 for technique details."
         ],
         "commands": [
@@ -154,9 +162,11 @@
         "label": "cloudformation:ExecuteChangeSet",
         "description": "Execute the change set. CloudFormation uses the stack's admin service role to perform all operations defined in the change set, including creating the new IAM role with AdministratorAccess \u2014 bypassing the caller's own limited permissions.\n",
         "hints": [
-          "Describe the stack to discover its service role: aws cloudformation describe-stacks.",
-          "Create a change set that adds a new IAM role with AdministratorAccess to the stack template.",
-          "Execute the change set \u2014 CloudFormation will use the stack's admin service role to create the role."
+          "Before executing, use cloudformation:DescribeChangeSet to review the planned changes and confirm the new IAM role is listed as an Add action.",
+          "Execute the change set \u2014 CloudFormation will perform all resource operations as the stack's service role, not as you. This is the key: you trigger it, the admin role does the work.",
+          "After initiating execution, poll the stack status with cloudformation:DescribeStacks until it reaches UPDATE_COMPLETE \u2014 the IAM role will not exist until the stack update finishes.",
+          "Allow a short wait after the stack update completes for IAM propagation before attempting to assume the newly created role.",
+          "The new role's trust policy was baked into your template \u2014 it should already allow your starting user to assume it via sts:AssumeRole."
         ],
         "commands": [
           {

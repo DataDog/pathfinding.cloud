@@ -1,5 +1,5 @@
 {
-  "displayName": "Self-Escalation to Bucket: iam:PutRolePolicy",
+  "displayName": "IAM Inline Role Policy Modification to Bucket",
   "name": "iam-005-iam-putrolepolicy",
   "description": "Role with iam:PutRolePolicy on itself can add inline policy granting S3 bucket access",
   "costEstimate": "$0/mo",
@@ -31,11 +31,12 @@
     "modulePath": "modules/scenarios/single-account/privesc-self-escalation/to-bucket/iam-005-iam-putrolepolicy"
   },
   "githubUrl": "https://github.com/DataDog/pathfinding-labs/tree/main/modules/scenarios/single-account/privesc-self-escalation/to-bucket/iam-005-iam-putrolepolicy",
-  "schemaVersion": "3.0.0",
+  "schemaVersion": "4.0.0",
   "permissions": {
     "required": [
       {
         "permission": "iam:PutRolePolicy",
+        "principal": "pl-prod-iam-005-to-bucket-starting-user",
         "resource": "arn:aws:iam::*:role/pl-prod-iam-005-to-bucket-starting-role",
         "description": "allows the role to write an inline policy to itself, granting S3 bucket access"
       }
@@ -43,14 +44,17 @@
     "helpful": [
       {
         "permission": "iam:GetRolePolicy",
+        "principal": "pl-prod-iam-005-to-bucket-starting-user",
         "purpose": "view existing inline policies on the role"
       },
       {
         "permission": "iam:ListRolePolicies",
+        "principal": "pl-prod-iam-005-to-bucket-starting-user",
         "purpose": "list all inline policies attached to the role"
       },
       {
         "permission": "s3:ListBucket",
+        "principal": "pl-prod-iam-005-to-bucket-starting-user",
         "purpose": "verify bucket access after escalation"
       }
     ]
@@ -134,8 +138,10 @@
         "label": "sts:AssumeRole",
         "description": "The starting user assumes the starting role to begin the attack path.\n",
         "hints": [
-          "You can assume a role from this user. What can that role do?",
-          "The starting role has permission to modify its own inline policy.",
+          "Start by understanding what this user can do. Use iam:ListAttachedUserPolicies and iam:GetUserPolicy to inspect its permissions.",
+          "The user can assume a role. Look at which roles trust this principal using iam:ListRoles or by checking the trust policy of any roles you identify.",
+          "Once you have identified the role, inspect what permissions it has before assuming it -- this tells you what you can do once inside.",
+          "Use sts:AssumeRole with a descriptive session name. Export the returned AccessKeyId, SecretAccessKey, and SessionToken as environment variables before proceeding.",
           "Browse to https://pathfinding.cloud/paths/iam-005 for technique details."
         ],
         "commands": [
@@ -151,9 +157,12 @@
         "label": "iam:PutRolePolicy (self)",
         "description": "The starting role uses its iam:PutRolePolicy permission to add an inline policy to itself, granting sts:AssumeRole permission on the target role. This self-escalation modifies the role's own permissions at runtime.\n",
         "hints": [
-          "This role can modify its own inline policies.",
-          "Add an inline policy to this role to grant yourself permission to assume the target role.",
-          "Use iam:PutRolePolicy to write an inline policy that allows sts:AssumeRole on the target role."
+          "With the role assumed, check what inline policies already exist on it using iam:ListRolePolicies and iam:GetRolePolicy.",
+          "The role has iam:PutRolePolicy scoped to its own ARN. This means the role can write new inline policies to itself.",
+          "Think about what permission you need to reach the target bucket. The target role already has S3 access -- so you need to be able to assume it.",
+          "Write an inline policy that grants sts:AssumeRole on the target role ARN. Then assume the target role.",
+          "IAM policy changes take time to propagate -- wait at least 15 seconds after calling PutRolePolicy before attempting to assume the target role.",
+          "Browse to https://pathfinding.cloud/paths/iam-005 for technique details."
         ],
         "commands": [
           {
@@ -167,6 +176,11 @@
         "to": "target-role",
         "label": "sts:AssumeRole",
         "description": "After adding the inline policy, the starting role assumes the target role to gain S3 bucket permissions.\n",
+        "hints": [
+          "After writing the inline policy and waiting for propagation, try assuming the target role using the credentials you have as the starting role.",
+          "If assumption fails with an access denied, the policy may not have propagated yet -- wait a few more seconds and try again.",
+          "Export the new session credentials (AccessKeyId, SecretAccessKey, SessionToken) after assuming the target role before proceeding to the bucket."
+        ],
         "commands": [
           {
             "description": "Assume the target role using newly granted permission",
@@ -179,6 +193,11 @@
         "to": "target-bucket",
         "label": "s3:GetObject",
         "description": "The target role reads sensitive data from the S3 bucket, completing the attack path.\n",
+        "hints": [
+          "With the target role credentials active, confirm you have S3 access by listing the bucket contents.",
+          "Use s3:ListBucket to enumerate what objects are in the bucket, then s3:GetObject to retrieve specific files.",
+          "Look for files with names suggesting sensitive content -- configuration files, credentials, data exports."
+        ],
         "commands": [
           {
             "description": "List and download sensitive data from the target bucket",

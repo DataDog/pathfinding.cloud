@@ -531,7 +531,7 @@ function applyFilters() {
         // Search filter
         if (searchTerm) {
             const searchableText = [
-                lab.name,
+                lab.displayName || lab.name,
                 lab.description,
                 lab.slug,
                 lab.pathfindingCloudId || '',
@@ -621,12 +621,12 @@ function getSortedLabs() {
     return [...filteredLabs].sort((a, b) => {
         let aVal, bVal;
         switch (sortColumn) {
-            case 'name': aVal = a.name; bVal = b.name; break;
+            case 'name': aVal = a.displayName || a.name; bVal = b.displayName || b.name; break;
             case 'category': aVal = a.category; bVal = b.category; break;
             case 'pathType': aVal = a.pathType; bVal = b.pathType; break;
             case 'target': aVal = a.target; bVal = b.target; break;
             case 'cost': aVal = a.costEstimate; bVal = b.costEstimate; break;
-            default: aVal = a.name; bVal = b.name;
+            default: aVal = a.displayName || a.name; bVal = b.displayName || b.name;
         }
         const cmp = String(aVal || '').localeCompare(String(bVal || ''));
         return sortDirection === 'asc' ? cmp : -cmp;
@@ -660,7 +660,7 @@ function renderLabTable() {
         html += `
             <tr class="lab-row" data-slug="${lab.slug}">
                 <td class="lab-name-desc-cell">
-                    <a href="/labs/${lab.slug}" class="lab-name-link" onclick="if (event.ctrlKey || event.metaKey) return; event.preventDefault(); navigateToLab('${lab.slug}')">${escapeHtml(lab.name)}</a>
+                    <a href="/labs/${lab.slug}" class="lab-name-link" onclick="if (event.ctrlKey || event.metaKey) return; event.preventDefault(); navigateToLab('${lab.slug}')">${escapeHtml(lab.displayName || lab.name)}</a>
                     <div class="lab-table-description">${escapeHtml(truncate(lab.description, 120))}</div>
                 </td>
                 <td><span class="lab-badge ${catConfig.cssClass}">${catConfig.label}</span></td>
@@ -750,7 +750,7 @@ function renderCardA(lab) {
         <div class="lab-card lab-card-a" data-slug="${lab.slug}">
             ${renderBannerA(lab)}
             <div class="lab-card-body">
-                <div class="lab-card-name">${escapeHtml(lab.name)}</div>
+                <div class="lab-card-name">${escapeHtml(lab.displayName || lab.name)}</div>
                 <div class="lab-card-description">${escapeHtml(truncate(lab.description, 450))}</div>
                 <div class="lab-card-badges">
                     <span class="lab-card-badge-item"><span class="lab-card-badge-label">Path Type</span> <span class="lab-badge ${pathTypeClass}">${pathTypeLabel}</span></span>
@@ -769,7 +769,7 @@ function renderCardB(lab) {
         <div class="lab-card lab-card-b" data-slug="${lab.slug}">
             ${renderBannerB(lab)}
             <div class="lab-card-body">
-                <div class="lab-card-name">${escapeHtml(lab.name)}</div>
+                <div class="lab-card-name">${escapeHtml(lab.displayName || lab.name)}</div>
                 <div class="lab-card-description lab-card-description-full">${escapeHtml(lab.description)}</div>
                 <div class="lab-card-badges">
                     <span class="lab-badge ${pathTypeClass}">${pathTypeLabel}</span>
@@ -882,7 +882,7 @@ function renderLabDetailContent(lab, container) {
                 <span class="breadcrumb-links">
                     <a href="/labs/" onclick="event.preventDefault(); navigateToList();">All Labs</a>
                     <span class="breadcrumb-separator">></span>
-                    <span class="breadcrumb-current">${escapeHtml(lab.name)}</span>
+                    <span class="breadcrumb-current">${escapeHtml(lab.displayName || lab.name)}</span>
                 </span>
                 ${modeToggle}
             </nav>
@@ -1624,14 +1624,15 @@ function renderLabDetailContentGuidedV2(lab, container) {
     // Build main content from sections
     const slug = lab.slug || 'default';
     const labShareUrl = `https://pathfinding.cloud/labs/${slug}`;
+    const labTitle = lab.displayName || lab.name;
     let mainHtml = `<div class="lab-gv2-title-row">
-        <h1 class="lab-gv2-title">${escapeHtml(lab.name)}</h1>
+        <h1 class="lab-gv2-title">${escapeHtml(labTitle)}</h1>
         <div class="lab-gv2-share-actions">
-            <button class="lab-gv2-share-btn" data-share-action="copy-link" data-share-url="${escapeHtml(labShareUrl)}" data-share-name="${escapeHtml(lab.name)}" title="Copy link">Copy Link</button>
-            <button class="lab-gv2-share-btn lab-gv2-share-btn-primary" data-share-action="linkedin" data-share-url="${escapeHtml(labShareUrl)}" data-share-name="${escapeHtml(lab.name)}" title="Share on LinkedIn">LinkedIn</button>
-            <button class="lab-gv2-share-btn" data-share-action="twitter" data-share-url="${escapeHtml(labShareUrl)}" data-share-name="${escapeHtml(lab.name)}" title="Share on X">X</button>
-            <button class="lab-gv2-share-btn" data-share-action="bluesky" data-share-url="${escapeHtml(labShareUrl)}" data-share-name="${escapeHtml(lab.name)}" title="Share on Bluesky">Bluesky</button>
-            <button class="lab-gv2-share-btn" data-share-action="mastodon" data-share-url="${escapeHtml(labShareUrl)}" data-share-name="${escapeHtml(lab.name)}" title="Share on Mastodon">Mastodon</button>
+            <button class="lab-gv2-share-btn" data-share-action="copy-link" data-share-url="${escapeHtml(labShareUrl)}" data-share-name="${escapeHtml(labTitle)}" title="Copy link">Copy Link</button>
+            <button class="lab-gv2-share-btn lab-gv2-share-btn-primary" data-share-action="linkedin" data-share-url="${escapeHtml(labShareUrl)}" data-share-name="${escapeHtml(labTitle)}" title="Share on LinkedIn">LinkedIn</button>
+            <button class="lab-gv2-share-btn" data-share-action="twitter" data-share-url="${escapeHtml(labShareUrl)}" data-share-name="${escapeHtml(labTitle)}" title="Share on X">X</button>
+            <button class="lab-gv2-share-btn" data-share-action="bluesky" data-share-url="${escapeHtml(labShareUrl)}" data-share-name="${escapeHtml(labTitle)}" title="Share on Bluesky">Bluesky</button>
+            <button class="lab-gv2-share-btn" data-share-action="mastodon" data-share-url="${escapeHtml(labShareUrl)}" data-share-name="${escapeHtml(labTitle)}" title="Share on Mastodon">Mastodon</button>
         </div>
     </div>`;
     let prevH2 = '';

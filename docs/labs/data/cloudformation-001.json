@@ -1,5 +1,5 @@
 {
-  "displayName": "One-Hop Privilege Escalation: iam:PassRole + cloudformation:CreateStack",
+  "displayName": "CloudFormation Stack Creation to Admin",
   "name": "cloudformation-001-iam-passrole-cloudformation",
   "description": "CloudFormation stack creation with privileged service role to create escalated IAM roles",
   "costEstimate": "$0/mo",
@@ -30,16 +30,18 @@
     "modulePath": "modules/scenarios/single-account/privesc-one-hop/to-admin/cloudformation-001-iam-passrole-cloudformation"
   },
   "githubUrl": "https://github.com/DataDog/pathfinding-labs/tree/main/modules/scenarios/single-account/privesc-one-hop/to-admin/cloudformation-001-iam-passrole-cloudformation",
-  "schemaVersion": "3.0.0",
+  "schemaVersion": "4.0.0",
   "permissions": {
     "required": [
       {
         "permission": "iam:PassRole",
+        "principal": "pl-prod-cloudformation-001-to-admin-starting-user",
         "resource": "arn:aws:iam::*:role/pl-prod-cloudformation-001-to-admin-cfn-role",
         "description": "allows passing the admin service role to CloudFormation"
       },
       {
         "permission": "cloudformation:CreateStack",
+        "principal": "pl-prod-cloudformation-001-to-admin-starting-user",
         "resource": "*",
         "description": "allows creating a CloudFormation stack with the passed service role"
       }
@@ -47,14 +49,17 @@
     "helpful": [
       {
         "permission": "cloudformation:DescribeStacks",
+        "principal": "pl-prod-cloudformation-001-to-admin-starting-user",
         "purpose": "monitor stack creation progress"
       },
       {
         "permission": "iam:ListRoles",
+        "principal": "pl-prod-cloudformation-001-to-admin-starting-user",
         "purpose": "discover available privileged roles to pass"
       },
       {
         "permission": "cloudformation:DeleteStack",
+        "principal": "pl-prod-cloudformation-001-to-admin-starting-user",
         "purpose": "clean up attack artifacts"
       }
     ]
@@ -131,8 +136,10 @@
         "label": "iam:PassRole + cloudformation:CreateStack",
         "description": "The starting user passes the privileged CFN service role to CloudFormation and creates a stack with a malicious template. CloudFormation executes the template using the admin service role's permissions.\n",
         "hints": [
-          "You can pass IAM roles to AWS services. What service here accepts a service role?",
-          "CloudFormation can create any resource in a template, including IAM roles. What if the template creates a role you can assume?",
+          "You can pass IAM roles to AWS services. Which service here is configured to accept a service role with admin permissions?",
+          "Use iam:ListRoles to find roles whose trust policy allows cloudformation.amazonaws.com as a principal \u2014 that's the service role you can pass.",
+          "CloudFormation can create any resource in a template, including IAM roles. What if the template creates a role that trusts your starting user?",
+          "The --role-arn flag on cloudformation:CreateStack is how you pass a service role. CloudFormation will use it to provision every resource in the template.",
           "Browse to https://pathfinding.cloud/paths/cloudformation-001 for technique details."
         ],
         "commands": [
@@ -156,8 +163,9 @@
         "label": "CloudFormation provisions IAM role",
         "description": "CloudFormation, running with the admin service role's permissions, provisions the IAM role defined in the malicious template. The resulting role has AdministratorAccess and trusts the starting user.\n",
         "hints": [
-          "The stack executes with the passed admin service role. What can it create?",
-          "Craft a template that defines a new IAM role with AdministratorAccess and a trust policy that allows your starting user to assume it."
+          "The stack executes with the passed admin service role. What can it create on your behalf?",
+          "Craft a template that defines a new IAM role with AdministratorAccess and a trust policy that allows your starting user to assume it directly.",
+          "Use cloudformation:DescribeStacks to monitor the stack status. Wait for CREATE_COMPLETE before trying to assume the new role."
         ],
         "commands": []
       },
@@ -166,6 +174,11 @@
         "to": "escalated-role",
         "label": "sts:AssumeRole",
         "description": "The starting user assumes the newly created escalated role, obtaining administrative credentials for the AWS account.\n",
+        "hints": [
+          "Once the stack reaches CREATE_COMPLETE, the escalated role exists and its trust policy allows your starting user to assume it.",
+          "Use sts:AssumeRole with the role ARN from the stack outputs (or construct it from the role name in your template).",
+          "Export the returned AccessKeyId, SecretAccessKey, and SessionToken as environment variables to operate as the escalated role."
+        ],
         "commands": [
           {
             "description": "Assume the escalated role created by CloudFormation",

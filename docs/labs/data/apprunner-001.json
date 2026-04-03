@@ -1,5 +1,5 @@
 {
-  "displayName": "Privilege Escalation via iam:PassRole + apprunner:CreateService",
+  "displayName": "App Runner Service Creation to Admin",
   "name": "apprunner-001-iam-passrole+apprunner-createservice",
   "description": "Pass privileged role to App Runner service with command override",
   "costEstimate": "$0/mo",
@@ -31,21 +31,24 @@
     "modulePath": "modules/scenarios/single-account/privesc-one-hop/to-admin/apprunner-001-iam-passrole+apprunner-createservice"
   },
   "githubUrl": "https://github.com/DataDog/pathfinding-labs/tree/main/modules/scenarios/single-account/privesc-one-hop/to-admin/apprunner-001-iam-passrole+apprunner-createservice",
-  "schemaVersion": "3.0.0",
+  "schemaVersion": "4.0.0",
   "permissions": {
     "required": [
       {
         "permission": "apprunner:CreateService",
+        "principal": "pl-prod-apprunner-001-to-admin-starting-user",
         "resource": "*",
         "description": "create an App Runner service to serve as the execution proxy"
       },
       {
         "permission": "iam:PassRole",
+        "principal": "pl-prod-apprunner-001-to-admin-starting-user",
         "resource": "arn:aws:iam::*:role/pl-prod-apprunner-001-to-admin-target-role",
         "description": "pass the privileged role to the App Runner service as its instance role"
       },
       {
         "permission": "iam:CreateServiceLinkedRole",
+        "principal": "pl-prod-apprunner-001-to-admin-starting-user",
         "resource": "arn:aws:iam::*:role/aws-service-role/apprunner.amazonaws.com/AWSServiceRoleForAppRunner",
         "description": "required only for the first App Runner service in the account"
       }
@@ -53,14 +56,17 @@
     "helpful": [
       {
         "permission": "apprunner:ListServices",
+        "principal": "pl-prod-apprunner-001-to-admin-starting-user",
         "purpose": "list App Runner services to verify service creation"
       },
       {
         "permission": "apprunner:DescribeService",
+        "principal": "pl-prod-apprunner-001-to-admin-starting-user",
         "purpose": "check service status and configuration"
       },
       {
         "permission": "iam:ListUsers",
+        "principal": "pl-prod-apprunner-001-to-admin-starting-user",
         "purpose": "verify admin access after escalation"
       }
     ]
@@ -136,8 +142,12 @@
         "label": "apprunner:CreateService + iam:PassRole",
         "description": "The starting user creates an App Runner service, passing the privileged target role as the instance role and specifying a StartCommand override that will execute an AWS CLI IAM command when the container starts.\n",
         "hints": [
-          "You can create compute services and pass roles to them.",
-          "Look for services that allow a StartCommand override \u2014 the instance role executes your command.",
+          "You have two interesting permissions: one to create a compute service, and one to hand a role to that service. Think about what happens when code runs under a privileged role.",
+          "Use apprunner:ListServices to see if any App Runner services already exist in the account to understand the environment.",
+          "App Runner accepts an InstanceRoleArn when you create a service -- that role's credentials are available to the running container.",
+          "Look at what image you could use as the container. The public AWS CLI image (public.ecr.aws/aws-cli/aws-cli:latest) has the AWS CLI as its entrypoint -- any StartCommand becomes AWS CLI arguments.",
+          "The StartCommand is passed as arguments directly to the container's entrypoint. If the entrypoint is /usr/local/bin/aws, your StartCommand is an AWS CLI subcommand.",
+          "Consider what IAM actions the target role can perform. Can it modify policies on your starting user?",
           "Browse to https://pathfinding.cloud/paths/apprunner-001 for technique details."
         ],
         "commands": [
@@ -153,9 +163,11 @@
         "label": "iam:AttachUserPolicy (via StartCommand)",
         "description": "When App Runner starts the container, it executes the StartCommand as arguments to the AWS CLI entrypoint. The container runs with the instance role's credentials, so the iam attach-user-policy command executes with the target role's permissions, attaching AdministratorAccess to the starting user.\n",
         "hints": [
-          "The service runs with an IAM role that has sensitive permissions.",
-          "The StartCommand override lets you run arbitrary AWS CLI commands as the instance role.",
-          "Use the instance role's iam:AttachUserPolicy permission to escalate the starting user."
+          "The service is now running with the privileged role's credentials. The StartCommand you provided has already executed -- the IAM change may have happened as soon as the container started.",
+          "Use apprunner:DescribeService to poll the service status. Watch for it to transition from OPERATION_IN_PROGRESS to RUNNING.",
+          "Once the service reaches RUNNING state, wait a few seconds for IAM policy propagation before verifying.",
+          "Check whether AdministratorAccess was attached to your starting user with iam:ListAttachedUserPolicies.",
+          "Verify the escalation worked by attempting an action your starting user could not do before, such as listing IAM users."
         ],
         "commands": [
           {

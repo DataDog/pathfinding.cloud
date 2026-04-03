@@ -1,5 +1,5 @@
 {
-  "displayName": "Privilege Escalation via iam:PassRole + Bedrock AgentCore Code Interpreter",
+  "displayName": "Bedrock Code Interpreter Creation to Admin",
   "name": "bedrock-001-iam-passrole+bedrockagentcore-codeinterpreter",
   "description": "Pass privileged IAM role to Bedrock code interpreter and extract credentials from MicroVM Metadata Service",
   "costEstimate": "$0/mo",
@@ -31,26 +31,30 @@
     "modulePath": "modules/scenarios/single-account/privesc-one-hop/to-admin/bedrock-001-iam-passrole+bedrockagentcore-codeinterpreter"
   },
   "githubUrl": "https://github.com/DataDog/pathfinding-labs/tree/main/modules/scenarios/single-account/privesc-one-hop/to-admin/bedrock-001-iam-passrole+bedrockagentcore-codeinterpreter",
-  "schemaVersion": "3.0.0",
+  "schemaVersion": "4.0.0",
   "permissions": {
     "required": [
       {
         "permission": "iam:PassRole",
+        "principal": "pl-prod-bedrock-001-to-admin-starting-user",
         "resource": "arn:aws:iam::*:role/pl-prod-bedrock-001-to-admin-target-role",
         "description": "pass the privileged role to Bedrock AgentCore as an execution role"
       },
       {
         "permission": "bedrock-agentcore:CreateCodeInterpreter",
+        "principal": "pl-prod-bedrock-001-to-admin-starting-user",
         "resource": "*",
         "description": "create the code interpreter provisioned with the privileged execution role"
       },
       {
         "permission": "bedrock-agentcore:StartCodeInterpreterSession",
+        "principal": "pl-prod-bedrock-001-to-admin-starting-user",
         "resource": "*",
         "description": "start an interactive session inside the code interpreter"
       },
       {
         "permission": "bedrock-agentcore:InvokeCodeInterpreter",
+        "principal": "pl-prod-bedrock-001-to-admin-starting-user",
         "resource": "*",
         "description": "execute code within the session to query the metadata service"
       }
@@ -58,14 +62,17 @@
     "helpful": [
       {
         "permission": "iam:ListRoles",
+        "principal": "pl-prod-bedrock-001-to-admin-starting-user",
         "purpose": "discover available privileged roles to pass"
       },
       {
         "permission": "iam:GetRole",
+        "principal": "pl-prod-bedrock-001-to-admin-starting-user",
         "purpose": "view role trust policies and attached permissions"
       },
       {
         "permission": "bedrock-agentcore:GetCodeInterpreter",
+        "principal": "pl-prod-bedrock-001-to-admin-starting-user",
         "purpose": "verify code interpreter creation and configuration"
       }
     ]
@@ -142,8 +149,11 @@
         "label": "iam:PassRole + bedrock-agentcore-control:CreateCodeInterpreter",
         "description": "Pass the privileged target role to a new Bedrock AgentCore code interpreter. The interpreter is provisioned with that role as its execution role.\n",
         "hints": [
-          "You can pass IAM roles to AWS services \u2014 think about which services accept execution roles.",
-          "Bedrock AgentCore code interpreters run in Firecracker MicroVMs that expose a metadata service.",
+          "Use iam:ListRoles to enumerate roles in the account and find privileged ones you can interact with.",
+          "Use iam:GetRole to inspect a role's trust policy -- look for roles that trust bedrock-agentcore.amazonaws.com as a service principal.",
+          "You have iam:PassRole on a specific role. Check which service you can pass it to by examining the PassedToService condition in your policy.",
+          "Bedrock AgentCore code interpreters accept an execution role when created. Try creating one and passing the admin role as that execution role.",
+          "The bedrock-agentcore-control API namespace is used for control-plane operations like creating interpreters. Check aws bedrock-agentcore-control create-code-interpreter.",
           "Browse to https://pathfinding.cloud/paths/bedrock-001 for technique details."
         ],
         "commands": [
@@ -159,8 +169,11 @@
         "label": "bedrock-agentcore:StartCodeInterpreterSession + bedrock-agentcore:InvokeCodeInterpreter",
         "description": "Start a session on the code interpreter and invoke Python code that queries the MicroVM Metadata Service at 169.254.169.254 to retrieve temporary credentials for the execution role (the admin target role).\n",
         "hints": [
-          "The code interpreter's execution role credentials are reachable from within the MicroVM.",
-          "Try querying 169.254.169.254/latest/meta-data/iam/security-credentials/ inside the interpreter."
+          "After creating the code interpreter, wait a few seconds for it to initialize before starting a session.",
+          "Use bedrock-agentcore:StartCodeInterpreterSession to open an interactive session on the interpreter, then bedrock-agentcore:InvokeCodeInterpreter to run code inside it.",
+          "Code interpreters run in Firecracker MicroVMs. Like EC2, MicroVMs expose a metadata service at 169.254.169.254 that vends temporary credentials for the execution role.",
+          "Inside the interpreter, use Python's urllib to query http://169.254.169.254/latest/meta-data/iam/security-credentials/ -- first get the role name, then fetch its credentials. IMDSv2 requires a PUT token first.",
+          "Once you have the AccessKeyId, SecretAccessKey, and Token from the metadata service, export them as environment variables locally and verify your new identity with aws sts get-caller-identity."
         ],
         "commands": [
           {

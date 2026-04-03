@@ -1,5 +1,5 @@
 {
-  "displayName": "Public Lambda with Admin Role (Toxic Combination)",
+  "displayName": "Public Lambda with Admin Role to Admin",
   "name": "public-lambda-with-admin",
   "description": "Publicly accessible Lambda function with administrative IAM role",
   "costEstimate": "$0/mo",
@@ -33,7 +33,7 @@
     "modulePath": "modules/scenarios/single-account/cspm-toxic-combo/public-lambda-with-admin"
   },
   "githubUrl": "https://github.com/DataDog/pathfinding-labs/tree/main/modules/scenarios/single-account/cspm-toxic-combo/public-lambda-with-admin",
-  "schemaVersion": "3.0.0",
+  "schemaVersion": "4.0.0",
   "permissions": {
     "required": [
       {
@@ -124,9 +124,12 @@
         "label": "lambda:InvokeFunctionUrl (no auth)",
         "description": "Send an unauthenticated HTTP request to the Lambda function URL. No AWS credentials or signatures are required because AuthorizationType is set to NONE.\n",
         "hints": [
-          "Look for Lambda functions that are publicly invocable without AWS credentials.",
-          "Check if the Lambda function's execution role has elevated permissions.",
-          "Lambda function URLs with AuthorizationType: NONE can be invoked by anyone."
+          "Start by searching for Lambda function URLs in the account \u2014 these are separate HTTPS endpoints distinct from regular Lambda invocation.",
+          "If you have any low-privilege AWS credentials, use lambda:ListFunctions to enumerate functions, then check each one for a function URL.",
+          "Use lambda:GetFunctionUrlConfig on any function you find to check the AuthorizationType field \u2014 the value NONE means no credentials are required.",
+          "Check the execution role attached to any publicly invocable function \u2014 use iam:ListAttachedRolePolicies to see what permissions it carries.",
+          "A Lambda function URL with AuthorizationType: NONE can be invoked with a plain HTTP client like curl \u2014 no AWS Signature Version 4 required.",
+          "Once you have the function URL, invoke it directly with an HTTP GET or POST request and observe the response body for any sensitive data."
         ],
         "commands": [
           {
@@ -141,9 +144,11 @@
         "label": "credential extraction",
         "description": "The Lambda execution role credentials are available as environment variables inside the function. Extract AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, and AWS_SESSION_TOKEN from the response to assume the admin role's identity.\n",
         "hints": [
-          "The function runtime environment exposes the execution role credentials as environment variables.",
-          "AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, and AWS_SESSION_TOKEN are available inside the function.",
-          "Invoke the function URL and parse the response for the credential values."
+          "When a Lambda function executes, the AWS runtime automatically injects the execution role's temporary credentials as environment variables.",
+          "Look at the function's response body \u2014 if the function exposes its environment variables, you will find AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, and AWS_SESSION_TOKEN.",
+          "The three credential values in the response are short-lived but fully functional \u2014 they represent the execution role's identity, not the invoking caller.",
+          "Export the extracted credentials as environment variables in your local shell and call aws sts get-caller-identity to confirm which role you now control.",
+          "Use the credentials to verify the effective permissions of the execution role \u2014 if AdministratorAccess is attached, you have full account access."
         ],
         "commands": [
           {

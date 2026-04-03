@@ -1,5 +1,5 @@
 {
-  "displayName": "Cross-Account Privilege Escalation: Dev to Prod Root Trust Role Assumption",
+  "displayName": "Dev to Prod via Root Trust Assumption to Admin",
   "name": "root-trust-role-assumption",
   "description": "Cross-account role assumption exploiting overly permissive :root trust policy",
   "costEstimate": "$0/mo",
@@ -31,11 +31,12 @@
     "modulePath": "modules/scenarios/cross-account/dev-to-prod/one-hop/root-trust-role-assumption"
   },
   "githubUrl": "https://github.com/DataDog/pathfinding-labs/tree/main/modules/scenarios/cross-account/dev-to-prod/one-hop/root-trust-role-assumption",
-  "schemaVersion": "3.0.0",
+  "schemaVersion": "4.0.0",
   "permissions": {
     "required": [
       {
         "permission": "sts:AssumeRole",
+        "principal": "pl-dev-xsarrt-to-admin-starting-user",
         "resource": "arn:aws:iam::{prod_account_id}:role/pl-prod-xsarrt-to-admin-target-role",
         "description": "allows the dev user to assume the prod admin role"
       }
@@ -43,10 +44,12 @@
     "helpful": [
       {
         "permission": "sts:GetCallerIdentity",
+        "principal": "pl-dev-xsarrt-to-admin-starting-user",
         "purpose": "verify current identity before and after role assumption"
       },
       {
         "permission": "iam:ListRoles",
+        "principal": "pl-dev-xsarrt-to-admin-starting-user",
         "purpose": "discover assumable roles in the target account"
       }
     ]
@@ -95,7 +98,7 @@
         "type": "principal",
         "subType": "iam-user",
         "arn": "arn:aws:iam::{dev_account_id}:user/pl-dev-xsarrt-to-admin-starting-user",
-        "description": "You have gained access to this principal's AWS IAM credentials. These could have been obtained through many real-world vectors: phishing a developer and gaining access to their workstation, compromising a browser session, exploiting a vulnerable workload running in this AWS account, discovering credentials in a public S3 bucket, or finding them hardcoded in source code or a CI/CD pipeline.\nRegardless of how you obtained them, you are now operating as this principal. This IAM user exists in the dev account and has sts:AssumeRole permission. The target production admin role trusts the entire dev account via an :root principal in its trust policy, meaning any dev principal with sts:AssumeRole can assume it.\n"
+        "description": "You have gained access to this principal's AWS IAM credentials. These could have been obtained through many real-world vectors: phishing a developer and gaining access to their workstation, compromising a browser session, exploiting a vulnerable workload running in this AWS account, discovering credentials in a public S3 bucket, or finding them hardcoded in source code or a CI/CD pipeline.\nRegardless of how you obtained them, you are now operating as this principal. This IAM user exists in the dev account and has sts:AssumeRole permission. The target production admin role trusts the entire dev account via a :root principal in its trust policy, meaning any dev principal with sts:AssumeRole can assume it.\n"
       },
       {
         "id": "target-role",
@@ -114,18 +117,30 @@
         "label": "sts:AssumeRole",
         "description": "The starting user assumes the production admin role using sts:AssumeRole. The role's trust policy trusts arn:aws:iam::{dev_account_id}:root, so any dev account principal with AssumeRole permission can perform this action.\n",
         "hints": [
-          "You have credentials in the dev account. What can you reach in other accounts?",
-          "Look for cross-account role trust relationships \u2014 especially ones that trust an entire account rather than a specific principal.",
-          "Check if any production roles have a trust policy using arn:aws:iam::{prod_account_id}:root or arn:aws:iam::{dev_account_id}:root."
+          "Start by confirming who you are and which account you are in. Use sts:GetCallerIdentity to establish your identity before looking for cross-account paths.",
+          "You have credentials in the dev account. Think about whether any production roles might be reachable from here \u2014 cross-account trust relationships are a common misconfiguration.",
+          "Look at the policies attached to your starting user. You may have sts:AssumeRole permission targeting a specific role ARN in another account.",
+          "Examine the trust policy of the target role in the prod account. Look for whether it trusts a specific principal or the entire dev account via :root.",
+          "A trust policy containing arn:aws:iam::{account_id}:root means every principal in that account can assume the role, not just the root user \u2014 this is a critical distinction.",
+          "Once you have identified the target role ARN, use sts:AssumeRole to obtain temporary credentials. Export all three values: AccessKeyId, SecretAccessKey, and SessionToken.",
+          "Browse to https://pathfinding.cloud/paths/sts-001 for technique background on cross-account role assumption."
         ],
         "commands": [
           {
+            "description": "Verify your current identity in the dev account",
+            "command": "aws sts get-caller-identity"
+          },
+          {
             "description": "Assume the production admin role from the dev account",
-            "command": "aws sts assume-role --role-arn arn:aws:iam::{prod_account_id}:role/pl-prod-xsarrt-to-admin-target-role --role-session-name cross-account-escalation"
+            "command": "aws sts assume-role --role-arn arn:aws:iam::{prod_account_id}:role/pl-prod-xsarrt-to-admin-target-role --role-session-name cross-account-escalation --query 'Credentials' --output json"
+          },
+          {
+            "description": "Verify you are now operating as the prod admin role",
+            "command": "aws sts get-caller-identity"
           },
           {
             "description": "Verify administrative access in the production account",
-            "command": "aws iam list-users"
+            "command": "aws iam list-users --max-items 3"
           }
         ]
       }

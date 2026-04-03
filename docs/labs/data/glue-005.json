@@ -1,5 +1,5 @@
 {
-  "displayName": "Privilege Escalation via iam:PassRole + glue:UpdateJob + glue:StartJobRun",
+  "displayName": "Glue Job Update + Run to Admin",
   "name": "glue-005-iam-passrole+glue-updatejob+glue-startjobrun",
   "description": "Modify existing Glue Job to use privileged role and malicious script for privilege escalation",
   "costEstimate": "$0/mo",
@@ -30,21 +30,24 @@
     "modulePath": "modules/scenarios/single-account/privesc-one-hop/to-admin/glue-005-iam-passrole+glue-updatejob+glue-startjobrun"
   },
   "githubUrl": "https://github.com/DataDog/pathfinding-labs/tree/main/modules/scenarios/single-account/privesc-one-hop/to-admin/glue-005-iam-passrole+glue-updatejob+glue-startjobrun",
-  "schemaVersion": "3.0.0",
+  "schemaVersion": "4.0.0",
   "permissions": {
     "required": [
       {
         "permission": "iam:PassRole",
+        "principal": "pl-prod-glue-005-to-admin-starting-user",
         "resource": "arn:aws:iam::{account_id}:role/pl-prod-glue-005-to-admin-target-role",
         "description": "pass the admin role to the Glue job during update"
       },
       {
         "permission": "glue:UpdateJob",
+        "principal": "pl-prod-glue-005-to-admin-starting-user",
         "resource": "*",
         "description": "update existing Glue job to use admin role and malicious script"
       },
       {
         "permission": "glue:StartJobRun",
+        "principal": "pl-prod-glue-005-to-admin-starting-user",
         "resource": "*",
         "description": "execute the updated Glue job with admin privileges"
       }
@@ -52,22 +55,27 @@
     "helpful": [
       {
         "permission": "glue:GetJob",
+        "principal": "pl-prod-glue-005-to-admin-starting-user",
         "purpose": "retrieve job details and verify configuration"
       },
       {
         "permission": "glue:GetJobRun",
+        "principal": "pl-prod-glue-005-to-admin-starting-user",
         "purpose": "get details about a specific job run"
       },
       {
         "permission": "glue:GetJobRuns",
+        "principal": "pl-prod-glue-005-to-admin-starting-user",
         "purpose": "list job runs to monitor execution status"
       },
       {
         "permission": "sts:GetCallerIdentity",
+        "principal": "pl-prod-glue-005-to-admin-starting-user",
         "purpose": "verify current identity and account ID"
       },
       {
         "permission": "iam:ListUsers",
+        "principal": "pl-prod-glue-005-to-admin-starting-user",
         "purpose": "verify admin access after privilege escalation"
       }
     ]
@@ -144,9 +152,11 @@
         "label": "glue:UpdateJob + iam:PassRole",
         "description": "Update the existing Glue job configuration to replace the execution role with the administrative target role and change the script location to the malicious escalation script stored in S3.\n",
         "hints": [
-          "You can modify existing AWS Glue jobs, including changing their execution role.",
-          "Look for a Glue job already deployed in this account and consider what you could change about it.",
-          "You have iam:PassRole \u2014 find a privileged role you can pass to the Glue service and update the job to use it with a malicious script.",
+          "Start by discovering what Glue resources exist in this account \u2014 use glue:GetJob or look for running ETL workloads.",
+          "You can modify existing AWS Glue jobs, including changing both the execution role and the script location.",
+          "Review the policy on your starting principal \u2014 which role is explicitly listed in your iam:PassRole permission?",
+          "You have iam:PassRole on an admin role and glue:UpdateJob. Update the existing job to use the admin role and a malicious script location.",
+          "The malicious script needs to be reachable by the Glue service. The scenario has already staged a script in an S3 bucket \u2014 use glue:GetJob to find where scripts are currently stored.",
           "Browse to https://pathfinding.cloud/paths/glue-005 for technique details."
         ],
         "commands": [
@@ -165,6 +175,13 @@
         "to": "target-role",
         "label": "glue:StartJobRun",
         "description": "Trigger execution of the updated Glue job. The job runs under the administrative target role and executes the malicious Python script, which attaches AdministratorAccess to the starting user via iam:AttachUserPolicy.\n",
+        "hints": [
+          "Now that you have updated the job, you need to trigger it to run.",
+          "Use glue:StartJobRun to execute the updated job and capture the JobRunId from the response.",
+          "Poll the job status using glue:GetJobRun with the run ID until you see SUCCEEDED.",
+          "After the job completes, wait about 15 seconds for IAM policy changes to propagate before verifying.",
+          "Verify the escalation worked by checking the policies attached to the starting user, then confirm admin access with iam:ListUsers."
+        ],
         "commands": [
           {
             "description": "Start the job run",

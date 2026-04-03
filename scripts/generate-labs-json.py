@@ -99,7 +99,7 @@ def validate_readme_metadata(metadata, readme_path):
     """Validate that required metadata fields are present. Returns True if valid."""
     required = list(REQUIRED_README_METADATA_BASE)
     # v1/v2 schemas require additional metadata fields
-    if not is_v3_schema(metadata):
+    if not is_modern_schema(metadata):
         required.extend(REQUIRED_README_METADATA_V1_EXTRA)
     missing = [f for f in required if f not in metadata]
     if missing:
@@ -271,30 +271,44 @@ def load_guided_walkthrough(readme_dir):
 
 
 def parse_starting_permissions_section(section_text):
-    """Parse the ### Starting Permissions section from a v3 README.
+    """Parse the ### Starting Permissions section from a v3 or v4 README.
 
-    Expected format:
+    v3 format (flat headings):
         **Required:**
         - `permission` on `resource` -- description
 
         **Helpful:**
         - `permission` -- purpose
 
+    v4 format (per-principal headings, multiple allowed):
+        **Required** (`principal_name`):
+        - `permission` on `resource` -- description
+
+        **Helpful** (`principal_name`):
+        - `permission` -- purpose
+
     Returns {"required": [...], "helpful": [...]}.
+    Each entry in v4 includes a "principal" field with the principal name.
     """
     result = {"required": [], "helpful": []}
     if not section_text:
         return result
 
     current_group = None
+    current_principal = None
     for line in section_text.split("\n"):
         stripped = line.strip()
 
         if stripped.startswith("**Required"):
             current_group = "required"
+            # v4: extract principal name from `**Required** (`name`):`
+            principal_match = re.search(r"\(`([^`]+)`\)", stripped)
+            current_principal = principal_match.group(1) if principal_match else None
             continue
         elif stripped.startswith("**Helpful"):
             current_group = "helpful"
+            principal_match = re.search(r"\(`([^`]+)`\)", stripped)
+            current_principal = principal_match.group(1) if principal_match else None
             continue
 
         if not current_group or not stripped.startswith("- "):
@@ -313,6 +327,8 @@ def parse_starting_permissions_section(section_text):
             )
             if match:
                 entry = {"permission": match.group(1)}
+                if current_principal:
+                    entry["principal"] = current_principal
                 if match.group(2):
                     entry["resource"] = match.group(2)
                 if match.group(3):
@@ -325,6 +341,8 @@ def parse_starting_permissions_section(section_text):
             match = re.match(r"`([^`]+)`(?:\s+--\s+(.+))?", item_text)
             if match:
                 entry = {"permission": match.group(1)}
+                if current_principal:
+                    entry["principal"] = current_principal
                 if match.group(2):
                     entry["purpose"] = match.group(2)
                 result["helpful"].append(entry)
@@ -673,10 +691,21 @@ def get_schema_version(metadata):
     return version_str.strip()
 
 
-def is_v3_schema(metadata):
-    """Check if the README uses v3 schema (3.x.x)."""
+def is_modern_schema(metadata):
+    """Check if the README uses v3 or v4 schema (3.x.x or 4.x.x).
+
+    Both use the same section structure (Objective, Self-hosted Lab Setup,
+    Attack, Teardown, Defend). v4 adds per-principal names to the Starting
+    Permissions headings; parse_starting_permissions_section handles both.
+    """
     version = get_schema_version(metadata)
-    return version.startswith("3")
+    return version.startswith("3") or version.startswith("4")
+
+
+def is_v4_schema(metadata):
+    """Check if the README uses v4 schema (4.x.x)."""
+    version = get_schema_version(metadata)
+    return version.startswith("4")
 
 
 # ---------------------------------------------------------------------------
@@ -836,7 +865,7 @@ def transform_readme(readme_text, module_path, readme_dir=None):
     # Directory name as scenario name/id
     name = Path(module_path).name
 
-    use_v3 = is_v3_schema(metadata)
+    use_modern_schema = is_modern_schema(metadata)
 
     result = {
         "displayName": display_name,
@@ -866,9 +895,9 @@ def transform_readme(readme_text, module_path, readme_dir=None):
         "schemaVersion": get_schema_version(metadata),
     }
 
-    # Parse permissions: v3 reads from markdown section, v2/v1 from metadata
-    if use_v3:
-        # v3: permissions come from README sections, parsed below after section parsing
+    # Parse permissions: v3+ reads from markdown section, v1/v2 from metadata
+    if use_modern_schema:
+        # v3+: permissions come from README sections, parsed below after section parsing
         result["permissions"] = {"required": [], "helpful": []}
     else:
         result["permissions"] = {
@@ -901,14 +930,14 @@ def transform_readme(readme_text, module_path, readme_dir=None):
         }
 
     # Parse README sections for prose content
-    if use_v3:
+    if use_modern_schema:
         readme_sections = parse_readme_sections_v3(readme_text)
     else:
         readme_sections = parse_readme_sections(readme_text)
 
     if readme_sections:
-        # v3: extract permissions from the Starting Permissions section
-        if use_v3 and "_startingPermissions" in readme_sections:
+        # v3+: extract permissions from the Starting Permissions section
+        if use_modern_schema and "_startingPermissions" in readme_sections:
             result["permissions"] = parse_starting_permissions_section(
                 readme_sections.pop("_startingPermissions")
             )
@@ -919,8 +948,8 @@ def transform_readme(readme_text, module_path, readme_dir=None):
 
         result["readme"] = readme_sections
 
-    # v3: Load companion files from the README directory
-    if use_v3 and readme_dir:
+    # v3+: Load companion files from the README directory
+    if use_modern_schema and readme_dir:
         # Load attack_map.yaml
         attack_map = load_attack_map_file(readme_dir)
         if attack_map:
@@ -1034,8 +1063,8 @@ def generate_labs_json(source_dir=None, output_file="docs/labs.json"):
                         lab["slug"] = generate_slug(
                             parse_readme_metadata(readme_text), module_path
                         )
-                        # For v3 schema, fetch companion files from GitHub
-                        if is_v3_schema(parse_readme_metadata(readme_text)):
+                        # For v3+ schema, fetch companion files from GitHub
+                        if is_modern_schema(parse_readme_metadata(readme_text)):
                             attack_map_path = f"{module_path}/attack_map.yaml"
                             attack_map_text = fetch_github_raw_file(attack_map_path, headers)
                             if attack_map_text:

@@ -1,5 +1,5 @@
 {
-  "displayName": "Privilege Escalation via cloudformation:UpdateStack",
+  "displayName": "CloudFormation Stack Update to Admin",
   "name": "cloudformation-002-cloudformation-updatestack",
   "description": "Modifying existing CloudFormation stack to create admin role using stack's elevated service role",
   "costEstimate": "$0/mo",
@@ -31,11 +31,12 @@
     "modulePath": "modules/scenarios/single-account/privesc-one-hop/to-admin/cloudformation-002-cloudformation-updatestack"
   },
   "githubUrl": "https://github.com/DataDog/pathfinding-labs/tree/main/modules/scenarios/single-account/privesc-one-hop/to-admin/cloudformation-002-cloudformation-updatestack",
-  "schemaVersion": "3.0.0",
+  "schemaVersion": "4.0.0",
   "permissions": {
     "required": [
       {
         "permission": "cloudformation:UpdateStack",
+        "principal": "pl-prod-cloudformation-002-to-admin-starting-user",
         "resource": "arn:aws:cloudformation:*:*:stack/pl-prod-cloudformation-002-to-admin-stack/*",
         "description": "allows modifying the stack template, which executes under the stack's administrative service role"
       }
@@ -43,18 +44,22 @@
     "helpful": [
       {
         "permission": "cloudformation:DescribeStacks",
+        "principal": "pl-prod-cloudformation-002-to-admin-starting-user",
         "purpose": "view stack details and verify stack configuration"
       },
       {
         "permission": "cloudformation:GetTemplate",
+        "principal": "pl-prod-cloudformation-002-to-admin-starting-user",
         "purpose": "retrieve the current stack template for modification"
       },
       {
         "permission": "iam:GetRole",
+        "principal": "pl-prod-cloudformation-002-to-admin-starting-user",
         "purpose": "verify the escalated role was created by the stack update"
       },
       {
         "permission": "sts:AssumeRole",
+        "principal": "pl-prod-cloudformation-002-to-admin-starting-user",
         "purpose": "assume the escalated role created by the stack update"
       }
     ]
@@ -130,9 +135,12 @@
         "label": "cloudformation:UpdateStack",
         "description": "The starting user updates the CloudFormation stack template to add a new IAM role resource with AdministratorAccess and a trust policy allowing the starting user to assume it. The stack executes the update using its administrative service role.\n",
         "hints": [
-          "You can update infrastructure stacks. Look for stacks with elevated service roles.",
-          "Inspect the stack's service role to understand what permissions CloudFormation has. Retrieve the current stack template and examine what resource types it already manages.",
-          "Add a new IAM role resource to the template that trusts your starting principal, then submit the stack update.",
+          "Your starting user can update CloudFormation stacks. Start by finding which stacks exist in the account and reviewing their configuration.",
+          "Use cloudformation:DescribeStacks to list stacks and check for a RoleARN field \u2014 this tells you which service role CloudFormation uses when executing updates.",
+          "Use cloudformation:GetTemplate to retrieve the current stack template. Understanding what resources already exist helps you craft a safe modification.",
+          "A stack update runs with the service role's permissions, not yours. If that role has AdministratorAccess, you can add IAM resources to the template that you couldn't create directly.",
+          "Craft a modified template that keeps the existing resources and adds a new AWS::IAM::Role with AdministratorAccess and a trust policy pointing to your starting user's ARN.",
+          "The cloudformation:UpdateStack call requires the --capabilities CAPABILITY_NAMED_IAM flag when the template creates named IAM resources.",
           "Browse to https://pathfinding.cloud/paths/cloudformation-002 for technique details."
         ],
         "commands": [
@@ -155,6 +163,11 @@
         "to": "escalated-role",
         "label": "iam:CreateRole + iam:AttachRolePolicy",
         "description": "The CloudFormation stack, executing with its administrative service role, creates the new IAM role and attaches the AdministratorAccess managed policy to it.\n",
+        "hints": [
+          "This transition is handled automatically by CloudFormation once the stack update is submitted \u2014 you don't need to take any action here.",
+          "Wait for the cloudformation:wait stack-update-complete command to return before attempting to use the new role.",
+          "After the stack update completes, you can verify the role exists using iam:GetRole on the role name specified in your template."
+        ],
         "commands": []
       },
       {
@@ -162,6 +175,12 @@
         "to": "escalated-role",
         "label": "sts:AssumeRole",
         "description": "With the escalated role now created by the stack update, the starting user assumes it to gain full administrative access to the AWS account.\n",
+        "hints": [
+          "The stack update created a new IAM role with a trust policy that explicitly allows your starting user to assume it.",
+          "Use iam:GetRole to confirm the role exists and review its trust policy before attempting assumption.",
+          "Allow 15 seconds after the stack update completes for IAM to propagate the new role before calling sts:AssumeRole.",
+          "Export the returned AccessKeyId, SecretAccessKey, and SessionToken as environment variables to operate as the escalated role."
+        ],
         "commands": [
           {
             "description": "Assume the escalated admin role",

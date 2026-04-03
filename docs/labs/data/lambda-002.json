@@ -1,5 +1,5 @@
 {
-  "displayName": "Privilege Escalation via iam:PassRole + lambda:CreateFunction + lambda:CreateEventSourceMapping (DynamoDB Stream)",
+  "displayName": "Lambda Function Creation + DynamoDB Event Source to Admin",
   "name": "lambda-002-iam-passrole+lambda-createfunction+createeventsourcemapping-dynamodb",
   "description": "Pass privileged role to Lambda function, link to DynamoDB stream for passive execution without requiring InvokeFunction permission",
   "costEstimate": "$0/mo",
@@ -31,21 +31,24 @@
     "modulePath": "modules/scenarios/single-account/privesc-one-hop/to-admin/lambda-002-iam-passrole+lambda-createfunction+createeventsourcemapping-dynamodb"
   },
   "githubUrl": "https://github.com/DataDog/pathfinding-labs/tree/main/modules/scenarios/single-account/privesc-one-hop/to-admin/lambda-002-iam-passrole+lambda-createfunction+createeventsourcemapping-dynamodb",
-  "schemaVersion": "3.0.0",
+  "schemaVersion": "4.0.0",
   "permissions": {
     "required": [
       {
         "permission": "iam:PassRole",
+        "principal": "pl-prod-lambda-002-to-admin-starting-user",
         "resource": "arn:aws:iam::*:role/pl-prod-lambda-002-to-admin-target-role",
         "description": "pass the privileged target role to a Lambda function"
       },
       {
         "permission": "lambda:CreateFunction",
+        "principal": "pl-prod-lambda-002-to-admin-starting-user",
         "resource": "*",
         "description": "create a Lambda function with the privileged role as its execution role"
       },
       {
         "permission": "lambda:CreateEventSourceMapping",
+        "principal": "pl-prod-lambda-002-to-admin-starting-user",
         "resource": "*",
         "description": "link the Lambda function to a DynamoDB stream to trigger it passively"
       }
@@ -53,34 +56,42 @@
     "helpful": [
       {
         "permission": "dynamodb:ListStreams",
+        "principal": "pl-prod-lambda-002-to-admin-starting-user",
         "purpose": "discover available DynamoDB streams to target"
       },
       {
         "permission": "dynamodb:DescribeStream",
+        "principal": "pl-prod-lambda-002-to-admin-starting-user",
         "purpose": "get stream ARN and configuration details"
       },
       {
         "permission": "dynamodb:DescribeTable",
+        "principal": "pl-prod-lambda-002-to-admin-starting-user",
         "purpose": "get table details including stream ARN"
       },
       {
         "permission": "lambda:ListFunctions",
+        "principal": "pl-prod-lambda-002-to-admin-starting-user",
         "purpose": "verify Lambda function creation"
       },
       {
         "permission": "lambda:GetFunction",
+        "principal": "pl-prod-lambda-002-to-admin-starting-user",
         "purpose": "confirm function configuration and role"
       },
       {
         "permission": "lambda:GetEventSourceMapping",
+        "principal": "pl-prod-lambda-002-to-admin-starting-user",
         "purpose": "check event source mapping status and verify activation"
       },
       {
         "permission": "iam:ListRoles",
+        "principal": "pl-prod-lambda-002-to-admin-starting-user",
         "purpose": "discover privileged roles available for PassRole"
       },
       {
         "permission": "dynamodb:PutItem",
+        "principal": "pl-prod-lambda-002-to-admin-starting-user",
         "purpose": "trigger Lambda execution by inserting test record (demo only)"
       }
     ]
@@ -164,9 +175,12 @@
         "label": "iam:PassRole + lambda:CreateFunction",
         "description": "The starting user creates a new Lambda function, passing the privileged target role as the function's execution role. The function code is designed to call iam:AttachUserPolicy to grant admin access to the starting user.\n",
         "hints": [
-          "You have permissions related to Lambda functions and IAM roles.",
-          "Look for permissions that let you run code as a more privileged identity without directly invoking it.",
-          "Combine iam:PassRole and lambda:CreateFunction to attach a privileged role to a Lambda, then use lambda:CreateEventSourceMapping to trigger it passively via a DynamoDB stream.",
+          "Review the policy attached to this user \u2014 notice the combination of IAM and Lambda permissions. What could you do with the ability to create Lambda functions and pass roles?",
+          "Use iam:ListRoles to discover which roles exist in the account. Look for roles with AdministratorAccess that this user is allowed to pass.",
+          "Use iam:GetRole on the target role to confirm its trust policy allows lambda.amazonaws.com as a service principal \u2014 this means it can be used as a Lambda execution role.",
+          "Write a Lambda function that uses the boto3 IAM client to attach a managed policy to a user. Package it as a zip file before creating the function.",
+          "Use lambda:CreateFunction, specifying the privileged role ARN in the --role parameter. The role you pass becomes the function's identity when it executes.",
+          "Use lambda:GetFunction after creation to verify the function was deployed with the correct execution role ARN.",
           "Browse to https://pathfinding.cloud/paths/lambda-002 for technique details."
         ],
         "commands": [
@@ -186,9 +200,11 @@
         "label": "lambda:CreateEventSourceMapping",
         "description": "The starting user creates an event source mapping connecting the Lambda function to the DynamoDB table's stream. This causes the Lambda to execute automatically whenever records are written to the table \u2014 no InvokeFunction permission needed.\n",
         "hints": [
-          "This Lambda function executes with the privileges of its execution role.",
-          "Inspect the execution role attached to this function.",
-          "Connect this function to an event source so it triggers without requiring lambda:InvokeFunction."
+          "Your permissions include lambda:CreateEventSourceMapping but not lambda:InvokeFunction. How can you trigger this function without invoking it directly?",
+          "Use dynamodb:ListStreams or dynamodb:DescribeTable to find DynamoDB streams in the account. A stream ARN is the event source you need.",
+          "Use dynamodb:DescribeTable on the trigger table to retrieve its LatestStreamArn \u2014 you'll need this ARN to create the event source mapping.",
+          "Use lambda:CreateEventSourceMapping with --starting-position LATEST to connect the function to the stream. The mapping will start in 'Creating' state before becoming 'Enabled'.",
+          "Use lambda:GetEventSourceMapping with the returned UUID to poll the mapping state. Wait until it reaches 'Enabled' before triggering."
         ],
         "commands": [
           {
@@ -207,9 +223,10 @@
         "label": "DynamoDB PutItem -> Lambda executes -> iam:AttachUserPolicy",
         "description": "Writing a record to the DynamoDB table triggers the Lambda function via the stream. The Lambda executes with the target role's AdministratorAccess permissions and attaches AdministratorAccess to the starting user, completing the escalation.\n",
         "hints": [
-          "This table has DynamoDB Streams enabled.",
-          "Lambda functions can be configured to trigger on stream events.",
-          "Writing a record to this table will trigger any Lambda functions subscribed to its stream."
+          "The event source mapping is now active. Any write to the DynamoDB table will fan out to your Lambda function via the stream.",
+          "Use dynamodb:PutItem to insert a record into the trigger table. This write will propagate through the stream and invoke your Lambda.",
+          "After inserting a record, wait 10-15 seconds for the Lambda to execute and IAM policy changes to propagate. If the first write doesn't trigger it, insert another record \u2014 event source mappings can take a moment to fully initialize even after showing 'Enabled'.",
+          "Use iam:ListAttachedUserPolicies on the starting user to check whether AdministratorAccess has been attached. Once it appears, your escalation is complete."
         ],
         "commands": [
           {

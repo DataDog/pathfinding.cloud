@@ -1,5 +1,5 @@
 {
-  "displayName": "Privilege Escalation via Launch Template Modification",
+  "displayName": "EC2 Launch Template Modification to Admin",
   "name": "ec2-005-ec2-createlaunchtemplateversion+ec2-modifylaunchtemplate",
   "description": "Modifying EC2 launch templates to change instance profiles and inject malicious user data for next instance launch",
   "costEstimate": "$0/mo",
@@ -31,16 +31,18 @@
     "modulePath": "modules/scenarios/single-account/privesc-one-hop/to-admin/ec2-005-ec2-createlaunchtemplateversion+ec2-modifylaunchtemplate"
   },
   "githubUrl": "https://github.com/DataDog/pathfinding-labs/tree/main/modules/scenarios/single-account/privesc-one-hop/to-admin/ec2-005-ec2-createlaunchtemplateversion+ec2-modifylaunchtemplate",
-  "schemaVersion": "3.0.0",
+  "schemaVersion": "4.0.0",
   "permissions": {
     "required": [
       {
         "permission": "ec2:CreateLaunchTemplateVersion",
+        "principal": "pl-prod-ec2-005-to-admin-starting-user",
         "resource": "*",
         "description": "create a new launch template version with malicious user data"
       },
       {
         "permission": "ec2:ModifyLaunchTemplate",
+        "principal": "pl-prod-ec2-005-to-admin-starting-user",
         "resource": "*",
         "description": "set the malicious version as the template default"
       }
@@ -48,26 +50,32 @@
     "helpful": [
       {
         "permission": "iam:ListRoles",
+        "principal": "pl-prod-ec2-005-to-admin-starting-user",
         "purpose": "discover available privileged roles already configured in existing templates"
       },
       {
         "permission": "ec2:DescribeLaunchTemplates",
+        "principal": "pl-prod-ec2-005-to-admin-starting-user",
         "purpose": "discover existing launch templates to target"
       },
       {
         "permission": "ec2:DescribeLaunchTemplateVersions",
+        "principal": "pl-prod-ec2-005-to-admin-starting-user",
         "purpose": "view existing template configuration before modification"
       },
       {
         "permission": "autoscaling:DescribeAutoScalingGroups",
+        "principal": "pl-prod-ec2-005-to-admin-starting-user",
         "purpose": "identify which ASGs use the target launch template"
       },
       {
         "permission": "ec2:DescribeInstances",
+        "principal": "pl-prod-ec2-005-to-admin-starting-user",
         "purpose": "monitor instance launch and verify user data execution"
       },
       {
         "permission": "sts:GetCallerIdentity",
+        "principal": "pl-prod-ec2-005-to-admin-starting-user",
         "purpose": "verify privilege escalation was successful"
       }
     ]
@@ -181,6 +189,13 @@
         "to": "ec2-instance",
         "label": "ec2:RunInstances",
         "description": "Launch an EC2 instance using the modified launch template. The instance receives the admin instance profile and executes the malicious user data.\n",
+        "hints": [
+          "With the default version updated, the next instance launched from this template will carry your payload.",
+          "Check whether an Auto Scaling Group is already associated with this launch template -- if so, you may be able to trigger a launch by adjusting the ASG's desired capacity.",
+          "Use autoscaling:DescribeAutoScalingGroups to identify which ASG references this template, then increase desired capacity to trigger the launch.",
+          "If no ASG is present, you can launch an instance directly using ec2:RunInstances with the launch template reference.",
+          "Monitor the new instance with ec2:DescribeInstances to confirm it reaches the running state before waiting for the user data to execute."
+        ],
         "commands": [
           {
             "description": "Launch an EC2 instance using the modified template",
@@ -193,6 +208,12 @@
         "to": "target-role",
         "label": "iam:AttachUserPolicy (via user data)",
         "description": "The instance launches with the admin instance profile (pl-prod-ec2-005-to-admin-target-role) and executes the malicious user data script. The script uses the instance's admin credentials to attach AdministratorAccess to the starting user, completing the privilege escalation.\n",
+        "hints": [
+          "The instance boots with the admin instance profile -- the user data script runs as that role automatically.",
+          "The script you injected into user data calls iam:AttachUserPolicy on the starting user using the instance's own credentials from IMDS.",
+          "Wait 2-3 minutes after the instance reaches the running state, then check whether AdministratorAccess has been attached to the starting user.",
+          "Use iam:ListAttachedUserPolicies on the starting user to confirm the policy attachment completed successfully."
+        ],
         "commands": [
           {
             "description": "Verify admin access after user data executes",

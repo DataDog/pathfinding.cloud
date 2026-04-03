@@ -1,5 +1,5 @@
 {
-  "displayName": "One-Hop Privilege Escalation: iam:AttachRolePolicy + sts:AssumeRole",
+  "displayName": "IAM Policy Attachment + Role Assumption to Admin",
   "name": "iam-014-iam-attachrolepolicy+sts-assumerole",
   "description": "Attaching administrator policy to an assumable role to gain admin access",
   "costEstimate": "$0/mo",
@@ -29,16 +29,18 @@
     "modulePath": "modules/scenarios/single-account/privesc-one-hop/to-admin/iam-014-iam-attachrolepolicy+sts-assumerole"
   },
   "githubUrl": "https://github.com/DataDog/pathfinding-labs/tree/main/modules/scenarios/single-account/privesc-one-hop/to-admin/iam-014-iam-attachrolepolicy+sts-assumerole",
-  "schemaVersion": "3.0.0",
+  "schemaVersion": "4.0.0",
   "permissions": {
     "required": [
       {
         "permission": "iam:AttachRolePolicy",
+        "principal": "pl-prod-iam-014-to-admin-starting-user",
         "resource": "arn:aws:iam::*:role/pl-prod-iam-014-to-admin-target-role",
         "description": "attach managed policies to the target role"
       },
       {
         "permission": "sts:AssumeRole",
+        "principal": "pl-prod-iam-014-to-admin-starting-user",
         "resource": "arn:aws:iam::*:role/pl-prod-iam-014-to-admin-target-role",
         "description": "assume the target role after elevating its permissions"
       }
@@ -46,14 +48,17 @@
     "helpful": [
       {
         "permission": "iam:ListRoles",
+        "principal": "pl-prod-iam-014-to-admin-starting-user",
         "purpose": "discover available roles that can be modified"
       },
       {
         "permission": "iam:GetRole",
+        "principal": "pl-prod-iam-014-to-admin-starting-user",
         "purpose": "view role trust policies to identify assumable roles"
       },
       {
         "permission": "iam:ListAttachedRolePolicies",
+        "principal": "pl-prod-iam-014-to-admin-starting-user",
         "purpose": "view current role permissions before and after modification"
       }
     ]
@@ -118,37 +123,33 @@
       {
         "from": "starting-user",
         "to": "target-role",
-        "label": "iam:AttachRolePolicy",
-        "description": "Attach the AWS-managed AdministratorAccess policy to the target role, elevating its permissions from minimal to full administrator.\n",
+        "label": "iam:AttachRolePolicy + sts:AssumeRole",
+        "description": "Attach the AWS-managed AdministratorAccess policy to the target role to elevate its permissions from minimal to full administrator, then assume the newly-privileged role to obtain temporary administrative credentials.\n",
         "hints": [
-          "You have write access to a role's policy configuration.",
-          "Look for roles you can both modify and assume.",
+          "Start by understanding what roles exist in the account and what permissions they currently have.",
+          "Use iam:ListRoles and iam:ListAttachedRolePolicies to discover roles and their current policy attachments.",
+          "Look for roles you have write access to -- specifically, roles where you can attach managed policies.",
+          "Once you identify a role with no admin policies attached, consider which well-known AWS-managed policies grant broad permissions.",
+          "After modifying the role's policies, you still need a way to use those permissions -- check whether you can assume the role.",
+          "IAM policy changes take a moment to propagate; wait at least 15 seconds after attaching the policy before attempting to assume the role.",
           "Browse to https://pathfinding.cloud/paths/iam-014 for technique details."
         ],
         "commands": [
           {
+            "description": "Check current policies attached to the target role",
+            "command": "aws iam list-attached-role-policies --role-name pl-prod-iam-014-to-admin-target-role --query 'AttachedPolicies[*].[PolicyName,PolicyArn]' --output table"
+          },
+          {
             "description": "Attach AdministratorAccess to the target role",
             "command": "aws iam attach-role-policy --role-name pl-prod-iam-014-to-admin-target-role --policy-arn arn:aws:iam::aws:policy/AdministratorAccess"
-          }
-        ]
-      },
-      {
-        "from": "starting-user",
-        "to": "target-role",
-        "label": "sts:AssumeRole",
-        "description": "Assume the now-privileged target role to obtain temporary credentials with full administrative access.\n",
-        "hints": [
-          "This role can be assumed after its permissions are modified.",
-          "Attach a managed policy with broad permissions before assuming the role."
-        ],
-        "commands": [
+          },
           {
-            "description": "Assume the target role",
+            "description": "Assume the target role to obtain temporary admin credentials",
             "command": "aws sts assume-role --role-arn arn:aws:iam::{account_id}:role/pl-prod-iam-014-to-admin-target-role --role-session-name escalation-session"
           },
           {
-            "description": "Verify admin access",
-            "command": "aws iam list-users --max-items 1"
+            "description": "Verify admin access with the assumed role credentials",
+            "command": "aws iam list-users --max-items 3 --output table"
           }
         ]
       }

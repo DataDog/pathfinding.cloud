@@ -1,5 +1,5 @@
 {
-  "displayName": "Multi-Hop Privilege Escalation via AssumeRole and ECS Fargate",
+  "displayName": "Role Assumption + ECS Service Creation to Admin",
   "name": "sts-001-to-ecs-002-to-admin",
   "description": "Assume a role with ECS permissions, then use PassRole combined with ECS Fargate to run a task with an administrative role",
   "costEstimate": "~$1/mo (ECS Fargate tasks incur minimal charges when run briefly for demonstrations)",
@@ -30,55 +30,65 @@
     "modulePath": "modules/scenarios/single-account/privesc-multi-hop/to-admin/sts-001-to-ecs-002-to-admin"
   },
   "githubUrl": "https://github.com/DataDog/pathfinding-labs/tree/main/modules/scenarios/single-account/privesc-multi-hop/to-admin/sts-001-to-ecs-002-to-admin",
-  "schemaVersion": "3.0.0",
+  "schemaVersion": "4.0.0",
   "permissions": {
     "required": [
       {
         "permission": "sts:AssumeRole",
+        "principal": "pl-prod-sts001-ecs002-starting-user",
         "resource": "arn:aws:iam::*:role/pl-prod-sts001-ecs002-intermediate-role",
         "description": "allows assuming the intermediate role (Hop 1)"
       },
       {
         "permission": "iam:PassRole",
+        "principal": "pl-prod-sts001-ecs002-intermediate-role",
         "resource": "arn:aws:iam::*:role/pl-prod-sts001-ecs002-admin-role",
-        "description": "allows attaching the admin role to an ECS task definition (held by intermediate role)"
+        "description": "allows attaching the admin role to an ECS task definition (Hop 2)"
       },
       {
         "permission": "ecs:CreateCluster",
+        "principal": "pl-prod-sts001-ecs002-intermediate-role",
         "resource": "*",
-        "description": "allows creating an ECS cluster to host the malicious task (held by intermediate role)"
+        "description": "allows creating an ECS cluster to host the malicious task (Hop 2)"
       },
       {
         "permission": "ecs:RegisterTaskDefinition",
+        "principal": "pl-prod-sts001-ecs002-intermediate-role",
         "resource": "*",
-        "description": "allows registering a task definition with the admin role attached (held by intermediate role)"
+        "description": "allows registering a task definition with the admin role attached (Hop 2)"
       },
       {
         "permission": "ecs:RunTask",
+        "principal": "pl-prod-sts001-ecs002-intermediate-role",
         "resource": "*",
-        "description": "allows launching the Fargate task that escalates privileges (held by intermediate role)"
+        "description": "allows launching the Fargate task that escalates privileges (Hop 2)"
       }
     ],
     "helpful": [
       {
-        "permission": "ec2:DescribeVpcs",
-        "purpose": "Find default VPC for Fargate network configuration"
-      },
-      {
-        "permission": "ec2:DescribeSubnets",
-        "purpose": "Find subnets for Fargate network configuration"
-      },
-      {
-        "permission": "ecs:DescribeTasks",
-        "purpose": "Monitor task status and completion"
-      },
-      {
         "permission": "iam:ListRoles",
-        "purpose": "Discover available roles that trust ecs-tasks.amazonaws.com"
+        "principal": "pl-prod-sts001-ecs002-starting-user",
+        "purpose": "discover available roles that trust ecs-tasks.amazonaws.com"
       },
       {
         "permission": "iam:GetRole",
-        "purpose": "View role permissions and trust policies"
+        "principal": "pl-prod-sts001-ecs002-starting-user",
+        "purpose": "view role permissions and trust policies before assuming"
+      },
+      {
+        "permission": "ec2:DescribeVpcs",
+        "principal": "pl-prod-sts001-ecs002-intermediate-role",
+        "purpose": "find the default VPC for Fargate network configuration"
+      },
+      {
+        "permission": "ec2:DescribeSubnets",
+        "principal": "pl-prod-sts001-ecs002-intermediate-role",
+        "purpose": "find subnets for Fargate network configuration"
+      },
+      {
+        "permission": "ecs:DescribeTasks",
+        "principal": "pl-prod-sts001-ecs002-intermediate-role",
+        "purpose": "monitor task status and completion"
       }
     ]
   },
@@ -152,7 +162,7 @@
         "subType": "iam-role",
         "isTarget": true,
         "arn": "arn:aws:iam::{account_id}:role/pl-prod-sts001-ecs002-admin-role",
-        "description": "This IAM role has AdministratorAccess and trusts ecs-tasks.amazonaws.com. By attaching it as the task role in an ECS task definition and running that task on Fargate, the container receives temporary credentials for this role via the ECS credential provider endpoint. Extracting those credentials gives you full administrative access to the AWS account.\n"
+        "description": "This IAM role has AdministratorAccess and trusts ecs-tasks.amazonaws.com. By attaching it as the task role in an ECS task definition and running that task on Fargate, the container receives temporary credentials for this role via the ECS credential provider endpoint. The container uses those credentials to attach AdministratorAccess to the starting user, granting persistent escalated access.\n"
       }
     ],
     "edges": [
@@ -162,9 +172,11 @@
         "label": "sts:AssumeRole",
         "description": "Assume the intermediate role to obtain temporary credentials with ECS management permissions and iam:PassRole on the admin role.\n",
         "hints": [
-          "You can assume roles in this account. Think about what roles might be available.",
-          "Look for roles whose trust policy allows this user to assume them and check what permissions those roles have.",
-          "Browse to https://pathfinding.cloud/paths/sts-001 for technique details."
+          "Your starting user has a very narrow permission set. Check which roles it's allowed to assume.",
+          "Use iam:ListRoles or review the starting user's attached policies to identify which role ARN is in the resource condition.",
+          "Once you find the assumable role, examine its permissions before assuming it -- iam:GetRole and iam:ListRolePolicies can reveal what you'll gain.",
+          "Assume the intermediate role using sts:AssumeRole and export the returned temporary credentials as environment variables.",
+          "Browse to https://pathfinding.cloud/paths/sts-001 for technique details on this hop."
         ],
         "commands": [
           {
@@ -179,9 +191,12 @@
         "label": "ecs:CreateCluster + ecs:RegisterTaskDefinition + iam:PassRole",
         "description": "Create an ECS cluster, then register a task definition that specifies the admin role as the task role. The iam:PassRole permission allows attaching the admin role to the task definition, which is the key escalation step.\n",
         "hints": [
-          "This role can create ECS infrastructure. Think about what you could run with it.",
-          "You can pass a role to an ECS task definition. Which roles trust ecs-tasks.amazonaws.com?",
-          "Browse to https://pathfinding.cloud/paths/ecs-002 for technique details."
+          "Now that you hold the intermediate role, enumerate its permissions. What AWS services can it interact with?",
+          "This role can create ECS resources. Think about how you could run arbitrary code in the account using Fargate.",
+          "ECS Fargate tasks need network configuration. Use ec2:DescribeVpcs and ec2:DescribeSubnets to find the default VPC and a subnet.",
+          "The key escalation step is in the task definition's taskRoleArn field. Use iam:ListRoles to find roles that trust ecs-tasks.amazonaws.com.",
+          "When registering the task definition, set both taskRoleArn and executionRoleArn to the admin role ARN. The container command should call iam:AttachUserPolicy to grant AdministratorAccess to the starting user.",
+          "Browse to https://pathfinding.cloud/paths/ecs-002 for technique details on this hop."
         ],
         "commands": [
           {
@@ -206,18 +221,21 @@
         "from": "ecs-cluster",
         "to": "admin-role",
         "label": "ecs:RunTask -> task role credentials",
-        "description": "Run the Fargate task. When the container starts, AWS injects temporary credentials for the admin role via the ECS metadata endpoint. The container uses those credentials to attach AdministratorAccess to the starting user, granting permanent escalated access.\n",
+        "description": "Run the Fargate task. When the container starts, AWS injects temporary credentials for the admin role via the ECS metadata endpoint. The container uses those credentials to attach AdministratorAccess to the starting user, granting persistent escalated access.\n",
         "hints": [
-          "You need a cluster to run a task. Create one, then register a task definition with an admin role."
+          "Run the task with ecs:RunTask against your newly created cluster, specifying FARGATE launch type and providing the VPC subnet you identified.",
+          "After launching, monitor the task status with ecs:DescribeTasks until it reaches STOPPED state.",
+          "A zero exit code from the container means the iam:AttachUserPolicy call succeeded. Wait for IAM propagation (about 15 seconds) before testing your new permissions.",
+          "Switch back to your starting user credentials and call iam:ListUsers to confirm AdministratorAccess was successfully attached."
         ],
         "commands": [
           {
             "description": "Run the Fargate task",
-            "command": "aws ecs run-task --cluster pl-prod-sts001-ecs002-attack-cluster --task-definition pl-prod-sts001-ecs002-attack-task --launch-type FARGATE --network-configuration \"awsvpcConfiguration={subnets=[$SUBNET_ID],assignPublicIp=ENABLED}\""
+            "command": "aws ecs run-task --cluster pl-prod-sts001-ecs002-attack-cluster --task-definition pl-sts001-ecs002-admin-escalation --launch-type FARGATE --network-configuration \"awsvpcConfiguration={subnets=[$SUBNET_ID],assignPublicIp=ENABLED}\""
           },
           {
             "description": "Wait for the task to complete",
-            "command": "aws ecs wait tasks-stopped --cluster pl-prod-sts001-ecs002-attack-cluster --tasks $TASK_ARN"
+            "command": "aws ecs describe-tasks --cluster pl-prod-sts001-ecs002-attack-cluster --tasks $TASK_ARN --query 'tasks[0].lastStatus' --output text"
           },
           {
             "description": "Verify administrative access",

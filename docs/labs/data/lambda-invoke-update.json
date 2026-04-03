@@ -1,5 +1,5 @@
 {
-  "displayName": "Cross-Account Lambda Function Code Update Attack",
+  "displayName": "Dev to Prod via Lambda Code Injection to Admin",
   "name": "lambda-invoke-update",
   "description": "Cross-account Lambda function code injection to extract admin credentials",
   "costEstimate": "$0/mo",
@@ -34,16 +34,18 @@
     "modulePath": "modules/scenarios/cross-account/dev-to-prod/multi-hop/lambda-invoke-update"
   },
   "githubUrl": "https://github.com/DataDog/pathfinding-labs/tree/main/modules/scenarios/cross-account/dev-to-prod/multi-hop/lambda-invoke-update",
-  "schemaVersion": "3.0.0",
+  "schemaVersion": "4.0.0",
   "permissions": {
     "required": [
       {
         "permission": "lambda:UpdateFunctionCode",
+        "principal": "pl-pathfinding-starting-user-dev",
         "resource": "arn:aws:lambda:*:{prod_account_id}:function/*",
         "description": "allows replacing the prod Lambda function's code with a malicious payload"
       },
       {
         "permission": "lambda:InvokeFunction",
+        "principal": "pl-pathfinding-starting-user-dev",
         "resource": "arn:aws:lambda:*:{prod_account_id}:function/*",
         "description": "allows executing the now-malicious function to retrieve the execution role credentials"
       }
@@ -51,10 +53,12 @@
     "helpful": [
       {
         "permission": "lambda:ListFunctions",
+        "principal": "pl-pathfinding-starting-user-dev",
         "purpose": "discover Lambda functions in the prod account"
       },
       {
         "permission": "lambda:GetFunction",
+        "principal": "pl-pathfinding-starting-user-dev",
         "purpose": "view Lambda function configuration and identify its execution role"
       }
     ]
@@ -138,9 +142,11 @@
         "label": "sts:AssumeRole",
         "description": "The dev starting user assumes the pl-dev-lambda-invoke-role using STS AssumeRole, obtaining temporary credentials with cross-account Lambda permissions.\n",
         "hints": [
-          "You have credentials for a dev account IAM user. What roles can you assume?",
-          "Look for roles with cross-account permissions, especially to Lambda functions in prod.",
-          "Assume the dev Lambda invoke role to gain cross-account Lambda update and invoke permissions."
+          "Start by confirming your identity with sts:GetCallerIdentity and listing what IAM roles exist in the dev account.",
+          "Look for roles whose names suggest Lambda or deployment permissions -- check their trust policies to see which principals can assume them.",
+          "Use iam:GetRole and iam:ListRolePolicies to inspect the role's trust policy and attached permissions before assuming it.",
+          "Assume the dev Lambda invoke role with sts:AssumeRole to get temporary credentials that carry cross-account Lambda permissions.",
+          "After assuming the role, export the returned AccessKeyId, SecretAccessKey, and SessionToken as environment variables before proceeding."
         ],
         "commands": [
           {
@@ -155,9 +161,12 @@
         "label": "lambda:UpdateFunctionCode",
         "description": "The dev role updates the prod Lambda function's code with a malicious Python payload that extracts the execution role's temporary credentials from the Lambda runtime environment when invoked.\n",
         "hints": [
-          "This role can modify Lambda function code in another account. What can you do with that?",
-          "Update the prod Lambda function with code that extracts its execution role credentials.",
-          "After updating the function code, invoke it to receive the extracted credentials."
+          "You now hold cross-account Lambda permissions. Use lambda:ListFunctions to discover what functions exist in the prod account.",
+          "Use lambda:GetFunction to inspect the target function's configuration -- pay attention to its Role field, which tells you what execution role it runs as.",
+          "Lambda functions have access to their execution role's temporary credentials via the AWS SDK at runtime. A function that returns those credentials gives you the role.",
+          "Craft a minimal Python handler that calls boto3.Session().get_credentials() and returns the result, then package it as a zip file.",
+          "Upload your payload using lambda:UpdateFunctionCode targeting the prod function's full ARN. Wait a few seconds for the update to finish before invoking.",
+          "Browse to https://pathfinding.cloud/paths/lambda-invoke-update for technique details on cross-account Lambda code injection."
         ],
         "commands": [
           {
@@ -166,7 +175,7 @@
           },
           {
             "description": "Update the prod Lambda function code",
-            "command": "aws lambda update-function-code \\\n  --function-name pl-prod-hello-world \\\n  --zip-file fileb:///tmp/malicious_lambda.zip \\\n  --region us-east-1\n"
+            "command": "aws lambda update-function-code \\\n  --function-name pl-prod-hello-world \\\n  --zip-file fileb:///tmp/malicious_lambda.zip \\\n  --region us-west-2\n"
           }
         ]
       },
@@ -176,14 +185,14 @@
         "label": "lambda:InvokeFunction",
         "description": "The dev role invokes the now-malicious prod Lambda function, which executes in the context of the prod Lambda execution role and returns its temporary credentials in the response payload.\n",
         "hints": [
-          "This Lambda function's resource policy allows a dev account role to update its code.",
-          "Upload a Python payload that reads credentials from the Lambda runtime environment variables.",
-          "Invoke the function after updating it to receive the execution role credentials."
+          "After updating the function code, invoke it using lambda:InvokeFunction with an empty payload.",
+          "The response body will be a JSON string -- parse it to extract the access key, secret key, and session token.",
+          "Export the extracted credentials as AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, and AWS_SESSION_TOKEN to operate as the prod Lambda execution role."
         ],
         "commands": [
           {
             "description": "Invoke the malicious Lambda function to extract credentials",
-            "command": "aws lambda invoke \\\n  --function-name pl-prod-hello-world \\\n  --region us-east-1 \\\n  --payload '{}' \\\n  /tmp/response.json && cat /tmp/response.json | jq -r '.body | fromjson'\n"
+            "command": "aws lambda invoke \\\n  --function-name pl-prod-hello-world \\\n  --region us-west-2 \\\n  --payload '{}' \\\n  /tmp/response.json && cat /tmp/response.json | jq -r '.body | fromjson'\n"
           }
         ]
       },
@@ -192,10 +201,19 @@
         "to": "target-role",
         "label": "credential extraction",
         "description": "The malicious Lambda function reads its execution role's temporary credentials from the runtime environment (available to all Lambda functions via the AWS SDK) and returns them in the function response, giving the attacker full administrative access to the prod account.\n",
+        "hints": [
+          "The JSON response from invoking the Lambda function contains the execution role's temporary credentials -- extract all three fields: access key, secret key, and session token.",
+          "Export the credentials and confirm your new identity with sts:GetCallerIdentity to verify you are now the prod Lambda execution role.",
+          "Test admin access by calling iam:ListUsers or another privileged action -- the execution role has AdministratorAccess."
+        ],
         "commands": [
           {
             "description": "Verify admin access using extracted credentials",
             "command": "export AWS_ACCESS_KEY_ID=<extracted_access_key_id>\nexport AWS_SECRET_ACCESS_KEY=<extracted_secret_access_key>\nexport AWS_SESSION_TOKEN=<extracted_session_token>\naws sts get-caller-identity\n"
+          },
+          {
+            "description": "Confirm full administrative access",
+            "command": "aws iam list-users --max-items 5\n"
           }
         ]
       }

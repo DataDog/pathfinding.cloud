@@ -1,5 +1,5 @@
 {
-  "displayName": "Exclusive S3 Bucket Access Through Restrictive Resource Policy",
+  "displayName": "Tool Testing: Exclusive Resource Policy Access to Bucket",
   "name": "exclusive-resource-policy",
   "description": "Access S3 bucket with exclusive resource policy that denies all except specific role",
   "costEstimate": "$0/mo",
@@ -31,11 +31,12 @@
     "modulePath": "modules/scenarios/tool-testing/exclusive-resource-policy"
   },
   "githubUrl": "https://github.com/DataDog/pathfinding-labs/tree/main/modules/scenarios/tool-testing/exclusive-resource-policy",
-  "schemaVersion": "3.0.0",
+  "schemaVersion": "4.0.0",
   "permissions": {
     "required": [
       {
         "permission": "sts:AssumeRole",
+        "principal": "pl-pathfinding-starting-user-prod",
         "resource": "arn:aws:iam::*:role/pl-exclusive-bucket-access-role",
         "description": "allows the starting user to assume the exclusive bucket access role"
       }
@@ -43,10 +44,12 @@
     "helpful": [
       {
         "permission": "iam:ListRoles",
+        "principal": "pl-pathfinding-starting-user-prod",
         "purpose": "discover roles with exclusive bucket access"
       },
       {
         "permission": "s3:GetBucketPolicy",
+        "principal": "pl-pathfinding-starting-user-prod",
         "purpose": "view the bucket resource policy to understand the exclusive-access grant"
       }
     ]
@@ -122,11 +125,17 @@
         "label": "sts:AssumeRole",
         "description": "The starting user assumes the exclusive bucket access role. The role's trust policy allows assumption by the pathfinding starting user.\n",
         "hints": [
-          "You can assume roles in this account. Look for roles that may have privileged access.",
-          "Check which roles this user can assume, and what resources those roles can access beyond their identity policy.",
-          "A role with minimal IAM permissions may still have access via a resource-based policy on an S3 bucket."
+          "Start by discovering what roles exist in this account and which ones trust your starting user.",
+          "Use iam:ListRoles to enumerate roles, then check each trust policy for a principal that matches your starting user.",
+          "Look for roles whose names suggest a specific or restricted purpose \u2014 those are often the interesting ones.",
+          "Once you find a candidate role, use sts:AssumeRole to assume it and see what you can do from there.",
+          "Don't dismiss a role just because its identity policy looks minimal \u2014 the interesting access may not be in the identity policy at all."
         ],
         "commands": [
+          {
+            "description": "List roles and check trust policies to find assumable roles",
+            "command": "aws iam list-roles --query 'Roles[*].{Name:RoleName,TrustPolicy:AssumeRolePolicyDocument}'"
+          },
           {
             "description": "Assume the exclusive bucket access role",
             "command": "aws sts assume-role --role-arn arn:aws:iam::{account_id}:role/pl-exclusive-bucket-access-role --role-session-name exclusive-access-demo"
@@ -139,9 +148,12 @@
         "label": "s3:GetObject / s3:PutObject (via resource policy)",
         "description": "Although the role's identity policy only contains s3:ListAllMyBuckets, the bucket's resource policy grants this role full read/write access. The effective permissions evaluation allows the access because both the resource policy allows it and there is no explicit deny from the identity policy side.\n",
         "hints": [
-          "This role's IAM policy looks minimal \u2014 but look beyond the identity policy.",
-          "Check the resource policies on S3 buckets for explicit grants to this role.",
-          "The bucket policy uses a Deny with StringNotEquals to block everyone else."
+          "You are now operating as pl-exclusive-bucket-access-role. Start by listing what S3 buckets exist in this account.",
+          "The role's identity policy only shows s3:ListAllMyBuckets \u2014 but effective access in AWS is the union of identity and resource policies.",
+          "Look for S3 buckets with resource policies that explicitly grant access to this role. Use s3:GetBucketPolicy on buckets you discover.",
+          "The bucket policy uses a Deny with StringNotEquals on aws:PrincipalArn to block everyone except this role \u2014 check each statement carefully.",
+          "Once you confirm the resource policy grants you access, try listing objects in the bucket and reading their contents.",
+          "Test write access as well \u2014 resource policies can grant s3:PutObject independently of what the identity policy says."
         ],
         "commands": [
           {
@@ -155,6 +167,10 @@
           {
             "description": "Read sensitive data from the exclusive bucket",
             "command": "aws s3 cp s3://pl-exclusive-sensitive-data-bucket-{account_id}/sensitive-data.txt ."
+          },
+          {
+            "description": "Inspect the bucket resource policy to understand the exclusive-access structure",
+            "command": "aws s3api get-bucket-policy --bucket pl-exclusive-sensitive-data-bucket-{account_id} --query Policy --output text | jq '.'"
           }
         ]
       }

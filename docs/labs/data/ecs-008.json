@@ -1,5 +1,5 @@
 {
-  "displayName": "Privilege Escalation via iam:PassRole + ecs:RunTask (Command Override)",
+  "displayName": "ECS Run Task to Admin",
   "name": "ecs-008-iam-passrole+ecs-runtask",
   "description": "Overriding ECS task definition commands and task role at runtime via ecs:RunTask to escalate to admin without ecs:RegisterTaskDefinition",
   "costEstimate": "$0/mo",
@@ -31,15 +31,17 @@
     "modulePath": "modules/scenarios/single-account/privesc-one-hop/to-admin/ecs-008-iam-passrole+ecs-runtask"
   },
   "githubUrl": "https://github.com/DataDog/pathfinding-labs/tree/main/modules/scenarios/single-account/privesc-one-hop/to-admin/ecs-008-iam-passrole+ecs-runtask",
-  "schemaVersion": "3.0.0",
+  "schemaVersion": "4.0.0",
   "permissions": {
     "required": [
       {
         "permission": "iam:PassRole",
+        "principal": "pl-prod-ecs-008-to-admin-starting-user",
         "resource": "arn:aws:iam::*:role/pl-prod-ecs-008-to-admin-target-role"
       },
       {
         "permission": "ecs:RunTask",
+        "principal": "pl-prod-ecs-008-to-admin-starting-user",
         "resource": "*",
         "description": "allows launching ECS tasks against any cluster or task definition"
       }
@@ -47,34 +49,42 @@
     "helpful": [
       {
         "permission": "ecs:ListTaskDefinitions",
+        "principal": "pl-prod-ecs-008-to-admin-starting-user",
         "purpose": "discover existing task definitions to exploit"
       },
       {
         "permission": "ecs:DescribeTasks",
+        "principal": "pl-prod-ecs-008-to-admin-starting-user",
         "purpose": "monitor task execution status and verify task completion"
       },
       {
         "permission": "ecs:ListClusters",
+        "principal": "pl-prod-ecs-008-to-admin-starting-user",
         "purpose": "discover available ECS clusters"
       },
       {
         "permission": "ecs:StopTask",
+        "principal": "pl-prod-ecs-008-to-admin-starting-user",
         "purpose": "stop running tasks during cleanup"
       },
       {
         "permission": "ec2:DescribeVpcs",
+        "principal": "pl-prod-ecs-008-to-admin-starting-user",
         "purpose": "find default VPC for Fargate task network configuration"
       },
       {
         "permission": "ec2:DescribeSubnets",
+        "principal": "pl-prod-ecs-008-to-admin-starting-user",
         "purpose": "find subnet in default VPC for Fargate task network configuration"
       },
       {
         "permission": "iam:DetachUserPolicy",
+        "principal": "pl-prod-ecs-008-to-admin-starting-user",
         "purpose": "remove admin policy from starting user during cleanup"
       },
       {
         "permission": "iam:ListAttachedUserPolicies",
+        "principal": "pl-prod-ecs-008-to-admin-starting-user",
         "purpose": "verify privilege escalation success by listing attached policies"
       }
     ]
@@ -179,6 +189,12 @@
         "to": "target-role",
         "label": "assumes role + iam:AttachUserPolicy",
         "description": "The Fargate task assumes the admin role via the taskRoleArn override. The ECS platform injects temporary credentials for this role into the task container automatically. Running as the admin role, the task calls iam:AttachUserPolicy to attach AdministratorAccess to the starting user. After the task completes, the attacker uses their original credentials to verify and exercise full admin access.\n",
+        "hints": [
+          "Poll the task status using ecs:DescribeTasks until the task reports STOPPED -- this confirms the injected command has finished executing.",
+          "Use iam:ListAttachedUserPolicies on your starting user to verify that AdministratorAccess was successfully attached after the task stops.",
+          "Wait a few seconds after the task stops before checking IAM -- policy attachments can take a moment to propagate across AWS infrastructure.",
+          "Once the policy is attached, confirm admin access by attempting a privileged operation such as listing IAM users -- this should now succeed."
+        ],
         "commands": [
           {
             "description": "Verify privilege escalation succeeded",

@@ -1,5 +1,5 @@
 {
-  "displayName": "Privilege Escalation via apprunner:UpdateService",
+  "displayName": "App Runner Service Update to Admin",
   "name": "apprunner-002-apprunner-updateservice",
   "description": "Update existing App Runner service to execute privilege escalation commands",
   "costEstimate": "$10/mo",
@@ -31,11 +31,12 @@
     "modulePath": "modules/scenarios/single-account/privesc-one-hop/to-admin/apprunner-002-apprunner-updateservice"
   },
   "githubUrl": "https://github.com/DataDog/pathfinding-labs/tree/main/modules/scenarios/single-account/privesc-one-hop/to-admin/apprunner-002-apprunner-updateservice",
-  "schemaVersion": "3.0.0",
+  "schemaVersion": "4.0.0",
   "permissions": {
     "required": [
       {
         "permission": "apprunner:UpdateService",
+        "principal": "pl-prod-apprunner-002-to-admin-starting-user",
         "resource": "arn:aws:apprunner:{region}:{account_id}:service/pl-prod-apprunner-002-to-admin-target-service/*",
         "description": "modify the existing service configuration to inject a malicious StartCommand"
       }
@@ -43,14 +44,17 @@
     "helpful": [
       {
         "permission": "apprunner:DescribeService",
+        "principal": "pl-prod-apprunner-002-to-admin-starting-user",
         "purpose": "view service configuration and verify the privileged role attached"
       },
       {
         "permission": "apprunner:ListServices",
+        "principal": "pl-prod-apprunner-002-to-admin-starting-user",
         "purpose": "discover existing App Runner services to exploit"
       },
       {
         "permission": "iam:ListUsers",
+        "principal": "pl-prod-apprunner-002-to-admin-starting-user",
         "purpose": "verify admin access after escalation"
       }
     ]
@@ -125,6 +129,15 @@
         "to": "apprunner-service",
         "label": "apprunner:UpdateService",
         "description": "Update the App Runner service configuration to replace the container image with the AWS CLI image and set a StartCommand that attaches AdministratorAccess to the starting user.\n",
+        "hints": [
+          "Use your apprunner:ListServices permission to discover existing services in the account and find one that looks interesting.",
+          "Once you have a service ARN, use apprunner:DescribeService to inspect its configuration \u2014 pay close attention to the InstanceConfiguration section.",
+          "Notice the role attached to the service's InstanceConfiguration. Use iam:ListAttachedRolePolicies to understand what that role can do.",
+          "App Runner services support a StartCommand field in ImageConfiguration. Think about what happens if you swap the container image and control the StartCommand.",
+          "The public AWS CLI container (public.ecr.aws/aws-cli/aws-cli:latest) has /usr/local/bin/aws as its entrypoint \u2014 any StartCommand you set becomes arguments passed directly to the aws binary.",
+          "The service role's permissions are what execute your StartCommand. If the role has iam:AttachUserPolicy, you can attach any managed policy to any user.",
+          "Browse to https://pathfinding.cloud/paths/apprunner-002 for technique details and to see the full attack path."
+        ],
         "commands": [
           {
             "description": "Get current service ARN and configuration",
@@ -145,6 +158,12 @@
         "to": "target-role",
         "label": "runs with role",
         "description": "The App Runner service executes with the privileged IAM role attached to it. When the service starts with the new configuration, all AWS API calls are made using this role's credentials. The AWS CLI container executes the StartCommand as the privileged role, attaching the AdministratorAccess managed policy to the starting user, granting full administrative access to the AWS account.\n",
+        "hints": [
+          "After triggering the update, the service needs time to redeploy \u2014 App Runner will pull the new container and restart (typically 3-5 minutes).",
+          "Poll the service status with apprunner:DescribeService until it returns RUNNING. Once it does, the StartCommand has already executed.",
+          "Wait a few seconds for IAM policy propagation, then verify your escalation by attempting an IAM call you previously couldn't make.",
+          "Try aws iam list-users or aws iam list-attached-user-policies on your own user to confirm that AdministratorAccess has been attached."
+        ],
         "commands": [
           {
             "description": "Verify administrator access with original starting user credentials",

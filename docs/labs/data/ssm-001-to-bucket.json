@@ -1,5 +1,5 @@
 {
-  "displayName": "One-Hop Privilege Escalation: ssm:StartSession to EC2 with S3 Bucket Access",
+  "displayName": "SSM Session Start to Bucket",
   "name": "ssm-001-ssm-startsession",
   "description": "Start interactive shell sessions on EC2 instances with S3 access roles to extract credentials via IMDS and access sensitive buckets",
   "costEstimate": "$5/mo",
@@ -31,29 +31,34 @@
     "modulePath": "modules/scenarios/single-account/privesc-one-hop/to-bucket/ssm-001-ssm-startsession"
   },
   "githubUrl": "https://github.com/DataDog/pathfinding-labs/tree/main/modules/scenarios/single-account/privesc-one-hop/to-bucket/ssm-001-ssm-startsession",
-  "schemaVersion": "3.0.0",
+  "schemaVersion": "4.0.0",
   "permissions": {
     "required": [
       {
         "permission": "ssm:StartSession",
+        "principal": "pl-prod-ssm-001-to-bucket-starting-user",
         "resource": "arn:aws:ec2:*:{account_id}:instance/{target_instance_id}"
       }
     ],
     "helpful": [
       {
         "permission": "ec2:DescribeInstances",
+        "principal": "pl-prod-ssm-001-to-bucket-starting-user",
         "purpose": "discover target EC2 instances and their attached instance profiles"
       },
       {
         "permission": "ssm:DescribeInstanceInformation",
+        "principal": "pl-prod-ssm-001-to-bucket-starting-user",
         "purpose": "identify which instances have the SSM agent running and are reachable"
       },
       {
         "permission": "sts:GetCallerIdentity",
+        "principal": "pl-prod-ssm-001-to-bucket-starting-user",
         "purpose": "verify credentials after exfiltration from IMDS"
       },
       {
         "permission": "s3:ListBucket",
+        "principal": "pl-prod-ssm-001-to-bucket-starting-user",
         "purpose": "enumerate bucket contents after gaining access via extracted credentials"
       }
     ]
@@ -137,9 +142,11 @@
         "label": "ssm:StartSession",
         "description": "Start an interactive shell session on the target EC2 instance using SSM Session Manager. No SSH keys, bastion hosts, or open network ports are required.\n",
         "hints": [
-          "You can interact with compute resources in this account.",
-          "Look for EC2 instances that have IAM roles with interesting permissions.",
-          "SSM Session Manager gives you shell-level access without SSH keys or open ports.",
+          "Your starting user has a permission that lets you interact with compute resources in this account \u2014 look at the policy carefully.",
+          "Use ec2:DescribeInstances to list running instances and inspect which ones have IAM instance profiles attached.",
+          "Use ssm:DescribeInstanceInformation to confirm which instances have the SSM agent running and are in Online state.",
+          "SSM Session Manager gives you interactive shell access without SSH keys, open ports, or a bastion host \u2014 purely via AWS API.",
+          "Review the policy attached to your starting user to see which specific instance resource ARN is permitted.",
           "Browse to https://pathfinding.cloud/paths/ssm-001 for technique details."
         ],
         "commands": [
@@ -159,9 +166,10 @@
         "label": "curl IMDS",
         "description": "From within the SSM shell session, query the Instance Metadata Service to retrieve the temporary credentials of the EC2 instance role. IMDSv2 requires a token first.\n",
         "hints": [
-          "This instance has an IAM role attached. What permissions does that role have?",
-          "The Instance Metadata Service at http://169.254.169.254 exposes the role's credentials.",
-          "Use IMDSv2: first get a token with a PUT request, then use it to fetch credentials."
+          "You are now inside the EC2 instance. Think about what services are available from within an EC2 instance that expose AWS credentials.",
+          "The Instance Metadata Service at http://169.254.169.254 exposes the role's temporary credentials to any process running on the instance.",
+          "This instance uses IMDSv2 \u2014 you need to first get a session token with a PUT request before you can query the credentials endpoint.",
+          "The credentials endpoint path is /latest/meta-data/iam/security-credentials/ \u2014 first list available role names, then fetch credentials for the specific role."
         ],
         "commands": [
           {
@@ -183,6 +191,12 @@
         "to": "target-bucket",
         "label": "s3:GetObject",
         "description": "Export the extracted credentials as environment variables locally (after exiting the SSM session), then use them to list and download objects from the sensitive S3 bucket.\n",
+        "hints": [
+          "You have credentials for the EC2 instance role \u2014 exit the SSM session and use them locally.",
+          "Export the AccessKeyId, SecretAccessKey, and Token as environment variables, then verify your identity with sts:GetCallerIdentity.",
+          "With the instance role credentials, try listing the contents of any S3 buckets the role has access to.",
+          "Use s3:ListBucket to discover what objects are in the bucket, then s3:GetObject to download the sensitive data."
+        ],
         "commands": [
           {
             "description": "Export extracted credentials as environment variables",

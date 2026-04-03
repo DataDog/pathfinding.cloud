@@ -1,5 +1,5 @@
 {
-  "displayName": "Tool Testing: Reverse Blast Radius Query Detection (Direct and Indirect S3 Access)",
+  "displayName": "Tool Testing: Direct and Indirect Access Paths to Bucket",
   "name": "test-reverse-blast-radius-direct-and-indirect-to-bucket",
   "description": "Testing security tool capability to identify both direct and indirect S3 bucket access paths in reverse blast radius queries",
   "costEstimate": "$0/mo",
@@ -29,42 +29,49 @@
     "modulePath": "modules/scenarios/tool-testing/test-reverse-blast-radius-direct-and-indirect-to-bucket"
   },
   "githubUrl": "https://github.com/DataDog/pathfinding-labs/tree/main/modules/scenarios/tool-testing/test-reverse-blast-radius-direct-and-indirect-to-bucket",
-  "schemaVersion": "3.0.0",
+  "schemaVersion": "4.0.0",
   "permissions": {
     "required": [
       {
         "permission": "s3:GetObject",
+        "principal": "pl-prod-rbr-di-user1",
         "resource": "arn:aws:s3:::pl-sensitive-data-rbr-di-*/*",
-        "description": "user1 has explicit permission to read objects from the target bucket"
+        "description": "direct permission to read objects from the target bucket"
       },
       {
         "permission": "s3:ListBucket",
+        "principal": "pl-prod-rbr-di-user1",
         "resource": "arn:aws:s3:::pl-sensitive-data-rbr-di-*",
-        "description": "user1 has explicit permission to list the target bucket"
+        "description": "direct permission to list the target bucket"
       },
       {
         "permission": "sts:AssumeRole",
+        "principal": "pl-prod-rbr-di-user2",
         "resource": "arn:aws:iam::{account_id}:role/pl-prod-rbr-di-role3",
-        "description": "user2 can assume role3 to gain indirect bucket access"
+        "description": "can assume role3 to gain indirect bucket access"
       },
       {
         "permission": "s3:GetObject",
+        "principal": "pl-prod-rbr-di-role3",
         "resource": "arn:aws:s3:::pl-sensitive-data-rbr-di-*/*",
-        "description": "role3 has permission to read objects from the target bucket"
+        "description": "permission to read objects from the target bucket (inherited by user2 via role assumption)"
       },
       {
         "permission": "s3:ListBucket",
+        "principal": "pl-prod-rbr-di-role3",
         "resource": "arn:aws:s3:::pl-sensitive-data-rbr-di-*",
-        "description": "role3 has permission to list the target bucket"
+        "description": "permission to list the target bucket (inherited by user2 via role assumption)"
       }
     ],
     "helpful": [
       {
         "permission": "sts:GetCallerIdentity",
+        "principal": "pl-prod-rbr-di-user1",
         "purpose": "verify current identity"
       },
       {
         "permission": "s3:ListAllMyBuckets",
+        "principal": "pl-prod-rbr-di-user1",
         "purpose": "discover available buckets"
       }
     ]
@@ -148,9 +155,11 @@
         "label": "s3:GetObject, s3:ListBucket",
         "description": "User1 has direct IAM permissions to list and read objects from the sensitive S3 bucket. No intermediate role assumption is required.\n",
         "hints": [
-          "You have direct access to an S3 bucket. Try listing or reading its contents.",
-          "Check what S3 permissions this user has directly attached.",
-          "Browse to https://pathfinding.cloud for technique details."
+          "Start by checking what S3 permissions are directly attached to this user's IAM policy.",
+          "With s3:ListAllMyBuckets, you can discover which buckets exist in the account.",
+          "Once you identify the target bucket, you have s3:ListBucket to enumerate its contents.",
+          "Use s3:GetObject to read individual objects from the bucket -- no role assumption needed.",
+          "The bucket name follows the pattern pl-sensitive-data-rbr-di-{account_id}-{suffix}; you can discover the exact name from the Terraform output or by listing buckets."
         ],
         "commands": [
           {
@@ -159,7 +168,7 @@
           },
           {
             "description": "Read an object from the bucket as user1",
-            "command": "aws s3 cp s3://pl-sensitive-data-rbr-di-{account_id}-{suffix}/test-data.txt -"
+            "command": "aws s3 cp s3://pl-sensitive-data-rbr-di-{account_id}-{suffix}/sensitive-data.txt /tmp/sensitive-user1.txt"
           }
         ]
       },
@@ -169,14 +178,16 @@
         "label": "sts:AssumeRole",
         "description": "User2 assumes pl-prod-rbr-di-role3, which has S3 bucket permissions. This grants user2 temporary credentials scoped to that role's permissions.\n",
         "hints": [
-          "You cannot access the S3 bucket directly. Look for other principals you can act as.",
-          "Check what roles this user is permitted to assume.",
-          "Browse to https://pathfinding.cloud for technique details."
+          "Try accessing the S3 bucket directly as user2 -- it will fail. You need a different path.",
+          "Review the IAM policies attached to this user to understand what actions are available.",
+          "This user has sts:AssumeRole permission. Use iam:ListRoles or inspect your policy to identify which role ARN you are allowed to assume.",
+          "Trust policies on roles specify which principals can assume them. Look for pl-prod-rbr-di-role3 and check its trust policy.",
+          "Use aws sts assume-role with the role ARN to obtain temporary credentials for that role."
         ],
         "commands": [
           {
             "description": "Assume the intermediate role",
-            "command": "aws sts assume-role --role-arn arn:aws:iam::{account_id}:role/pl-prod-rbr-di-role3 --role-session-name rbr-test"
+            "command": "aws sts assume-role --role-arn arn:aws:iam::{account_id}:role/pl-prod-rbr-di-role3 --role-session-name rbr-test --query 'Credentials' --output json"
           }
         ]
       },
@@ -185,6 +196,12 @@
         "to": "target-bucket",
         "label": "s3:GetObject, s3:ListBucket",
         "description": "pl-prod-rbr-di-role3 has the same S3 bucket permissions as user1. Using the temporary credentials from the assumed role, user2 can now list and read objects from the sensitive bucket.\n",
+        "hints": [
+          "Export the temporary credentials from the assume-role response as environment variables before making S3 calls.",
+          "This role has s3:ListBucket and s3:GetObject on the same bucket user1 can access directly.",
+          "Verify your identity has changed by calling sts:GetCallerIdentity -- you should now be operating as a role session, not user2.",
+          "List the bucket contents and then download an object to confirm the indirect access path is fully functional."
+        ],
         "commands": [
           {
             "description": "List bucket contents using assumed role credentials",
@@ -192,7 +209,7 @@
           },
           {
             "description": "Read an object from the bucket using assumed role credentials",
-            "command": "aws s3 cp s3://pl-sensitive-data-rbr-di-{account_id}-{suffix}/test-data.txt -"
+            "command": "aws s3 cp s3://pl-sensitive-data-rbr-di-{account_id}-{suffix}/sensitive-data.txt /tmp/sensitive-role3.txt"
           }
         ]
       }

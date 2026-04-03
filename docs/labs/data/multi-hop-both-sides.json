@@ -1,5 +1,5 @@
 {
-  "displayName": "Multi-Hop Cross-Account Privilege Escalation (Both Sides)",
+  "displayName": "Dev to Prod Multi-Hop Both Accounts to Admin",
   "name": "multi-hop-both-sides",
   "description": "Multi-hop privilege escalation across both dev and prod accounts using login profile manipulation",
   "costEstimate": "$0/mo",
@@ -33,37 +33,42 @@
     "modulePath": "modules/scenarios/cross-account/dev-to-prod/multi-hop/multi-hop-both-sides"
   },
   "githubUrl": "https://github.com/DataDog/pathfinding-labs/tree/main/modules/scenarios/cross-account/dev-to-prod/multi-hop/multi-hop-both-sides",
-  "schemaVersion": "3.0.0",
+  "schemaVersion": "4.0.0",
   "permissions": {
     "required": [
       {
-        "permission": "iam:CreateLoginProfile",
-        "resource": "arn:aws:iam::{dev_account_id}:user/pl-Josh",
-        "description": "create a console password for the dev admin user"
+        "permission": "sts:AssumeRole",
+        "principal": "pl-pathfinding-starting-user-dev",
+        "resource": "arn:aws:iam::{dev_account_id}:role/pl-helpdesk",
+        "description": "assume the helpdesk role in dev to begin the escalation chain"
       },
       {
-        "permission": "sts:AssumeRole",
-        "resource": "arn:aws:iam::{prod_account_id}:role/pl-trustsdev",
-        "description": "cross-account lateral movement from dev to prod"
+        "permission": "iam:CreateLoginProfile",
+        "principal": "pl-helpdesk",
+        "resource": "arn:aws:iam::{dev_account_id}:user/pl-Josh",
+        "description": "create a console password for the dev admin user, enabling authentication as Josh"
       },
       {
         "permission": "iam:UpdateLoginProfile",
+        "principal": "pl-trustsdev",
         "resource": "arn:aws:iam::{prod_account_id}:user/pl-Jeremy",
-        "description": "reset the prod admin user's console password"
+        "description": "reset the prod admin user's console password to a value the attacker controls"
       }
     ],
     "helpful": [
       {
         "permission": "iam:GetLoginProfile",
-        "purpose": "view existing login profile configuration"
+        "principal": "pl-pathfinding-starting-user-dev"
       },
       {
         "permission": "iam:ListUsers",
-        "purpose": "discover users in both accounts"
+        "principal": "pl-pathfinding-starting-user-dev",
+        "purpose": "discover users in the dev account and identify high-value targets"
       },
       {
         "permission": "iam:GetUser",
-        "purpose": "view user details and permissions"
+        "principal": "pl-pathfinding-starting-user-dev",
+        "purpose": "view user details to confirm which accounts hold elevated permissions"
       }
     ]
   },
@@ -97,7 +102,7 @@
         "prevention": "- Apply the principle of least privilege: avoid granting `iam:CreateLoginProfile` and `iam:UpdateLoginProfile` unless absolutely necessary, and scope them to non-privileged users only\n- Limit cross-account role assumptions to specific, documented use cases; use conditions like `aws:PrincipalOrgID` or explicit account conditions in trust policies\n- Monitor and alert on login profile creation and updates using CloudTrail; treat any modification to a privileged user's login profile as a high-severity event\n- Use more restrictive trust policies for cross-account roles, including `sts:ExternalId` conditions and MFA requirements\n- Regularly audit cross-account permissions and login profile usage across all accounts in your organization\n- Implement SCPs that deny `iam:CreateLoginProfile` and `iam:UpdateLoginProfile` for production account roles that do not require console access"
       },
       "cloudSiem": {
-        "cloudTrailEvents": "- `STS: AssumeRole` \u2014 Role assumption from dev to the helpdesk role; alert when the source principal is the pathfinding starting user\n- `IAM: CreateLoginProfile` \u2014 Login profile created for a user; critical when the target user holds admin or elevated permissions\n- `STS: AssumeRole` \u2014 Cross-account role assumption from dev `pl-Josh` to prod `pl-trustsdev`; alert on cross-account assumptions involving non-prod principals\n- `IAM: UpdateLoginProfile` \u2014 Login profile updated for a user; high severity when the target user holds admin permissions in prod\n- `STS: GetCallerIdentity` \u2014 Identity verification calls that follow a chain of role assumptions; useful for tracing lateral movement",
+        "cloudTrailEvents": "- `STS: AssumeRole` -- Role assumption from dev to the helpdesk role; alert when the source principal is the pathfinding starting user\n- `IAM: CreateLoginProfile` -- Login profile created for a user; critical when the target user holds admin or elevated permissions\n- `STS: AssumeRole` -- Cross-account role assumption from dev `pl-Josh` to prod `pl-trustsdev`; alert on cross-account assumptions involving non-prod principals\n- `IAM: UpdateLoginProfile` -- Login profile updated for a user; high severity when the target user holds admin permissions in prod\n- `STS: GetCallerIdentity` -- Identity verification calls that follow a chain of role assumptions; useful for tracing lateral movement",
         "detonationLogs": "_Detonation log integration (Stratus Red Team / Grimoire) is planned for a future release._"
       }
     },
@@ -119,7 +124,7 @@
         "type": "principal",
         "subType": "iam-role",
         "arn": "arn:aws:iam::{dev_account_id}:role/pl-helpdesk",
-        "description": "This is the helpdesk role in the dev account. It has iam:CreateLoginProfile permission scoped to the pl-Josh user, who is an admin in the dev account. By creating a login profile for pl-Josh, an attacker can set a known password and then authenticate to the AWS console or use those credentials for further escalation.\n"
+        "description": "This is the helpdesk role in the dev account. It has iam:CreateLoginProfile permission scoped to the pl-Josh user, who is an admin in the dev account. By creating a login profile for pl-Josh, an attacker can set a known password and then authenticate to the AWS console or use those credentials for further escalation across accounts.\n"
       },
       {
         "id": "josh-user",
@@ -127,7 +132,7 @@
         "type": "principal",
         "subType": "iam-user",
         "arn": "arn:aws:iam::{dev_account_id}:user/pl-Josh",
-        "description": "pl-Josh is an admin user in the dev account. The helpdesk role was able to create a login profile for this user, setting a known password. Josh's admin permissions in dev include the ability to assume cross-account roles in prod that trust the dev account \u2014 specifically the pl-trustsdev role.\n"
+        "description": "pl-Josh is an admin user in the dev account. The helpdesk role was able to create a login profile for this user, setting a known password. Josh's admin permissions in dev include the ability to assume cross-account roles in prod that trust the dev account -- specifically the pl-trustsdev role.\n"
       },
       {
         "id": "trustsdev-role",
@@ -154,11 +159,18 @@
         "label": "sts:AssumeRole",
         "description": "The dev starting user assumes the pl-helpdesk role in the dev account, gaining its permissions including iam:CreateLoginProfile on pl-Josh.\n",
         "hints": [
-          "You can assume roles in the dev account. Look for roles that grant elevated permissions.",
-          "The helpdesk role may have permissions to modify IAM user login profiles.",
-          "Browse to https://pathfinding.cloud for technique details on login profile manipulation."
+          "Start by verifying your identity and noting your dev account ID -- you will need it to construct role ARNs.",
+          "Use iam:ListUsers to discover what other principals exist in the dev account and whether any have elevated permissions.",
+          "Check whether your starting user has sts:AssumeRole on any roles in the account -- look at the attached policy.",
+          "The pl-helpdesk role is designed to be assumed by dev account users for support tasks. Try assuming it.",
+          "Use iam:GetRole or iam:ListRolePolicies on the helpdesk role to understand what permissions you gain by assuming it.",
+          "Once you know what the helpdesk role can do, assume it and see what IAM actions are now available to you."
         ],
         "commands": [
+          {
+            "description": "Verify current identity and note the dev account ID",
+            "command": "aws sts get-caller-identity"
+          },
           {
             "description": "Assume the helpdesk role in dev",
             "command": "aws sts assume-role --role-arn arn:aws:iam::{dev_account_id}:role/pl-helpdesk --role-session-name helpdesk-session"
@@ -171,13 +183,24 @@
         "label": "iam:CreateLoginProfile",
         "description": "The helpdesk role creates a login profile for pl-Josh with a known password, enabling authentication as Josh via the AWS console or CLI.\n",
         "hints": [
-          "This role has IAM permissions on specific users. Which users does it have access to?",
-          "Look for iam:CreateLoginProfile permissions \u2014 they allow setting console passwords for users.",
-          "Creating a login profile for an admin user gives you their console access."
+          "As the helpdesk role, check what IAM permissions you now have -- specifically look for permissions that affect user login.",
+          "Use iam:ListUsers to discover which users exist in the dev account and which ones might have elevated permissions.",
+          "Look for iam:GetUser on pl-Josh to understand his permissions and determine whether he is a high-value target.",
+          "Check whether pl-Josh already has a login profile with iam:GetLoginProfile -- if he does not, you can create one.",
+          "Creating a login profile for an admin user effectively sets a password you control, granting console access as that user.",
+          "After creating the profile, you have a dev admin account with a known password -- what cross-account roles might that admin be trusted to assume?"
         ],
         "commands": [
           {
-            "description": "Create a login profile for pl-Josh",
+            "description": "List users to identify high-value targets",
+            "command": "aws iam list-users"
+          },
+          {
+            "description": "Check whether pl-Josh already has a login profile",
+            "command": "aws iam get-login-profile --user-name pl-Josh"
+          },
+          {
+            "description": "Create a login profile for pl-Josh with a known password",
             "command": "aws iam create-login-profile --user-name pl-Josh --password 'Pathfinding@Labs1!' --no-password-reset-required"
           }
         ]
@@ -188,9 +211,11 @@
         "label": "sts:AssumeRole",
         "description": "pl-Josh assumes the pl-trustsdev role in the prod account via a cross-account trust relationship, achieving lateral movement from dev to prod.\n",
         "hints": [
-          "As Josh, you have admin permissions in dev. What cross-account roles can you assume?",
-          "Look for prod roles with trust policies that allow assumption by dev principals.",
-          "The pl-trustsdev role in prod trusts principals from the dev account."
+          "You now have admin-level access in the dev account as pl-Josh. Look outward -- what other accounts can a dev admin reach?",
+          "Cross-account role assumptions require the target role's trust policy to explicitly allow the source principal. Look for prod roles that trust dev.",
+          "List roles in the prod account if you have permission, or try assuming well-named roles that imply dev trust (e.g., roles named 'trustsdev').",
+          "The pl-trustsdev role in prod has a trust policy that allows assumption by pl-Josh from the dev account.",
+          "Assume the pl-trustsdev role using the prod account ID in the ARN -- this is the cross-account hop from dev to prod."
         ],
         "commands": [
           {
@@ -205,18 +230,29 @@
         "label": "iam:UpdateLoginProfile",
         "description": "The pl-trustsdev role updates pl-Jeremy's login profile with a known password, granting the attacker full admin access to the prod account.\n",
         "hints": [
-          "This role can modify IAM user login profiles in the prod account.",
-          "Look for iam:UpdateLoginProfile permissions \u2014 they allow resetting console passwords.",
-          "Updating pl-Jeremy's login profile gives you access to a prod admin account."
+          "You are now operating as the pl-trustsdev role in prod. Check what IAM permissions this role has -- the pattern should look familiar.",
+          "Use iam:ListUsers to discover prod account users and identify which ones hold admin-level permissions.",
+          "Look for iam:GetUser on pl-Jeremy to confirm he is an admin user worth targeting.",
+          "Check whether pl-Jeremy already has a login profile with iam:GetLoginProfile -- if he does, you can update it rather than create it.",
+          "iam:UpdateLoginProfile lets you reset an existing console password. Use it to set a password you control for pl-Jeremy.",
+          "After updating Jeremy's login profile, authenticate to the console as pl-Jeremy to confirm prod admin access."
         ],
         "commands": [
+          {
+            "description": "List prod users to identify the admin target",
+            "command": "aws iam list-users"
+          },
+          {
+            "description": "Check whether pl-Jeremy already has a login profile",
+            "command": "aws iam get-login-profile --user-name pl-Jeremy"
+          },
           {
             "description": "Update the login profile for pl-Jeremy in prod",
             "command": "aws iam update-login-profile --user-name pl-Jeremy --password 'Pathfinding@Labs1!' --no-password-reset-required"
           },
           {
-            "description": "Verify admin access as Jeremy",
-            "command": "aws sts get-caller-identity"
+            "description": "Verify admin access in the prod account",
+            "command": "aws iam list-users"
           }
         ]
       }
