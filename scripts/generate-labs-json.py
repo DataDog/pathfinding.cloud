@@ -273,81 +273,79 @@ def load_guided_walkthrough(readme_dir):
 def parse_starting_permissions_section(section_text):
     """Parse the ### Starting Permissions section from a v3 or v4 README.
 
-    v3 format (flat headings):
+    v3 format (flat headings, single implicit principal):
         **Required:**
         - `permission` on `resource` -- description
 
         **Helpful:**
         - `permission` -- purpose
 
-    v4 format (per-principal headings, multiple allowed):
+    v4 format (per-principal headings, one or more principals):
         **Required** (`principal_name`):
         - `permission` on `resource` -- description
 
         **Helpful** (`principal_name`):
         - `permission` -- purpose
 
-    Returns {"required": [...], "helpful": [...]}.
-    Each entry in v4 includes a "principal" field with the principal name.
+    Returns {"principals": [{"name": str|None, "required": [...], "helpful": [...]}, ...]}.
+    Principals appear in document order; the first entry is always the starting principal.
     """
-    result = {"required": [], "helpful": []}
     if not section_text:
-        return result
+        return {"principals": []}
+
+    # ordered list of principal dicts; principal_index maps name-key -> list index
+    principals = []
+    principal_index = {}
 
     current_group = None
-    current_principal = None
+    current_key = None  # lookup key into principal_index
+
     for line in section_text.split("\n"):
         stripped = line.strip()
 
-        if stripped.startswith("**Required"):
-            current_group = "required"
+        if stripped.startswith("**Required") or stripped.startswith("**Helpful"):
+            current_group = "required" if stripped.startswith("**Required") else "helpful"
             # v4: extract principal name from `**Required** (`name`):`
             principal_match = re.search(r"\(`([^`]+)`\)", stripped)
-            current_principal = principal_match.group(1) if principal_match else None
-            continue
-        elif stripped.startswith("**Helpful"):
-            current_group = "helpful"
-            principal_match = re.search(r"\(`([^`]+)`\)", stripped)
-            current_principal = principal_match.group(1) if principal_match else None
+            name = principal_match.group(1) if principal_match else None
+            current_key = name or ""
+            if current_key not in principal_index:
+                principal_index[current_key] = len(principals)
+                principals.append({"name": name, "required": [], "helpful": []})
             continue
 
         if not current_group or not stripped.startswith("- "):
             continue
 
         item_text = stripped[2:].strip()
+        idx = principal_index.get(current_key)
+        if idx is None:
+            continue
 
         if current_group == "required":
-            # Match: `permission` on `resource` -- description
-            # or:   `permission` on `resource`
-            # or:   `permission` -- description
-            # or:   `permission`
+            # Match: `permission` on `resource` -- description  (all parts optional after permission)
             match = re.match(
                 r"`([^`]+)`(?:\s+on\s+`([^`]+)`)?(?:\s+--\s+(.+))?",
                 item_text,
             )
             if match:
                 entry = {"permission": match.group(1)}
-                if current_principal:
-                    entry["principal"] = current_principal
                 if match.group(2):
                     entry["resource"] = match.group(2)
                 if match.group(3):
                     entry["description"] = match.group(3)
-                result["required"].append(entry)
+                principals[idx]["required"].append(entry)
 
         elif current_group == "helpful":
-            # Match: `permission` -- purpose
-            # or:   `permission`
+            # Match: `permission` -- purpose  (purpose optional)
             match = re.match(r"`([^`]+)`(?:\s+--\s+(.+))?", item_text)
             if match:
                 entry = {"permission": match.group(1)}
-                if current_principal:
-                    entry["principal"] = current_principal
                 if match.group(2):
                     entry["purpose"] = match.group(2)
-                result["helpful"].append(entry)
+                principals[idx]["helpful"].append(entry)
 
-    return result
+    return {"principals": principals}
 
 
 # ---------------------------------------------------------------------------
@@ -895,14 +893,20 @@ def transform_readme(readme_text, module_path, readme_dir=None):
         "schemaVersion": get_schema_version(metadata),
     }
 
-    # Parse permissions: v3+ reads from markdown section, v1/v2 from metadata
+    # Parse permissions: v3+ reads from markdown section, v1/v2 from metadata.
+    # Both produce {"principals": [{name, required, helpful}, ...]} so the
+    # frontend always reads permissions.principals[0] for the starting principal.
     if use_modern_schema:
         # v3+: permissions come from README sections, parsed below after section parsing
-        result["permissions"] = {"required": [], "helpful": []}
+        result["permissions"] = {"principals": []}
     else:
+        # v1/v2: single implicit principal (no name), wrap in principals array
         result["permissions"] = {
-            "required": parse_required_permissions(metadata.get("Required Permissions", "")),
-            "helpful": parse_helpful_permissions(metadata.get("Helpful Permissions", "")),
+            "principals": [{
+                "name": None,
+                "required": parse_required_permissions(metadata.get("Required Permissions", "")),
+                "helpful": parse_helpful_permissions(metadata.get("Helpful Permissions", "")),
+            }]
         }
 
     # CSPM-specific fields (only present in CSPM scenarios)
@@ -982,18 +986,15 @@ def make_index_entry(lab):
     if "terraform" in lab:
         entry["terraform"] = {"variableName": lab["terraform"].get("variableName", "")}
 
-    # Include minimal permissions for search
+    # Include minimal permissions for search -- flatten all principals so the
+    # frontend search index can match any permission in the scenario.
     if "permissions" in lab:
-        entry["permissions"] = {
-            "required": [
-                {"permission": p.get("permission", "")}
-                for p in lab.get("permissions", {}).get("required", [])
-            ],
-            "helpful": [
-                {"permission": p.get("permission", "")}
-                for p in lab.get("permissions", {}).get("helpful", [])
-            ],
-        }
+        all_required = []
+        all_helpful = []
+        for principal in lab.get("permissions", {}).get("principals", []):
+            all_required.extend({"permission": p.get("permission", "")} for p in principal.get("required", []))
+            all_helpful.extend({"permission": p.get("permission", "")} for p in principal.get("helpful", []))
+        entry["permissions"] = {"required": all_required, "helpful": all_helpful}
 
     return entry
 

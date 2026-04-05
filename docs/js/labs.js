@@ -261,11 +261,14 @@ function getStartDestination(lab) {
 }
 
 // Extract unique AWS services from required permissions by splitting on ':'
+// Reads from the starting principal only (principals[0]) for display purposes.
+// Falls back to flat permissions.required for legacy (v1/v2) index data.
 function parseServicesFromPermissions(permissions) {
-    if (!permissions?.required?.length) return [];
+    const required = permissions?.principals?.[0]?.required ?? permissions?.required ?? [];
+    if (!required.length) return [];
     const seen = new Set();
     const services = [];
-    for (const p of permissions.required) {
+    for (const p of required) {
         const service = p.permission?.split(':')?.[0]?.toLowerCase();
         if (service && !seen.has(service)) {
             seen.add(service);
@@ -943,31 +946,33 @@ function renderSidebarPermissions(permissions, labSlug) {
 // Render permissions as horizontal pill layout (used in guided v2 main content)
 function renderPermissionsPills(permissions, labSlug) {
     if (!permissions) return '';
-    const hasRequired = permissions.required && permissions.required.length > 0;
-    const hasHelpful = permissions.helpful && permissions.helpful.length > 0;
-    if (!hasRequired && !hasHelpful) return '';
+    // Use starting principal only (principals[0]); fall back to legacy flat arrays.
+    const startingPrincipal = permissions.principals?.[0];
+    const required = startingPrincipal?.required ?? permissions.required ?? [];
+    const helpful = startingPrincipal?.helpful ?? permissions.helpful ?? [];
+    if (!required.length && !helpful.length) return '';
 
     let html = '';
 
-    if (hasRequired) {
+    if (required.length) {
         html += `<div class="lab-perms-pills-section">
             <div class="lab-perms-pills-label">Required</div>
             <div class="lab-perms-pills-row">
-                ${permissions.required.map(p =>
+                ${required.map(p =>
                     `<code class="lab-perm-pill">${escapeHtml(p.permission)}</code>`
                 ).join('')}
             </div>
         </div>`;
     }
 
-    if (hasHelpful) {
+    if (helpful.length) {
         html += `<div class="lab-perms-pills-section">
             <button class="lab-perms-pills-toggle" onclick="this.classList.toggle('open'); this.nextElementSibling.classList.toggle('open');">
-                Helpful (${permissions.helpful.length})
+                Helpful (${helpful.length})
                 <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
             </button>
             <div class="lab-perms-pills-row lab-perms-pills-collapsible">
-                ${permissions.helpful.map(p =>
+                ${helpful.map(p =>
                     `<code class="lab-perm-pill">${escapeHtml(p.permission)}</code>`
                 ).join('')}
             </div>
@@ -1383,7 +1388,8 @@ function buildGuidedV2Sections(lab) {
         }
 
         // Starting Permissions sub-section (rendered as horizontal pills)
-        if (lab.permissions && (lab.permissions.required?.length || lab.permissions.helpful?.length)) {
+        const startingPerms = lab.permissions?.principals?.[0];
+        if (startingPerms?.required?.length || startingPerms?.helpful?.length) {
             sections.push({
                 id: `gv2-permissions-${slug}`,
                 h2Section: 'Objective',
