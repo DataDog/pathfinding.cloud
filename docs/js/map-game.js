@@ -383,6 +383,22 @@ function drawGameIslandLabels(ctx, w, h, state) {
             }
         }
 
+        // Green ring on the start island when the entry point is public-network or assumed-breach-network
+        if (isFirst) {
+            const startAccess = nodes[0]?.access;
+            if (startAccess?.type === 'public-network' || startAccess?.type === 'assumed-breach-network') {
+                const ringColor = startAccess.type === 'public-network' ? '#4ade80' : '#fbbf24';
+                ctx.save();
+                ctx.globalAlpha = 0.35;
+                ctx.strokeStyle = ringColor;
+                ctx.lineWidth = 3;
+                ctx.beginPath();
+                ctx.ellipse(pos.x, pos.y + 2, 52 * 1.15, 52 * 0.42, 0, 0, Math.PI * 2);
+                ctx.stroke();
+                ctx.restore();
+            }
+        }
+
         // Label -- always show all island names
         let label;
         if (isFirst) label = 'Startington';
@@ -409,20 +425,28 @@ function drawGameIslandLabels(ctx, w, h, state) {
             const node = nodes[i];
             const arn = node?.arn || '';
             const arnSuffix = arn.includes(':') ? arn.substring(arn.lastIndexOf(':') + 1) : '';
+
+            // For nodes with an access field, show the URL/IP/domain instead of the ARN suffix.
+            // Truncate to 24 chars so it fits in the island plate.
+            const accessObj = isFirst ? node?.access : null;
+            const rawEndpoint = accessObj?.url || accessObj?.ip || accessObj?.domain || '';
+            const accessShort = rawEndpoint.length > 24 ? rawEndpoint.substring(0, 22) + '\u2026' : rawEndpoint;
+            const subtitleText = accessShort || arnSuffix;
+
             const nameColor = isFirst ? (p.startFill || '#4ade80') : (p.endFill || '#f59e0b');
 
             // Measure text widths
             ctx.font = 'bold 13px -apple-system, BlinkMacSystemFont, sans-serif';
             const tw = ctx.measureText(label).width;
             ctx.font = '500 9px -apple-system, BlinkMacSystemFont, sans-serif';
-            const idTw = arnSuffix ? ctx.measureText(arnSuffix).width : 0;
+            const idTw = subtitleText ? ctx.measureText(subtitleText).width : 0;
 
             // Calculate total content height to center vertically in plate
             const nameH = 13;  // font size
             const iconGap = belowLabelIcon ? 4 : 0;
             const iconH = belowLabelIcon ? belowIconSize : 0;
-            const arnGap = arnSuffix ? (belowLabelIcon ? 4 : 8) : 0;
-            const arnH = arnSuffix ? 9 : 0;
+            const arnGap = subtitleText ? (belowLabelIcon ? 4 : 8) : 0;
+            const arnH = subtitleText ? 9 : 0;
             const contentH = nameH + iconGap + iconH + arnGap + arnH;
             const pad = 8; // equal top and bottom padding
             const plateH = contentH + pad * 2;
@@ -454,12 +478,12 @@ function drawGameIslandLabels(ctx, w, h, state) {
                 cursorY += iconH;
             }
 
-            // ARN identifier below
-            if (arnSuffix) {
+            // Subtitle: access URL/IP/domain (preferred) or ARN identifier
+            if (subtitleText) {
                 cursorY += arnGap + arnH / 2;
                 ctx.font = '500 9px -apple-system, BlinkMacSystemFont, sans-serif';
                 ctx.fillStyle = p.mutedText || 'rgba(180, 160, 120, 0.9)';
-                ctx.fillText(arnSuffix, pos.x, cursorY);
+                ctx.fillText(subtitleText, pos.x, cursorY);
             }
         } else {
             // Middle islands: label + optional icon below
@@ -1362,12 +1386,32 @@ function renderGamePanelOverview(panelEl, state) {
     const lab = state.lab;
     const startNode = state.nodes[0];
     const targetNode = state.nodes[state.nodes.length - 1];
-    const perms = lab?.permissions?.required || [];
+
+    // Detect public/network-start scenarios. Primary signal: access field on the start node.
+    // Fallback: parse the "- **Start:**" line from the objective text (older data without access field).
+    const startAccess = startNode?.access;
+    const overviewText = lab?.readme?.objective || lab?.readme?.overview || lab?.description || '';
+    const startLineMatch = overviewText.match(/^-\s*\*\*Start:\*\*\s*`?([^`\n]+)`?/m);
+    const startLineValue = startLineMatch?.[1]?.trim() || '';
+    const isPublicStart = startAccess?.type === 'public-network'
+        || startAccess?.type === 'assumed-breach-network'
+        || startLineValue.startsWith('https://')
+        || startLineValue.startsWith('http://')
+        || startLineValue.toLowerCase().includes('(public');
+    // Resolved entry point URL/IP/domain for display
+    const accessEndpoint = startAccess?.url || startAccess?.ip || startAccess?.domain || '';
+
+    // Read permissions from v4 per-principal structure, falling back to legacy flat arrays.
+    const startingPrincipal = lab?.permissions?.principals?.[0];
+    const perms = startingPrincipal?.required ?? lab?.permissions?.required ?? [];
     const permPills = perms.map(pr =>
         `<code class="mg-code-pill">${escapeHtmlGame(pr.permission)}</code>`
     ).join('');
-    const helpfulPerms = lab?.permissions?.helpful || [];
-    const helpfulPills = helpfulPerms.map(pr =>
+    // Collect helpful permissions across all principals (secondary recon principal may hold them)
+    const allPrincipals = lab?.permissions?.principals ?? [];
+    const helpfulPerms = allPrincipals.flatMap(p => p.helpful ?? []);
+    const helpfulPermsFlat = helpfulPerms.length > 0 ? helpfulPerms : (lab?.permissions?.helpful ?? []);
+    const helpfulPills = helpfulPermsFlat.map(pr =>
         `<code class="mg-code-pill">${escapeHtmlGame(pr.permission)}</code>`
     ).join('');
 
@@ -1399,16 +1443,30 @@ function renderGamePanelOverview(panelEl, state) {
         </div>
         ${startNode ? `
         <div class="mg-panel-section">
-            <span class="mg-section-label">STARTING PRINCIPAL</span>
+            <span class="mg-section-label">${isPublicStart ? 'STARTING POINT' : 'STARTING PRINCIPAL'}</span>
             <code class="mg-arn">${escapeHtmlGame(shortArn(startNode.arn) || startNode.label)}</code>
+            ${accessEndpoint ? `<code class="mg-access-url">${escapeHtmlGame(accessEndpoint)}</code>` : ''}
+            ${isPublicStart ? `<div class="mg-public-access-note">No AWS credentials required</div>` : ''}
         </div>` : ''}
-        ${permPills ? `
+        ${isPublicStart ? `
         <div class="mg-panel-section">
-            <span class="mg-section-label">STARTING PRINCIPAL PERMISSIONS</span>
+            <span class="mg-section-label">STARTING PERMISSIONS</span>
+            <div class="mg-public-access-note">No AWS credentials required — the entry point accepts unauthenticated requests</div>
+            ${helpfulPills ? `
+            <button class="mg-helpful-toggle" onclick="this.classList.toggle('open'); this.nextElementSibling.classList.toggle('open');">
+                Helpful IAM permissions (${helpfulPermsFlat.length})
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
+            </button>
+            <div class="mg-perm-pills mg-helpful-collapsible">
+                ${helpfulPills}
+            </div>` : ''}
+        </div>` : permPills ? `
+        <div class="mg-panel-section">
+            <span class="mg-section-label">STARTING PERMISSIONS</span>
             <div class="mg-perm-pills">${permPills}</div>
             ${helpfulPills ? `
             <button class="mg-helpful-toggle" onclick="this.classList.toggle('open'); this.nextElementSibling.classList.toggle('open');">
-                Helpful (${helpfulPerms.length})
+                Helpful (${helpfulPermsFlat.length})
                 <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
             </button>
             <div class="mg-perm-pills mg-helpful-collapsible">
@@ -1483,12 +1541,33 @@ function renderGamePanelNode(panelEl, state) {
     const badgeText = subType ? `${typeLabel} / ${subType}` : typeLabel;
 
     // -- Primary section: node identity --
+    // Build access block for nodes that have an access entry point field
+    let accessBlockHtml = '';
+    if (isFirst && node.access) {
+        const accessTypeLabels = {
+            'public-network': 'PUBLIC NETWORK',
+            'assumed-breach-network': 'INTERNAL NETWORK',
+            'assumed-breach-credentials': 'ASSUMED BREACH',
+        };
+        const accessTypeLabel = accessTypeLabels[node.access.type] || node.access.type?.toUpperCase() || 'NETWORK ACCESS';
+        const accessCssClass = node.access.type === 'public-network' ? 'mg-access-public'
+            : node.access.type === 'assumed-breach-network' ? 'mg-access-internal'
+            : 'mg-access-credentials';
+        const endpoint = node.access.url || node.access.ip || node.access.domain || '';
+        accessBlockHtml = `
+        <div class="mg-access-block">
+            <span class="mg-access-badge ${accessCssClass}">${escapeHtmlGame(accessTypeLabel)}</span>
+            ${endpoint ? `<code class="mg-access-endpoint">${escapeHtmlGame(endpoint)}</code>` : ''}
+        </div>`;
+    }
+
     let html = `
         <div class="mg-panel-section">
             <span class="mg-section-label">${isFirst ? 'STARTING POSITION' : isLast ? 'TARGET REACHED' : `HOP ${hopNumber} DESTINATION`}</span>
             <span class="mg-type-badge mg-type-${node.type?.type || 'unknown'}">${escapeHtmlGame(badgeText)}</span>
             <h2 class="mg-panel-title">${escapeHtmlGame(node.label)}</h2>
             ${node.arn ? `<code class="mg-arn">${escapeHtmlGame(node.arn)}</code>` : ''}
+            ${accessBlockHtml}
         </div>`;
 
     // Node description -- about this place
@@ -2763,6 +2842,7 @@ function parseAttackMapToGameNodes(attackMap) {
             hints: nd.hints || [],
             arn: nd.arn || '',
             subType: nd.subType || '',
+            access: nd.access || null,
         };
     }
 

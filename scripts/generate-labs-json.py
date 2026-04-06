@@ -230,6 +230,44 @@ def extract_attack_map(section_text):
     return None
 
 
+VALID_ACCESS_TYPES = {"public-network", "assumed-breach-network", "assumed-breach-credentials"}
+NETWORK_ACCESS_TYPES = {"public-network", "assumed-breach-network"}
+
+
+def validate_attack_map_access(attack_map: dict, source_label: str) -> None:
+    """Validate the optional `access` field on attackMap nodes.
+
+    Prints WARNING lines for malformed access blocks so issues surface during
+    generation rather than silently producing bad frontend data.
+    """
+    nodes = attack_map.get("nodes", [])
+    nodes_with_access = [n for n in nodes if "access" in n]
+
+    if len(nodes_with_access) > 1:
+        ids = [n.get("id", "<unknown>") for n in nodes_with_access]
+        print(f"  WARNING [{source_label}]: multiple nodes have an `access` field ({ids}); "
+              f"only the entry-point node should have one")
+
+    for node in nodes_with_access:
+        node_id = node.get("id", "<unknown>")
+        access = node["access"]
+
+        if not isinstance(access, dict):
+            print(f"  WARNING [{source_label}]: node '{node_id}' has a non-object `access` field")
+            continue
+
+        access_type = access.get("type")
+        if access_type not in VALID_ACCESS_TYPES:
+            print(f"  WARNING [{source_label}]: node '{node_id}' has unknown access.type "
+                  f"'{access_type}'; expected one of {sorted(VALID_ACCESS_TYPES)}")
+
+        if access_type in NETWORK_ACCESS_TYPES:
+            has_endpoint = any(access.get(k) for k in ("url", "ip", "domain"))
+            if not has_endpoint:
+                print(f"  WARNING [{source_label}]: node '{node_id}' has access.type "
+                      f"'{access_type}' but is missing url, ip, or domain")
+
+
 def load_attack_map_file(readme_dir):
     """Load attack_map.yaml companion file from the same directory as README.
 
@@ -247,11 +285,14 @@ def load_attack_map_file(readme_dir):
         return None
 
     if isinstance(parsed, dict) and "attackMap" in parsed:
-        return parsed["attackMap"]
-    if isinstance(parsed, dict) and ("nodes" in parsed or "edges" in parsed):
-        return parsed
+        attack_map = parsed["attackMap"]
+    elif isinstance(parsed, dict) and ("nodes" in parsed or "edges" in parsed):
+        attack_map = parsed
+    else:
+        return None
 
-    return None
+    validate_attack_map_access(attack_map, str(attack_map_path))
+    return attack_map
 
 
 def load_guided_walkthrough(readme_dir):

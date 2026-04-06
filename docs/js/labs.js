@@ -35,6 +35,7 @@ const categoryConfig = {
     'Toxic Combination': { label: 'Toxic Combo', cssClass: 'lab-badge-toxic' },
     'CSPM: Toxic Combination': { label: 'Toxic Combo', cssClass: 'lab-badge-toxic' },
     'Tool Testing': { label: 'Tool Testing', cssClass: 'lab-badge-tooltest' },
+    'CTF': { label: 'CTF', cssClass: 'lab-badge-ctf' },
 };
 
 // Category banner configuration for card graphics
@@ -45,6 +46,7 @@ const categoryBannerConfig = {
     'Toxic Combination': { bannerClass: 'lab-banner-toxic', bannerText: 'TOXIC COMBINATION' },
     'CSPM: Toxic Combination': { bannerClass: 'lab-banner-toxic', bannerText: 'TOXIC COMBINATION' },
     'Tool Testing': { bannerClass: 'lab-banner-tooltest', bannerText: 'TOOL TESTING' },
+    'CTF': { bannerClass: 'lab-banner-ctf', bannerText: 'CTF CHALLENGE' },
 };
 
 // Path type display labels and colors
@@ -55,6 +57,7 @@ const pathTypeLabels = {
     'cross-account': 'Cross-Acct',
     'single-condition': 'Single',
     'toxic-combination': 'Toxic',
+    'ctf': 'CTF',
 };
 
 const pathTypeColors = {
@@ -64,6 +67,7 @@ const pathTypeColors = {
     'cross-account': 'lab-pathtype-crossacct',
     'single-condition': 'lab-pathtype-single',
     'toxic-combination': 'lab-pathtype-toxic',
+    'ctf': 'lab-pathtype-ctf',
 };
 
 const targetColors = {
@@ -156,13 +160,19 @@ function isV3Schema(lab) {
     return lab.schemaVersion?.startsWith('3') || !!lab.readme?.objective;
 }
 
-// Determine if an ARN represents a principal (IAM user/role) or a resource
+// Determine if an ARN represents a principal (IAM user/role), a public entry point, or a resource
 function classifyArn(arn) {
     if (!arn) return { type: 'resource', label: 'Resource' };
+    // Public URLs (Lambda function URLs, API Gateway, etc.) — no IAM identity required
+    if (arn.startsWith('https://') || arn.startsWith('http://')) {
+        return { type: 'public', label: 'Public URL', icon: 'public' };
+    }
     // IAM users and roles are principals
     if (arn.includes(':user/')) return { type: 'principal', label: 'IAM User', icon: 'user' };
     if (arn.includes(':role/')) return { type: 'principal', label: 'IAM Role', icon: 'role' };
     if (arn.includes(':group/')) return { type: 'principal', label: 'IAM Group', icon: 'group' };
+    // Non-ARN descriptive labels (e.g., "anonymous (public URL)") — public/anonymous access
+    if (!arn.startsWith('arn:')) return { type: 'public', label: 'Public Access', icon: 'public' };
     // Everything else is a resource
     return { type: 'resource', label: formatArnServiceLabel(arn), icon: 'resource' };
 }
@@ -194,8 +204,10 @@ function formatArnServiceLabel(arn) {
 }
 
 // Extract the short resource name from an ARN (last segment after /)
+// For URLs, returns the URL as-is since truncating would lose meaningful context.
 function getArnShortName(arn) {
     if (!arn) return '';
+    if (arn.startsWith('https://') || arn.startsWith('http://')) return arn;
     const parts = arn.split('/');
     return parts[parts.length - 1] || arn;
 }
@@ -944,12 +956,58 @@ function renderSidebarPermissions(permissions, labSlug) {
 }
 
 // Render permissions as horizontal pill layout (used in guided v2 main content)
+// Handles multi-principal scenarios (e.g., public entry point + IAM recon user) and
+// public/anonymous principals that require no AWS credentials.
 function renderPermissionsPills(permissions, labSlug) {
     if (!permissions) return '';
-    // Use starting principal only (principals[0]); fall back to legacy flat arrays.
-    const startingPrincipal = permissions.principals?.[0];
-    const required = startingPrincipal?.required ?? permissions.required ?? [];
-    const helpful = startingPrincipal?.helpful ?? permissions.helpful ?? [];
+
+    // Per-principal structure (v4+)
+    if (permissions.principals?.length) {
+        const principals = permissions.principals;
+        const multiPrincipal = principals.length > 1;
+        let html = '';
+
+        for (const principal of principals) {
+            const isPublic = principal.principalType === 'public';
+            const required = principal.required ?? [];
+            const helpful = principal.helpful ?? [];
+            if (!required.length && !helpful.length) continue;
+
+            // Show principal label when there are multiple principals so context is clear
+            if (multiPrincipal && principal.name) {
+                const labelClass = isPublic ? 'lab-perms-principal-label lab-perms-principal-public' : 'lab-perms-principal-label';
+                html += `<div class="${labelClass}">${escapeHtml(principal.name)}</div>`;
+            }
+
+            if (required.length) {
+                const rowContent = isPublic
+                    ? `<span class="lab-perms-public-note">No AWS credentials required — public access</span>`
+                    : required.map(p => `<code class="lab-perm-pill">${escapeHtml(p.permission)}</code>`).join('');
+                html += `<div class="lab-perms-pills-section">
+                    <div class="lab-perms-pills-label">Required</div>
+                    <div class="lab-perms-pills-row">${rowContent}</div>
+                </div>`;
+            }
+
+            if (helpful.length) {
+                html += `<div class="lab-perms-pills-section">
+                    <button class="lab-perms-pills-toggle" onclick="this.classList.toggle('open'); this.nextElementSibling.classList.toggle('open');">
+                        Helpful (${helpful.length})
+                        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
+                    </button>
+                    <div class="lab-perms-pills-row lab-perms-pills-collapsible">
+                        ${helpful.map(p => `<code class="lab-perm-pill">${escapeHtml(p.permission)}</code>`).join('')}
+                    </div>
+                </div>`;
+            }
+        }
+
+        return html;
+    }
+
+    // Legacy flat arrays (v2/v3)
+    const required = permissions.required ?? [];
+    const helpful = permissions.helpful ?? [];
     if (!required.length && !helpful.length) return '';
 
     let html = '';
@@ -1335,9 +1393,21 @@ function buildGuidedV2Sections(lab) {
                     ${renderServiceIcons(lab.permissions) ? `<span class="lab-service-icons-right">${renderServiceIcons(lab.permissions)}</span>` : ''}
                 </div>`;
 
+                // Detect public/network-start scenarios. Primary signal: access field on the first
+                // attackMap node (schema v1.1.0+). Fallback: README "- **Start:**" line regex for
+                // older data that predates the access field.
+                const rawOverview = overview || lab.description || '';
+                const startLineMatch = rawOverview.match(/^-\s*\*\*Start:\*\*\s*`?([^`\n]+)`?/m);
+                const startLineValue = startLineMatch?.[1]?.trim() || '';
+                const startNodeAccess = lab.attackMap?.nodes?.[0]?.access;
+                const isPublicStart = startNodeAccess?.type === 'public-network'
+                    || startNodeAccess?.type === 'assumed-breach-network'
+                    || startLineValue.startsWith('https://')
+                    || startLineValue.startsWith('http://')
+                    || startLineValue.toLowerCase().includes('(public');
+
                 // Strip start/destination lines from overview text since we show them as cards
-                let overviewText = overview || lab.description || '';
-                overviewText = overviewText.replace(/^-\s*\*\*Start:\*\*.*$/gm, '').replace(/^-\s*\*\*Destination.*?\*\*.*$/gm, '').trim();
+                let overviewText = rawOverview.replace(/^-\s*\*\*Start:\*\*.*$/gm, '').replace(/^-\s*\*\*Destination.*?\*\*.*$/gm, '').trim();
 
                 if (overviewText) {
                     html += `<div class="lab-tab-prose">${renderLabMarkdown(overviewText)}</div>`;
@@ -1346,16 +1416,28 @@ function buildGuidedV2Sections(lab) {
                 // Start/Destination cards from attackMap
                 const sd = getStartDestination(lab);
                 if (sd) {
-                    const startClassify = classifyArn(sd.start.arn);
+                    // For public-start scenarios, override the type label so the card communicates
+                    // that no AWS credentials are required, even if the node's ARN is a Lambda ARN.
+                    const startClassify = isPublicStart
+                        ? { type: 'public', label: 'Public Access' }
+                        : classifyArn(sd.start.arn);
                     const destClassify = classifyArn(sd.destination.arn);
                     const startName = getArnShortName(sd.start.arn);
                     const destName = getArnShortName(sd.destination.arn);
+
+                    // For public-start, show the access endpoint URL/IP/domain as a subtitle.
+                    // Prefer the structured access field over the README regex value.
+                    const displayUrl = startNodeAccess?.url || startNodeAccess?.ip
+                        || startNodeAccess?.domain || startLineValue;
+                    const startArnLine = isPublicStart && displayUrl
+                        ? `<div class="lab-objective-card-arn lab-objective-card-public-url" title="${escapeHtml(displayUrl)}">${escapeHtml(displayUrl)}</div>`
+                        : `<div class="lab-objective-card-arn" title="${escapeHtml(sd.start.arn || '')}">${escapeHtml(startName)}</div>`;
 
                     html += `<div class="lab-objective-flow">
                         <div class="lab-objective-card lab-objective-card-${startClassify.type}">
                             <div class="lab-objective-card-type">${escapeHtml(startClassify.label)}</div>
                             <div class="lab-objective-card-label">${escapeHtml(sd.start.label || sd.start.id)}</div>
-                            <div class="lab-objective-card-arn" title="${escapeHtml(sd.start.arn || '')}">${escapeHtml(startName)}</div>
+                            ${startArnLine}
                         </div>
                         <div class="lab-objective-arrow">
                             <svg width="32" height="24" viewBox="0 0 32 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -1388,8 +1470,12 @@ function buildGuidedV2Sections(lab) {
         }
 
         // Starting Permissions sub-section (rendered as horizontal pills)
-        const startingPerms = lab.permissions?.principals?.[0];
-        if (startingPerms?.required?.length || startingPerms?.helpful?.length) {
+        // Check across all principals, not just principals[0], to catch multi-principal scenarios
+        // where helpful permissions belong to a secondary IAM recon principal.
+        const allPrincipals = lab.permissions?.principals ?? [];
+        const hasAnyPerms = allPrincipals.some(p => p.required?.length || p.helpful?.length)
+            || lab.permissions?.required?.length || lab.permissions?.helpful?.length;
+        if (hasAnyPerms) {
             sections.push({
                 id: `gv2-permissions-${slug}`,
                 h2Section: 'Objective',
