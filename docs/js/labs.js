@@ -152,8 +152,8 @@ function getResourcesCreated(lab) {
     return lab.readme?.attack?.resourcesCreated || lab.readme?.resourcesCreated;
 }
 
-function getGuidedWalkthrough(lab) {
-    return lab.readme?.guidedWalkthrough;
+function getSolution(lab) {
+    return lab.readme?.solution ?? lab.readme?.guidedWalkthrough;
 }
 
 function isV3Schema(lab) {
@@ -1532,12 +1532,12 @@ function buildGuidedV2Sections(lab) {
 
     // --- Attack ---
 
-    // CTF Challenge from attackMap
+    // Guided Challenge from attackMap
     if (lab.attackMap?.nodes?.length && lab.attackMap?.edges?.length) {
         sections.push({
             id: `gv2-ctf-${slug}`,
             h2Section: 'Attack',
-            title: 'CTF Challenge',
+            title: 'Guided Challenge',
             level: 3,
             colorClass: sectionColors['Attack'],
             renderContent: () => {
@@ -1548,22 +1548,22 @@ function buildGuidedV2Sections(lab) {
         });
     }
 
-    // Guided Walkthrough from companion file
-    const walkthrough = getGuidedWalkthrough(lab);
-    if (walkthrough) {
-        // Strip the leading H1 title line (e.g. "# Guided Walkthrough: ...") since it
-        // duplicates the section heading already shown on the page
-        // Strip leading H1, then prepend a "Summary" section heading so the
-        // introductory paragraphs have a visible header matching the ## style
-        const walkthroughCleaned = '## Summary\n\n' + walkthrough.replace(/^# [^\n]+\n+/, '');
+    // Solution from companion file
+    const solution = getSolution(lab);
+    if (solution) {
+        // Strip the leading H1 title line (e.g. "# Solution: ...") since it
+        // duplicates the section heading already shown on the page.
+        // Prepend a "Summary" section heading so the introductory paragraphs
+        // have a visible header matching the ## style.
+        const solutionCleaned = '## Summary\n\n' + solution.replace(/^# [^\n]+\n+/, '');
         sections.push({
             id: `gv2-walkthrough-${slug}`,
             h2Section: 'Attack',
-            title: 'Guided Walkthrough',
+            title: 'Solution',
             level: 3,
             colorClass: sectionColors['Attack'],
             collapsed: true,
-            renderContent: () => `<div class="lab-walkthrough-container"><div class="lab-tab-prose">${renderLabMarkdown(walkthroughCleaned)}</div></div>`,
+            renderContent: () => `<div class="lab-walkthrough-container"><div class="lab-tab-prose">${renderLabMarkdown(solutionCleaned)}</div></div>`,
         });
     }
 

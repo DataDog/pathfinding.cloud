@@ -1885,8 +1885,11 @@ function renderGamePanelCloudSIEM(panelEl, state) {
 // Render deploy instructions in the panel (triggered by canvas button)
 function renderGamePanelDeploy(panelEl, state) {
     const lab = state.lab;
-    const tfVar = lab?.terraform?.variableName || '';
     const scenarioDir = lab?.name || '';
+    // Extract the deploy commands from the README's non-interactive section, stripping
+    // the markdown code fence (```bash...```) to get the raw command text.
+    const deployRaw = lab?.readme?.setup?.deployNonInteractive || '';
+    const deployCmd = deployRaw.replace(/^```[a-z]*\n/, '').replace(/\n?```\s*$/, '').trim();
 
     let html = `
         <div class="mg-panel-section">
@@ -1902,17 +1905,16 @@ function renderGamePanelDeploy(panelEl, state) {
             <div class="mg-deploy-step">
                 <p class="mg-deploy-step-title">2. Configure plabs</p>
                 <pre class="mg-cmd-block"><code>plabs init</code></pre>
-                <p class="mg-panel-body mg-muted">Configure your AWS profiles in ~/.plabs/plabs.yaml</p>
+          
             </div>
-            ${tfVar ? `
+            ${deployCmd ? `
             <div class="mg-deploy-step">
                 <p class="mg-deploy-step-title">3. Deploy this scenario</p>
-                <pre class="mg-cmd-block"><code>plabs enable ${escapeHtmlGame(tfVar)}
-plabs apply</code></pre>
+                <pre class="mg-cmd-block"><code>${escapeHtmlGame(deployCmd)}</code></pre>
             </div>` : ''}
             <div class="mg-deploy-step">
-                <p class="mg-deploy-step-title">${tfVar ? '4' : '3'}. Get starting credentials</p>
-                <pre class="mg-cmd-block"><code>plabs demo --print-starting-info ${escapeHtmlGame(scenarioDir)}</code></pre>
+                <p class="mg-deploy-step-title">${deployCmd ? '4' : '3'}. Get starting credentials</p>
+                <pre class="mg-cmd-block"><code>plabs credentials ${escapeHtmlGame(scenarioDir)}</code></pre>
             </div>
         </div>`;
 
@@ -1930,8 +1932,7 @@ function updateGamePanel(state) {
     const hasCompanion = state.selectedCompanion !== null && state.selectedCompanion !== undefined;
 
     if (state.screen === 'start' || state.screen === 'paused') {
-        // Check if deploy view is active
-        if (state.showDeploy) {
+        if (state.gameViewPhase === 'setup') {
             renderGamePanelDeploy(panelEl, state);
         } else {
             renderGamePanelOverview(panelEl, state);
@@ -1952,8 +1953,15 @@ function updateGamePanel(state) {
             renderGamePanelComplete(panelEl, state);
         }
     } else if (state.screen === 'playing') {
-        if (state.showDeploy) {
+        // Panel override from Lab Setup / Lab Overview buttons takes priority
+        if (state.panelOverride === 'setup') {
             renderGamePanelDeploy(panelEl, state);
+        } else if (state.panelOverride === 'overview') {
+            renderGamePanelOverview(panelEl, state);
+        } else if (state.gameViewPhase === 'setup') {
+            renderGamePanelDeploy(panelEl, state);
+        } else if (state.gameViewPhase === 'overview') {
+            renderGamePanelOverview(panelEl, state);
         } else if (hasCompanion) {
             renderGamePanelCompanion(panelEl, state);
         } else if (hasNode) {
@@ -2028,7 +2036,7 @@ function buildStartButtons(w, h, state) {
             fontSize: 13,
             radius: 12,
             onClick: () => {
-                state.showDeploy = !state.showDeploy;
+                state.gameViewPhase = state.gameViewPhase === 'setup' ? 'overview' : 'setup';
                 state._redraw();
                 updateGamePanel(state);
             }
@@ -2047,7 +2055,7 @@ function buildStartButtons(w, h, state) {
         fontSize: 15,
         radius: 12,
         onClick: () => {
-            state.showDeploy = false;
+            state.gameViewPhase = 'setup';
             state.screen = 'playing';
             state.selectedNode = null; // start on mission briefing, first Next goes to Startington
             state.selectedEdge = null;
@@ -2094,7 +2102,7 @@ function drawStartOverlay(ctx, w, h, state) {
     ctx.fillText('Esc = Pause  |  T = Island style  |  P = Plane style  |  Click island = View details', w / 2, lastBtn.y + lastBtn.h + 24);
 
     // Highlight deploy button when active
-    if (state.showDeploy && deployBtn) {
+    if (state.gameViewPhase === 'setup' && deployBtn) {
         ctx.strokeStyle = p.hudProgressFill || '#7c3aed';
         ctx.lineWidth = 2;
         drawRoundedRect(ctx, deployBtn.x - 2, deployBtn.y - 2, deployBtn.w + 4, deployBtn.h + 4, 14);
@@ -2108,13 +2116,38 @@ function drawStartOverlay(ctx, w, h, state) {
 // Advance game state: edge-based progression
 // Flow: overview -> start node -> hop 1 (edge) -> companion(s) on hop -> destination node -> hop 2 -> ...
 function advanceGameState(w, h, state) {
+    state.panelOverride = null; // clear any temporary panel switch
     const nextEdgeIdx = state.currentEdge + 1;
 
-    // Initial state: nothing selected yet -> select Startington (node 0)
-    if (state.selectedNode === null && state.selectedEdge === null
-        && state.selectedCompanion === null && state.currentEdge === -1) {
-        state.selectedNode = 0;
+    // Phase transitions: setup -> overview -> navigation
+    if (state.gameViewPhase === 'setup') {
+        state.gameViewPhase = 'overview';
+        state.selectedNode = null;
+        state.selectedEdge = null;
         state.selectedCompanion = null;
+        state.buttons = buildPlayingButtons(w, h, state);
+        state._redraw();
+        updateGamePanel(state);
+        return;
+    }
+    if (state.gameViewPhase === 'overview') {
+        state.gameViewPhase = 'navigation';
+        state.selectedNode = 0;
+        state.selectedEdge = null;
+        state.selectedCompanion = null;
+        state.buttons = buildPlayingButtons(w, h, state);
+        state._redraw();
+        updateGamePanel(state);
+        return;
+    }
+
+    // At node 0 with no edges completed -> advance to first edge
+    if (state.selectedNode === 0 && state.selectedEdge === null
+        && state.selectedCompanion === null && state.currentEdge === -1
+        && nextEdgeIdx < state.edges.length) {
+        state.selectedNode = null;
+        state.selectedCompanion = null;
+        state.selectedEdge = nextEdgeIdx;
         state.buttons = buildPlayingButtons(w, h, state);
         state._redraw();
         updateGamePanel(state);
@@ -2183,6 +2216,30 @@ function advanceGameState(w, h, state) {
 }
 
 function retreatGameState(w, h, state) {
+    state.panelOverride = null; // clear any temporary panel switch
+
+    // Phase transitions: overview -> setup, navigation at node 0 -> overview
+    if (state.gameViewPhase === 'overview') {
+        state.gameViewPhase = 'setup';
+        state.selectedNode = null;
+        state.selectedEdge = null;
+        state.selectedCompanion = null;
+        state.buttons = buildPlayingButtons(w, h, state);
+        state._redraw();
+        updateGamePanel(state);
+        return;
+    }
+    if (state.gameViewPhase === 'navigation' && state.selectedNode === 0 && state.currentEdge === -1) {
+        state.gameViewPhase = 'overview';
+        state.selectedNode = null;
+        state.selectedEdge = null;
+        state.selectedCompanion = null;
+        state.buttons = buildPlayingButtons(w, h, state);
+        state._redraw();
+        updateGamePanel(state);
+        return;
+    }
+
     // If viewing a companion, go back to previous companion or to the edge view
     if (state.selectedCompanion !== null && state.selectedCompanion !== undefined) {
         const parentEdge = state.edges.find(e => e.companionIndices && e.companionIndices.includes(state.selectedCompanion));
@@ -2238,15 +2295,21 @@ function buildPlayingButtons(w, h, state) {
     const btnH = 32;
     const gap = 8;
     const barY = h - barH - 6;
+    const btnY = barY + (barH - btnH) / 2;
+
     // Navigation complete when we've stepped through everything to the final node
     const hasCompanionSelected = state.selectedCompanion !== null && state.selectedCompanion !== undefined;
     const allRevealed = state.currentEdge >= state.edges.length - 1
         && !hasCompanionSelected
         && state.selectedNode === state.nodes.length - 1;
 
-    // Can go back if we've moved beyond the initial state
-    const canGoBack = state.currentEdge >= 0 || (state.selectedEdge !== null && state.selectedEdge !== undefined);
+    // Can go back from current position (not at very first view)
+    const canGoBack = state.gameViewPhase !== 'setup';
 
+    // Next is disabled when at the final node with all revealed
+    const canGoNext = !allRevealed;
+
+    // --- Top bar buttons (menu + switch mode) ---
     const menuBtn = {
         id: 'menu',
         x: 10, y: 8,
@@ -2263,7 +2326,6 @@ function buildPlayingButtons(w, h, state) {
         }
     };
 
-    // "Switch to Single Page Mode" button in top bar (right side)
     const switchGuidedW = 185;
     const switchGuidedBtn = {
         id: 'switch-guided',
@@ -2276,135 +2338,112 @@ function buildPlayingButtons(w, h, state) {
         onClick: () => { switchDetailMode('guidedv2', state.lab); }
     };
 
-    // "Lab Deployment Instructions" button in top bar (left side, after menu)
-    const hasDeployData = !!(state.lab?.readme?.setup || state.lab?.readme?.attackLab || state.lab?.terraform?.variableName);
-    const deployBtnW = 185;
-    const deployBtn = hasDeployData ? {
-        id: 'deploy-hud',
-        x: 50, y: 7,
-        w: deployBtnW, h: 28,
-        label: 'Lab Deployment Instructions',
-        style: 'secondary',
-        fontSize: 11,
-        radius: 6,
-        onClick: () => {
-            state.showDeploy = !state.showDeploy;
-            state.selectedNode = null;
-            state.selectedEdge = null;
-            state.selectedCompanion = null;
-            state._redraw();
-            updateGamePanel(state);
-        }
-    } : null;
+    // --- Bottom bar: fixed 5-button layout ---
+    // [Lab Setup][Lab Overview]          [Back][Next]          [Finish Mission]
+    //  ^-- left edge padded              ^-- centered           ^-- right edge padded
+    const setupW = 90;
+    const overviewW = 110;
+    const backW = 70;
+    const nextW = 70;
+    const finishW = 125;
+    const edgePad = 14; // padding from bar edges
 
-    const btnW = 100;
-    const overviewW = 90;
-    const btnY = barY + (barH - btnH) / 2;
+    // Center Back/Next in the middle of the bar
+    const centerGroupW = backW + gap + nextW;
+    const backX = (w - centerGroupW) / 2;
+    const nextX = backX + backW + gap;
 
-    // Overview button -- always present on the far left
-    const overviewOnClick = () => {
-        state.selectedNode = null;
-        state.selectedEdge = null;
-        state.selectedCompanion = null;
-        state.completeView = null;
-        state._redraw();
-        updateGamePanel(state);
-    };
+    // Left group: halfway between edge padding and the center group
+    const leftGroupW = setupW + gap + overviewW;
+    const leftGroupX = edgePad + (backX - edgePad - leftGroupW) / 2;
+    const labSetupX = leftGroupX;
+    const labOverviewX = labSetupX + setupW + gap;
 
-    if (allRevealed) {
-        // All nodes revealed -- show Overview + Back + Finish Mission
-        // Fixed layout: Overview, Back, Finish always in same positions
-        const finishW = 140;
-        const buttons = [menuBtn, switchGuidedBtn];
-        if (deployBtn) buttons.push(deployBtn);
-        const totalW = overviewW + gap + btnW + gap + finishW;
-        const startX = (w - totalW) / 2;
+    // Right group: halfway between center group and the right edge
+    const centerRightEdge = nextX + nextW;
+    const rightEdge = w - edgePad;
+    const finishX = centerRightEdge + (rightEdge - centerRightEdge - finishW) / 2;
 
-        buttons.push({
-            id: 'overview',
-            x: startX, y: btnY,
-            w: overviewW, h: btnH,
-            label: 'Overview',
-            style: 'secondary',
-            fontSize: 12,
-            radius: 8,
-            onClick: overviewOnClick
-        });
-
-        if (canGoBack) {
-            buttons.push({
-                id: 'back',
-                x: startX + overviewW + gap, y: btnY,
-                w: btnW, h: btnH,
-                label: 'Back',
-                style: 'secondary',
-                fontSize: 12,
-                radius: 8,
-                onClick: () => { retreatGameState(w, h, state); }
-            });
-        }
-        buttons.push({
-            id: 'finish-mission',
-            x: startX + overviewW + gap + btnW + gap, y: btnY,
-            w: finishW, h: btnH,
-            label: 'Finish Mission',
-            style: 'primary',
-            fontSize: 13,
-            radius: 8,
-            onClick: () => {
-                state.screen = 'complete';
-                state.selectedNode = null;
-                state.selectedEdge = null;
-                state.buttons = buildCompleteButtons(w, h, state);
-                state._redraw();
-                updateGamePanel(state);
-            }
-        });
-        return buttons;
-    }
-
-    // Normal play: [Overview] + Back + Next
-    // Layout: Overview on far left, then Back where Overview was, Next stays rightmost
     const buttons = [menuBtn, switchGuidedBtn];
-    if (deployBtn) buttons.push(deployBtn);
 
-    // Always allocate 3 button slots: Overview, Back, Next
-    // This keeps Back and Next in fixed positions regardless of state
-    const totalW = overviewW + gap + btnW + gap + btnW;
-    const startX = (w - totalW) / 2;
-
+    // Lab Setup button -- shows deploy instructions panel without changing navigation position
     buttons.push({
-        id: 'overview',
-        x: startX, y: btnY,
-        w: overviewW, h: btnH,
-        label: 'Overview',
+        id: 'lab-setup',
+        x: labSetupX, y: btnY,
+        w: setupW, h: btnH,
+        label: 'Lab Setup',
         style: 'secondary',
         fontSize: 12,
         radius: 8,
-        onClick: overviewOnClick
+        onClick: () => {
+            state.panelOverride = state.panelOverride === 'setup' ? null : 'setup';
+            state.completeView = null;
+            state._redraw();
+            updateGamePanel(state);
+        }
     });
 
-    if (canGoBack) {
-        buttons.push({
-            id: 'back',
-            x: startX + overviewW + gap, y: btnY,
-            w: btnW, h: btnH,
-            label: 'Back',
-            style: 'secondary',
-            fontSize: 12,
-            radius: 8,
-            onClick: () => { retreatGameState(w, h, state); }
-        });
-    }
+    // Lab Overview button -- shows mission briefing panel without changing navigation position
+    buttons.push({
+        id: 'lab-overview',
+        x: labOverviewX, y: btnY,
+        w: overviewW, h: btnH,
+        label: 'Lab Overview',
+        style: 'secondary',
+        fontSize: 12,
+        radius: 8,
+        onClick: () => {
+            state.panelOverride = state.panelOverride === 'overview' ? null : 'overview';
+            state.completeView = null;
+            state._redraw();
+            updateGamePanel(state);
+        }
+    });
+
+    // Back button (disabled at setup phase)
+    buttons.push({
+        id: 'back',
+        x: backX, y: btnY,
+        w: backW, h: btnH,
+        label: 'Back',
+        style: 'secondary',
+        fontSize: 12,
+        radius: 8,
+        disabled: !canGoBack,
+        onClick: () => { retreatGameState(w, h, state); }
+    });
+
+    // Next button (disabled at final node)
     buttons.push({
         id: 'next-step',
-        x: startX + overviewW + gap + btnW + gap, y: btnY,
-        w: btnW, h: btnH,
+        x: nextX, y: btnY,
+        w: nextW, h: btnH,
         label: 'Next',
         style: 'primary',
         fontSize: 12,
         radius: 8,
+        disabled: !canGoNext,
         onClick: () => { advanceGameState(w, h, state); }
+    });
+
+    // Finish Mission button (disabled until all revealed)
+    buttons.push({
+        id: 'finish-mission',
+        x: finishX, y: btnY,
+        w: finishW, h: btnH,
+        label: 'Finish Mission',
+        style: 'primary',
+        fontSize: 13,
+        radius: 8,
+        disabled: !allRevealed,
+        onClick: () => {
+            state.screen = 'complete';
+            state.selectedNode = null;
+            state.selectedEdge = null;
+            state.buttons = buildCompleteButtons(w, h, state);
+            state._redraw();
+            updateGamePanel(state);
+        }
     });
 
     return buttons;
@@ -2425,7 +2464,7 @@ function drawPlayingHUD(ctx, w, h, state) {
     ctx.stroke();
 
     // Top bar buttons (menu left, switch-guided right)
-    const topBarBtnIds = new Set(['menu', 'switch-guided', 'deploy-hud']);
+    const topBarBtnIds = new Set(['menu', 'switch-guided']);
     state.buttons.forEach(btn => {
         if (topBarBtnIds.has(btn.id)) drawThemedButton(ctx, btn, state.hoveredButton, state.activeButton, p);
     });
@@ -2554,7 +2593,8 @@ function buildPauseButtons(w, h, state) {
                 state.selectedNode = null;
                 state.selectedEdge = null;
                 state.completeView = null;
-                state.showDeploy = false;
+                state.gameViewPhase = 'setup';
+                state.panelOverride = null;
                 state.hintsUsed = 0;
                 state.revealedHints = {};
                 state.screen = 'playing';
@@ -2624,7 +2664,8 @@ function buildCompleteButtons(w, h, state) {
                 state.selectedNode = null;
                 state.selectedEdge = null;
                 state.completeView = null;
-                state.showDeploy = false;
+                state.gameViewPhase = 'setup';
+                state.panelOverride = null;
                 state.hintsUsed = 0;
                 state.revealedHints = {};
                 state.screen = 'playing';
@@ -3819,7 +3860,8 @@ function initMapGame(mapId, nodes, edges, companions, lab) {
         selectedEdge: null,
         selectedCompanion: null, // index into companions[] or null
         completeView: null,      // 'cspm' | 'cloudsiem' | null -- which defense panel to show
-        showDeploy: false,       // whether deploy instructions panel is showing
+        gameViewPhase: 'setup',  // 'setup' | 'overview' | 'navigation' -- controls initial flow
+        panelOverride: null,     // 'setup' | 'overview' | null -- temporary panel switch via buttons
         positions,
         companionPositions,
         companions: companions || [],
@@ -3943,7 +3985,7 @@ function initMapGame(mapId, nodes, edges, companions, lab) {
         }
         state.activeButton = null;
 
-        if (state.screen === 'playing' || state.screen === 'complete') {
+        if ((state.screen === 'playing' || state.screen === 'complete') && state.gameViewPhase === 'navigation') {
             // Hit-test hop labels first (highest priority -- they sit on top of edges)
             const hopRects = state._hopLabelRects || [];
             let hopHit = -1;
@@ -3958,7 +4000,8 @@ function initMapGame(mapId, nodes, edges, companions, lab) {
                 state.selectedNode = null;
                 state.selectedEdge = hopHit;
                 state.selectedCompanion = null;
-                state.completeView = null; // clear detection panel when clicking map
+                state.completeView = null;
+                state.panelOverride = null;
                 redraw();
                 updateGamePanel(state);
                 return;
@@ -3975,6 +4018,7 @@ function initMapGame(mapId, nodes, edges, companions, lab) {
                 state.selectedEdge = null;
                 state.selectedCompanion = null;
                 state.completeView = null;
+                state.panelOverride = null;
                 // Sync navigation position: find the edge that leads TO this node
                 if (state.screen === 'playing') {
                     const edgeLeadingHere = state.edges.findIndex(e => e.toIdx === closest);
@@ -4009,6 +4053,7 @@ function initMapGame(mapId, nodes, edges, companions, lab) {
                     state.selectedEdge = null;
                     state.selectedCompanion = companionHit;
                     state.completeView = null;
+                    state.panelOverride = null;
                     // Sync navigation position to this companion's edge
                     if (state.screen === 'playing') {
                         const parentEdge = state.edges.find(e => e.companionIndices && e.companionIndices.includes(companionHit));
@@ -4035,6 +4080,7 @@ function initMapGame(mapId, nodes, edges, companions, lab) {
                         state.selectedEdge = bestEdge;
                         state.selectedCompanion = null;
                         state.completeView = null;
+                        state.panelOverride = null;
                     } else {
                         // Empty canvas click -- do nothing, keep current selection
                         return;
@@ -4181,7 +4227,8 @@ function renderStaticMapPreview(containerEl, lab) {
         selectedEdge: null,
         selectedCompanion: null,
         completeView: null,
-        showDeploy: false,
+        gameViewPhase: 'navigation',
+        panelOverride: null,
         positions,
         companionPositions,
         companions: mapCompanions,

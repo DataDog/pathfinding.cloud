@@ -295,20 +295,23 @@ def load_attack_map_file(readme_dir):
     return attack_map
 
 
-def load_guided_walkthrough(readme_dir):
-    """Load guided_walkthrough.md companion file from the same directory as README.
+def load_solution(readme_dir):
+    """Load solution.md companion file from the same directory as README.
+
+    Tries solution.md first, falls back to guided_walkthrough.md for
+    scenarios that haven't been migrated to schema v4.1.0 yet.
 
     Returns the markdown text, or None if not found.
     """
-    walkthrough_path = Path(readme_dir) / "guided_walkthrough.md"
-    if not walkthrough_path.exists():
-        return None
-
-    try:
-        return walkthrough_path.read_text(encoding="utf-8")
-    except Exception as e:
-        print(f"  WARNING: Failed to read {walkthrough_path}: {e}")
-        return None
+    for filename in ("solution.md", "guided_walkthrough.md"):
+        path = Path(readme_dir) / filename
+        if path.exists():
+            try:
+                return path.read_text(encoding="utf-8")
+            except Exception as e:
+                print(f"  WARNING: Failed to read {path}: {e}")
+                return None
+    return None
 
 
 def parse_starting_permissions_section(section_text):
@@ -625,7 +628,7 @@ def parse_readme_sections_v3(readme_text):
             low = key.lower()
             if "scenario specific" in low or "resources created" in low and "demo" not in low and "attack script" not in low:
                 attack["resourcesCreated"] = content
-            elif "guided walkthrough" in low:
+            elif "guided walkthrough" in low or low.strip() == "solution":
                 # Just a link in README; actual content from companion file
                 pass
             elif "automated demo" in low or "demo_attack" in low:
@@ -1000,12 +1003,12 @@ def transform_readme(readme_text, module_path, readme_dir=None):
         if attack_map:
             result["attackMap"] = attack_map
 
-        # Load guided_walkthrough.md
-        walkthrough = load_guided_walkthrough(readme_dir)
-        if walkthrough:
+        # Load solution.md (or legacy guided_walkthrough.md)
+        solution = load_solution(readme_dir)
+        if solution:
             if "readme" not in result:
                 result["readme"] = {}
-            result["readme"]["guidedWalkthrough"] = walkthrough
+            result["readme"]["solution"] = solution
 
     result["hasAttackMap"] = "attackMap" in result
 
@@ -1121,12 +1124,14 @@ def generate_labs_json(source_dir=None, output_file="docs/labs.json"):
                                 except yaml.YAMLError as e:
                                     print(f"  WARNING: Failed to parse remote attack_map.yaml: {e}")
 
-                            walkthrough_path = f"{module_path}/guided_walkthrough.md"
-                            walkthrough_text = fetch_github_raw_file(walkthrough_path, headers)
-                            if walkthrough_text:
+                            # Try solution.md first, fall back to guided_walkthrough.md
+                            solution_text = fetch_github_raw_file(f"{module_path}/solution.md", headers)
+                            if not solution_text:
+                                solution_text = fetch_github_raw_file(f"{module_path}/guided_walkthrough.md", headers)
+                            if solution_text:
                                 if "readme" not in lab:
                                     lab["readme"] = {}
-                                lab["readme"]["guidedWalkthrough"] = walkthrough_text
+                                lab["readme"]["solution"] = solution_text
 
                         labs.append(lab)
                         print(f"  Loaded: {lab['name']}")
