@@ -36,10 +36,13 @@ const cloudSprites = {
         for (let i = 0; i < count; i++) {
             const img = this.images[Math.floor(rng() * this.images.length)];
             const scale = 2.0 + rng() * 2.0; // 2x-4x native size for prominent clouds
-            // Keep clouds fully within the canvas -- buffer on left so they don't clip
+            // Distribute clouds evenly across the full canvas width with random jitter
             const drawW = img.width * scale;
             const drawH = img.height * scale;
-            const x = (drawW / 4) + rng() * Math.max(0, w - drawW / 2);
+            const segment = w / count;
+            const baseX = (i + 0.5) * segment;
+            const jitter = (rng() - 0.5) * segment * 0.6;
+            const x = Math.max(drawW / 2, Math.min(w - drawW / 2, baseX + jitter));
             const y = hudTop + 10 + rng() * (cloudMaxY - hudTop - 10);
             ctx.globalAlpha = 0.7 + rng() * 0.3;
             ctx.drawImage(img, x - drawW / 2, y - drawH / 2, drawW, drawH);
@@ -1015,7 +1018,7 @@ function drawCompanions(ctx, w, h, state) {
                 break;
             case 'islet':
             default:
-                drawCompanionIslet(ctx, pos, companions[ci], isSelected, state);
+                drawCompanionIslet(ctx, pos, companions[ci], isSelected, state, ci);
                 break;
         }
     }
@@ -1113,7 +1116,7 @@ function drawCompanionShip(ctx, pos, companion, isSelected, state) {
 }
 
 // Treatment 2: Rocky Islet -- smaller island with barren rock tones
-function drawCompanionIslet(ctx, pos, companion, isSelected, state) {
+function drawCompanionIslet(ctx, pos, companion, isSelected, state, nodeIndex) {
     const p = state.palette;
     const x = pos.x;
     const y = pos.y;
@@ -1121,7 +1124,7 @@ function drawCompanionIslet(ctx, pos, companion, isSelected, state) {
     const baseCompanionRadius = 56;
     const companionShrinkSteps = Math.max(0, (state.nodes?.length || 0) - 3);
     const islandRadius = baseCompanionRadius * Math.pow(0.8, companionShrinkSteps);
-    const seed = Math.round(x * 7 + y * 13);
+    const seed = (nodeIndex ?? 0) * 997 + 501;  // stable per-companion seed, independent of position
 
     ctx.save();
 
@@ -1978,6 +1981,15 @@ function updateGamePanel(state) {
 // ---- Canvas Screen Renderers ----
 
 function renderMapGame(ctx, w, h, state) {
+    // Helper: apply pan/zoom transform for world-space map content
+    function withViewTransform(fn) {
+        ctx.save();
+        ctx.translate(state.viewPanX, state.viewPanY);
+        ctx.scale(state.viewZoom, state.viewZoom);
+        fn();
+        ctx.restore();
+    }
+
     switch (state.screen) {
         case 'start':
             drawParchmentBackground(ctx, w, h, state.palette);
@@ -1985,16 +1997,23 @@ function renderMapGame(ctx, w, h, state) {
             drawStartOverlay(ctx, w, h, state);
             break;
         case 'playing':
-            drawMapWithGameLabels(ctx, w, h, state);
-            drawPlayingHUD(ctx, w, h, state);
+            withViewTransform(() => {
+                drawMapWithGameLabels(ctx, w, h, state);
+                drawEdgeHopLabels(ctx, w, h, state);
+            });
+            drawPlayingHUD(ctx, w, h, state);  // HUD stays in screen space
             break;
         case 'paused':
-            drawMapWithGameLabels(ctx, w, h, state);
+            withViewTransform(() => {
+                drawMapWithGameLabels(ctx, w, h, state);
+            });
             drawPauseOverlay(ctx, w, h, state);
             break;
         case 'complete':
-            drawMapWithGameLabels(ctx, w, h, state);
-            drawEdgeHopLabels(ctx, w, h, state);
+            withViewTransform(() => {
+                drawMapWithGameLabels(ctx, w, h, state);
+                drawEdgeHopLabels(ctx, w, h, state);
+            });
             drawCompleteOverlay(ctx, w, h, state);
             break;
     }
@@ -2366,6 +2385,27 @@ function buildPlayingButtons(w, h, state) {
 
     const buttons = [menuBtn, switchGuidedBtn];
 
+    // Reset View button (only visible when panned or zoomed)
+    const viewIsTransformed = state.viewZoom !== 1 || state.viewPanX !== 0 || state.viewPanY !== 0;
+    if (viewIsTransformed) {
+        buttons.push({
+            id: 'reset-view',
+            x: 50, y: 8,
+            w: 80, h: 30,
+            label: 'Reset View',
+            style: 'ghost',
+            fontSize: 11,
+            radius: 6,
+            onClick: () => {
+                state.viewPanX = 0;
+                state.viewPanY = 0;
+                state.viewZoom = 1;
+                state.buttons = buildPlayingButtons(w, h, state);
+                state._redraw();
+            }
+        });
+    }
+
     // Lab Setup button -- shows deploy instructions panel without changing navigation position
     buttons.push({
         id: 'lab-setup',
@@ -2463,21 +2503,47 @@ function drawPlayingHUD(ctx, w, h, state) {
     ctx.lineWidth = 1;
     ctx.stroke();
 
-    // Top bar buttons (menu left, switch-guided right)
-    const topBarBtnIds = new Set(['menu', 'switch-guided']);
+    // Top bar buttons (menu left, reset-view, switch-guided right)
+    const topBarBtnIds = new Set(['menu', 'reset-view', 'switch-guided']);
     state.buttons.forEach(btn => {
         if (topBarBtnIds.has(btn.id)) drawThemedButton(ctx, btn, state.hoveredButton, state.activeButton, p);
     });
 
-    // Title in center of top bar
+    // "Pathfinding.cloud Labs" label left of hamburger menu (after the menu button)
+    const menuBtnRight = 10 + 34 + 6; // menuBtn.x + menuBtn.w + gap
     ctx.fillStyle = p.hudText;
-    ctx.font = 'bold 14px -apple-system, BlinkMacSystemFont, sans-serif';
-    ctx.textAlign = 'center';
+    ctx.font = '11px -apple-system, BlinkMacSystemFont, sans-serif';
+    ctx.textAlign = 'left';
     ctx.textBaseline = 'middle';
-    ctx.fillText('Pathfinding.cloud Labs', w / 2, 22);
+    ctx.globalAlpha = 0.55;
+    ctx.fillText('Pathfinding.cloud Labs', menuBtnRight, 22);
+    ctx.globalAlpha = 1;
 
-    // -- Hop labels on edges --
-    drawEdgeHopLabels(ctx, w, h, state);
+    // Scenario name in center of top bar
+    const scenarioName = state.lab?.displayName || state.lab?.name || '';
+    if (scenarioName) {
+        // Measure available center space (between the left label area and right buttons)
+        const switchBtn = state.buttons.find(b => b.id === 'switch-guided');
+        const rightEdge = switchBtn ? switchBtn.x - 8 : w - 210;
+        const leftEdge = menuBtnRight + ctx.measureText('Pathfinding.cloud Labs').width + 16;
+        const centerX = (leftEdge + rightEdge) / 2;
+
+        ctx.fillStyle = p.hudText;
+        ctx.font = 'bold 13px -apple-system, BlinkMacSystemFont, sans-serif';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+
+        // Truncate if too wide
+        const maxWidth = rightEdge - leftEdge - 16;
+        let label = scenarioName;
+        while (label.length > 4 && ctx.measureText(label).width > maxWidth) {
+            label = label.slice(0, -1);
+        }
+        if (label !== scenarioName) label = label.trimEnd() + '…';
+        ctx.fillText(label, centerX, 22);
+    }
+
+    // (Hop labels are now drawn in world-space inside renderMapGame's transform block)
 
     // -- Bottom action bar --
     const barH = 40;
@@ -3587,24 +3653,40 @@ function drawGameMap(ctx, w, h, state) {
     const rng = mapRng(123);
     const lastIdx = nodes.length - 1;
 
+    // Compute visible world-space bounds (accounts for pan/zoom so background covers all exposed area)
+    const zoom = state.viewZoom || 1;
+    const panX = state.viewPanX || 0;
+    const panY = state.viewPanY || 0;
+    const bgX = -panX / zoom;
+    const bgY = -panY / zoom;
+    const bgW = w / zoom;
+    const bgH = h / zoom;
+    // Padded bounds to ensure full coverage
+    const fillX = Math.min(0, bgX) - 50;
+    const fillY = Math.min(0, bgY) - 50;
+    const fillR = Math.max(w, bgX + bgW) + 50;
+    const fillB = Math.max(h, bgY + bgH) + 50;
+    const fillW = fillR - fillX;
+    const fillH = fillB - fillY;
+
     // Ocean/sky gradient background
-    const oceanGrad = ctx.createLinearGradient(0, 0, 0, h);
+    const oceanGrad = ctx.createLinearGradient(fillX, fillY, fillX, fillB);
     oceanGrad.addColorStop(0, p.oceanA);
     oceanGrad.addColorStop(0.6, p.oceanB);
     oceanGrad.addColorStop(1, p.oceanDeep);
     ctx.fillStyle = oceanGrad;
-    ctx.fillRect(0, 0, w, h);
+    ctx.fillRect(fillX, fillY, fillW, fillH);
 
-    // Subtle wave lines
+    // Subtle wave lines (extended to cover visible area)
     ctx.save();
     ctx.strokeStyle = p.waveLine;
     ctx.lineWidth = 0.8;
     const waveRng = mapRng(555);
-    for (let wy = 30; wy < h; wy += 35 + waveRng() * 20) {
+    for (let wy = fillY + 30; wy < fillB; wy += 35 + waveRng() * 20) {
         ctx.beginPath();
-        for (let wx = 0; wx <= w; wx += 4) {
+        for (let wx = fillX; wx <= fillR; wx += 4) {
             const yOff = Math.sin(wx * 0.015 + wy * 0.1) * 3;
-            if (wx === 0) ctx.moveTo(wx, wy + yOff);
+            if (wx === fillX) ctx.moveTo(wx, wy + yOff);
             else ctx.lineTo(wx, wy + yOff);
         }
         ctx.stroke();
@@ -3653,7 +3735,7 @@ function drawGameMap(ctx, w, h, state) {
         const isFirst = i === 0;
         const isLast = i === lastIdx;
         const isSelected = state.selectedNode === i;
-        const seed = Math.round(pos.x * 7 + pos.y * 13);
+        const seed = i * 997 + 1;  // stable per-island seed, independent of position
 
         ctx.save();
 
@@ -3826,8 +3908,11 @@ function initMapGame(mapId, nodes, edges, companions, lab) {
     if (!canvas || !panelEl) return;
 
     const wrap = canvas.parentElement;
-    const w = wrap.clientWidth;
-    const h = Math.max(480, Math.min(640, w * 0.6));
+    let w = wrap.clientWidth;
+    // Use 65% of the viewport height, clamped between 480px and 85vh.
+    // This gives large screens a taller map while keeping it usable on small ones.
+    const maxH = Math.floor(window.innerHeight * 0.85);
+    let h = Math.max(480, Math.min(maxH, Math.round(window.innerHeight * 0.65)));
     const dpr = window.devicePixelRatio || 1;
     canvas.width = w * dpr;
     canvas.height = h * dpr;
@@ -3836,6 +3921,9 @@ function initMapGame(mapId, nodes, edges, companions, lab) {
 
     const ctx = canvas.getContext('2d');
     ctx.scale(dpr, dpr);
+
+    // Set canvas background so exposed areas during pan/zoom match the ocean
+    canvas.style.backgroundColor = '#0a1628';
 
     // Preload AWS icons for all nodes so they're ready when we draw
     awsIconSprites.preload(nodes);
@@ -3880,6 +3968,14 @@ function initMapGame(mapId, nodes, edges, companions, lab) {
         buttons: [],
         lab,
         palette,
+        // -- View transform state (pan/zoom) --
+        viewPanX: 0,
+        viewPanY: 0,
+        viewZoom: 1,
+        _isPanning: false,
+        _panStartPointer: null,  // {x, y} screen coords at drag start
+        _panStartView: null,     // {panX, panY} at drag start
+        _suppressClick: false,   // true after a pan drag to prevent click
         _redraw: null,
         _panelEl: panelEl,
     };
@@ -3887,6 +3983,7 @@ function initMapGame(mapId, nodes, edges, companions, lab) {
     function redraw() {
         ctx.save();
         ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+        ctx.clearRect(0, 0, w, h);
         renderMapGame(ctx, w, h, state);
         ctx.restore();
     }
@@ -3899,17 +3996,45 @@ function initMapGame(mapId, nodes, edges, companions, lab) {
     redraw();
     updateGamePanel(state);
 
+    // Returns screen-space (sx/sy) for HUD/button hit testing
+    // and world-space (x/y) for island/edge/companion hit testing
     function canvasCoords(e) {
         const rect = canvas.getBoundingClientRect();
+        const sx = (e.clientX - rect.left) * (w / rect.width);
+        const sy = (e.clientY - rect.top) * (h / rect.height);
         return {
-            x: (e.clientX - rect.left) * (w / rect.width),
-            y: (e.clientY - rect.top) * (h / rect.height)
+            sx, sy,
+            x: (sx - state.viewPanX) / state.viewZoom,
+            y: (sy - state.viewPanY) / state.viewZoom,
         };
     }
 
     function onPointerMove(e) {
-        const { x, y } = canvasCoords(e);
-        const hit = hitTestButtons(state.buttons, x, y);
+        const { sx, sy, x, y } = canvasCoords(e);
+
+        // Handle active pan drag
+        if (state._isPanning) {
+            state.viewPanX = state._panStartView.panX + (sx - state._panStartPointer.x);
+            state.viewPanY = state._panStartView.panY + (sy - state._panStartPointer.y);
+            canvas.style.cursor = 'grabbing';
+            redraw();
+            return;
+        }
+
+        // Check if we should start panning (pointer is down + moved > 5px)
+        if (state._panStartPointer && !state._isPanning) {
+            const dx = sx - state._panStartPointer.x;
+            const dy = sy - state._panStartPointer.y;
+            if (Math.hypot(dx, dy) > 5) {
+                state._isPanning = true;
+                state.activeButton = null;
+                canvas.style.cursor = 'grabbing';
+                return;
+            }
+        }
+
+        // Buttons use screen-space coords
+        const hit = hitTestButtons(state.buttons, sx, sy);
         if (hit !== state.hoveredButton) {
             state.hoveredButton = hit;
             if (hit) {
@@ -3926,7 +4051,7 @@ function initMapGame(mapId, nodes, edges, companions, lab) {
                 } else {
                     // Check if hovering over an island or edge
                     let overIsland = false;
-                    for (const pos of positions) {
+                    for (const pos of state.positions) {
                         if (Math.hypot(pos.x - x, pos.y - y) < 42) { overIsland = true; break; }
                     }
                     if (overIsland) {
@@ -3951,10 +4076,10 @@ function initMapGame(mapId, nodes, edges, companions, lab) {
                             let overEdge = false;
                             for (const edge of state.edges) {
                                 if (!state.revealed.has(edge.fromIdx)) continue;
-                                const a = positions[edge.fromIdx], b = positions[edge.toIdx];
+                                const a = state.positions[edge.fromIdx], b = state.positions[edge.toIdx];
                                 if (pointToSegmentDist(x, y, a.x, a.y, b.x, b.y) < 18) { overEdge = true; break; }
                             }
-                            canvas.style.cursor = overEdge ? 'pointer' : 'crosshair';
+                            canvas.style.cursor = overEdge ? 'pointer' : 'grab';
                         }
                     }
                 }
@@ -3966,17 +4091,44 @@ function initMapGame(mapId, nodes, edges, companions, lab) {
     }
 
     function onPointerDown(e) {
-        const { x, y } = canvasCoords(e);
-        const hit = hitTestButtons(state.buttons, x, y);
+        const { sx, sy } = canvasCoords(e);
+        const hit = hitTestButtons(state.buttons, sx, sy);
         if (hit) {
             state.activeButton = hit;
             redraw();
         }
+
+        // Start tracking for potential pan drag (playing/complete screens only)
+        if ((state.screen === 'playing' || state.screen === 'complete') && !hit) {
+            state._panStartPointer = { x: sx, y: sy };
+            state._panStartView = { panX: state.viewPanX, panY: state.viewPanY };
+        }
+    }
+
+    function onPointerUp(e) {
+        if (state._isPanning) {
+            state._suppressClick = true;
+            state._isPanning = false;
+            canvas.style.cursor = 'grab';
+            // Rebuild buttons so reset-view button appears
+            if (state.screen === 'playing') {
+                state.buttons = buildPlayingButtons(w, h, state);
+                redraw();
+            }
+        }
+        state._panStartPointer = null;
+        state._panStartView = null;
     }
 
     function onClick(e) {
-        const { x, y } = canvasCoords(e);
-        const buttonHit = hitTestButtons(state.buttons, x, y);
+        // Suppress click after a pan drag
+        if (state._suppressClick) {
+            state._suppressClick = false;
+            return;
+        }
+        const { sx, sy, x, y } = canvasCoords(e);
+        // Buttons use screen-space coords
+        const buttonHit = hitTestButtons(state.buttons, sx, sy);
         if (buttonHit && state.activeButton === buttonHit) {
             const btn = state.buttons.find(b => b.id === buttonHit);
             state.activeButton = null;
@@ -3985,7 +4137,7 @@ function initMapGame(mapId, nodes, edges, companions, lab) {
         }
         state.activeButton = null;
 
-        if ((state.screen === 'playing' || state.screen === 'complete') && state.gameViewPhase === 'navigation') {
+        if (state.screen === 'playing' || state.screen === 'complete') {
             // Hit-test hop labels first (highest priority -- they sit on top of edges)
             const hopRects = state._hopLabelRects || [];
             let hopHit = -1;
@@ -4009,7 +4161,7 @@ function initMapGame(mapId, nodes, edges, companions, lab) {
 
             // Hit-test islands (main principal nodes)
             let closest = -1, closestDist = Infinity;
-            positions.forEach((pos, i) => {
+            state.positions.forEach((pos, i) => {
                 const d = Math.hypot(pos.x - x, pos.y - y);
                 if (d < 42 && d < closestDist) { closest = i; closestDist = d; }
             });
@@ -4070,8 +4222,8 @@ function initMapGame(mapId, nodes, edges, companions, lab) {
                     for (let ei = 0; ei < state.edges.length; ei++) {
                         const edge = state.edges[ei];
                         if (!state.revealed.has(edge.fromIdx)) continue;
-                        const a = positions[edge.fromIdx];
-                        const b = positions[edge.toIdx];
+                        const a = state.positions[edge.fromIdx];
+                        const b = state.positions[edge.toIdx];
                         const d = pointToSegmentDist(x, y, a.x, a.y, b.x, b.y);
                         if (d < 18 && d < bestEdgeDist) { bestEdge = ei; bestEdgeDist = d; }
                     }
@@ -4137,18 +4289,93 @@ function initMapGame(mapId, nodes, edges, companions, lab) {
             state.planeStyle = planeStyles[(currentIdx + 1) % planeStyles.length];
             redraw();
         }
+        // R key resets the view (pan/zoom) to default
+        if ((e.key === 'r' || e.key === 'R') && (state.screen === 'playing' || state.screen === 'complete')) {
+            if (state.viewZoom !== 1 || state.viewPanX !== 0 || state.viewPanY !== 0) {
+                state.viewPanX = 0;
+                state.viewPanY = 0;
+                state.viewZoom = 1;
+                if (state.screen === 'playing') {
+                    state.buttons = buildPlayingButtons(w, h, state);
+                }
+                redraw();
+            }
+        }
+    }
+
+    function onWheel(e) {
+        if (state.screen !== 'playing' && state.screen !== 'complete') return;
+        e.preventDefault();
+        const { sx, sy } = canvasCoords(e);
+        const oldZoom = state.viewZoom;
+        const zoomFactor = e.deltaY < 0 ? 1.1 : 0.9;
+        const newZoom = Math.max(0.4, Math.min(3.0, oldZoom * zoomFactor));
+
+        // Adjust pan so the point under cursor stays fixed
+        state.viewPanX = sx - (sx - state.viewPanX) * (newZoom / oldZoom);
+        state.viewPanY = sy - (sy - state.viewPanY) * (newZoom / oldZoom);
+        state.viewZoom = newZoom;
+
+        // Rebuild buttons so reset-view button appears/disappears
+        if (state.screen === 'playing') {
+            state.buttons = buildPlayingButtons(w, h, state);
+        }
+        redraw();
     }
 
     canvas.addEventListener('pointermove', onPointerMove);
     canvas.addEventListener('pointerdown', onPointerDown);
+    canvas.addEventListener('pointerup', onPointerUp);
     canvas.addEventListener('click', onClick);
+    canvas.addEventListener('wheel', onWheel, { passive: false });
     document.addEventListener('keydown', onKeyDown);
+
+    // ResizeObserver: recompute layout when container is resized
+    const resizeObserver = new ResizeObserver(() => {
+        const newW = wrap.clientWidth;
+        const newH = wrap.clientHeight;
+        if (newW === w && newH === h) return;
+        if (newW < 1 || newH < 1) return; // guard against collapse
+
+        w = newW;
+        h = newH;
+        canvas.width = w * dpr;
+        canvas.height = h * dpr;
+        canvas.style.width = w + 'px';
+        canvas.style.height = h + 'px';
+        ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+
+        // Recompute layout for new dimensions
+        state.positions = computeMapLayout(state.nodes.length, w, h);
+        state.companionPositions = computeCompanionPositions(state.companions, state.edges, state.positions);
+        const allDeco = generateMapDecorations(state.positions, w, h);
+        state.decorations = allDeco.filter(d => d.type !== 'mountain');
+
+        // Reset view transform since positions are recalculated for the new size
+        state.viewPanX = 0;
+        state.viewPanY = 0;
+        state.viewZoom = 1;
+
+        // Rebuild buttons for current screen
+        if (state.screen === 'playing') {
+            state.buttons = buildPlayingButtons(w, h, state);
+        } else if (state.screen === 'paused') {
+            state.buttons = buildPauseButtons(w, h, state);
+        } else if (state.screen === 'complete') {
+            state.buttons = buildCompleteButtons(w, h, state);
+        }
+        redraw();
+    });
+    resizeObserver.observe(wrap);
 
     canvas._mapGameCleanup = () => {
         canvas.removeEventListener('pointermove', onPointerMove);
         canvas.removeEventListener('pointerdown', onPointerDown);
+        canvas.removeEventListener('pointerup', onPointerUp);
         canvas.removeEventListener('click', onClick);
+        canvas.removeEventListener('wheel', onWheel);
         document.removeEventListener('keydown', onKeyDown);
+        resizeObserver.disconnect();
     };
 }
 

@@ -36,6 +36,7 @@ const categoryConfig = {
     'CSPM: Toxic Combination': { label: 'Toxic Combo', cssClass: 'lab-badge-toxic' },
     'Tool Testing': { label: 'Tool Testing', cssClass: 'lab-badge-tooltest' },
     'CTF': { label: 'CTF', cssClass: 'lab-badge-ctf' },
+    'Attack Simulation': { label: 'Attack Sim', cssClass: 'lab-badge-attacksim' },
 };
 
 // Category banner configuration for card graphics
@@ -47,6 +48,7 @@ const categoryBannerConfig = {
     'CSPM: Toxic Combination': { bannerClass: 'lab-banner-toxic', bannerText: 'TOXIC COMBINATION' },
     'Tool Testing': { bannerClass: 'lab-banner-tooltest', bannerText: 'TOOL TESTING' },
     'CTF': { bannerClass: 'lab-banner-ctf', bannerText: 'CTF CHALLENGE' },
+    'Attack Simulation': { bannerClass: 'lab-banner-attacksim', bannerText: 'ATTACK SIMULATION' },
 };
 
 // Path type display labels and colors
@@ -58,6 +60,7 @@ const pathTypeLabels = {
     'single-condition': 'Single',
     'toxic-combination': 'Toxic',
     'ctf': 'CTF',
+    'attack-simulation': 'Simulation',
 };
 
 const pathTypeColors = {
@@ -68,6 +71,7 @@ const pathTypeColors = {
     'single-condition': 'lab-pathtype-single',
     'toxic-combination': 'lab-pathtype-toxic',
     'ctf': 'lab-pathtype-ctf',
+    'attack-simulation': 'lab-pathtype-attacksim',
 };
 
 const targetColors = {
@@ -523,6 +527,7 @@ function navigateToList() {
 }
 
 function showListView() {
+    document.body.classList.remove('lab-game-mode');
     const listView = document.getElementById('list-view');
     const detailView = document.getElementById('detail-view');
     const nav = document.querySelector('nav.container');
@@ -908,6 +913,7 @@ function renderLabDetailContent(lab, container) {
     html += '</div>'; // close detail-scrollable-content (mode fills it after render)
     container.innerHTML = html;
     const scrollableContent = container.querySelector('.detail-scrollable-content');
+    document.body.classList.toggle('lab-game-mode', currentMode === 'mapgame');
     if (currentMode === 'mapgame') {
         renderLabDetailContentMapGame(lab, scrollableContent);
     } else {
@@ -1186,6 +1192,9 @@ function getNodeTypeFromColor(colorObj) {
 function switchDetailMode(mode, lab) {
     localStorage.setItem('labs-detail-mode', mode);
 
+    // Toggle body class so CSS can expand/restore max-width constraints for game mode
+    document.body.classList.toggle('lab-game-mode', mode === 'mapgame');
+
     // Update toggle buttons
     document.querySelectorAll('.lab-mode-btn').forEach(btn => {
         btn.classList.toggle('active', btn.dataset.mode === mode);
@@ -1393,6 +1402,19 @@ function buildGuidedV2Sections(lab) {
                     ${renderServiceIcons(lab.permissions) ? `<span class="lab-service-icons-right">${renderServiceIcons(lab.permissions)}</span>` : ''}
                 </div>`;
 
+                // Source attribution (Attack Simulation scenarios)
+                if (lab.source?.title || lab.source?.url) {
+                    const titleHtml = lab.source.url
+                        ? `<a href="${escapeHtml(lab.source.url)}" target="_blank" rel="noopener noreferrer" class="lab-source-link">${escapeHtml(lab.source.title || lab.source.url)}</a>`
+                        : escapeHtml(lab.source.title);
+                    const metaParts = [lab.source.author, lab.source.date].filter(Boolean);
+                    html += `<div class="lab-source-attribution">
+                        <div class="lab-source-label">Based on real-world incident</div>
+                        <div class="lab-source-title">${titleHtml}</div>
+                        ${metaParts.length ? `<div class="lab-source-meta">${escapeHtml(metaParts.join(' · '))}</div>` : ''}
+                    </div>`;
+                }
+
                 // Detect public/network-start scenarios. Primary signal: access field on the first
                 // attackMap node (schema v1.1.0+). Fallback: README "- **Start:**" line regex for
                 // older data that predates the access field.
@@ -1564,6 +1586,19 @@ function buildGuidedV2Sections(lab) {
             colorClass: sectionColors['Attack'],
             collapsed: true,
             renderContent: () => `<div class="lab-walkthrough-container"><div class="lab-tab-prose">${renderLabMarkdown(solutionCleaned)}</div></div>`,
+        });
+    }
+
+    // Modifications from Original Attack (Attack Simulation scenarios only)
+    const modificationsFromOriginal = lab.readme?.attack?.modificationsFromOriginal;
+    if (modificationsFromOriginal) {
+        sections.push({
+            id: `gv2-modifications-${slug}`,
+            h2Section: 'Attack',
+            title: 'Modifications from Original Attack',
+            level: 3,
+            colorClass: sectionColors['Attack'],
+            renderContent: () => `<div class="lab-tab-prose">${renderLabMarkdown(modificationsFromOriginal)}</div>`,
         });
     }
 

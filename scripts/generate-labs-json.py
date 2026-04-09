@@ -64,6 +64,7 @@ INDEX_FIELDS = [
     "environments",
     "githubUrl",
     "hasAttackMap",
+    "source",
 ]
 
 
@@ -648,6 +649,8 @@ def parse_readme_sections_v3(readme_text):
                         demo["intro"] = h4_content
                 if demo:
                     attack["demoAttack"] = demo
+            elif "modifications" in low:
+                attack["modificationsFromOriginal"] = content
             elif "cleanup" in low:
                 h4 = split_by_heading_level(content, 4)
                 cleanup = {}
@@ -909,6 +912,20 @@ def transform_readme(readme_text, module_path, readme_dir=None):
 
     use_modern_schema = is_modern_schema(metadata)
 
+    # Source attribution (Attack Simulation scenarios only)
+    source_url = metadata.get("Source URL", "").strip()
+    source_title = metadata.get("Source Title", "").strip()
+    source_author = metadata.get("Source Author", "").strip()
+    source_date = metadata.get("Source Date", "").strip()
+    source = None
+    if any([source_url, source_title, source_author, source_date]):
+        source = {
+            "url": source_url,
+            "title": source_title,
+            "author": source_author,
+            "date": source_date,
+        }
+
     result = {
         "displayName": display_name,
         "name": name,
@@ -936,6 +953,9 @@ def transform_readme(readme_text, module_path, readme_dir=None):
         "githubUrl": f"https://github.com/{GITHUB_OWNER}/{GITHUB_REPO}/tree/main/{module_path}",
         "schemaVersion": get_schema_version(metadata),
     }
+
+    if source:
+        result["source"] = source
 
     # Parse permissions: v3+ reads from markdown section, v1/v2 from metadata.
     # Both produce {"principals": [{name, required, helpful}, ...]} so the
