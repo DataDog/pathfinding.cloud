@@ -65,6 +65,7 @@ INDEX_FIELDS = [
     "githubUrl",
     "hasAttackMap",
     "source",
+    "modifications",
 ]
 
 
@@ -183,6 +184,37 @@ def parse_semicolon_list(raw):
     if not raw:
         return []
     return [item.strip() for item in raw.split(";") if item.strip()]
+
+
+def parse_lab_modifications(readme_text):
+    """Parse the Lab Modifications nested bullet list from README metadata.
+
+    Recognises the Attack Simulation metadata block pattern:
+      * **Lab Modifications:**
+        * First modification — natural language comparison of real vs. lab
+        * Second modification, if any
+
+    Returns a list of modification strings, or an empty list if not found.
+    """
+    modifications = []
+    lines = readme_text.split("\n")
+    in_modifications = False
+
+    for line in lines:
+        if re.match(r"^\*?\s*\*\*Lab Modifications:\*\*\s*$", line):
+            in_modifications = True
+            continue
+
+        if in_modifications:
+            # Nested bullet: 2+ spaces then * or -
+            nested_match = re.match(r"^\s{2,}[*\-]\s+(.+)$", line)
+            if nested_match:
+                modifications.append(nested_match.group(1).strip())
+            elif line.strip():
+                # Any non-empty, non-bullet line ends the block
+                break
+
+    return modifications
 
 
 def parse_cspm_expected_finding(raw):
@@ -956,6 +988,10 @@ def transform_readme(readme_text, module_path, readme_dir=None):
 
     if source:
         result["source"] = source
+
+    modifications = parse_lab_modifications(readme_text)
+    if modifications:
+        result["modifications"] = modifications
 
     # Parse permissions: v3+ reads from markdown section, v1/v2 from metadata.
     # Both produce {"principals": [{name, required, helpful}, ...]} so the

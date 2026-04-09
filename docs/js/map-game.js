@@ -11,6 +11,24 @@
 // start/pause/complete overlay screens.
 // The HTML panel handles: node details, mission briefing, commands.
 
+// ---- Labs index / detail cache (shared across all game instances) ----
+let _gameLabsIndexCache = null;
+let _gameLabDetailCache = {};
+
+async function fetchLabsIndex() {
+    if (_gameLabsIndexCache) return _gameLabsIndexCache;
+    const resp = await fetch('/labs.json');
+    _gameLabsIndexCache = await resp.json();
+    return _gameLabsIndexCache;
+}
+
+async function fetchLabDetailForGame(slug) {
+    if (_gameLabDetailCache[slug]) return _gameLabDetailCache[slug];
+    const resp = await fetch(`/labs/data/${slug}.json`);
+    _gameLabDetailCache[slug] = await resp.json();
+    return _gameLabDetailCache[slug];
+}
+
 // Cloud sprite loader -- loads pixel-art cloud PNGs for the map background
 const cloudSprites = {
     images: [],
@@ -1768,6 +1786,38 @@ function renderGamePanelEdge(panelEl, state) {
 }
 
 // Attach click handlers for hints and command toggles on the edge panel
+// Scroll the focused lab item in the labs browser into view.
+function scrollLabsBrowserItemIntoView(state) {
+    const menuEl = state._menuEl;
+    if (!menuEl) return;
+    const list = menuEl.querySelector('.mg-labs-list');
+    const focused = menuEl.querySelector('.mg-lab-item.mg-menu-focused');
+    if (!list || !focused) return;
+    const buffer = 40;
+    const listRect = list.getBoundingClientRect();
+    const itemRect = focused.getBoundingClientRect();
+    if (itemRect.bottom + buffer > listRect.bottom) {
+        list.scrollTop += itemRect.bottom + buffer - listRect.bottom;
+    } else if (itemRect.top - buffer < listRect.top) {
+        list.scrollTop -= listRect.top - itemRect.top + buffer;
+    }
+}
+
+// Scroll the panel so the hint at hintIdx is fully visible, with a small
+// buffer below so the user can see there is (or isn't) another hint after it.
+function scrollHintIntoView(panelEl, hintIdx) {
+    const hintEls = panelEl.querySelectorAll('.mg-hint');
+    const hintEl = hintEls[hintIdx];
+    if (!hintEl) return;
+    const buffer = 48; // px of breathing room below the revealed hint
+    const panelRect = panelEl.getBoundingClientRect();
+    const hintRect = hintEl.getBoundingClientRect();
+    const overflow = hintRect.bottom + buffer - panelRect.bottom;
+    if (overflow > 0) {
+        panelEl.scrollTop += overflow;
+    }
+}
+
 function attachEdgePanelHandlers(panelEl, state) {
     // Hint click handlers
     panelEl.querySelectorAll('.mg-hint-hidden').forEach(el => {
@@ -1779,6 +1829,7 @@ function attachEdgePanelHandlers(panelEl, state) {
             state.revealedHints[key].add(hIdx);
             state.hintsUsed++;
             renderGamePanelEdge(panelEl, state);
+            scrollHintIntoView(panelEl, hIdx);
         });
     });
 
@@ -2337,12 +2388,7 @@ function buildPlayingButtons(w, h, state) {
         style: 'ghost',
         fontSize: 18,
         radius: 6,
-        onClick: () => {
-            state.screen = 'paused';
-            state.buttons = buildPauseButtons(w, h, state);
-            state._redraw();
-            updateGamePanel(state);
-        }
+        onClick: () => { openGameMenu(state); }
     };
 
     const switchGuidedW = 185;
@@ -2512,10 +2558,10 @@ function drawPlayingHUD(ctx, w, h, state) {
     // "Pathfinding.cloud Labs" label left of hamburger menu (after the menu button)
     const menuBtnRight = 10 + 34 + 6; // menuBtn.x + menuBtn.w + gap
     ctx.fillStyle = p.hudText;
-    ctx.font = '11px -apple-system, BlinkMacSystemFont, sans-serif';
+    ctx.font = 'bold 12px -apple-system, BlinkMacSystemFont, sans-serif';
     ctx.textAlign = 'left';
     ctx.textBaseline = 'middle';
-    ctx.globalAlpha = 0.55;
+    ctx.globalAlpha = 0.9;
     ctx.fillText('Pathfinding.cloud Labs', menuBtnRight, 22);
     ctx.globalAlpha = 1;
 
@@ -2529,7 +2575,7 @@ function drawPlayingHUD(ctx, w, h, state) {
         const centerX = (leftEdge + rightEdge) / 2;
 
         ctx.fillStyle = p.hudText;
-        ctx.font = 'bold 13px -apple-system, BlinkMacSystemFont, sans-serif';
+        ctx.font = 'bold 15px -apple-system, BlinkMacSystemFont, sans-serif';
         ctx.textAlign = 'center';
         ctx.textBaseline = 'middle';
 
@@ -2628,72 +2674,334 @@ function drawEdgeHopLabels(ctx, w, h, state) {
 
 // ---- Pause Overlay ----
 
-function buildPauseButtons(w, h, state) {
-    const btnW = Math.min(220, w - 40);
-    const btnH = 42;
-    const btnX = (w - btnW) / 2;
-    const centerY = h * 0.35;
-    const gap = 12;
+// ---- HTML Game Menu (shown over canvas when paused) ----
+
+function getMenuItems(state) {
+    if (state.menuView === 'keybindings') {
+        return [{ id: 'back', label: 'Back to Menu', style: 'secondary' }];
+    }
     return [
-        {
-            id: 'resume', x: btnX, y: centerY,
-            w: btnW, h: btnH, label: 'Resume Mission',
-            style: 'primary', fontSize: 15, radius: 12,
-            onClick: () => {
-                state.screen = 'playing';
-                state.buttons = buildPlayingButtons(w, h, state);
-                state._redraw();
-                updateGamePanel(state);
-            }
-        },
-        {
-            id: 'restart', x: btnX, y: centerY + btnH + gap,
-            w: btnW, h: 36, label: 'Restart',
-            style: 'secondary', radius: 10,
-            onClick: () => {
-                state.revealed = new Set(state.nodes.map((_, i) => i));
-                state.currentNode = 0;
-                state.currentEdge = -1;
-                state.revealedEdges = new Set(state.edges.map((_, i) => i));
-                state.revealedCommands = new Set();
-                state.selectedNode = null;
-                state.selectedEdge = null;
-                state.completeView = null;
-                state.gameViewPhase = 'setup';
-                state.panelOverride = null;
-                state.hintsUsed = 0;
-                state.revealedHints = {};
-                state.screen = 'playing';
-                state.buttons = buildPlayingButtons(w, h, state);
-                state._redraw();
-                updateGamePanel(state);
-            }
-        },
-        {
-            id: 'exit-to-list', x: btnX, y: centerY + btnH + 36 + gap * 2,
-            w: btnW, h: 34, label: 'Exit to Lab List',
-            style: 'ghost', radius: 8,
-            onClick: () => { navigateToList(); }
-        }
+        { id: 'resume',      label: 'Resume Mission',      style: 'primary' },
+        { separator: true },
+        { id: 'demo',        label: 'Run Simulated Demo',  style: 'secondary', stub: true },
+        { id: 'all-labs',    label: 'View All Labs',       style: 'secondary' },
+        { id: 'keybindings', label: 'Show Keybindings',    style: 'secondary' },
+        { separator: true },
+        { id: 'restart',     label: 'Restart',             style: 'secondary' },
+        { id: 'exit',        label: 'Exit to Lab List',    style: 'danger' },
     ];
 }
 
+// Returns the filtered lab list for the browser based on current search string.
+function getFilteredBrowserLabs(state) {
+    const q = (state.labsBrowserFilter || '').trim().toLowerCase();
+    const labs = state.labsBrowserLabs || [];
+    if (!q) return labs;
+    return labs.filter(l =>
+        (l.displayName || l.name || '').toLowerCase().includes(q) ||
+        (l.category || '').toLowerCase().includes(q)
+    );
+}
+
+function getFocusableMenuItems(state) {
+    if (state.menuView === 'labs-browser') {
+        const labs = getFilteredBrowserLabs(state);
+        return [
+            { id: 'back' },
+            ...labs.map(l => ({ id: `lab-${l.slug}`, slug: l.slug })),
+        ];
+    }
+    return getMenuItems(state).filter(item => !item.separator && !item.stub);
+}
+
+// Start loading the labs index and show the labs-browser menu view.
+function loadLabsBrowser(state) {
+    state.menuView = 'labs-browser';
+    state.menuFocusIdx = 0;
+    state.labsBrowserFilter = '';
+    renderGameMenu(state);
+    if (state.labsBrowserLabs !== null) return; // already loaded
+    fetchLabsIndex()
+        .then(allLabs => {
+            // Only show labs that have an attack map (i.e. can be played)
+            state.labsBrowserLabs = allLabs.filter(l => l.hasAttackMap);
+            if (state.menuView === 'labs-browser') {
+                state.menuFocusIdx = 0;
+                renderGameMenu(state);
+            }
+        })
+        .catch(() => {
+            if (state.menuView === 'labs-browser') {
+                state.labsBrowserLabs = [];
+                renderGameMenu(state);
+            }
+        });
+}
+
+// Switch the current game container to a different lab.
+async function switchToLab(slug, state) {
+    const menuEl = state._menuEl;
+    const container = state._container;
+
+    // Show a loading indicator while we fetch
+    if (menuEl) {
+        const dialog = menuEl.querySelector('.mg-menu-dialog');
+        if (dialog) dialog.innerHTML = '<div class="mg-labs-switching">Loading lab\u2026</div>';
+    }
+
+    try {
+        const fullLab = await fetchLabDetailForGame(slug);
+
+        // Remove the old game's document-level event listeners before wiping the DOM
+        const oldCanvas = container?.querySelector('canvas.mg-canvas');
+        if (oldCanvas?._mapGameCleanup) oldCanvas._mapGameCleanup();
+
+        // Update the browser URL
+        history.pushState(null, '', `/labs/${slug}`);
+
+        // Re-render the game container with the new lab — this wipes the old
+        // canvas (and menu overlay) and sets up a fresh game after a short delay.
+        renderLabDetailContentMapGame(fullLab, container);
+    } catch (_err) {
+        // On failure, return to the labs browser so the user can try again
+        if (state._menuEl) {
+            state.menuView = 'labs-browser';
+            renderGameMenu(state);
+        }
+    }
+}
+
+function renderGameMenu(state) {
+    const menuEl = state._menuEl;
+    if (!menuEl) return;
+
+    let html = '';
+
+    if (state.menuView === 'labs-browser') {
+        // ----- Labs browser view -----
+        const focusable = getFocusableMenuItems(state); // [{id:'back'}, {id:'lab-slug', slug}...]
+        const focusedId = focusable[state.menuFocusIdx]?.id;
+        const filteredLabs = getFilteredBrowserLabs(state);
+
+        html = '<div class="mg-menu-dialog mg-labs-dialog">';
+        html += '<div class="mg-menu-brand">Pathfinding.cloud Labs</div>';
+        html += '<div class="mg-menu-title">All Labs</div>';
+        html += '<div class="mg-menu-separator" style="margin-top:0;margin-bottom:8px;"></div>';
+
+        // Search input
+        html += '<div class="mg-labs-search-wrap">';
+        html += `<input type="text" class="mg-labs-search-input" placeholder="Filter labs\u2026" value="${escapeHtmlGame(state.labsBrowserFilter || '')}" autocomplete="off" spellcheck="false">`;
+        html += '</div>';
+
+        // Labs list
+        html += '<div class="mg-labs-list">';
+        if (state.labsBrowserLabs === null) {
+            html += '<div class="mg-labs-loading">Loading\u2026</div>';
+        } else if (filteredLabs.length === 0) {
+            html += '<div class="mg-labs-empty">No labs found</div>';
+        } else {
+            for (const lab of filteredLabs) {
+                const itemId = `lab-${lab.slug}`;
+                const focused = itemId === focusedId ? 'mg-menu-focused' : '';
+                const labLabel = escapeHtmlGame(lab.displayName || lab.name || lab.slug);
+                const catLabel = escapeHtmlGame(lab.category || '');
+                html += `<div class="mg-lab-item ${focused}" data-slug="${escapeHtmlGame(lab.slug)}">`;
+                html += `<div class="mg-lab-item-name">${labLabel}</div>`;
+                if (catLabel) html += `<div class="mg-lab-item-meta"><span class="mg-lab-category-badge">${catLabel}</span></div>`;
+                html += '</div>';
+            }
+        }
+        html += '</div>'; // mg-labs-list
+
+        html += '<div class="mg-menu-separator" style="margin-bottom:6px;"></div>';
+        html += '<div class="mg-menu-items">';
+        const backFocused = focusedId === 'back' ? 'mg-menu-focused' : '';
+        html += `<button class="mg-menu-item ${backFocused}" data-menu-id="back">Back to Menu</button>`;
+        html += '</div>';
+        html += '</div>'; // mg-labs-dialog
+
+    } else {
+        // ----- Main menu + keybindings views -----
+        const items = getMenuItems(state);
+        const focusableItems = items.filter(item => !item.separator && !item.stub);
+        const focusedId = focusableItems[state.menuFocusIdx]?.id;
+
+        html = '<div class="mg-menu-dialog">';
+
+        if (state.menuView === 'keybindings') {
+            html += '<div class="mg-menu-title">Keybindings</div>';
+            html += '<div class="mg-menu-separator" style="margin-top:0;margin-bottom:10px;"></div>';
+            html += '<div class="mg-keybindings-section">';
+            const groups = [
+                {
+                    label: 'Gameplay',
+                    rows: [
+                        { keys: ['&#8592; &#8594;'], desc: 'Back / Next step' },
+                        { keys: ['A'],               desc: 'Reveal next hint' },
+                    ],
+                },
+                {
+                    label: 'Visuals',
+                    rows: [
+                        { keys: ['V'], desc: 'Cycle companion style' },
+                        { keys: ['I'], desc: 'Cycle icon style' },
+                        { keys: ['T'], desc: 'Cycle island style' },
+                        { keys: ['P'], desc: 'Cycle plane style' },
+                        { keys: ['R'], desc: 'Reset view' },
+                    ],
+                },
+                {
+                    label: 'Menu',
+                    rows: [
+                        { keys: ['Esc'],             desc: 'Open / close menu' },
+                        { keys: ['&#8593; &#8595;'], desc: 'Navigate items' },
+                        { keys: ['A', 'Enter'],      desc: 'Select item' },
+                        { keys: ['&#8592;', 'Esc'],  desc: 'Back / close' },
+                    ],
+                },
+            ];
+            for (const group of groups) {
+                html += `<div class="mg-keybindings-group-label">${group.label}</div>`;
+                for (const row of group.rows) {
+                    const keyBadges = row.keys.map(k => `<span class="mg-key-badge">${k}</span>`).join(' ');
+                    html += `<div class="mg-keybindings-row"><span class="mg-keybindings-keys">${keyBadges}</span><span>${row.desc}</span></div>`;
+                }
+            }
+            html += '</div>';
+        } else {
+            const labName = state.lab?.name || '';
+            html += '<div class="mg-menu-brand">Pathfinding.cloud Labs</div>';
+            if (labName) html += `<div class="mg-menu-lab-name">${escapeHtmlGame(labName)}</div>`;
+            html += '<div class="mg-menu-separator" style="margin-top:0;margin-bottom:10px;"></div>';
+        }
+
+        html += '<div class="mg-menu-items">';
+        for (const item of items) {
+            if (item.separator) { html += '<div class="mg-menu-separator"></div>'; continue; }
+            const focusedClass = item.id === focusedId ? 'mg-menu-focused' : '';
+            const styleClass   = item.style === 'primary' ? 'mg-menu-primary'
+                               : item.style === 'danger'  ? 'mg-menu-danger' : '';
+            const disabledAttr = item.stub ? 'disabled' : '';
+            html += `<button class="mg-menu-item ${styleClass} ${focusedClass}" data-menu-id="${item.id}" ${disabledAttr}>${escapeHtmlGame(item.label)}</button>`;
+        }
+        html += '</div></div>';
+    }
+
+    menuEl.innerHTML = html;
+
+    // Attach click handlers for regular menu buttons
+    menuEl.querySelectorAll('.mg-menu-item:not([disabled])').forEach(btn => {
+        btn.addEventListener('click', () => activateMenuItem(btn.dataset.menuId, state));
+    });
+
+    // Labs browser: lab item click handlers + search input handler
+    if (state.menuView === 'labs-browser') {
+        menuEl.querySelectorAll('.mg-lab-item[data-slug]').forEach(el => {
+            el.addEventListener('click', () => switchToLab(el.dataset.slug, state));
+        });
+        const searchInput = menuEl.querySelector('.mg-labs-search-input');
+        if (searchInput) {
+            searchInput.addEventListener('input', () => {
+                state.labsBrowserFilter = searchInput.value;
+                state.menuFocusIdx = 0;
+                renderGameMenu(state);
+                // Re-focus and restore cursor after the full re-render
+                const newInput = state._menuEl?.querySelector('.mg-labs-search-input');
+                if (newInput) { newInput.focus(); const l = newInput.value.length; newInput.setSelectionRange(l, l); }
+            });
+        }
+    }
+}
+
+function activateMenuItem(itemId, state) {
+    const w = state._w;
+    const h = state._h;
+    switch (itemId) {
+        case 'resume':
+            closeGameMenu(state);
+            break;
+        case 'back':
+            state.menuView = 'main';
+            state.menuFocusIdx = 0;
+            renderGameMenu(state);
+            break;
+        case 'all-labs':
+            loadLabsBrowser(state);
+            break;
+        case 'keybindings':
+            state.menuView = 'keybindings';
+            state.menuFocusIdx = 0;
+            renderGameMenu(state);
+            break;
+        case 'restart':
+            closeGameMenu(state);
+            state.revealed = new Set(state.nodes.map((_, i) => i));
+            state.currentNode = 0;
+            state.currentEdge = -1;
+            state.revealedEdges = new Set(state.edges.map((_, i) => i));
+            state.revealedCommands = new Set();
+            state.selectedNode = null;
+            state.selectedEdge = null;
+            state.completeView = null;
+            state.gameViewPhase = 'setup';
+            state.panelOverride = null;
+            state.hintsUsed = 0;
+            state.revealedHints = {};
+            state._redraw();
+            updateGamePanel(state);
+            break;
+        case 'exit':
+            navigateToList();
+            break;
+    }
+}
+
+function openGameMenu(state) {
+    state.screen = 'paused';
+    state.menuView = 'main';
+    state.menuFocusIdx = 0;
+    state.buttons = [];
+    // Push the game palette into the menu overlay as CSS custom properties so
+    // the menu dialog matches the canvas HUD colors (parchment / dark) instead
+    // of the site's generic --card-background (which is white in light mode).
+    if (state._menuEl) {
+        const p = state.palette;
+        const el = state._menuEl;
+        el.style.setProperty('--game-hud-bg',         p.hudBg);
+        el.style.setProperty('--game-hud-border',      p.hudBorder);
+        el.style.setProperty('--game-hud-text',        p.hudText);
+        el.style.setProperty('--game-hud-text-muted',  p.hudTextMuted);
+        el.style.setProperty('--game-accent',          p.accentGold);
+        el.style.setProperty('--game-accent-focus',    p.hudProgressFill);
+        el.style.setProperty('--game-separator',       p.separator);
+        el.style.setProperty('--game-danger',          p.typeTintPrincipal);
+    }
+    renderGameMenu(state);
+    if (state._menuEl) state._menuEl.classList.add('visible');
+    state._redraw();
+    updateGamePanel(state);
+}
+
+function closeGameMenu(state) {
+    const w = state._w;
+    const h = state._h;
+    state.screen = 'playing';
+    if (state._menuEl) state._menuEl.classList.remove('visible');
+    state.buttons = buildPlayingButtons(w, h, state);
+    state._redraw();
+    updateGamePanel(state);
+}
+
+function buildPauseButtons(w, h, state) {
+    // Pause menu is now rendered as HTML via renderGameMenu(); no canvas buttons needed.
+    return [];
+}
+
 function drawPauseOverlay(ctx, w, h, state) {
+    // Dim the map behind the HTML menu overlay.
     const p = state.palette;
     ctx.fillStyle = p.overlayBg;
     ctx.fillRect(0, 0, w, h);
-
-    ctx.fillStyle = p.hudText;
-    ctx.font = 'bold 28px -apple-system, BlinkMacSystemFont, sans-serif';
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'middle';
-    ctx.fillText('PAUSED', w / 2, h * 0.18);
-
-    ctx.fillStyle = p.hudTextMuted;
-    ctx.font = '14px -apple-system, BlinkMacSystemFont, sans-serif';
-    ctx.fillText(`${Math.max(0, state.currentEdge + 1)} of ${state.edges.length} hops visited`, w / 2, h * 0.25);
-
-    state.buttons.forEach(btn => drawThemedButton(ctx, btn, state.hoveredButton, state.activeButton, p));
 }
 
 
@@ -3891,11 +4199,13 @@ function renderLabDetailContentMapGame(lab, container) {
     }
 
     // Two-column layout: HTML detail panel (left) + canvas map (right)
+    // The mg-canvas-wrap is position:relative so the menu overlay can sit on top.
     container.innerHTML = `
         <div class="mg-layout" id="${mapId}">
             <div class="mg-detail-panel" id="${mapId}-panel"></div>
             <div class="mg-canvas-wrap">
                 <canvas id="${mapId}-canvas" class="mg-canvas"></canvas>
+                <div class="mg-menu-overlay" id="${mapId}-menu"></div>
             </div>
         </div>`;
 
@@ -3905,6 +4215,7 @@ function renderLabDetailContentMapGame(lab, container) {
 function initMapGame(mapId, nodes, edges, companions, lab) {
     const canvas = document.getElementById(`${mapId}-canvas`);
     const panelEl = document.getElementById(`${mapId}-panel`);
+    const menuEl = document.getElementById(`${mapId}-menu`);
     if (!canvas || !panelEl) return;
 
     const wrap = canvas.parentElement;
@@ -3954,7 +4265,7 @@ function initMapGame(mapId, nodes, edges, companions, lab) {
         companionPositions,
         companions: companions || [],
         companionStyle: 'islet', // 'ship' | 'islet' | 'note'
-        iconStyle: 'on-island',  // 'on-island' | 'below-label' | 'off' -- toggled with I key
+        iconStyle: 'below-label',  // 'on-island' | 'below-label' | 'off' -- toggled with I key
         islandStyle: 'wooded', // 'classic' | 'wooded' | 'tropical' | 'ruins' -- toggled with T key
         planeStyle: 'helicopter',    // 'jet' | 'biplane' | 'seaplane' | 'helicopter' -- toggled with P key
         nodes,
@@ -3978,6 +4289,14 @@ function initMapGame(mapId, nodes, edges, companions, lab) {
         _suppressClick: false,   // true after a pan drag to prevent click
         _redraw: null,
         _panelEl: panelEl,
+        _menuEl: menuEl,
+        _container: wrap.parentElement.parentElement, // scrollableContent that holds mg-layout
+        _w: w,
+        _h: h,
+        menuFocusIdx: 0,
+        menuView: 'main',        // 'main' | 'keybindings' | 'labs-browser'
+        labsBrowserLabs: null,   // null = not yet loaded, Array = loaded
+        labsBrowserFilter: '',
     };
 
     function redraw() {
@@ -4250,16 +4569,88 @@ function initMapGame(mapId, nodes, edges, companions, lab) {
     function onKeyDown(e) {
         if (e.key === 'Escape') {
             if (state.screen === 'playing') {
-                state.screen = 'paused';
-                state.buttons = buildPauseButtons(w, h, state);
-                redraw();
-                updateGamePanel(state);
+                openGameMenu(state);
             } else if (state.screen === 'paused') {
-                state.screen = 'playing';
-                state.buttons = buildPlayingButtons(w, h, state);
-                redraw();
-                updateGamePanel(state);
+                if (state.menuView === 'keybindings') {
+                    state.menuView = 'main';
+                    state.menuFocusIdx = 0;
+                    renderGameMenu(state);
+                } else {
+                    closeGameMenu(state);
+                }
             }
+        }
+        // Menu navigation (when paused)
+        if (state.screen === 'paused') {
+            const focusableItems = getFocusableMenuItems(state);
+
+            if (state.menuView === 'labs-browser') {
+                // Esc/Left: clear search first, then go back to main menu
+                if (e.key === 'Escape' || e.key === 'ArrowLeft') {
+                    if (state.labsBrowserFilter) {
+                        state.labsBrowserFilter = '';
+                        state.menuFocusIdx = 0;
+                        renderGameMenu(state);
+                    } else {
+                        state.menuView = 'main';
+                        state.menuFocusIdx = 0;
+                        renderGameMenu(state);
+                    }
+                } else if (e.key === 'ArrowUp') {
+                    e.preventDefault();
+                    state.menuFocusIdx = Math.max(0, state.menuFocusIdx - 1);
+                    renderGameMenu(state);
+                    scrollLabsBrowserItemIntoView(state);
+                } else if (e.key === 'ArrowDown') {
+                    e.preventDefault();
+                    state.menuFocusIdx = Math.min(focusableItems.length - 1, state.menuFocusIdx + 1);
+                    renderGameMenu(state);
+                    scrollLabsBrowserItemIntoView(state);
+                } else if (e.key === 'Enter') {
+                    const focused = focusableItems[state.menuFocusIdx];
+                    if (focused?.id === 'back') {
+                        state.menuView = 'main'; state.menuFocusIdx = 0; renderGameMenu(state);
+                    } else if (focused?.slug) {
+                        switchToLab(focused.slug, state);
+                    }
+                } else if (e.key === 'a' || e.key === 'A') {
+                    // Only intercept A when the search input is not focused
+                    const searchInput = state._menuEl?.querySelector('.mg-labs-search-input');
+                    if (document.activeElement !== searchInput) {
+                        const focused = focusableItems[state.menuFocusIdx];
+                        if (focused?.id === 'back') {
+                            state.menuView = 'main'; state.menuFocusIdx = 0; renderGameMenu(state);
+                        } else if (focused?.slug) {
+                            switchToLab(focused.slug, state);
+                        }
+                    }
+                }
+                // All other keys (typing into search) fall through to the input naturally
+                return;
+            }
+
+            // Main menu / keybindings navigation
+            if (e.key === 'ArrowUp') {
+                e.preventDefault();
+                state.menuFocusIdx = (state.menuFocusIdx - 1 + focusableItems.length) % focusableItems.length;
+                renderGameMenu(state);
+            } else if (e.key === 'ArrowDown') {
+                e.preventDefault();
+                state.menuFocusIdx = (state.menuFocusIdx + 1) % focusableItems.length;
+                renderGameMenu(state);
+            } else if (e.key === 'ArrowLeft') {
+                if (state.menuView === 'keybindings') {
+                    state.menuView = 'main';
+                    state.menuFocusIdx = 0;
+                    renderGameMenu(state);
+                } else {
+                    closeGameMenu(state);
+                }
+            } else if (e.key === 'Enter' || e.key === 'a' || e.key === 'A') {
+                const focused = focusableItems[state.menuFocusIdx];
+                if (focused) activateMenuItem(focused.id, state);
+            }
+            return; // consume all keys while menu is open
         }
         // V key toggles companion visual style (ship -> islet -> note -> ship)
         if ((e.key === 'v' || e.key === 'V') && (state.screen === 'playing' || state.screen === 'complete')) {
@@ -4301,6 +4692,39 @@ function initMapGame(mapId, nodes, edges, companions, lab) {
                 redraw();
             }
         }
+        // Left arrow: same as Back button
+        if (e.key === 'ArrowLeft' && state.screen === 'playing') {
+            retreatGameState(w, h, state);
+        }
+        // Right arrow: same as Next button
+        if (e.key === 'ArrowRight' && state.screen === 'playing') {
+            advanceGameState(w, h, state);
+        }
+        // A key: progressively reveal the next hidden hint on the current edge panel
+        if ((e.key === 'a' || e.key === 'A') && state.screen === 'playing') {
+            const panelEl = state._panelEl;
+            const edgeIdx = state.selectedEdge;
+            const isShowingEdge = edgeIdx !== null && edgeIdx !== undefined
+                && state.selectedNode === null
+                && state.selectedCompanion === null;
+            if (isShowingEdge && panelEl) {
+                const edge = state.edges[edgeIdx];
+                const hints = edge ? (edge.hints || []) : [];
+                if (hints.length > 0) {
+                    const key = `edge-${edgeIdx}`;
+                    if (!state.revealedHints[key]) state.revealedHints[key] = new Set();
+                    const revealedSet = state.revealedHints[key];
+                    // Find the lowest-indexed hint not yet revealed
+                    const nextHintIdx = hints.findIndex((_, i) => !revealedSet.has(i));
+                    if (nextHintIdx !== -1) {
+                        revealedSet.add(nextHintIdx);
+                        state.hintsUsed++;
+                        renderGamePanelEdge(panelEl, state);
+                        scrollHintIntoView(panelEl, nextHintIdx);
+                    }
+                }
+            }
+        }
     }
 
     function onWheel(e) {
@@ -4339,6 +4763,8 @@ function initMapGame(mapId, nodes, edges, companions, lab) {
 
         w = newW;
         h = newH;
+        state._w = w;
+        state._h = h;
         canvas.width = w * dpr;
         canvas.height = h * dpr;
         canvas.style.width = w + 'px';
@@ -4360,7 +4786,7 @@ function initMapGame(mapId, nodes, edges, companions, lab) {
         if (state.screen === 'playing') {
             state.buttons = buildPlayingButtons(w, h, state);
         } else if (state.screen === 'paused') {
-            state.buttons = buildPauseButtons(w, h, state);
+            // Menu is HTML-based; canvas buttons stay empty
         } else if (state.screen === 'complete') {
             state.buttons = buildCompleteButtons(w, h, state);
         }

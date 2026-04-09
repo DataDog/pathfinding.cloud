@@ -1415,6 +1415,15 @@ function buildGuidedV2Sections(lab) {
                     </div>`;
                 }
 
+                // Lab modifications (Attack Simulation scenarios)
+                if (lab.modifications?.length) {
+                    const items = lab.modifications.map(m => `<li>${escapeHtml(m)}</li>`).join('');
+                    html += `<div class="lab-modifications">
+                        <div class="lab-modifications-label">Lab modifications from original attack</div>
+                        <ul class="lab-modifications-list">${items}</ul>
+                    </div>`;
+                }
+
                 // Detect public/network-start scenarios. Primary signal: access field on the first
                 // attackMap node (schema v1.1.0+). Fallback: README "- **Start:**" line regex for
                 // older data that predates the access field.
