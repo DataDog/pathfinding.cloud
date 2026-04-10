@@ -21,7 +21,7 @@ class SPAHTTPRequestHandler(http.server.SimpleHTTPRequestHandler):
 
         # List of file extensions that should be served directly
         file_extensions = ['.html', '.css', '.js', '.json', '.png', '.jpg', '.jpeg',
-                          '.gif', '.svg', '.ico', '.woff', '.woff2', '.ttf', '.eot']
+                          '.gif', '.svg', '.ico', '.woff', '.woff2', '.ttf', '.eot', '.txt']
 
         # Check if the request is for a static file
         is_file = any(url_path.endswith(ext) for ext in file_extensions)

@@ -11,9 +11,10 @@
 // start/pause/complete overlay screens.
 // The HTML panel handles: node details, mission briefing, commands.
 
-// ---- Labs index / detail cache (shared across all game instances) ----
+// ---- Labs index / detail / transcript cache (shared across all game instances) ----
 let _gameLabsIndexCache = null;
 let _gameLabDetailCache = {};
+let _gameTranscriptCache = {};
 
 async function fetchLabsIndex() {
     if (_gameLabsIndexCache) return _gameLabsIndexCache;
@@ -1311,6 +1312,53 @@ function drawCompanionLabel(ctx, x, y, companion, state) {
 function escapeHtmlGame(str) {
     if (!str) return '';
     return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+}
+
+// Convert ANSI escape codes in a terminal transcript to safe HTML with CSS class spans.
+// Handles SGR codes: bold, dim, and the standard 8 foreground colors.
+// Compound codes like "0;32" (reset + green) or "1;33" (bold + yellow) are split
+// on ";" and each parameter is processed in sequence, matching real terminal behavior.
+function ansiToHtml(text) {
+    const PARAM_MAP = {
+        '1':  'ansi-bold',
+        '2':  'ansi-dim',
+        '31': 'ansi-red',
+        '32': 'ansi-green',
+        '33': 'ansi-yellow',
+        '34': 'ansi-blue',
+        '35': 'ansi-magenta',
+        '36': 'ansi-cyan',
+        '37': 'ansi-white',
+    };
+    // Split on SGR sequences: \x1b[<codes>m — captured group gives us the code string
+    const parts = text.split(/\x1b\[([0-9;]*)m/);
+    let html = '';
+    let openSpans = 0;
+    for (let i = 0; i < parts.length; i++) {
+        if (i % 2 === 0) {
+            // Text segment — escape HTML entities
+            html += escapeHtmlGame(parts[i]);
+        } else {
+            // SGR code string — may be compound like "0;32" or "1;33"
+            const params = parts[i].split(';');
+            for (const param of params) {
+                if (param === '0' || param === '') {
+                    // Reset — close all open spans
+                    html += '</span>'.repeat(openSpans);
+                    openSpans = 0;
+                } else {
+                    const cls = PARAM_MAP[param];
+                    if (cls) {
+                        html += `<span class="${cls}">`;
+                        openSpans++;
+                    }
+                }
+            }
+        }
+    }
+    // Close any spans left open at end of text
+    html += '</span>'.repeat(openSpans);
+    return html;
 }
 
 // Format markdown-ish text to simple HTML (backticks -> <code>)
@@ -2683,7 +2731,7 @@ function getMenuItems(state) {
     return [
         { id: 'resume',      label: 'Resume Mission',      style: 'primary' },
         { separator: true },
-        { id: 'demo',        label: 'Run Simulated Demo',  style: 'secondary', stub: true },
+        { id: 'demo',        label: 'Run Simulated Demo',  style: 'secondary', stub: !state?.lab?.hasDemoTranscript },
         { id: 'all-labs',    label: 'View All Labs',       style: 'secondary' },
         { id: 'keybindings', label: 'Show Keybindings',    style: 'secondary' },
         { separator: true },
@@ -2771,6 +2819,29 @@ async function switchToLab(slug, state) {
     }
 }
 
+// Load and display the demo transcript overlay for the current lab.
+async function loadDemoTranscript(state) {
+    const slug = state.lab?.slug;
+    if (!slug) return;
+    state.menuView = 'demo-transcript';
+    state.transcriptText = null; // null = loading
+    renderGameMenu(state);
+
+    if (_gameTranscriptCache[slug] === undefined) {
+        try {
+            const resp = await fetch(`/labs/demos/${slug}.txt`);
+            if (!resp.ok) throw new Error('not found');
+            _gameTranscriptCache[slug] = await resp.text();
+        } catch (_) {
+            _gameTranscriptCache[slug] = '\x1b[0;31mTranscript not available for this lab.\x1b[0m\n';
+        }
+    }
+    state.transcriptText = _gameTranscriptCache[slug];
+    if (state.menuView === 'demo-transcript') {
+        renderGameMenu(state);
+    }
+}
+
 function renderGameMenu(state) {
     const menuEl = state._menuEl;
     if (!menuEl) return;
@@ -2820,6 +2891,25 @@ function renderGameMenu(state) {
         html += '</div>';
         html += '</div>'; // mg-labs-dialog
 
+    } else if (state.menuView === 'demo-transcript') {
+        // ----- Demo transcript viewer -----
+        const transcriptHtml = state.transcriptText !== null
+            ? ansiToHtml(state.transcriptText)
+            : '<span class="ansi-dim">Loading\u2026</span>';
+
+        html = '<div class="mg-menu-dialog mg-transcript-dialog" style="background:#000!important;border-color:rgba(255,255,255,0.15);">';
+        html += '<div class="mg-transcript-header" style="background:#111;border-bottom:1px solid rgba(255,255,255,0.12);color:#fff;">';
+        html += `<span style="font-size:11px;font-weight:700;letter-spacing:0.12em;text-transform:uppercase;color:#f0b040;">${escapeHtmlGame(state.lab?.name || 'Demo Transcript')}</span>`;
+        html += '<button class="mg-transcript-close" aria-label="Close" style="color:rgba(255,255,255,0.5);">&times;</button>';
+        html += '</div>';
+        html += `<pre class="mg-transcript-pre" style="background:#000;color:#e0e0e0;">${transcriptHtml}</pre>`;
+        html += '<div class="mg-transcript-footer" style="background:#111;border-top:1px solid rgba(255,255,255,0.12);color:rgba(255,255,255,0.45);">';
+        html += '<span class="mg-key-badge">&uarr;&darr;</span> Scroll &nbsp;';
+        html += '<span class="mg-key-badge">&larr;&rarr;</span> Side-scroll &nbsp;';
+        html += '<span class="mg-key-badge">Esc</span> Close';
+        html += '</div>';
+        html += '</div>'; // mg-transcript-dialog
+
     } else {
         // ----- Main menu + keybindings views -----
         const items = getMenuItems(state);
@@ -2838,6 +2928,7 @@ function renderGameMenu(state) {
                     rows: [
                         { keys: ['&#8592; &#8594;'], desc: 'Back / Next step' },
                         { keys: ['A'],               desc: 'Reveal next hint' },
+                        { keys: ['D'],               desc: 'View simulated demo (&#8592;&#8594; side-scroll)' },
                     ],
                 },
                 {
@@ -2894,6 +2985,11 @@ function renderGameMenu(state) {
         btn.addEventListener('click', () => activateMenuItem(btn.dataset.menuId, state));
     });
 
+    // Demo transcript: close button
+    if (state.menuView === 'demo-transcript') {
+        menuEl.querySelector('.mg-transcript-close')?.addEventListener('click', () => closeGameMenu(state));
+    }
+
     // Labs browser: lab item click handlers + search input handler
     if (state.menuView === 'labs-browser') {
         menuEl.querySelectorAll('.mg-lab-item[data-slug]').forEach(el => {
@@ -2924,6 +3020,9 @@ function activateMenuItem(itemId, state) {
             state.menuView = 'main';
             state.menuFocusIdx = 0;
             renderGameMenu(state);
+            break;
+        case 'demo':
+            loadDemoTranscript(state);
             break;
         case 'all-labs':
             loadLabsBrowser(state);
@@ -4571,7 +4670,7 @@ function initMapGame(mapId, nodes, edges, companions, lab) {
             if (state.screen === 'playing') {
                 openGameMenu(state);
             } else if (state.screen === 'paused') {
-                if (state.menuView === 'keybindings') {
+                if (state.menuView === 'keybindings' || state.menuView === 'demo-transcript') {
                     state.menuView = 'main';
                     state.menuFocusIdx = 0;
                     renderGameMenu(state);
@@ -4583,6 +4682,30 @@ function initMapGame(mapId, nodes, edges, companions, lab) {
         // Menu navigation (when paused)
         if (state.screen === 'paused') {
             const focusableItems = getFocusableMenuItems(state);
+
+            // Demo transcript: arrow keys scroll, Esc closes
+            if (state.menuView === 'demo-transcript') {
+                if (e.key === 'Escape') {
+                    // Escape already handled above (goes back to main menu)
+                } else if (e.key === 'ArrowUp') {
+                    e.preventDefault();
+                    const pre = menuEl?.querySelector('.mg-transcript-pre');
+                    if (pre) pre.scrollTop = Math.max(0, pre.scrollTop - 60);
+                } else if (e.key === 'ArrowDown') {
+                    e.preventDefault();
+                    const pre = menuEl?.querySelector('.mg-transcript-pre');
+                    if (pre) pre.scrollTop += 60;
+                } else if (e.key === 'ArrowLeft') {
+                    e.preventDefault();
+                    const pre = menuEl?.querySelector('.mg-transcript-pre');
+                    if (pre) pre.scrollLeft = Math.max(0, pre.scrollLeft - 60);
+                } else if (e.key === 'ArrowRight') {
+                    e.preventDefault();
+                    const pre = menuEl?.querySelector('.mg-transcript-pre');
+                    if (pre) pre.scrollLeft += 60;
+                }
+                return;
+            }
 
             if (state.menuView === 'labs-browser') {
                 // Esc/Left: clear search first, then go back to main menu
@@ -4690,6 +4813,13 @@ function initMapGame(mapId, nodes, edges, companions, lab) {
                     state.buttons = buildPlayingButtons(w, h, state);
                 }
                 redraw();
+            }
+        }
+        // D key: open simulated demo transcript (if available)
+        if ((e.key === 'd' || e.key === 'D') && state.screen === 'playing') {
+            if (state.lab?.hasDemoTranscript) {
+                openGameMenu(state);
+                loadDemoTranscript(state);
             }
         }
         // Left arrow: same as Back button

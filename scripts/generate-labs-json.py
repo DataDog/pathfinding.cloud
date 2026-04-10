@@ -64,6 +64,7 @@ INDEX_FIELDS = [
     "environments",
     "githubUrl",
     "hasAttackMap",
+    "hasDemoTranscript",
     "source",
     "modifications",
 ]
@@ -796,7 +797,10 @@ def find_local_readmes(source_dir):
         print(f"Error: Scenarios directory not found at {scenarios_path}")
         sys.exit(1)
 
-    readme_files = sorted(scenarios_path.rglob("README.md"))
+    readme_files = sorted(
+        p for p in scenarios_path.rglob("README.md")
+        if (p.parent / "scenario.yaml").exists()
+    )
     print(f"Found {len(readme_files)} README files in {scenarios_path}")
     return readme_files
 
@@ -1138,6 +1142,8 @@ def generate_labs_json(source_dir=None, output_file="docs/labs.json"):
                     lab["slug"] = generate_slug(
                         parse_readme_metadata(readme_text), module_path
                     )
+                    transcript_path = Path("docs/labs/demo-transcripts") / f"{lab['slug']}.txt"
+                    lab["hasDemoTranscript"] = transcript_path.exists()
                     labs.append(lab)
                     print(f"  Loaded: {lab['name']}")
                 elif not is_valid:
@@ -1189,6 +1195,8 @@ def generate_labs_json(source_dir=None, output_file="docs/labs.json"):
                                     lab["readme"] = {}
                                 lab["readme"]["solution"] = solution_text
 
+                        transcript_path = Path("docs/labs/demo-transcripts") / f"{lab['slug']}.txt"
+                        lab["hasDemoTranscript"] = transcript_path.exists()
                         labs.append(lab)
                         print(f"  Loaded: {lab['name']}")
                     elif not is_valid:
