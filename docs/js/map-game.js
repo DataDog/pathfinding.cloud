@@ -192,6 +192,112 @@ function drawThemedButton(ctx, btn, hoveredId, activeId, palette) {
         ctx.textAlign = 'center';
         ctx.textBaseline = 'middle';
         ctx.fillText(btn.label, x + w / 2, y + h / 2);
+    } else if (style === 'terminal') {
+        // Option A: hacker-terminal look — black bg, Matrix green text, monospace, scanlines
+        const bgColor = isActive ? '#001a00' : isHovered ? '#001f00' : '#0a0a0a';
+        const borderColor = isActive ? '#00ff41' : isHovered ? '#00cc33' : '#007a1f';
+        const textColor = isActive ? '#ffffff' : '#00ff41';
+        // Shadow
+        drawRoundedRect(ctx, x + 1, y + 2, w, h, r);
+        ctx.fillStyle = 'rgba(0, 255, 65, 0.08)';
+        ctx.fill();
+        // Body
+        drawRoundedRect(ctx, x, y, w, h, r);
+        ctx.fillStyle = bgColor;
+        ctx.fill();
+        // Scanlines
+        ctx.save();
+        ctx.clip();
+        ctx.strokeStyle = 'rgba(0, 255, 65, 0.04)';
+        ctx.lineWidth = 1;
+        for (let ly = y + 2; ly < y + h; ly += 3) {
+            ctx.beginPath();
+            ctx.moveTo(x, ly);
+            ctx.lineTo(x + w, ly);
+            ctx.stroke();
+        }
+        ctx.restore();
+        // Border
+        drawRoundedRect(ctx, x, y, w, h, r);
+        ctx.strokeStyle = borderColor;
+        ctx.lineWidth = isHovered ? 2 : 1.5;
+        ctx.stroke();
+        // Glow on hover
+        if (isHovered || isActive) {
+            ctx.save();
+            ctx.shadowColor = '#00ff41';
+            ctx.shadowBlur = 8;
+            drawRoundedRect(ctx, x, y, w, h, r);
+            ctx.strokeStyle = borderColor;
+            ctx.lineWidth = 1;
+            ctx.stroke();
+            ctx.restore();
+        }
+        // Label with prompt prefix
+        ctx.fillStyle = textColor;
+        ctx.font = `bold ${btn.fontSize || 12}px 'Courier New', Courier, monospace`;
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText(btn.label, x + w / 2, y + h / 2);
+    } else if (style === 'danger') {
+        // Option B: danger-parchment — warm parchment silhouette with crimson/amber warning tint
+        const base = isActive ? '#5a1a1a' : isHovered ? '#7a2020' : '#4a1515';
+        drawRoundedRect(ctx, x + 1, y + 2, w, h, r);
+        ctx.fillStyle = 'rgba(0,0,0,0.18)';
+        ctx.fill();
+        drawRoundedRect(ctx, x, y, w, h, r);
+        ctx.fillStyle = base;
+        ctx.fill();
+        // Worn texture lines
+        ctx.save();
+        ctx.clip();
+        ctx.strokeStyle = 'rgba(220,60,60,0.08)';
+        ctx.lineWidth = 0.6;
+        for (let ly = y + 5; ly < y + h; ly += 6) {
+            ctx.beginPath();
+            ctx.moveTo(x + 4, ly + Math.sin(ly * 0.3) * 2);
+            ctx.lineTo(x + w - 4, ly + Math.sin(ly * 0.3 + 1) * 2);
+            ctx.stroke();
+        }
+        ctx.restore();
+        drawRoundedRect(ctx, x, y, w, h, r);
+        ctx.strokeStyle = isHovered ? '#f59e0b' : '#c0392b';
+        ctx.lineWidth = 1.5;
+        ctx.stroke();
+        ctx.fillStyle = isHovered ? '#fde68a' : '#fca5a5';
+        ctx.font = `bold ${btn.fontSize || 13}px -apple-system, BlinkMacSystemFont, sans-serif`;
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText('\u2620 ' + btn.label, x + w / 2, y + h / 2);
+    } else if (style === 'void') {
+        // Option C: void/purple — dark bg with purple glow border, on-theme but clearly special
+        const bgColor = isActive ? '#1e0a3c' : isHovered ? '#2d1257' : '#160830';
+        const borderColor = isActive ? '#a78bfa' : isHovered ? '#7c3aed' : '#4c1d95';
+        drawRoundedRect(ctx, x + 1, y + 2, w, h, r);
+        ctx.fillStyle = 'rgba(124, 58, 237, 0.1)';
+        ctx.fill();
+        drawRoundedRect(ctx, x, y, w, h, r);
+        ctx.fillStyle = bgColor;
+        ctx.fill();
+        drawRoundedRect(ctx, x, y, w, h, r);
+        ctx.strokeStyle = borderColor;
+        ctx.lineWidth = isHovered ? 2 : 1.5;
+        ctx.stroke();
+        if (isHovered || isActive) {
+            ctx.save();
+            ctx.shadowColor = '#7c3aed';
+            ctx.shadowBlur = 10;
+            drawRoundedRect(ctx, x, y, w, h, r);
+            ctx.strokeStyle = borderColor;
+            ctx.lineWidth = 1;
+            ctx.stroke();
+            ctx.restore();
+        }
+        ctx.fillStyle = isHovered ? '#ede9fe' : '#c4b5fd';
+        ctx.font = `600 ${btn.fontSize || 13}px -apple-system, BlinkMacSystemFont, sans-serif`;
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText(btn.label, x + w / 2, y + h / 2);
     } else {
         if (isHovered || isActive) {
             drawRoundedRect(ctx, x, y, w, h, r);
@@ -452,8 +558,7 @@ function drawGameIslandLabels(ctx, w, h, state) {
             // Truncate to 24 chars so it fits in the island plate.
             const accessObj = isFirst ? node?.access : null;
             const rawEndpoint = accessObj?.url || accessObj?.ip || accessObj?.domain || '';
-            const accessShort = rawEndpoint.length > 24 ? rawEndpoint.substring(0, 22) + '\u2026' : rawEndpoint;
-            const subtitleText = accessShort || arnSuffix;
+            const subtitleText = rawEndpoint || arnSuffix;
 
             const nameColor = isFirst ? (p.startFill || '#4ade80') : (p.endFill || '#f59e0b');
 
@@ -2459,6 +2564,7 @@ function buildPlayingButtons(w, h, state) {
     const backW = 70;
     const nextW = 70;
     const finishW = 125;
+    const demoW = 140;
     const edgePad = 14; // padding from bar edges
 
     // Center Back/Next in the middle of the bar
@@ -2472,10 +2578,13 @@ function buildPlayingButtons(w, h, state) {
     const labSetupX = leftGroupX;
     const labOverviewX = labSetupX + setupW + gap;
 
-    // Right group: halfway between center group and the right edge
+    // Right group: [Finish Mission] [Exploitation Demo] centered between center group and right edge
     const centerRightEdge = nextX + nextW;
     const rightEdge = w - edgePad;
-    const finishX = centerRightEdge + (rightEdge - centerRightEdge - finishW) / 2;
+    const rightGroupW = finishW + gap + demoW;
+    const rightGroupX = centerRightEdge + (rightEdge - centerRightEdge - rightGroupW) / 2;
+    const finishX = rightGroupX;
+    const demoX = rightGroupX + finishW + gap;
 
     const buttons = [menuBtn, switchGuidedBtn];
 
@@ -2578,6 +2687,22 @@ function buildPlayingButtons(w, h, state) {
             state._redraw();
             updateGamePanel(state);
         }
+    });
+
+    // Demo button — rightmost; disabled when no transcript is available
+    // demoButtonStyle cycles through 'terminal' | 'danger' | 'void' via T key
+    const demoStyles = ['terminal', 'danger', 'void'];
+    const demoStyle = demoStyles[(state._demoButtonStyleIdx || 0) % demoStyles.length];
+    buttons.push({
+        id: 'demo',
+        x: demoX, y: btnY,
+        w: demoW, h: btnH,
+        label: 'Exploitation Demo',
+        style: demoStyle,
+        fontSize: 12,
+        radius: 8,
+        disabled: !state.lab?.hasDemoTranscript,
+        onClick: () => { openGameMenu(state); loadDemoTranscript(state); }
     });
 
     return buttons;
@@ -2829,7 +2954,7 @@ async function loadDemoTranscript(state) {
 
     if (_gameTranscriptCache[slug] === undefined) {
         try {
-            const resp = await fetch(`/labs/demos/${slug}.txt`);
+            const resp = await fetch(`/labs/demo-transcripts/${slug}.txt`);
             if (!resp.ok) throw new Error('not found');
             _gameTranscriptCache[slug] = await resp.text();
         } catch (_) {
@@ -2903,10 +3028,11 @@ function renderGameMenu(state) {
         html += '<button class="mg-transcript-close" aria-label="Close" style="color:rgba(255,255,255,0.5);">&times;</button>';
         html += '</div>';
         html += `<pre class="mg-transcript-pre" style="background:#000;color:#e0e0e0;">${transcriptHtml}</pre>`;
-        html += '<div class="mg-transcript-footer" style="background:#111;border-top:1px solid rgba(255,255,255,0.12);color:rgba(255,255,255,0.45);">';
-        html += '<span class="mg-key-badge">&uarr;&darr;</span> Scroll &nbsp;';
-        html += '<span class="mg-key-badge">&larr;&rarr;</span> Side-scroll &nbsp;';
-        html += '<span class="mg-key-badge">Esc</span> Close';
+        const kbStyle = 'display:inline-block;background:rgba(255,255,255,0.12);border:1px solid rgba(255,255,255,0.25);border-radius:4px;padding:1px 6px;font-family:monospace;';
+        html += '<div class="mg-transcript-footer" style="background:#111;border-top:1px solid rgba(255,255,255,0.12);color:rgba(255,255,255,0.65);">';
+        html += `<span style="${kbStyle}">&uarr;&darr;</span> Scroll &nbsp;`;
+        html += `<span style="${kbStyle}">&larr;&rarr;</span> Side-scroll &nbsp;`;
+        html += `<span style="${kbStyle}">Esc</span> Close`;
         html += '</div>';
         html += '</div>'; // mg-transcript-dialog
 
@@ -3567,7 +3693,7 @@ function computeMapLayout(count, w, h) {
     if (count === 0) return positions;
 
     const hudTop = 48;          // below top HUD bar
-    const hudBottom = 80;       // above bottom action bar + label space
+    const hudBottom = 110;      // above bottom action bar + label plate space
     const cloudBottom = h * 0.22; // clouds end here -- islands start BELOW this
     const padX = w * 0.15;     // 15% margin each side so islands stay central
 
@@ -4821,6 +4947,12 @@ function initMapGame(mapId, nodes, edges, companions, lab) {
                 openGameMenu(state);
                 loadDemoTranscript(state);
             }
+        }
+        // B key: cycle demo button style (terminal → danger → void)
+        if (e.key === 'b' && state.screen === 'playing') {
+            state._demoButtonStyleIdx = ((state._demoButtonStyleIdx || 0) + 1) % 3;
+            state.buttons = buildPlayingButtons(w, h, state);
+            redraw();
         }
         // Left arrow: same as Back button
         if (e.key === 'ArrowLeft' && state.screen === 'playing') {

@@ -1100,6 +1100,7 @@ function renderResourceCards(markdownTable) {
 // tabs: array of { id, label, show, content }
 // Returns empty string if no visible tabs have content.
 function renderInnerTabContent(tab) {
+    if (tab.rawHtml !== undefined) return tab.rawHtml;
     if (tab.id === 'tui') {
         return `<pre><code>${escapeHtml(tab.content)}</code></pre>`;
     }
@@ -1107,7 +1108,7 @@ function renderInnerTabContent(tab) {
 }
 
 function renderInnerTabSection(groupId, tabs) {
-    const visible = tabs.filter(t => t.show && t.content);
+    const visible = tabs.filter(t => t.show && (t.content || t.rawHtml !== undefined));
     if (visible.length === 0) return '';
     if (visible.length === 1) {
         return `<div class="lab-inner-tab-content">${renderInnerTabContent(visible[0])}</div>`;
@@ -1579,26 +1580,103 @@ function buildGuidedV2Sections(lab) {
         });
     }
 
-    // Solution from companion file
+    // Attack Walkthrough — tabbed: Pentest Report Style | Scripted Attack Demo | Setup and Run Yourself
     const solution = getSolution(lab);
-    if (solution) {
-        // Strip the leading H1 title line (e.g. "# Solution: ...") since it
-        // duplicates the section heading already shown on the page.
-        // Prepend a "Summary" section heading so the introductory paragraphs
-        // have a visible header matching the ## style.
-        const solutionCleaned = '## Summary\n\n' + solution.replace(/^# [^\n]+\n+/, '');
+    const demoAttack = getAttackDemo(lab);
+    const cleanupData = getCleanup(lab);
+    const labDisplayName = lab.displayName || lab.name || slug;
+
+    if (solution || lab.hasDemoTranscript || demoAttack) {
+        const walkthroughTabs = [];
+
+        // Tab 1: Scripted Attack Demo (ANSI transcript with spoiler gate)
+        if (lab.hasDemoTranscript) {
+            walkthroughTabs.push({
+                id: 'transcript',
+                label: 'Scripted Attack Demo',
+                show: true,
+                rawHtml: `
+                    <div class="lab-demo-transcript-wrapper">
+                        <div class="lab-demo-spoiler-gate" data-slug="${escapeHtml(slug)}" data-lab-name="${escapeHtml(labDisplayName)}">
+                            <div class="lab-demo-spoiler-icon">⚠</div>
+                            <h4 class="lab-demo-spoiler-title">Contains Spoilers</h4>
+                            <p class="lab-demo-spoiler-text">This demo walks through the complete attack path step by step. Watch it after you've tried the lab on your own.</p>
+                            <button class="lab-demo-spoiler-btn">Watch Exploitation Demo</button>
+                        </div>
+                        <div class="lab-demo-terminal-area" style="display:none;width:100%;box-sizing:border-box;flex-direction:column;background:#000;border-radius:8px;overflow:hidden;">
+                            <div class="mg-transcript-header" style="background:#111;border-bottom:1px solid rgba(255,255,255,0.12);color:#fff;">
+                                <span style="font-size:11px;font-weight:700;letter-spacing:0.12em;text-transform:uppercase;color:#f0b040;">${escapeHtml(labDisplayName)}</span>
+                            </div>
+                            <pre class="mg-transcript-pre" style="background:#000;color:#e0e0e0;border-radius:0;max-height:400px;width:100%;box-sizing:border-box;"><span class="ansi-dim">Loading\u2026</span></pre>
+                        </div>
+                    </div>`,
+            });
+        }
+
+        // Tab 2: Pentest Report Style (solution text, behind spoiler gate)
+        if (solution) {
+            const solutionCleaned = '## Summary\n\n' + solution.replace(/^# [^\n]+\n+/, '');
+            const solutionHtml = `<div class="lab-walkthrough-container"><div class="lab-tab-prose">${renderLabMarkdown(solutionCleaned)}</div></div>`;
+            walkthroughTabs.push({
+                id: 'report',
+                label: 'Pentest Report Style',
+                show: true,
+                rawHtml: `
+                    <div class="lab-demo-transcript-wrapper">
+                        <div class="lab-demo-spoiler-gate" data-slug="${escapeHtml(slug)}-report" data-raw-html="${escapeHtml(btoa(encodeURIComponent(solutionHtml)))}">
+                            <div class="lab-demo-spoiler-icon">⚠</div>
+                            <h4 class="lab-demo-spoiler-title">Contains Spoilers</h4>
+                            <p class="lab-demo-spoiler-text">This report details the full attack path and exploitation steps. Read it after you've tried the lab on your own.</p>
+                            <button class="lab-demo-spoiler-btn">Read the Report</button>
+                        </div>
+                        <div class="lab-demo-terminal-area" style="display:none;width:100%;box-sizing:border-box;"></div>
+                    </div>`,
+            });
+        }
+
+        // Tab 3: Setup and Run the Attack Demo Yourself (automated demo + cleanup)
+        if (demoAttack || cleanupData) {
+            let runHtml = '';
+            if (demoAttack) {
+                if (demoAttack.executing) {
+                    runHtml += `<div class="lab-tab-prose">${renderLabMarkdown(demoAttack.executing)}</div>`;
+                }
+                runHtml += renderInnerTabSection(`gv2-demo-inner-${slug}`, [
+                    { id: 'cli', label: 'Non-Interactive', show: !!demoAttack.nonInteractive, content: demoAttack.nonInteractive },
+                    { id: 'tui', label: 'TUI', show: !!demoAttack.tui, content: demoAttack.tui },
+                ]);
+                if (demoAttack.resourcesCreated) {
+                    runHtml += `<div class="lab-tab-subsection"><h4>Resources Created by Attack Script</h4>
+                        <div class="lab-tab-prose">${renderLabMarkdown(demoAttack.resourcesCreated)}</div></div>`;
+                }
+            }
+            if (cleanupData) {
+                runHtml += `<div class="lab-tab-subsection"><h4>Cleanup</h4>`;
+                runHtml += renderInnerTabSection(`gv2-cleanup-inner-${slug}`, [
+                    { id: 'cli', label: 'Non-Interactive', show: !!cleanupData.nonInteractive, content: cleanupData.nonInteractive },
+                    { id: 'tui', label: 'TUI', show: !!cleanupData.tui, content: cleanupData.tui },
+                ]);
+                runHtml += '</div>';
+            }
+            walkthroughTabs.push({
+                id: 'run',
+                label: 'Setup and Run the Attack Demo Yourself',
+                show: true,
+                rawHtml: runHtml,
+            });
+        }
+
         sections.push({
-            id: `gv2-walkthrough-${slug}`,
+            id: `gv2-attack-walkthrough-${slug}`,
             h2Section: 'Attack',
-            title: 'Solution',
+            title: 'Attack Walkthrough',
             level: 3,
             colorClass: sectionColors['Attack'],
-            collapsed: true,
-            renderContent: () => `<div class="lab-walkthrough-container"><div class="lab-tab-prose">${renderLabMarkdown(solutionCleaned)}</div></div>`,
+            renderContent: () => renderInnerTabSection(`gv2-walkthrough-tabs-${slug}`, walkthroughTabs),
         });
     }
 
-    // Modifications from Original Attack (Attack Simulation scenarios only)
+    // Modifications from Original Attack (Attack Simulation scenarios only) — kept separate
     const modificationsFromOriginal = lab.readme?.attack?.modificationsFromOriginal;
     if (modificationsFromOriginal) {
         sections.push({
@@ -1608,51 +1686,6 @@ function buildGuidedV2Sections(lab) {
             level: 3,
             colorClass: sectionColors['Attack'],
             renderContent: () => `<div class="lab-tab-prose">${renderLabMarkdown(modificationsFromOriginal)}</div>`,
-        });
-    }
-
-    // Automated Demo
-    const demoAttack = getAttackDemo(lab);
-    if (demoAttack) {
-        sections.push({
-            id: `gv2-demo-${slug}`,
-            h2Section: 'Attack',
-            title: 'Automated Demo',
-            level: 3,
-            colorClass: sectionColors['Attack'],
-            renderContent: () => {
-                let html = '';
-                if (demoAttack.executing) {
-                    html += `<div class="lab-tab-prose">${renderLabMarkdown(demoAttack.executing)}</div>`;
-                }
-                html += renderInnerTabSection(`gv2-demo-inner-${slug}`, [
-                    { id: 'cli', label: 'Non-Interactive', show: !!demoAttack.nonInteractive, content: demoAttack.nonInteractive },
-                    { id: 'tui', label: 'TUI', show: !!demoAttack.tui, content: demoAttack.tui },
-                ]);
-                if (demoAttack.resourcesCreated) {
-                    html += `<div class="lab-tab-subsection"><h4>Resources Created by Attack Script</h4>
-                        <div class="lab-tab-prose">${renderLabMarkdown(demoAttack.resourcesCreated)}</div></div>`;
-                }
-                return html;
-            },
-        });
-    }
-
-    // (Resources Created section is under Self-hosted Lab Setup, not here)
-
-    // Cleanup
-    const cleanupData = getCleanup(lab);
-    if (cleanupData) {
-        sections.push({
-            id: `gv2-cleanup-${slug}`,
-            h2Section: 'Attack',
-            title: 'Cleanup',
-            level: 3,
-            colorClass: sectionColors['Attack'],
-            renderContent: () => renderInnerTabSection(`gv2-cleanup-inner-${slug}`, [
-                { id: 'cli', label: 'Non-Interactive', show: !!cleanupData.nonInteractive, content: cleanupData.nonInteractive },
-                { id: 'tui', label: 'TUI', show: !!cleanupData.tui, content: cleanupData.tui },
-            ]),
         });
     }
 
@@ -1723,6 +1756,41 @@ function buildGuidedV2Sections(lab) {
     }
 
     return sections;
+}
+
+function setupDemoTranscriptSections() {
+    document.querySelectorAll('.lab-demo-spoiler-gate').forEach(gate => {
+        const wrapper = gate.closest('.lab-demo-transcript-wrapper');
+        const terminalArea = wrapper.querySelector('.lab-demo-terminal-area');
+        const slug = gate.dataset.slug;
+        const rawHtmlEncoded = gate.dataset.rawHtml;
+
+        gate.querySelector('.lab-demo-spoiler-btn').addEventListener('click', async () => {
+            const gateWidth = gate.offsetWidth;
+            gate.style.display = 'none';
+            terminalArea.style.width = gateWidth + 'px';
+            terminalArea.style.display = 'flex';
+
+            // Pentest report tab: reveal pre-rendered HTML stored in data attribute
+            if (rawHtmlEncoded) {
+                terminalArea.innerHTML = decodeURIComponent(atob(rawHtmlEncoded));
+                return;
+            }
+
+            // Scripted attack demo tab: fetch and render ANSI transcript
+            const pre = wrapper.querySelector('.mg-transcript-pre');
+            try {
+                const resp = await fetch(`/labs/demo-transcripts/${slug}.txt`);
+                if (!resp.ok) throw new Error('not found');
+                const text = await resp.text();
+                pre.innerHTML = typeof ansiToHtml === 'function'
+                    ? ansiToHtml(text)
+                    : escapeHtml(text);
+            } catch (_) {
+                pre.innerHTML = '<span class="ansi-red">Transcript not available for this lab.</span>';
+            }
+        });
+    });
 }
 
 function renderLabDetailContentGuidedV2(lab, container) {
@@ -1806,6 +1874,7 @@ function renderLabDetailContentGuidedV2(lab, container) {
         </div>`;
 
     setupTabListeners();
+    setupDemoTranscriptSections();
     setupGuidedV2ScrollSpy(gv2Id);
 
     // Initialize static map preview after DOM is ready
