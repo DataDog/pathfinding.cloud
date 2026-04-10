@@ -1409,19 +1409,15 @@ function buildGuidedV2Sections(lab) {
                         ? `<a href="${escapeHtml(lab.source.url)}" target="_blank" rel="noopener noreferrer" class="lab-source-link">${escapeHtml(lab.source.title || lab.source.url)}</a>`
                         : escapeHtml(lab.source.title);
                     const metaParts = [lab.source.author, lab.source.date].filter(Boolean);
+                    const hasModifications = lab.modifications?.length || lab.readme?.attack?.modificationsFromOriginal;
+                    const modLinkHtml = hasModifications
+                        ? `<div class="lab-source-modifications-link"><a href="#gv2-modifications-${slug}" onclick="event.preventDefault();document.getElementById('gv2-modifications-${slug}')?.scrollIntoView({behavior:'smooth'})">See what was changed for this lab</a></div>`
+                        : '';
                     html += `<div class="lab-source-attribution">
                         <div class="lab-source-label">Based on real-world incident</div>
                         <div class="lab-source-title">${titleHtml}</div>
                         ${metaParts.length ? `<div class="lab-source-meta">${escapeHtml(metaParts.join(' · '))}</div>` : ''}
-                    </div>`;
-                }
-
-                // Lab modifications (Attack Simulation scenarios)
-                if (lab.modifications?.length) {
-                    const items = lab.modifications.map(m => `<li>${escapeHtml(m)}</li>`).join('');
-                    html += `<div class="lab-modifications">
-                        <div class="lab-modifications-label">Lab modifications from original attack</div>
-                        <ul class="lab-modifications-list">${items}</ul>
+                        ${modLinkHtml}
                     </div>`;
                 }
 
