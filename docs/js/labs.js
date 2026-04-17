@@ -911,6 +911,20 @@ function renderLabDetailContent(lab, container) {
     // Store lab reference for mode switching
     window._currentLabDetail = lab;
 
+    const shareUrl = `https://pathfinding.cloud/labs/${lab.slug || ''}`;
+    const shareTitle = escapeHtml(lab.displayName || lab.name);
+    const shareDropdown = `
+        <div class="lab-share-wrapper">
+            <button class="lab-share-trigger" aria-haspopup="true" aria-expanded="false">Share this lab</button>
+            <div class="lab-share-dropdown" role="menu">
+                <button class="lab-share-option" data-share-action="copy-link" data-share-url="${shareUrl}" data-share-name="${shareTitle}">Copy Link</button>
+                <button class="lab-share-option" data-share-action="linkedin" data-share-url="${shareUrl}" data-share-name="${shareTitle}">LinkedIn</button>
+                <button class="lab-share-option" data-share-action="twitter" data-share-url="${shareUrl}" data-share-name="${shareTitle}">X</button>
+                <button class="lab-share-option" data-share-action="bluesky" data-share-url="${shareUrl}" data-share-name="${shareTitle}">Bluesky</button>
+                <button class="lab-share-option" data-share-action="mastodon" data-share-url="${shareUrl}" data-share-name="${shareTitle}">Mastodon</button>
+            </div>
+        </div>`;
+
     let html = `
         <div class="detail-sticky-header">
             <nav class="breadcrumb">
@@ -919,7 +933,10 @@ function renderLabDetailContent(lab, container) {
                     <span class="breadcrumb-separator">></span>
                     <span class="breadcrumb-current">${escapeHtml(lab.displayName || lab.name)}</span>
                 </span>
-                ${modeToggle}
+                <span class="breadcrumb-actions">
+                    ${shareDropdown}
+                    ${modeToggle}
+                </span>
             </nav>
         </div>
 
@@ -927,6 +944,52 @@ function renderLabDetailContent(lab, container) {
 
     html += '</div>'; // close detail-scrollable-content (mode fills it after render)
     container.innerHTML = html;
+
+    // Share dropdown toggle
+    const shareWrapper = container.querySelector('.lab-share-wrapper');
+    if (shareWrapper) {
+        const trigger = shareWrapper.querySelector('.lab-share-trigger');
+        const dropdown = shareWrapper.querySelector('.lab-share-dropdown');
+
+        trigger.addEventListener('click', (e) => {
+            e.stopPropagation();
+            const open = shareWrapper.classList.toggle('open');
+            trigger.setAttribute('aria-expanded', open);
+        });
+
+        dropdown.addEventListener('click', (e) => {
+            const btn = e.target.closest('.lab-share-option');
+            if (!btn) return;
+            const action = btn.dataset.shareAction;
+            if (action === 'copy-link') {
+                navigator.clipboard.writeText(btn.dataset.shareUrl).then(() => {
+                    const original = btn.textContent;
+                    btn.textContent = 'Copied!';
+                    setTimeout(() => { btn.textContent = original; }, 1500);
+                });
+            } else if (typeof labShareAction === 'function') {
+                const previewCanvas = document.querySelector(`#gv2-map-preview-container-${lab.slug} canvas`);
+                labShareAction(action, previewCanvas, lab);
+            }
+            shareWrapper.classList.remove('open');
+            trigger.setAttribute('aria-expanded', 'false');
+        });
+
+        // Close on outside click; use once-per-open to avoid listener accumulation
+        const closeOnOutsideClick = (e) => {
+            if (!shareWrapper.contains(e.target)) {
+                shareWrapper.classList.remove('open');
+                trigger.setAttribute('aria-expanded', 'false');
+                document.removeEventListener('click', closeOnOutsideClick);
+            }
+        };
+        trigger.addEventListener('click', () => {
+            if (shareWrapper.classList.contains('open')) {
+                document.addEventListener('click', closeOnOutsideClick);
+            }
+        });
+    }
+
     const scrollableContent = container.querySelector('.detail-scrollable-content');
     document.body.classList.toggle('lab-game-mode', currentMode === 'mapgame');
     if (currentMode === 'mapgame') {
@@ -1005,7 +1068,7 @@ function renderPermissionsPills(permissions, labSlug) {
                     ? `<span class="lab-perms-public-note">No AWS credentials required — public access</span>`
                     : required.map(p => `<code class="lab-perm-pill">${escapeHtml(p.permission)}</code>`).join('');
                 html += `<div class="lab-perms-pills-section">
-                    <div class="lab-perms-pills-label">Required</div>
+                    <div class="lab-perms-pills-label">Required Permissions for Starting User</div>
                     <div class="lab-perms-pills-row">${rowContent}</div>
                 </div>`;
             }
@@ -1013,7 +1076,7 @@ function renderPermissionsPills(permissions, labSlug) {
             if (helpful.length) {
                 html += `<div class="lab-perms-pills-section">
                     <button class="lab-perms-pills-toggle" onclick="this.classList.toggle('open'); this.nextElementSibling.classList.toggle('open');">
-                        Helpful (${helpful.length})
+                        Helpful Permissions for Starting User (${helpful.length})
                         <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
                     </button>
                     <div class="lab-perms-pills-row lab-perms-pills-collapsible">
@@ -1035,7 +1098,7 @@ function renderPermissionsPills(permissions, labSlug) {
 
     if (required.length) {
         html += `<div class="lab-perms-pills-section">
-            <div class="lab-perms-pills-label">Required</div>
+            <div class="lab-perms-pills-label">Required Permissions for Starting User</div>
             <div class="lab-perms-pills-row">
                 ${required.map(p =>
                     `<code class="lab-perm-pill">${escapeHtml(p.permission)}</code>`
@@ -1047,7 +1110,7 @@ function renderPermissionsPills(permissions, labSlug) {
     if (helpful.length) {
         html += `<div class="lab-perms-pills-section">
             <button class="lab-perms-pills-toggle" onclick="this.classList.toggle('open'); this.nextElementSibling.classList.toggle('open');">
-                Helpful (${helpful.length})
+                Helpful Permissions for Starting User (${helpful.length})
                 <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
             </button>
             <div class="lab-perms-pills-row lab-perms-pills-collapsible">
@@ -1375,6 +1438,38 @@ function convertMarkdownLists(html) {
 // Guided v2 Mode: Continuous scroll with scroll-spy TOC
 // ---------------------------------------------------------------------------
 
+// Renders the key/value two-part pill row for a lab.
+// Each pill has a grey key half and a colored value half (Option A style).
+function renderLabKVPills(lab) {
+    const catConfig = categoryConfig[lab.category] || { label: lab.category, cssClass: '' };
+    const pathTypeLabel = pathTypeLabels[lab.pathType] || lab.pathType;
+    const pathTypeClass = pathTypeColors[lab.pathType] || 'lab-badge-pathtype';
+    const isFree = lab.costEstimate === 'free' || lab.costEstimate === '$0/mo';
+    const targetLabel = lab.target === 'to-admin' ? 'Admin' : lab.target === 'to-bucket' ? 'Bucket' : lab.target;
+    const targetClass = targetColors[lab.target] || 'lab-badge-target';
+
+    const pill = (key, valueClass, valueText) =>
+        `<span class="lab-kv-pill">
+            <span class="lab-kv-pill-key">${key}</span>
+            <span class="lab-badge ${valueClass} lab-kv-pill-value">${escapeHtml(valueText)}</span>
+        </span>`;
+
+    const pills = [
+        pill('Category', catConfig.cssClass, catConfig.label),
+        lab.pathType ? pill('Path Type', pathTypeClass, pathTypeLabel) : '',
+        targetLabel ? pill('Target', targetClass, targetLabel) : '',
+        pill('Est. AWS Cost', isFree ? 'lab-cost-free' : 'lab-cost-paid', isFree ? 'Free' : lab.costEstimate),
+        ...(lab.environments || []).map(env => pill('Env', 'lab-badge-env', env)),
+    ].filter(Boolean);
+
+    const serviceIconsHtml = renderServiceIcons(lab.permissions);
+
+    return `<div class="lab-detail-badges lab-kv-pills-row" style="margin-bottom:16px;">
+        ${pills.join('')}
+        ${serviceIconsHtml ? `<span class="lab-service-icons-right">${serviceIconsHtml}</span>` : ''}
+    </div>`;
+}
+
 function buildGuidedV2Sections(lab) {
     const slug = lab.slug || 'default';
     const sections = [];
@@ -1388,6 +1483,20 @@ function buildGuidedV2Sections(lab) {
         'Defend': 'lab-guided-section-conclusion',
     };
 
+    // --- Attack Map preview (shown first, before Objective) ---
+    if (lab.attackMap?.nodes?.length || lab.readme?.attackDiagram) {
+        sections.push({
+            id: `gv2-map-preview-${slug}`,
+            h2Section: 'Objective',
+            title: 'Attack Map',
+            level: 2,
+            hideHeading: true,
+            noDivider: true,
+            colorClass: sectionColors['Objective'],
+            renderContent: () => `<div class="lab-gv2-map-preview" id="gv2-map-preview-container-${slug}"></div>` + renderLabKVPills(lab),
+        });
+    }
+
     // --- Objective ---
     const overview = getOverview(lab);
     if (overview || lab.description) {
@@ -1399,24 +1508,6 @@ function buildGuidedV2Sections(lab) {
             colorClass: sectionColors['Objective'],
             renderContent: () => {
                 let html = '';
-                // Title + informational badge pills
-                const catConfig2 = categoryConfig[lab.category] || { label: lab.category, cssClass: '' };
-                const pathTypeLabel = pathTypeLabels[lab.pathType] || lab.pathType;
-                const pathTypeClass = pathTypeColors[lab.pathType] || 'lab-badge-pathtype';
-                const isFree = lab.costEstimate === 'free' || lab.costEstimate === '$0/mo';
-                const targetLabel = lab.target === 'to-admin' ? 'Admin' : lab.target === 'to-bucket' ? 'Bucket' : lab.target;
-                const targetClass = targetColors[lab.target] || 'lab-badge-target';
-
-                html += `<div class="lab-detail-badges" style="margin-bottom:16px;">
-                    <span class="lab-badge ${catConfig2.cssClass}">${catConfig2.label}</span>
-                    ${lab.pathType ? `<span class="lab-badge ${pathTypeClass}">${pathTypeLabel}</span>` : ''}
-                    ${targetLabel ? `<span class="lab-badge ${targetClass}">${targetLabel}</span>` : ''}
-                    <span class="lab-badge ${isFree ? 'lab-cost-free' : 'lab-cost-paid'}">${isFree ? 'Free' : lab.costEstimate}</span>
-                    ${lab.environments && lab.environments.length > 0 ? lab.environments.map(env =>
-                        `<span class="lab-badge lab-badge-env">${escapeHtml(env)}</span>`
-                    ).join('') : ''}
-                    ${renderServiceIcons(lab.permissions) ? `<span class="lab-service-icons-right">${renderServiceIcons(lab.permissions)}</span>` : ''}
-                </div>`;
 
                 // Source attribution (Attack Simulation scenarios)
                 if (lab.source?.title || lab.source?.url) {
@@ -1476,23 +1567,28 @@ function buildGuidedV2Sections(lab) {
                         ? `<div class="lab-objective-card-arn lab-objective-card-public-url" title="${escapeHtml(displayUrl)}">${escapeHtml(displayUrl)}</div>`
                         : `<div class="lab-objective-card-arn" title="${escapeHtml(sd.start.arn || '')}">${escapeHtml(startName)}</div>`;
 
-                    html += `<div class="lab-objective-flow">
-                        <div class="lab-objective-card lab-objective-card-${startClassify.type}">
-                            <div class="lab-objective-card-type">${escapeHtml(startClassify.label)}</div>
-                            <div class="lab-objective-card-label">${escapeHtml(sd.start.label || sd.start.id)}</div>
-                            ${startArnLine}
+                    const permsPillsHtml = renderPermissionsPills(lab.permissions, slug);
+
+                    html += `<div class="lab-objective-flow${permsPillsHtml ? ' lab-objective-flow-with-perms' : ''}">
+                        <div class="lab-objective-flow-cards">
+                            <div class="lab-objective-card lab-objective-card-${startClassify.type}">
+                                <div class="lab-objective-card-type">${escapeHtml(startClassify.label)}</div>
+                                <div class="lab-objective-card-label">${escapeHtml(sd.start.label || sd.start.id)}</div>
+                                ${startArnLine}
+                            </div>
+                            <div class="lab-objective-arrow">
+                                <svg width="32" height="24" viewBox="0 0 32 24" fill="none" stroke="currentColor" stroke-width="2">
+                                    <line x1="0" y1="12" x2="26" y2="12"/>
+                                    <polyline points="20 6 26 12 20 18"/>
+                                </svg>
+                            </div>
+                            <div class="lab-objective-card lab-objective-card-${destClassify.type}">
+                                <div class="lab-objective-card-type">${escapeHtml(destClassify.label)}</div>
+                                <div class="lab-objective-card-label">${escapeHtml(sd.destination.label || sd.destination.id)}</div>
+                                <div class="lab-objective-card-arn" title="${escapeHtml(sd.destination.arn || '')}">${escapeHtml(destName)}</div>
+                            </div>
                         </div>
-                        <div class="lab-objective-arrow">
-                            <svg width="32" height="24" viewBox="0 0 32 24" fill="none" stroke="currentColor" stroke-width="2">
-                                <line x1="0" y1="12" x2="26" y2="12"/>
-                                <polyline points="20 6 26 12 20 18"/>
-                            </svg>
-                        </div>
-                        <div class="lab-objective-card lab-objective-card-${destClassify.type}">
-                            <div class="lab-objective-card-type">${escapeHtml(destClassify.label)}</div>
-                            <div class="lab-objective-card-label">${escapeHtml(sd.destination.label || sd.destination.id)}</div>
-                            <div class="lab-objective-card-arn" title="${escapeHtml(sd.destination.arn || '')}">${escapeHtml(destName)}</div>
-                        </div>
+                        ${permsPillsHtml ? `<div class="lab-objective-flow-perms">${permsPillsHtml}</div>` : ''}
                     </div>`;
                 }
 
@@ -1500,34 +1596,7 @@ function buildGuidedV2Sections(lab) {
             }
         });
 
-        // Attack Map preview (static screenshot of start screen)
-        if (lab.attackMap?.nodes?.length || lab.readme?.attackDiagram) {
-            sections.push({
-                id: `gv2-map-preview-${slug}`,
-                h2Section: 'Objective',
-                title: 'Attack Map',
-                level: 3,
-                colorClass: sectionColors['Objective'],
-                renderContent: () => `<div class="lab-gv2-map-preview" id="gv2-map-preview-container-${slug}"></div>`,
-            });
-        }
-
-        // Starting Permissions sub-section (rendered as horizontal pills)
-        // Check across all principals, not just principals[0], to catch multi-principal scenarios
-        // where helpful permissions belong to a secondary IAM recon principal.
-        const allPrincipals = lab.permissions?.principals ?? [];
-        const hasAnyPerms = allPrincipals.some(p => p.required?.length || p.helpful?.length)
-            || lab.permissions?.required?.length || lab.permissions?.helpful?.length;
-        if (hasAnyPerms) {
-            sections.push({
-                id: `gv2-permissions-${slug}`,
-                h2Section: 'Objective',
-                title: 'Starting Permissions',
-                level: 3,
-                colorClass: sectionColors['Objective'],
-                renderContent: () => renderPermissionsPills(lab.permissions, slug),
-            });
-        }
+        // Starting Permissions are embedded directly in the Objective card flow wrapper above
     }
 
     // --- Self-hosted Lab Setup ---
@@ -1840,27 +1909,20 @@ function renderLabDetailContentGuidedV2(lab, container) {
     const slug = lab.slug || 'default';
     const labShareUrl = `https://pathfinding.cloud/labs/${slug}`;
     const labTitle = lab.displayName || lab.name;
-    let mainHtml = `<div class="lab-gv2-title-row">
-        <h1 class="lab-gv2-title">${escapeHtml(labTitle)}</h1>
-        <div class="lab-gv2-share-actions">
-            <button class="lab-gv2-share-btn" data-share-action="copy-link" data-share-url="${escapeHtml(labShareUrl)}" data-share-name="${escapeHtml(labTitle)}" title="Copy link">Copy Link</button>
-            <button class="lab-gv2-share-btn lab-gv2-share-btn-primary" data-share-action="linkedin" data-share-url="${escapeHtml(labShareUrl)}" data-share-name="${escapeHtml(labTitle)}" title="Share on LinkedIn">LinkedIn</button>
-            <button class="lab-gv2-share-btn" data-share-action="twitter" data-share-url="${escapeHtml(labShareUrl)}" data-share-name="${escapeHtml(labTitle)}" title="Share on X">X</button>
-            <button class="lab-gv2-share-btn" data-share-action="bluesky" data-share-url="${escapeHtml(labShareUrl)}" data-share-name="${escapeHtml(labTitle)}" title="Share on Bluesky">Bluesky</button>
-            <button class="lab-gv2-share-btn" data-share-action="mastodon" data-share-url="${escapeHtml(labShareUrl)}" data-share-name="${escapeHtml(labTitle)}" title="Share on Mastodon">Mastodon</button>
-        </div>
-    </div>`;
+    let mainHtml = '';
     let prevH2 = '';
     sections.forEach(sec => {
         if (sec.h2Section !== prevH2) {
             prevH2 = sec.h2Section;
         }
         const headingTag = sec.level === 2 ? 'h2' : 'h3';
+        const headingHtml = sec.hideHeading ? '' : `<${headingTag} class="lab-gv2-heading ${sec.colorClass || ''}">${escapeHtml(sec.title)}</${headingTag}>`;
+        const sectionClass = `lab-gv2-section${sec.noDivider ? ' lab-gv2-section-no-divider' : ''}`;
         if (sec.collapsed) {
             const summaryText = sec.collapsedSummary || `Show ${escapeHtml(sec.title)}`;
             mainHtml += `
-                <div class="lab-gv2-section" id="${sec.id}" data-gv2-h2="${sec.h2Section}">
-                    <${headingTag} class="lab-gv2-heading ${sec.colorClass || ''}">${escapeHtml(sec.title)}</${headingTag}>
+                <div class="${sectionClass}" id="${sec.id}" data-gv2-h2="${sec.h2Section}">
+                    ${headingHtml}
                     <details class="lab-gv2-collapsible">
                         <summary class="lab-gv2-collapsible-summary">
                             ${summaryText}
@@ -1871,8 +1933,8 @@ function renderLabDetailContentGuidedV2(lab, container) {
                 </div>`;
         } else {
             mainHtml += `
-                <div class="lab-gv2-section" id="${sec.id}" data-gv2-h2="${sec.h2Section}">
-                    <${headingTag} class="lab-gv2-heading ${sec.colorClass || ''}">${escapeHtml(sec.title)}</${headingTag}>
+                <div class="${sectionClass}" id="${sec.id}" data-gv2-h2="${sec.h2Section}">
+                    ${headingHtml}
                     <div class="lab-gv2-body">${sec.renderContent()}</div>
                 </div>`;
         }
@@ -1896,24 +1958,6 @@ function renderLabDetailContentGuidedV2(lab, container) {
         }
     }, 60);
 
-    // Share button click handlers -- delegate to labShareAction for all platforms
-    // Grab the static preview canvas (if present) so social shares can download the map image
-    container.querySelectorAll('.lab-gv2-share-btn').forEach(btn => {
-        btn.addEventListener('click', () => {
-            const action = btn.dataset.shareAction;
-            if (action === 'copy-link') {
-                const url = btn.dataset.shareUrl;
-                navigator.clipboard.writeText(url).then(() => {
-                    const original = btn.textContent;
-                    btn.textContent = 'Copied!';
-                    setTimeout(() => { btn.textContent = original; }, 1500);
-                });
-            } else if (typeof labShareAction === 'function') {
-                const previewCanvas = document.querySelector(`#gv2-map-preview-container-${slug} canvas`);
-                labShareAction(action, previewCanvas, lab);
-            }
-        });
-    });
 }
 
 function setupGuidedV2ScrollSpy(containerId) {

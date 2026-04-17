@@ -5179,7 +5179,6 @@ function renderStaticMapPreview(containerEl, lab) {
     if (mapNodes.length === 0) return;
 
     const canvas = document.createElement('canvas');
-    containerEl.appendChild(canvas);
 
     const w = containerEl.clientWidth;
     const h = 280;
@@ -5235,11 +5234,113 @@ function renderStaticMapPreview(containerEl, lab) {
         _panelEl: null,
     };
 
+    function drawCenteredTitleBar(targetCtx, barY, barH, rounded) {
+        const p = state.palette;
+        const labTitle = state.lab?.displayName || state.lab?.name || '';
+        if (!labTitle) return;
+        const fullText = `Pathfinding.cloud Labs: ${labTitle}`;
+        const maxWidth = w - 32;
+
+        if (rounded) {
+            drawRoundedRect(targetCtx, 6, barY, w - 12, barH, 8);
+            targetCtx.fillStyle = p.hudBg;
+            targetCtx.fill();
+            targetCtx.strokeStyle = p.hudBorder;
+            targetCtx.lineWidth = 1;
+            targetCtx.stroke();
+        } else {
+            targetCtx.fillStyle = p.hudBg;
+            targetCtx.fillRect(0, barY, w, barH);
+            targetCtx.strokeStyle = p.hudBorder;
+            targetCtx.lineWidth = 1;
+            targetCtx.beginPath();
+            // border on the adjacent edge only (top for bottom bar, bottom for top bar)
+            const borderY = barY === 0 ? barY + barH : barY;
+            targetCtx.moveTo(0, borderY);
+            targetCtx.lineTo(w, borderY);
+            targetCtx.stroke();
+        }
+
+        targetCtx.fillStyle = p.hudText;
+        targetCtx.font = 'bold 13px -apple-system, BlinkMacSystemFont, sans-serif';
+        targetCtx.textAlign = 'center';
+        targetCtx.textBaseline = 'middle';
+        let label = fullText;
+        while (label.length > 4 && targetCtx.measureText(label).width > maxWidth) {
+            label = label.slice(0, -1);
+        }
+        if (label !== fullText) label = label.trimEnd() + '…';
+        targetCtx.fillText(label, w / 2, barY + barH / 2);
+    }
+
+    // Option A: bottom bar
+    function drawOverlayBottom(targetCtx) {
+        const barH = 30;
+        drawCenteredTitleBar(targetCtx, h - barH, barH, false);
+    }
+
+    // Option B: top pill sized to fit the text, centered
+    function drawOverlayTop(targetCtx) {
+        const p = state.palette;
+        const labTitle = state.lab?.displayName || state.lab?.name || '';
+        if (!labTitle) return;
+        const fullText = `Pathfinding.cloud Labs: ${labTitle}`;
+        const barH = 30;
+        const hPad = 18;
+        const maxTextWidth = w - 48;
+
+        targetCtx.font = 'bold 13px -apple-system, BlinkMacSystemFont, sans-serif';
+        let label = fullText;
+        while (label.length > 4 && targetCtx.measureText(label).width > maxTextWidth) {
+            label = label.slice(0, -1);
+        }
+        if (label !== fullText) label = label.trimEnd() + '…';
+
+        const textWidth = targetCtx.measureText(label).width;
+        const pillW = textWidth + hPad * 2;
+        const pillX = (w - pillW) / 2;
+        const pillY = 8;
+
+        drawRoundedRect(targetCtx, pillX, pillY, pillW, barH, 8);
+        targetCtx.fillStyle = p.hudBg;
+        targetCtx.fill();
+        targetCtx.strokeStyle = p.hudBorder;
+        targetCtx.lineWidth = 1;
+        targetCtx.stroke();
+
+        targetCtx.fillStyle = p.hudText;
+        targetCtx.textAlign = 'center';
+        targetCtx.textBaseline = 'middle';
+        targetCtx.fillText(label, w / 2, pillY + barH / 2);
+    }
+
+    // Option C: full-width top bar, same style as A but header instead of footer
+    function drawOverlayTopFlat(targetCtx) {
+        const barH = 30;
+        drawCenteredTitleBar(targetCtx, 0, barH, false);
+    }
+
+    // Overlay options — A and C kept for reference, only B is active
+    // const overlayA = { fn: drawOverlayBottom, mapYOffset: 0 };    // Option A: bottom bar
+    // const overlayC = { fn: drawOverlayTopFlat, mapYOffset: 30 };  // Option C: full-width top bar
+    const activeOverlay = { fn: drawOverlayTop, mapYOffset: 30 };    // Option B: top pill
+
+    canvas.style.display = 'block';
+    containerEl.appendChild(canvas);
+
     function draw() {
+        const { fn, mapYOffset } = activeOverlay;
         ctx.save();
         ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-        // Draw the map with islands and paths (no HUD or overlays)
-        drawMapWithGameLabels(ctx, w, h, state);
+        if (mapYOffset) {
+            ctx.save();
+            ctx.translate(0, mapYOffset);
+            drawMapWithGameLabels(ctx, w, h - mapYOffset, state);
+            ctx.restore();
+        } else {
+            drawMapWithGameLabels(ctx, w, h, state);
+        }
+        fn(ctx);
         ctx.restore();
     }
 
