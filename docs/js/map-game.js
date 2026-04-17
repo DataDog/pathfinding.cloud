@@ -137,7 +137,7 @@ function drawRoundedRect(ctx, x, y, w, h, radius) {
 function drawThemedButton(ctx, btn, hoveredId, activeId, palette) {
     if (btn.visible === false) return;
     const isHovered = hoveredId === btn.id;
-    const isActive = activeId === btn.id;
+    const isActive = activeId === btn.id || !!btn.forceActive;
     const isDisabled = btn.disabled;
     const style = btn.style || 'primary';
     const p = palette;
@@ -543,7 +543,9 @@ function drawGameIslandLabels(ctx, w, h, state) {
         ctx.save();
 
         // Check if below-label icon mode applies to this node
-        const belowLabelIcon = (state.iconStyle === 'below-label')
+        // Use effectiveIconStyle if set (auto-compact override), otherwise the user's choice.
+        const resolvedIconStyle = state.effectiveIconStyle || state.iconStyle;
+        const belowLabelIcon = (resolvedIconStyle === 'below-label')
             ? awsIconSprites.get(nodes[i]?.subType || '')
             : null;
         const belowIconSize = 32; // prominent icon size for below-label mode
@@ -1294,7 +1296,7 @@ function drawCompanionIslet(ctx, pos, companion, isSelected, state, nodeIndex) {
     ctx.fill();
 
     // AWS icon centered on companion islet (max 50% of islet radius) -- only in 'on-island' mode
-    if (state.iconStyle === 'on-island') {
+    if ((state.effectiveIconStyle || state.iconStyle) === 'on-island') {
         const companionSubType = companion.subType || '';
         const companionIcon = awsIconSprites.get(companionSubType);
         if (companionIcon) {
@@ -1379,7 +1381,7 @@ function drawCompanionLabel(ctx, x, y, companion, state) {
     const displayLabel = label;
 
     // Check for below-label icon
-    const belowIcon = (state.iconStyle === 'below-label')
+    const belowIcon = ((state.effectiveIconStyle || state.iconStyle) === 'below-label')
         ? awsIconSprites.get(companion.subType || '')
         : null;
     const iconSize = 24; // slightly smaller for companions
@@ -2615,9 +2617,10 @@ function buildPlayingButtons(w, h, state) {
         x: labSetupX, y: btnY,
         w: setupW, h: btnH,
         label: 'Lab Setup',
-        style: 'secondary',
+        style: state.gameViewPhase === 'setup' ? 'primary' : 'secondary',
         fontSize: 12,
         radius: 8,
+        forceActive: state.gameViewPhase === 'setup',
         onClick: () => {
             state.panelOverride = state.panelOverride === 'setup' ? null : 'setup';
             state.completeView = null;
@@ -2632,9 +2635,10 @@ function buildPlayingButtons(w, h, state) {
         x: labOverviewX, y: btnY,
         w: overviewW, h: btnH,
         label: 'Lab Overview',
-        style: 'secondary',
+        style: state.gameViewPhase === 'overview' ? 'primary' : 'secondary',
         fontSize: 12,
         radius: 8,
+        forceActive: state.gameViewPhase === 'overview',
         onClick: () => {
             state.panelOverride = state.panelOverride === 'overview' ? null : 'overview';
             state.completeView = null;
@@ -2666,6 +2670,7 @@ function buildPlayingButtons(w, h, state) {
         fontSize: 12,
         radius: 8,
         disabled: !canGoNext,
+        forceActive: state.gameViewPhase === 'navigation' && !allRevealed,
         onClick: () => { advanceGameState(w, h, state); }
     });
 
@@ -2679,6 +2684,7 @@ function buildPlayingButtons(w, h, state) {
         fontSize: 13,
         radius: 8,
         disabled: !allRevealed,
+        forceActive: allRevealed,
         onClick: () => {
             state.screen = 'complete';
             state.selectedNode = null;
@@ -3065,6 +3071,7 @@ function renderGameMenu(state) {
                         { keys: ['T'], desc: 'Cycle island style' },
                         { keys: ['P'], desc: 'Cycle plane style' },
                         { keys: ['R'], desc: 'Reset view' },
+                        { keys: ['Ctrl+Scroll'], desc: 'Zoom in / out' },
                     ],
                 },
                 {
@@ -3716,9 +3723,12 @@ function computeMapLayout(count, w, h) {
         const amplitude = rangeY * 0.6;
         let baseY = centerY + zigzagSign * amplitude;
 
-        // Jitter for organic feel
-        const jitterX = (rng() - 0.5) * 30;
-        const jitterY = (rng() - 0.5) * 40;
+        // Jitter for organic feel -- scale down with node count so the zig-zag
+        // separation is preserved when islands are small and space is tight.
+        // At 3 nodes scale=1.0, at 5 nodes scale=0.76, at 7 nodes scale=0.52, etc.
+        const jitterScale = Math.max(0.25, 1 - Math.max(0, count - 3) * 0.12);
+        const jitterX = (rng() - 0.5) * 30 * jitterScale;
+        const jitterY = (rng() - 0.5) * 40 * jitterScale;
 
         const clampedX = Math.max(padX, Math.min(w - padX, x + jitterX));
         const clampedY = Math.max(minY, Math.min(maxY, baseY + jitterY));
@@ -3727,9 +3737,14 @@ function computeMapLayout(count, w, h) {
     return positions;
 }
 
-// Compute companion positions offset from their parent edge midpoints
-function computeCompanionPositions(companions, edges, positions) {
+// Compute companion positions offset from their parent edge midpoints.
+// islandRadius is used to define a minimum safe clearance from main island centers.
+function computeCompanionPositions(companions, edges, positions, islandRadius) {
     if (!companions || !companions.length) return [];
+    // Companions must stay this far from every main island center
+    const safeDistance = (islandRadius || 70) * 1.7;
+    const tooClose = (cx, cy) => positions.some(p => Math.hypot(p.x - cx, p.y - cy) < safeDistance);
+
     const companionPositions = [];
     for (let ci = 0; ci < companions.length; ci++) {
         const parentEdge = edges.find(e => e.companionIndices && e.companionIndices.includes(ci));
@@ -3758,11 +3773,30 @@ function computeCompanionPositions(companions, edges, positions) {
         const t = siblingCount <= 1 ? 0.5 : 0.35 + (siblingPos / (siblingCount - 1)) * 0.3;
         const anchorX = fromPos.x + dx * t;
         const anchorY = fromPos.y + dy * t;
-        const perpOffset = 60;
-        companionPositions.push({
-            x: anchorX + perpX * perpOffset,
-            y: anchorY + perpY * perpOffset,
-        });
+
+        // Try increasing offsets on each side until we find a position that doesn't
+        // land on a main island. Candidates: +60, -60, +90, -90, +120, -120.
+        const offsets = [60, -60, 90, -90, 120, -120];
+        let chosen = null;
+        for (const off of offsets) {
+            const cx = anchorX + perpX * off;
+            const cy = anchorY + perpY * off;
+            if (!tooClose(cx, cy)) {
+                chosen = { x: cx, y: cy };
+                break;
+            }
+        }
+        // Fallback: use the candidate that maximises distance from its nearest island
+        if (!chosen) {
+            const best = offsets.map(off => {
+                const cx = anchorX + perpX * off;
+                const cy = anchorY + perpY * off;
+                const minD = Math.min(...positions.map(p => Math.hypot(p.x - cx, p.y - cy)));
+                return { x: cx, y: cy, minD };
+            }).reduce((a, b) => (b.minD > a.minD ? b : a));
+            chosen = { x: best.x, y: best.y };
+        }
+        companionPositions.push(chosen);
     }
     return companionPositions;
 }
@@ -4262,8 +4296,37 @@ function drawGameMap(ctx, w, h, state) {
     // Shrink islands by 20% for each main island beyond 3 to avoid crowding
     const baseIslandRadius = 104;
     const shrinkSteps = Math.max(0, nodes.length - 3);
-    const islandRadius = baseIslandRadius * Math.pow(0.8, shrinkSteps);
+    let islandRadius = baseIslandRadius * Math.pow(0.8, shrinkSteps);
+
+    // Overlap detection: if the zig-zag layout placed any two islands closer than
+    // 2.4× the radius (island body + breathing room), shrink further to fit.
+    if (positions.length >= 2) {
+        let minDist = Infinity;
+        for (let a = 0; a < positions.length; a++) {
+            for (let b = a + 1; b < positions.length; b++) {
+                const dx = positions[b].x - positions[a].x;
+                const dy = positions[b].y - positions[a].y;
+                minDist = Math.min(minDist, Math.sqrt(dx * dx + dy * dy));
+            }
+        }
+        const radiusForMinDist = minDist / 2.4;
+        if (radiusForMinDist < islandRadius) {
+            islandRadius = Math.max(30, radiusForMinDist);
+        }
+    }
+
     state.islandRadius = islandRadius; // store for label positioning
+
+    // Auto-compact: when islands are small enough that below-label icons (32px) would
+    // dominate the label plate, automatically promote them onto the island instead.
+    // This preserves the user's toggle choice (state.iconStyle) while applying a
+    // display-time override stored in state.effectiveIconStyle.
+    // Threshold: at 5 nodes islandRadius ≈ 66.5px; at 6 nodes ≈ 53px. Use 72 so the
+    // 5-node case triggers the compact mode and removes the 32px below-label icon row.
+    const AUTO_COMPACT_THRESHOLD = 72;
+    state.effectiveIconStyle = (islandRadius < AUTO_COMPACT_THRESHOLD && state.iconStyle === 'below-label')
+        ? 'on-island'
+        : state.iconStyle;
     positions.forEach((pos, i) => {
         const isFirst = i === 0;
         const isLast = i === lastIdx;
@@ -4289,7 +4352,7 @@ function drawGameMap(ctx, w, h, state) {
         drawIslandTerrain(ctx, pos, islandRadius, seed, p, isFirst, isLast);
 
         // AWS icon centered on the island (max 50% of island diameter) -- only in 'on-island' mode
-        if (state.iconStyle === 'on-island') {
+        if (state.effectiveIconStyle === 'on-island') {
             const nodeSubType = nodes[i]?.subType || '';
             const iconImg = awsIconSprites.get(nodeSubType);
             if (iconImg) {
@@ -4466,8 +4529,12 @@ function initMapGame(mapId, nodes, edges, companions, lab) {
     if (companions) awsIconSprites.preload(companions);
 
     const positions = computeMapLayout(nodes.length, w, h);
+    // Pre-compute the island radius (same formula as renderMapGame) so companion
+    // placement can avoid landing on main island bodies.
+    const initShrinkSteps = Math.max(0, nodes.length - 3);
+    const initIslandRadius = 104 * Math.pow(0.8, initShrinkSteps);
     // Compute companion positions offset from their parent edge midpoints
-    const companionPositions = computeCompanionPositions(companions, edges, positions);
+    const companionPositions = computeCompanionPositions(companions, edges, positions, initIslandRadius);
     // Filter out mountains from decorations for game mode
     const allDecorations = generateMapDecorations(positions, w, h);
     const decorations = allDecorations.filter(d => d.type !== 'mountain');
@@ -4991,6 +5058,8 @@ function initMapGame(mapId, nodes, edges, companions, lab) {
 
     function onWheel(e) {
         if (state.screen !== 'playing' && state.screen !== 'complete') return;
+        // Require Ctrl/Cmd to zoom; without it let the page scroll normally
+        if (!e.ctrlKey && !e.metaKey) return;
         e.preventDefault();
         const { sx, sy } = canvasCoords(e);
         const oldZoom = state.viewZoom;
