@@ -5181,24 +5181,30 @@ function renderStaticMapPreview(containerEl, lab) {
     const canvas = document.createElement('canvas');
 
     const w = containerEl.clientWidth;
-    const h = 280;
+    const h = 380;
+    // Header zone height and bottom clearance for footer + island labels
+    const mapYOffset = 80;
+    const bottomPad = 120;
+    const mapH = h - mapYOffset;
+
     const dpr = window.devicePixelRatio || 1;
     canvas.width = w * dpr;
     canvas.height = h * dpr;
     canvas.style.width = '100%';
     canvas.style.height = h + 'px';
+    canvas.style.display = 'block';
+    containerEl.appendChild(canvas);
 
     const ctx = canvas.getContext('2d');
     ctx.scale(dpr, dpr);
 
-    const positions = computeMapLayout(mapNodes.length, w, h);
+    // Compute layout within the map zone (below header) so hudBottom is relative to mapH
+    const positions = computeMapLayout(mapNodes.length, w, mapH);
     const companionPositions = computeCompanionPositions(mapCompanions, mapEdges, positions);
-    const allDecorations = generateMapDecorations(positions, w, h);
+    const allDecorations = generateMapDecorations(positions, w, mapH);
     const decorations = allDecorations.filter(d => d.type !== 'mountain');
     const palette = getGameUIPalette();
 
-    // Build a minimal state object for the drawing functions
-    // Use 'playing' screen so the map with islands is drawn (not the start overlay)
     const state = {
         screen: 'playing',
         revealed: new Set(mapNodes.map((_, i) => i)),
@@ -5234,115 +5240,50 @@ function renderStaticMapPreview(containerEl, lab) {
         _panelEl: null,
     };
 
-    function drawCenteredTitleBar(targetCtx, barY, barH, rounded) {
-        const p = state.palette;
-        const labTitle = state.lab?.displayName || state.lab?.name || '';
-        if (!labTitle) return;
-        const fullText = `Pathfinding.cloud Labs: ${labTitle}`;
-        const maxWidth = w - 32;
-
-        if (rounded) {
-            drawRoundedRect(targetCtx, 6, barY, w - 12, barH, 8);
-            targetCtx.fillStyle = p.hudBg;
-            targetCtx.fill();
-            targetCtx.strokeStyle = p.hudBorder;
-            targetCtx.lineWidth = 1;
-            targetCtx.stroke();
-        } else {
-            targetCtx.fillStyle = p.hudBg;
-            targetCtx.fillRect(0, barY, w, barH);
-            targetCtx.strokeStyle = p.hudBorder;
-            targetCtx.lineWidth = 1;
-            targetCtx.beginPath();
-            // border on the adjacent edge only (top for bottom bar, bottom for top bar)
-            const borderY = barY === 0 ? barY + barH : barY;
-            targetCtx.moveTo(0, borderY);
-            targetCtx.lineTo(w, borderY);
-            targetCtx.stroke();
-        }
-
-        targetCtx.fillStyle = p.hudText;
-        targetCtx.font = 'bold 13px -apple-system, BlinkMacSystemFont, sans-serif';
-        targetCtx.textAlign = 'center';
-        targetCtx.textBaseline = 'middle';
-        let label = fullText;
-        while (label.length > 4 && targetCtx.measureText(label).width > maxWidth) {
-            label = label.slice(0, -1);
-        }
-        if (label !== fullText) label = label.trimEnd() + '…';
-        targetCtx.fillText(label, w / 2, barY + barH / 2);
-    }
-
-    // Option A: bottom bar
-    function drawOverlayBottom(targetCtx) {
-        const barH = 30;
-        drawCenteredTitleBar(targetCtx, h - barH, barH, false);
-    }
-
-    // Option B: top pill sized to fit the text, centered
-    function drawOverlayTop(targetCtx) {
-        const p = state.palette;
-        const labTitle = state.lab?.displayName || state.lab?.name || '';
-        if (!labTitle) return;
-        const fullText = `Pathfinding.cloud Labs: ${labTitle}`;
-        const barH = 30;
-        const hPad = 18;
-        const maxTextWidth = w - 48;
-
-        targetCtx.font = 'bold 13px -apple-system, BlinkMacSystemFont, sans-serif';
-        let label = fullText;
-        while (label.length > 4 && targetCtx.measureText(label).width > maxTextWidth) {
-            label = label.slice(0, -1);
-        }
-        if (label !== fullText) label = label.trimEnd() + '…';
-
-        const textWidth = targetCtx.measureText(label).width;
-        const pillW = textWidth + hPad * 2;
-        const pillX = (w - pillW) / 2;
-        const pillY = 8;
-
-        drawRoundedRect(targetCtx, pillX, pillY, pillW, barH, 8);
-        targetCtx.fillStyle = p.hudBg;
-        targetCtx.fill();
-        targetCtx.strokeStyle = p.hudBorder;
-        targetCtx.lineWidth = 1;
-        targetCtx.stroke();
-
-        targetCtx.fillStyle = p.hudText;
-        targetCtx.textAlign = 'center';
-        targetCtx.textBaseline = 'middle';
-        targetCtx.fillText(label, w / 2, pillY + barH / 2);
-    }
-
-    // Option C: full-width top bar, same style as A but header instead of footer
-    function drawOverlayTopFlat(targetCtx) {
-        const barH = 30;
-        drawCenteredTitleBar(targetCtx, 0, barH, false);
-    }
-
-    // Overlay options — A and C kept for reference, only B is active
-    // const overlayA = { fn: drawOverlayBottom, mapYOffset: 0 };    // Option A: bottom bar
-    // const overlayC = { fn: drawOverlayTopFlat, mapYOffset: 30 };  // Option C: full-width top bar
-    const activeOverlay = { fn: drawOverlayTop, mapYOffset: 30 };    // Option B: top pill
-
-    canvas.style.display = 'block';
-    containerEl.appendChild(canvas);
+    // Shift islands down into the map zone and clamp above footer+label clearance.
+    // Done once before any draw() call so repeated redraws don't compound the shift.
+    const shift = Math.round(mapH * 0.25);
+    const maxAllowed = mapH - bottomPad - 30;
+    state.positions.forEach(p => { p.y = Math.min(maxAllowed, p.y + shift); });
 
     function draw() {
-        const { fn, mapYOffset } = activeOverlay;
         ctx.save();
         ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-        if (mapYOffset) {
-            ctx.save();
-            ctx.translate(0, mapYOffset);
-            drawMapWithGameLabels(ctx, w, h - mapYOffset, state);
-            ctx.restore();
-        } else {
-            drawMapWithGameLabels(ctx, w, h, state);
-        }
-        fn(ctx);
+
+        // Draw the map translated down below the header zone
+        ctx.save();
+        ctx.translate(0, mapYOffset);
+        drawMapWithGameLabels(ctx, w, mapH, state);
+        ctx.restore();
+
+        // Fill the header zone with the sky color — HTML overlay sits on top
+        const isLight = document.documentElement.classList.contains('light-theme');
+        ctx.fillStyle = isLight ? '#5a9ac0' : '#060c18';
+        ctx.fillRect(0, 0, w, mapYOffset);
+
         ctx.restore();
     }
+
+    // --- HTML overlays ---
+    const labTitle = escapeHtmlGame(lab.displayName || lab.name || '');
+
+    // Title overlay: brand line + shimmering rule + gold gradient lab name
+    const titleEl = document.createElement('div');
+    titleEl.className = 'map-preview-title-overlay';
+    titleEl.innerHTML = `
+        <span class="map-preview-brand">PATHFINDING.CLOUD — LABS</span>
+        <div class="map-preview-rule"></div>
+        <span class="map-preview-lab-name">${labTitle}</span>
+    `;
+    containerEl.appendChild(titleEl);
+
+    // Badge footer: KV pills + service tags, built by labs.js helper
+    const footerEl = document.createElement('div');
+    footerEl.className = 'map-preview-badge-footer';
+    if (typeof buildPreviewFooterHTML === 'function') {
+        footerEl.innerHTML = buildPreviewFooterHTML(lab);
+    }
+    containerEl.appendChild(footerEl);
 
     awsIconSprites.preload(mapNodes);
     if (mapCompanions) awsIconSprites.preload(mapCompanions);

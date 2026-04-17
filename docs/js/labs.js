@@ -1470,6 +1470,48 @@ function renderLabKVPills(lab) {
     </div>`;
 }
 
+// Builds the inner HTML for the map preview badge footer overlay.
+// Reuses the same pill logic as renderLabKVPills, plus service name tags right-justified.
+function buildPreviewFooterHTML(lab) {
+    const catConfig = categoryConfig[lab.category] || { label: lab.category, cssClass: '' };
+    const pathTypeLabel = pathTypeLabels[lab.pathType] || lab.pathType;
+    const pathTypeClass = pathTypeColors[lab.pathType] || 'lab-badge-pathtype';
+    const isFree = lab.costEstimate === 'free' || lab.costEstimate === '$0/mo';
+    const targetLabel = lab.target === 'to-admin' ? 'Admin' : lab.target === 'to-bucket' ? 'Bucket' : (lab.target || '');
+    const targetClass = targetColors[lab.target] || 'lab-badge-target';
+
+    const pill = (key, valueClass, valueText) =>
+        `<span class="lab-kv-pill">
+            <span class="lab-kv-pill-key">${key}</span>
+            <span class="lab-badge ${valueClass} lab-kv-pill-value">${escapeHtml(valueText)}</span>
+        </span>`;
+
+    const pills = [
+        pill('Category', catConfig.cssClass, catConfig.label),
+        lab.pathType ? pill('Path Type', pathTypeClass, pathTypeLabel) : '',
+        targetLabel ? pill('Target', targetClass, targetLabel) : '',
+        pill('Est. AWS Cost', isFree ? 'lab-cost-free' : 'lab-cost-paid', isFree ? 'Free' : lab.costEstimate),
+        ...(lab.environments || []).map(env => pill('Env', 'lab-badge-env', env)),
+    ].filter(Boolean).join('');
+
+    // Extract unique service labels from required permissions
+    const required = lab.permissions?.principals?.[0]?.required ?? lab.permissions?.required ?? [];
+    const seenPrefixes = new Set();
+    const serviceLabels = [];
+    for (const p of required) {
+        const prefix = (p.permission || '').split(':')[0].toLowerCase();
+        if (prefix && awsServiceConfig[prefix] && !seenPrefixes.has(prefix)) {
+            seenPrefixes.add(prefix);
+            serviceLabels.push(awsServiceConfig[prefix].label);
+        }
+    }
+    const serviceTagsHtml = serviceLabels.length
+        ? `<div class="map-preview-service-tags">${serviceLabels.map(s => `<span class="map-preview-service-tag">${s}</span>`).join('')}</div>`
+        : '';
+
+    return pills + serviceTagsHtml;
+}
+
 function buildGuidedV2Sections(lab) {
     const slug = lab.slug || 'default';
     const sections = [];
@@ -1493,7 +1535,7 @@ function buildGuidedV2Sections(lab) {
             hideHeading: true,
             noDivider: true,
             colorClass: sectionColors['Objective'],
-            renderContent: () => `<div class="lab-gv2-map-preview" id="gv2-map-preview-container-${slug}"></div>` + renderLabKVPills(lab),
+            renderContent: () => `<div class="lab-gv2-map-preview" id="gv2-map-preview-container-${slug}"></div>`,
         });
     }
 
