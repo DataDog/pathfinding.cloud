@@ -693,6 +693,21 @@ function renderLabTable() {
     html += '</tbody></table>';
     labsContainer.innerHTML = html;
 
+    // Add click listeners to make entire row clickable
+    labsContainer.querySelectorAll('.lab-row').forEach(row => {
+        const slug = row.dataset.slug;
+        row.addEventListener('click', (e) => {
+            if (e.target.closest('a')) return; // let anchor handle its own clicks
+            navigateToLab(slug, e);
+        });
+        row.addEventListener('mousedown', (e) => {
+            if (e.button === 1) {
+                e.preventDefault();
+                window.open(`/labs/${slug}`, '_blank');
+            }
+        });
+    });
+
     // Add sort listeners
     labsContainer.querySelectorAll('.sortable').forEach(th => {
         th.addEventListener('click', () => {

