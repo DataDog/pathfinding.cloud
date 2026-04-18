@@ -56,11 +56,11 @@ const cloudSprites = {
         return Promise.all(promises).then(() => { this.loaded = true; });
     },
     // Draw clouds in the upper portion of the canvas, below the top HUD bar
-    draw(ctx, w, h, seed) {
+    draw(ctx, w, h, seed, hudTopOverride) {
         if (!this.images.length) return;
         const rng = mapRng(seed || 99);
-        const hudTop = 52;               // generous buffer below top HUD bar
-        const cloudMaxY = h * 0.20;      // clouds confined to top ~20%
+        const hudTop = hudTopOverride ?? 52;  // generous buffer below top HUD bar
+        const cloudMaxY = h * 0.20;           // clouds confined to top ~20%
         const count = Math.max(7, Math.floor(w / 100)); // more clouds
         for (let i = 0; i < count; i++) {
             const img = this.images[Math.floor(rng() * this.images.length)];
@@ -2563,10 +2563,15 @@ function buildPlayingButtons(w, h, state) {
     // Next is disabled when at the final node with all revealed
     const canGoNext = !allRevealed;
 
-    // --- Top bar buttons (menu + switch mode) ---
+    // --- Top bar buttons ---
+    const variant = state.hudVariant || 0;
+
+    // In V5 (capcom top-left, the default) the hamburger sits at the top-right corner
+    // so it doesn't compete with the left-anchored capcom title text.
+    const menuX = variant === 5 ? w - 44 : 10;
     const menuBtn = {
         id: 'menu',
-        x: 10, y: 8,
+        x: menuX, y: 8,
         w: 34, h: 30,
         label: '=',
         style: 'ghost',
@@ -2590,6 +2595,7 @@ function buildPlayingButtons(w, h, state) {
     // --- Bottom bar layout ---
     // [Play Online] [Lab Setup][Lab Overview]   [Back][Next]   [Finish Mission][Demo]
     //  ^-- left edge                            ^-- centered    ^-- right edge
+
     const playOnlineW = 110;
     const setupW = 90;
     const overviewW = 110;
@@ -2604,7 +2610,7 @@ function buildPlayingButtons(w, h, state) {
     const backX = (w - centerGroupW) / 2;
     const nextX = backX + backW + gap;
 
-    // Left group: Play Online at far left, then Lab Setup + Lab Overview with fixed spacing
+    // Left group: Play Online at far left, then Lab Setup + Lab Overview
     const playOnlineX = edgePad;
     const labSetupX = edgePad + playOnlineW + gap;
     const labOverviewX = labSetupX + setupW + gap;
@@ -2617,7 +2623,10 @@ function buildPlayingButtons(w, h, state) {
     const finishX = rightGroupX;
     const demoX = rightGroupX + finishW + gap;
 
-    const buttons = [menuBtn, switchGuidedBtn];
+    // V0: top bar has menu + switch-to-single; V1-5: top bar has only the hamburger
+    const buttons = variant === 0
+        ? [menuBtn, switchGuidedBtn]
+        : [menuBtn];
 
     // Reset View button (only visible when panned or zoomed)
     const viewIsTransformed = state.viewZoom !== 1 || state.viewPanX !== 0 || state.viewPanY !== 0;
@@ -2640,7 +2649,7 @@ function buildPlayingButtons(w, h, state) {
         });
     }
 
-    // Play Online button -- leftmost; opens an interactive terminal session
+    // Play Online button — always in the bottom bar (bottom-left)
     const labOnlineEnabled = PLAY_ONLINE_GLOBALLY_ENABLED && (PLAY_ONLINE_MOCK_MODE || !!state.lab?.supportsOnlineMode);
     buttons.push({
         id: 'play-online',
@@ -2764,63 +2773,306 @@ function buildPlayingButtons(w, h, state) {
     return buttons;
 }
 
+// Draw the capcom-style header (brand + shimmer rule + gold gradient lab name) in canvas,
+// matching the .map-preview-title-overlay CSS used in single page mode exactly.
+// zoneTopY is the top of the 80px header zone (usually 0).
+function drawCapcomHeader(ctx, w, zoneTopY, title) {
+    const BRAND_TEXT = 'PATHFINDING.CLOUD — LABS';
+    const labName = title.toUpperCase();
+
+    // CSS layout: flex column, centered in 80px zone, gap=0
+    // brand (13px) + 5px margin + rule (2px) + 6px margin + lab name (26px) = 52px total
+    const ZONE_H = 80;
+    const BRAND_SIZE = 13;
+    const RULE_H = 2;
+    const LAB_SIZE = 26;
+    const BRAND_GAP = 5;   // margin-bottom on brand (.map-preview-brand margin-bottom: 5px)
+    const RULE_GAP = 6;    // margin-bottom on rule  (.map-preview-rule margin-bottom: 6px)
+
+    const totalH = BRAND_SIZE + BRAND_GAP + RULE_H + RULE_GAP + LAB_SIZE;
+    const contentTop = zoneTopY + Math.round((ZONE_H - totalH) / 2);
+    const brandY   = contentTop;
+    const ruleY    = brandY + BRAND_SIZE + BRAND_GAP;
+    const labNameY = ruleY + RULE_H + RULE_GAP;
+
+    // Brand line: font-weight:700 font-size:13px letter-spacing:0.22em color:rgba(255,220,100,0.9) text-shadow:0 0 10px rgba(240,180,40,0.5)
+    ctx.save();
+    ctx.font = '700 13px -apple-system, BlinkMacSystemFont, sans-serif';
+    ctx.letterSpacing = '0.22em';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'top';
+    ctx.fillStyle = 'rgba(255, 220, 100, 0.9)';
+    ctx.shadowOffsetX = 0;
+    ctx.shadowOffsetY = 0;
+    ctx.shadowBlur = 10;
+    ctx.shadowColor = 'rgba(240, 180, 40, 0.5)';
+    ctx.fillText(BRAND_TEXT, w / 2, brandY);
+    ctx.letterSpacing = 'normal';
+    ctx.restore();
+
+    // Shimmer rule: width:320px height:2px gradient(90deg,transparent,rgba(240,180,40,0.8),#fff8c0,...) box-shadow:0 0 8px rgba(240,180,40,0.4)
+    const ruleW = 320;
+    const ruleX = (w - ruleW) / 2;
+    const ruleGrad = ctx.createLinearGradient(ruleX, 0, ruleX + ruleW, 0);
+    ruleGrad.addColorStop(0,    'transparent');
+    ruleGrad.addColorStop(0.25, 'rgba(240,180,40,0.8)');
+    ruleGrad.addColorStop(0.5,  '#fff8c0');
+    ruleGrad.addColorStop(0.75, 'rgba(240,180,40,0.8)');
+    ruleGrad.addColorStop(1,    'transparent');
+    ctx.save();
+    ctx.fillStyle = ruleGrad;
+    ctx.shadowOffsetX = 0;
+    ctx.shadowOffsetY = 0;
+    ctx.shadowBlur = 8;
+    ctx.shadowColor = 'rgba(240, 180, 40, 0.4)';
+    ctx.fillRect(ruleX, ruleY, ruleW, RULE_H);
+    ctx.restore();
+
+    // Lab name: font-weight:900 font-size:26px letter-spacing:0.04em
+    //           gradient(180deg,#fff8c0 0%,#f0b030 45%,#c06010 100%)
+    //           filter:drop-shadow(2px 3px 0 rgba(0,0,0,0.8))
+    const nameGrad = ctx.createLinearGradient(0, labNameY, 0, labNameY + LAB_SIZE);
+    nameGrad.addColorStop(0,    '#fff8c0');
+    nameGrad.addColorStop(0.45, '#f0b030');
+    nameGrad.addColorStop(1,    '#c06010');
+    ctx.save();
+    ctx.font = '900 26px -apple-system, BlinkMacSystemFont, sans-serif';
+    ctx.letterSpacing = '0.04em';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'top';
+    ctx.fillStyle = nameGrad;
+    ctx.shadowOffsetX = 2;
+    ctx.shadowOffsetY = 3;
+    ctx.shadowBlur = 0;
+    ctx.shadowColor = 'rgba(0, 0, 0, 0.8)';
+    ctx.fillText(labName, w / 2, labNameY);
+    ctx.letterSpacing = 'normal';
+    ctx.restore();
+}
+
 function drawPlayingHUD(ctx, w, h, state) {
     const p = state.palette;
-    const totalEdges = state.edges.length;
-    const completedEdges = state.revealedEdges.size;
+    const variant = state.hudVariant || 0;
+    const isLight = document.documentElement.classList.contains('light-theme');
+    const labTitle = state.lab?.displayName || state.lab?.name || '';
 
-    // -- Top bar --
-    const topH = 36;
-    drawRoundedRect(ctx, 6, 4, w - 12, topH, 8);
-    ctx.fillStyle = p.hudBg;
-    ctx.fill();
-    ctx.strokeStyle = p.hudBorder;
-    ctx.lineWidth = 1;
-    ctx.stroke();
+    // Which button IDs live in the top bar vs bottom bar.
+    // V5 excludes 'menu' so we can draw it manually with capcom gold styling.
+    const topBarBtnIds = variant === 0
+        ? new Set(['menu', 'reset-view', 'switch-guided'])
+        : variant === 5
+        ? new Set(['reset-view'])
+        : new Set(['menu', 'reset-view']);
 
-    // Top bar buttons (menu left, reset-view, switch-guided right)
-    const topBarBtnIds = new Set(['menu', 'reset-view', 'switch-guided']);
-    state.buttons.forEach(btn => {
-        if (topBarBtnIds.has(btn.id)) drawThemedButton(ctx, btn, state.hoveredButton, state.activeButton, p);
-    });
+    // ---- Top area: variant-specific rendering ----
 
-    // "Pathfinding.cloud Labs" label left of hamburger menu (after the menu button)
-    const menuBtnRight = 10 + 34 + 6; // menuBtn.x + menuBtn.w + gap
-    ctx.fillStyle = p.hudText;
-    ctx.font = 'bold 12px -apple-system, BlinkMacSystemFont, sans-serif';
-    ctx.textAlign = 'left';
-    ctx.textBaseline = 'middle';
-    ctx.globalAlpha = 0.9;
-    ctx.fillText('Pathfinding.cloud Labs', menuBtnRight, 22);
-    ctx.globalAlpha = 1;
+    if (variant === 0) {
+        // V0 (current): rounded rect bar with branding text + switch-mode button
+        const topH = 36;
+        drawRoundedRect(ctx, 6, 4, w - 12, topH, 8);
+        ctx.fillStyle = p.hudBg;
+        ctx.fill();
+        ctx.strokeStyle = p.hudBorder;
+        ctx.lineWidth = 1;
+        ctx.stroke();
 
-    // Scenario name in center of top bar
-    const scenarioName = state.lab?.displayName || state.lab?.name || '';
-    if (scenarioName) {
-        // Measure available center space (between the left label area and right buttons)
-        const switchBtn = state.buttons.find(b => b.id === 'switch-guided');
-        const rightEdge = switchBtn ? switchBtn.x - 8 : w - 210;
-        const leftEdge = menuBtnRight + ctx.measureText('Pathfinding.cloud Labs').width + 16;
-        const centerX = (leftEdge + rightEdge) / 2;
+        state.buttons.forEach(btn => {
+            if (topBarBtnIds.has(btn.id)) drawThemedButton(ctx, btn, state.hoveredButton, state.activeButton, p);
+        });
 
+        const menuBtnRight = 10 + 34 + 6;
         ctx.fillStyle = p.hudText;
-        ctx.font = 'bold 15px -apple-system, BlinkMacSystemFont, sans-serif';
-        ctx.textAlign = 'center';
+        ctx.font = 'bold 12px -apple-system, BlinkMacSystemFont, sans-serif';
+        ctx.textAlign = 'left';
         ctx.textBaseline = 'middle';
+        ctx.globalAlpha = 0.9;
+        ctx.fillText('Pathfinding.cloud Labs', menuBtnRight, 22);
+        ctx.globalAlpha = 1;
 
-        // Truncate if too wide
-        const maxWidth = rightEdge - leftEdge - 16;
-        let label = scenarioName;
-        while (label.length > 4 && ctx.measureText(label).width > maxWidth) {
-            label = label.slice(0, -1);
+        const scenarioName = state.lab?.displayName || state.lab?.name || '';
+        if (scenarioName) {
+            const switchBtn = state.buttons.find(b => b.id === 'switch-guided');
+            const rightEdge = switchBtn ? switchBtn.x - 8 : w - 210;
+            const leftEdge = menuBtnRight + ctx.measureText('Pathfinding.cloud Labs').width + 16;
+            const centerX = (leftEdge + rightEdge) / 2;
+            ctx.fillStyle = p.hudText;
+            ctx.font = 'bold 15px -apple-system, BlinkMacSystemFont, sans-serif';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            const maxWidth = rightEdge - leftEdge - 16;
+            let label = scenarioName;
+            while (label.length > 4 && ctx.measureText(label).width > maxWidth) label = label.slice(0, -1);
+            if (label !== scenarioName) label = label.trimEnd() + '…';
+            ctx.fillText(label, centerX, 22);
         }
-        if (label !== scenarioName) label = label.trimEnd() + '…';
-        ctx.fillText(label, centerX, 22);
+
+    } else if (variant === 1) {
+        // V1 — Capcom header bar: solid sky strip + capcom title centered, hamburger TL, Play Online TR
+        ctx.fillStyle = isLight ? '#5a9ac0' : '#060c18';
+        ctx.fillRect(0, 0, w, 80);
+        drawCapcomHeader(ctx, w, 0, labTitle);
+        state.buttons.forEach(btn => {
+            if (topBarBtnIds.has(btn.id)) drawThemedButton(ctx, btn, state.hoveredButton, state.activeButton, p);
+        });
+
+    } else if (variant === 2) {
+        // V2 — Floating controls: capcom title over full-bleed sky, no bar background
+        // Draw a subtle gradient scrim so the title reads on any sky
+        const scrim = ctx.createLinearGradient(0, 0, 0, 90);
+        scrim.addColorStop(0, isLight ? 'rgba(0,0,0,0.25)' : 'rgba(0,0,0,0.45)');
+        scrim.addColorStop(1, 'rgba(0,0,0,0)');
+        ctx.fillStyle = scrim;
+        ctx.fillRect(0, 0, w, 90);
+        drawCapcomHeader(ctx, w, 0, labTitle);
+        state.buttons.forEach(btn => {
+            if (topBarBtnIds.has(btn.id)) drawThemedButton(ctx, btn, state.hoveredButton, state.activeButton, p);
+        });
+
+    } else if (variant === 3) {
+        // V3 — Thin strip: 28px semi-transparent bar, hamburger TL, plain small lab name centered, Play Online TR
+        const stripH = 28;
+        ctx.fillStyle = isLight ? 'rgba(242,226,196,0.93)' : 'rgba(10,14,24,0.88)';
+        ctx.fillRect(0, 0, w, stripH);
+        ctx.strokeStyle = isLight ? 'rgba(120,90,30,0.2)' : 'rgba(200,150,50,0.18)';
+        ctx.lineWidth = 1;
+        ctx.beginPath(); ctx.moveTo(0, stripH); ctx.lineTo(w, stripH); ctx.stroke();
+        state.buttons.forEach(btn => {
+            if (topBarBtnIds.has(btn.id)) drawThemedButton(ctx, btn, state.hoveredButton, state.activeButton, p);
+        });
+        // Small lab name in center
+        if (labTitle) {
+            const playOnlineBtn = state.buttons.find(b => b.id === 'play-online');
+            const leftBound = 10 + 34 + 8;
+            const rightBound = playOnlineBtn ? playOnlineBtn.x - 8 : w - 130;
+            ctx.save();
+            ctx.font = '500 12px -apple-system, BlinkMacSystemFont, sans-serif';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillStyle = p.hudText;
+            ctx.globalAlpha = 0.8;
+            const centerX = (leftBound + rightBound) / 2;
+            let label = labTitle;
+            const maxW = rightBound - leftBound - 8;
+            while (label.length > 4 && ctx.measureText(label).width > maxW) label = label.slice(0, -1);
+            if (label !== labTitle) label = label.trimEnd() + '…';
+            ctx.fillText(label, centerX, stripH / 2);
+            ctx.restore();
+        }
+
+    } else if (variant === 4) {
+        // V4 — Capcom bottom-left: no top bar, capcom title anchored above bottom bar.
+        // SCRIM_H4 defines the forbidden zone — must match hudBottom in the backtick handler exactly.
+        // Forbidden zone from canvas bottom = SCRIM_H4 + bottom bar height (46px).
+        state.buttons.forEach(btn => {
+            if (topBarBtnIds.has(btn.id)) drawThemedButton(ctx, btn, state.hoveredButton, state.activeButton, p);
+        });
+        const barY4   = h - 40 - 6;   // top of bottom action bar
+        const SCRIM_H4 = 180;          // gradient height — matches layout margin in backtick handler
+        const scrim4 = ctx.createLinearGradient(0, barY4 - SCRIM_H4, 0, barY4);
+        scrim4.addColorStop(0, 'rgba(0,0,0,0)');
+        scrim4.addColorStop(1, isLight ? 'rgba(10,5,0,0.90)' : 'rgba(0,0,0,0.90)');
+        ctx.fillStyle = scrim4;
+        ctx.fillRect(0, barY4 - SCRIM_H4, w, SCRIM_H4);
+        // Capcom title: brand → rule → lab name, left-aligned, bottom-anchored
+        const BRAND_SIZE4 = 13; const RULE_H4 = 2; const LAB_SIZE4 = 34;
+        const leftPad4       = 20;
+        const labBaseline4   = barY4 - 28;           // lab name bottom edge
+        const ruleBottom4    = labBaseline4 - LAB_SIZE4 - 8;
+        const ruleTop4       = ruleBottom4 - RULE_H4;
+        const brandBaseline4 = ruleTop4 - 6;
+        ctx.save();
+        ctx.font = `700 ${BRAND_SIZE4}px -apple-system, BlinkMacSystemFont, sans-serif`;
+        ctx.letterSpacing = '0.22em'; ctx.textAlign = 'left'; ctx.textBaseline = 'bottom';
+        ctx.fillStyle = 'rgba(255, 220, 100, 0.9)';
+        ctx.shadowOffsetX = 0; ctx.shadowOffsetY = 0; ctx.shadowBlur = 10; ctx.shadowColor = 'rgba(240,180,40,0.5)';
+        ctx.fillText('PATHFINDING.CLOUD — LABS', leftPad4, brandBaseline4);
+        ctx.letterSpacing = 'normal'; ctx.restore();
+        const rg4 = ctx.createLinearGradient(leftPad4, 0, leftPad4 + 300, 0);
+        rg4.addColorStop(0, 'rgba(240,180,40,0.85)'); rg4.addColorStop(0.5, '#fff8c0'); rg4.addColorStop(1, 'transparent');
+        ctx.save(); ctx.fillStyle = rg4;
+        ctx.shadowOffsetX = 0; ctx.shadowOffsetY = 0; ctx.shadowBlur = 8; ctx.shadowColor = 'rgba(240,180,40,0.4)';
+        ctx.fillRect(leftPad4, ruleTop4, 300, RULE_H4); ctx.restore();
+        const ng4 = ctx.createLinearGradient(0, labBaseline4 - LAB_SIZE4, 0, labBaseline4);
+        ng4.addColorStop(0, '#fff8c0'); ng4.addColorStop(0.45, '#f0b030'); ng4.addColorStop(1, '#c06010');
+        ctx.save();
+        ctx.font = `900 ${LAB_SIZE4}px -apple-system, BlinkMacSystemFont, sans-serif`;
+        ctx.letterSpacing = '0.04em'; ctx.textAlign = 'left'; ctx.textBaseline = 'bottom';
+        ctx.fillStyle = ng4; ctx.shadowOffsetX = 2; ctx.shadowOffsetY = 3;
+        ctx.shadowBlur = 0; ctx.shadowColor = 'rgba(0,0,0,0.8)';
+        ctx.fillText(labTitle.toUpperCase(), leftPad4, labBaseline4);
+        ctx.letterSpacing = 'normal'; ctx.restore();
+
+    } else if (variant === 5) {
+        // V5 (default) — Capcom top-left: dark gradient scrim at top, brand → rule → lab name left-aligned.
+        // SCRIM_H5 defines the forbidden zone — must match hudTop in the backtick handler exactly.
+        // Clouds and islands are pushed below SCRIM_H5 when this variant is active.
+        state.buttons.forEach(btn => {
+            if (topBarBtnIds.has(btn.id)) drawThemedButton(ctx, btn, state.hoveredButton, state.activeButton, p);
+        });
+        // Draw hamburger at top-right in capcom gold style (matches brand text color + glow).
+        const menuBtn5 = state.buttons.find(b => b.id === 'menu');
+        if (menuBtn5) {
+            ctx.save();
+            ctx.font = '700 17px -apple-system, BlinkMacSystemFont, sans-serif';
+            ctx.letterSpacing = '0.12em';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillStyle = 'rgba(255, 220, 100, 0.9)';
+            ctx.shadowOffsetX = 0; ctx.shadowOffsetY = 0;
+            ctx.shadowBlur = 10; ctx.shadowColor = 'rgba(240,180,40,0.5)';
+            ctx.fillText('=', menuBtn5.x + menuBtn5.w / 2, menuBtn5.y + menuBtn5.h / 2);
+            ctx.letterSpacing = 'normal';
+            ctx.restore();
+        }
+        const SCRIM_H5 = 150;          // gradient height — matches layout margin in backtick handler
+        const scrim5 = ctx.createLinearGradient(0, 0, 0, SCRIM_H5);
+        scrim5.addColorStop(0,    isLight ? 'rgba(0,0,0,0.82)' : 'rgba(0,0,0,0.92)');
+        scrim5.addColorStop(0.6,  isLight ? 'rgba(0,0,0,0.40)' : 'rgba(0,0,0,0.50)');
+        scrim5.addColorStop(1,    'rgba(0,0,0,0)');
+        ctx.fillStyle = scrim5;
+        ctx.fillRect(0, 0, w, SCRIM_H5);
+        // Capcom title: brand → rule → lab name, left-aligned, top-anchored
+        const BRAND_SIZE5 = 17; const RULE_H5 = 2; const LAB_SIZE5 = 46;
+        const leftPad5  = 20; const topPad5 = 14;
+        const brandTop5   = topPad5;
+        const ruleTop5    = brandTop5 + BRAND_SIZE5 + 7;
+        const labNameTop5 = ruleTop5 + RULE_H5 + 9;
+        ctx.save();
+        ctx.font = `700 ${BRAND_SIZE5}px -apple-system, BlinkMacSystemFont, sans-serif`;
+        ctx.letterSpacing = '0.22em'; ctx.textAlign = 'left'; ctx.textBaseline = 'top';
+        ctx.fillStyle = 'rgba(255, 220, 100, 0.9)';
+        ctx.shadowOffsetX = 0; ctx.shadowOffsetY = 0; ctx.shadowBlur = 10; ctx.shadowColor = 'rgba(240,180,40,0.5)';
+        ctx.fillText('PATHFINDING.CLOUD — LABS', leftPad5, brandTop5);
+        ctx.letterSpacing = 'normal'; ctx.restore();
+        const rg5 = ctx.createLinearGradient(leftPad5, 0, leftPad5 + 300, 0);
+        rg5.addColorStop(0, 'rgba(240,180,40,0.85)'); rg5.addColorStop(0.5, '#fff8c0'); rg5.addColorStop(1, 'transparent');
+        ctx.save(); ctx.fillStyle = rg5;
+        ctx.shadowOffsetX = 0; ctx.shadowOffsetY = 0; ctx.shadowBlur = 8; ctx.shadowColor = 'rgba(240,180,40,0.4)';
+        ctx.fillRect(leftPad5, ruleTop5, 300, RULE_H5); ctx.restore();
+        // Shrink the lab name font until it fits between the left pad and the hamburger button.
+        // Right edge: hamburger sits at w-44, leave 14px breathing room → w-58.
+        const labMaxWidth5 = w - leftPad5 - 58;
+        let labFontSize5 = LAB_SIZE5;
+        ctx.save();
+        ctx.letterSpacing = '0.04em';
+        while (labFontSize5 > 14) {
+            ctx.font = `900 ${labFontSize5}px -apple-system, BlinkMacSystemFont, sans-serif`;
+            if (ctx.measureText(labTitle.toUpperCase()).width <= labMaxWidth5) break;
+            labFontSize5--;
+        }
+        ctx.restore();
+        const ng5 = ctx.createLinearGradient(0, labNameTop5, 0, labNameTop5 + labFontSize5);
+        ng5.addColorStop(0, '#fff8c0'); ng5.addColorStop(0.45, '#f0b030'); ng5.addColorStop(1, '#c06010');
+        ctx.save();
+        ctx.font = `900 ${labFontSize5}px -apple-system, BlinkMacSystemFont, sans-serif`;
+        ctx.letterSpacing = '0.04em'; ctx.textAlign = 'left'; ctx.textBaseline = 'top';
+        ctx.fillStyle = ng5; ctx.shadowOffsetX = 2; ctx.shadowOffsetY = 3;
+        ctx.shadowBlur = 0; ctx.shadowColor = 'rgba(0,0,0,0.8)';
+        ctx.fillText(labTitle.toUpperCase(), leftPad5, labNameTop5);
+        ctx.letterSpacing = 'normal'; ctx.restore();
     }
 
-    // (Hop labels are now drawn in world-space inside renderMapGame's transform block)
-
-    // -- Bottom action bar --
+    // ---- Bottom action bar (same across all variants) ----
     const barH = 40;
     const barY = h - barH - 6;
     drawRoundedRect(ctx, 6, barY, w - 12, barH, 8);
@@ -2830,10 +3082,36 @@ function drawPlayingHUD(ctx, w, h, state) {
     ctx.lineWidth = 1;
     ctx.stroke();
 
-    // Bottom bar buttons (everything except top bar buttons)
+    // Bottom bar buttons (everything not in the top bar set)
     state.buttons.forEach(btn => {
         if (!topBarBtnIds.has(btn.id)) drawThemedButton(ctx, btn, state.hoveredButton, state.activeButton, p);
     });
+
+    // ---- HUD variant flash indicator (shown briefly after cycling with backtick) ----
+    const flashAge = Date.now() - (state._hudVariantFlashAt || 0);
+    if (flashAge < 2000) {
+        const alpha = flashAge < 1400 ? 1 : 1 - (flashAge - 1400) / 600;
+        const label = `HUD ${variant + 1} / 6`;
+        ctx.save();
+        ctx.globalAlpha = alpha;
+        ctx.font = 'bold 11px -apple-system, BlinkMacSystemFont, sans-serif';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        const pillW = ctx.measureText(label).width + 22;
+        const pillH = 22;
+        const pillX = (w - pillW) / 2;
+        const pillY = h / 2 - pillH / 2;
+        ctx.fillStyle = 'rgba(0,0,0,0.72)';
+        drawRoundedRect(ctx, pillX, pillY, pillW, pillH, 6);
+        ctx.fill();
+        ctx.fillStyle = '#fff';
+        ctx.fillText(label, w / 2, pillY + pillH / 2);
+        ctx.restore();
+        // Schedule one more redraw for the fade-out
+        if (alpha > 0 && state._redraw) requestAnimationFrame(() => {
+            if (Date.now() - (state._hudVariantFlashAt || 0) < 2000) state._redraw();
+        });
+    }
 }
 
 // Draw "Hop N" labels at the midpoint of each edge on the map
@@ -3745,12 +4023,12 @@ function mapRng(seed) {
 // First island is leftmost, last island is rightmost. Y positions vary freely
 // with a zig-zag pattern and jitter so the layout feels organic, not linear.
 // Islands live in the bottom 80% of the canvas, leaving top 20% for clouds.
-function computeMapLayout(count, w, h) {
+function computeMapLayout(count, w, h, hudTopOverride, hudBottomOverride) {
     const positions = [];
     if (count === 0) return positions;
 
-    const hudTop = 48;          // below top HUD bar
-    const hudBottom = 110;      // above bottom action bar + label plate space
+    const hudTop    = hudTopOverride    ?? 48;   // below top HUD bar
+    const hudBottom = hudBottomOverride ?? 110;  // above bottom action bar + label plate space
     const cloudBottom = h * 0.22; // clouds end here -- islands start BELOW this
     const padX = w * 0.15;     // 15% margin each side so islands stay central
 
@@ -3762,15 +4040,21 @@ function computeMapLayout(count, w, h) {
 
     const rng = mapRng(count * 31);
 
+    // With only 2 islands the full zig-zag amplitude looks very diagonal.
+    // Spread them wider than the default (use less padding) while keeping the
+    // reduced vertical offset so the pair reads as nearly side-by-side.
+    const effectivePadX = count === 2 ? w * 0.20 : padX;
+
     for (let i = 0; i < count; i++) {
         // Evenly spaced left-to-right
         const t = count === 1 ? 0.5 : i / (count - 1);
-        const x = padX + t * (w - padX * 2);
+        const x = effectivePadX + t * (w - effectivePadX * 2);
 
-        // Zig-zag Y: alternate above/below center, amplitude scales with zone height
-        // First and last islands get moderate offsets; middle islands get full amplitude
+        // Zig-zag Y: alternate above/below center, amplitude scales with zone height.
+        // For 2-island layouts use a much smaller amplitude so they sit near the
+        // horizontal midline instead of forming a steep diagonal.
         const zigzagSign = (i % 2 === 0) ? 1 : -1;
-        const amplitude = rangeY * 0.6;
+        const amplitude = rangeY * (count === 2 ? 0.18 : 0.6);
         let baseY = centerY + zigzagSign * amplitude;
 
         // Jitter for organic feel -- scale down with node count so the zig-zag
@@ -3780,7 +4064,7 @@ function computeMapLayout(count, w, h) {
         const jitterX = (rng() - 0.5) * 30 * jitterScale;
         const jitterY = (rng() - 0.5) * 40 * jitterScale;
 
-        const clampedX = Math.max(padX, Math.min(w - padX, x + jitterX));
+        const clampedX = Math.max(effectivePadX, Math.min(w - effectivePadX, x + jitterX));
         const clampedY = Math.max(minY, Math.min(maxY, baseY + jitterY));
         positions.push({ x: clampedX, y: clampedY });
     }
@@ -3853,12 +4137,12 @@ function computeCompanionPositions(companions, edges, positions, islandRadius) {
 
 // Generate decorative elements avoiding island positions and HUD bars.
 // Clouds are handled separately by cloudSprites, so this only generates trees.
-function generateMapDecorations(positions, w, h) {
+function generateMapDecorations(positions, w, h, hudTopOverride, hudBottomOverride) {
     const decorations = [];
     const rng = mapRng(42);
     const isNear = (x, y, minDist) => positions.some(p => Math.hypot(p.x - x, p.y - y) < minDist);
-    const hudTop = 48;
-    const hudBottom = 56;
+    const hudTop    = hudTopOverride    ?? 48;
+    const hudBottom = hudBottomOverride ?? 56;
 
     // A few small trees scattered on the island zone (bottom 2/3)
     const treeCount = Math.floor(w * h / 18000);
@@ -4310,9 +4594,9 @@ function drawGameMap(ctx, w, h, state) {
     }
     ctx.restore();
 
-    // Cloud sprites (pixel-art PNGs)
+    // Cloud sprites (pixel-art PNGs). Pass a custom hudTop for variants that push content down.
     ctx.save();
-    cloudSprites.draw(ctx, w, h, 99);
+    cloudSprites.draw(ctx, w, h, 99, state._cloudHudTop);
     ctx.restore();
 
     // Paths (edges) between islands -- always draw all paths visibly
@@ -4585,7 +4869,8 @@ function initMapGame(mapId, nodes, edges, companions, lab) {
     awsIconSprites.preload(nodes);
     if (companions) awsIconSprites.preload(companions);
 
-    const positions = computeMapLayout(nodes.length, w, h);
+    // V5 (capcom top-left) is the default; use its margins so islands start below the scrim.
+    const positions = computeMapLayout(nodes.length, w, h, 160, 110);
     // Pre-compute the island radius (same formula as renderMapGame) so companion
     // placement can avoid landing on main island bodies.
     const initShrinkSteps = Math.max(0, nodes.length - 3);
@@ -4593,7 +4878,7 @@ function initMapGame(mapId, nodes, edges, companions, lab) {
     // Compute companion positions offset from their parent edge midpoints
     const companionPositions = computeCompanionPositions(companions, edges, positions, initIslandRadius);
     // Filter out mountains from decorations for game mode
-    const allDecorations = generateMapDecorations(positions, w, h);
+    const allDecorations = generateMapDecorations(positions, w, h, 150, 56);
     const decorations = allDecorations.filter(d => d.type !== 'mountain');
     const palette = getGameUIPalette();
 
@@ -4646,6 +4931,12 @@ function initMapGame(mapId, nodes, edges, companions, lab) {
         menuView: 'main',        // 'main' | 'keybindings' | 'labs-browser'
         labsBrowserLabs: null,   // null = not yet loaded, Array = loaded
         labsBrowserFilter: '',
+        // -- HUD variant (cycled with backtick for design exploration) --
+        hudVariant: 5,            // 5=capcom TL (default); 0=legacy bar, 1=capcom bar, 2=floating, 3=thin strip, 4=capcom BL
+        _hudVariantFlashAt: 0,    // timestamp of last variant change, drives the flash indicator fade
+        _basePositions: null,     // saved island positions before variant-specific recompute
+        _baseDecorations: null,   // saved decorations before variant-specific recompute
+        _cloudHudTop: 155,        // push clouds below the capcom top-left scrim (SCRIM_H5=150)
         // -- Play Online terminal state --
         terminalOpen: false,
         _layoutEl: layoutEl,
@@ -5079,6 +5370,45 @@ function initMapGame(mapId, nodes, edges, companions, lab) {
                 loadDemoTranscript(state);
             }
         }
+        // ` key: cycle HUD variants for design exploration (0→1→2→3→4→5→0)
+        if (e.key === '`' && state.screen === 'playing') {
+            state.hudVariant = ((state.hudVariant || 0) + 1) % 6;
+            state._hudVariantFlashAt = Date.now();
+
+            // Save base positions/decorations on first variant switch so we can restore them
+            if (!state._basePositions) {
+                state._basePositions    = state.positions;
+                state._baseDecorations  = state.decorations;
+            }
+
+            // Variants 4 (capcom bottom-left) and 5 (capcom top-left) need recomputed layout
+            // so islands and decorations avoid the capcom title zone.
+            if (state.hudVariant === 4) {
+                // SCRIM_H4=180px + bottom bar (~46px) = 226px from bottom; add gap → 230
+                state.positions   = computeMapLayout(state.nodes.length, w, h, 48, 230);
+                const allDeco4    = generateMapDecorations(state.positions, w, h, 48, 180);
+                state.decorations = allDeco4.filter(d => d.type !== 'mountain');
+                state.companionPositions = computeCompanionPositions(state.companions, state.edges, state.positions);
+                state._cloudHudTop = undefined; // clouds stay near top
+            } else if (state.hudVariant === 5) {
+                // SCRIM_H5=150px from top; add gap → 160 for layout, 150 for decos, 155 for clouds
+                state.positions   = computeMapLayout(state.nodes.length, w, h, 160, 110);
+                const allDeco5    = generateMapDecorations(state.positions, w, h, 150, 56);
+                state.decorations = allDeco5.filter(d => d.type !== 'mountain');
+                state.companionPositions = computeCompanionPositions(state.companions, state.edges, state.positions);
+                state._cloudHudTop = 155; // push clouds below the capcom title zone
+            } else {
+                // Restore original layout for all other variants
+                state.positions   = state._basePositions;
+                state.decorations = state._baseDecorations;
+                state.companionPositions = computeCompanionPositions(state.companions, state.edges, state.positions);
+                state._cloudHudTop = undefined;
+            }
+
+            state.buttons = buildPlayingButtons(w, h, state);
+            redraw();
+            setTimeout(() => redraw(), 2100); // ensure flash indicator clears
+        }
         // B key: cycle demo button style (terminal → danger → void)
         if (e.key === 'b' && state.screen === 'playing') {
             state._demoButtonStyleIdx = ((state._demoButtonStyleIdx || 0) + 1) % 3;
@@ -5166,11 +5496,22 @@ function initMapGame(mapId, nodes, edges, companions, lab) {
         canvas.style.height = h + 'px';
         ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
 
-        // Recompute layout for new dimensions
-        state.positions = computeMapLayout(state.nodes.length, w, h);
+        // Recompute layout for new dimensions, respecting the active HUD variant's margins.
+        const resizeV = state.hudVariant || 0;
+        if (resizeV === 4) {
+            state.positions = computeMapLayout(state.nodes.length, w, h, 48, 230);
+            const rd4 = generateMapDecorations(state.positions, w, h, 48, 180);
+            state.decorations = rd4.filter(d => d.type !== 'mountain');
+        } else if (resizeV === 5) {
+            state.positions = computeMapLayout(state.nodes.length, w, h, 160, 110);
+            const rd5 = generateMapDecorations(state.positions, w, h, 150, 56);
+            state.decorations = rd5.filter(d => d.type !== 'mountain');
+        } else {
+            state.positions = computeMapLayout(state.nodes.length, w, h);
+            const rdDef = generateMapDecorations(state.positions, w, h);
+            state.decorations = rdDef.filter(d => d.type !== 'mountain');
+        }
         state.companionPositions = computeCompanionPositions(state.companions, state.edges, state.positions);
-        const allDeco = generateMapDecorations(state.positions, w, h);
-        state.decorations = allDeco.filter(d => d.type !== 'mountain');
 
         // Reset view transform since positions are recalculated for the new size
         state.viewPanX = 0;
@@ -5286,12 +5627,26 @@ function renderComingSoonPanel(state) {
     });
 }
 
+// Skip ahead to the objective/mission-briefing phase, bypassing lab setup.
+// Called when Play Online is clicked so the user lands on the overview rather than setup.
+function skipToObjective(state) {
+    if (state.gameViewPhase === 'setup') {
+        state.gameViewPhase = 'overview';
+        state.panelOverride = null;
+        state.selectedNode = null;
+        state.selectedEdge = null;
+        state.selectedCompanion = null;
+        updateGamePanel(state);
+    }
+}
+
 // Open or close the coming-soon terminal panel (toggled by Play Online button when globally disabled).
 function toggleComingSoonTerminal(state) {
     if (state.terminalOpen) {
         closePlayOnlineTerminal(state);
         return;
     }
+    skipToObjective(state);
     initTerminalPanel(state);
     renderComingSoonPanel(state);
     state._terminalResizeHandleEl.classList.add('visible');
@@ -5307,6 +5662,7 @@ async function togglePlayOnlineTerminal(state) {
         closePlayOnlineTerminal(state);
         return;
     }
+    skipToObjective(state);
     initTerminalPanel(state);
 
     // Show header immediately while xterm loads
@@ -5748,9 +6104,10 @@ function renderStaticMapPreview(containerEl, lab) {
     const canvas = document.createElement('canvas');
 
     const w = containerEl.clientWidth;
-    const h = 380;
+    const h = 460;
     // Header zone height and bottom clearance for footer + island labels
-    const mapYOffset = 80;
+    // Matches SCRIM_H5 = 150 in the game mode V5 HUD so both headers look identical.
+    const mapYOffset = 150;
     const bottomPad = 120;
     const mapH = h - mapYOffset;
 
@@ -5817,15 +6174,30 @@ function renderStaticMapPreview(containerEl, lab) {
         ctx.save();
         ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
 
+        const isLight = document.documentElement.classList.contains('light-theme');
+        const p = state.palette;
+
+        // Fill the full canvas with the ocean/sky background so the header zone has
+        // the same sky colour underneath the scrim that the game mode has.
+        const skyGrad = ctx.createLinearGradient(0, 0, 0, h);
+        skyGrad.addColorStop(0,   p.oceanA);
+        skyGrad.addColorStop(0.6, p.oceanB);
+        skyGrad.addColorStop(1,   p.oceanDeep);
+        ctx.fillStyle = skyGrad;
+        ctx.fillRect(0, 0, w, h);
+
         // Draw the map translated down below the header zone
         ctx.save();
         ctx.translate(0, mapYOffset);
         drawMapWithGameLabels(ctx, w, mapH, state);
         ctx.restore();
 
-        // Fill the header zone with the sky color — HTML overlay sits on top
-        const isLight = document.documentElement.classList.contains('light-theme');
-        ctx.fillStyle = isLight ? '#5a9ac0' : '#060c18';
+        // Gradient scrim over the header zone — matches SCRIM_H5 in game mode V5 exactly.
+        const scrim = ctx.createLinearGradient(0, 0, 0, mapYOffset);
+        scrim.addColorStop(0,   isLight ? 'rgba(0,0,0,0.82)' : 'rgba(0,0,0,0.92)');
+        scrim.addColorStop(0.6, isLight ? 'rgba(0,0,0,0.40)' : 'rgba(0,0,0,0.50)');
+        scrim.addColorStop(1,   'rgba(0,0,0,0)');
+        ctx.fillStyle = scrim;
         ctx.fillRect(0, 0, w, mapYOffset);
 
         ctx.restore();
@@ -5843,6 +6215,20 @@ function renderStaticMapPreview(containerEl, lab) {
         <span class="map-preview-lab-name">${labTitle}</span>
     `;
     containerEl.appendChild(titleEl);
+
+    // Shrink the lab name font until it fits — mirrors the canvas V5 shrink logic.
+    requestAnimationFrame(() => {
+        const nameEl = titleEl.querySelector('.map-preview-lab-name');
+        if (nameEl) {
+            const maxW = containerEl.clientWidth - 40; // 20px left pad + 20px right margin
+            let size = 46;
+            nameEl.style.fontSize = size + 'px';
+            while (size > 14 && nameEl.scrollWidth > maxW) {
+                size--;
+                nameEl.style.fontSize = size + 'px';
+            }
+        }
+    });
 
     // Badge footer: KV pills + service tags, built by labs.js helper
     const footerEl = document.createElement('div');

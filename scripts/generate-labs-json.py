@@ -65,6 +65,7 @@ INDEX_FIELDS = [
     "githubUrl",
     "hasAttackMap",
     "hasDemoTranscript",
+    "supportsOnlineMode",
     "source",
     "modifications",
 ]
@@ -943,6 +944,10 @@ def transform_readme(readme_text, module_path, readme_dir=None):
     interactive_raw = metadata.get("Interactive Demo", "").lower()
     interactive_demo = interactive_raw in ("yes", "true")
 
+    # Determine online play support
+    online_mode_raw = metadata.get("Supports Online Mode", "").lower()
+    supports_online_mode = online_mode_raw in ("yes", "true")
+
     # Directory name as scenario name/id
     name = Path(module_path).name
 
@@ -969,6 +974,7 @@ def transform_readme(readme_text, module_path, readme_dir=None):
         "costEstimate": metadata.get("Cost Estimate", "$0/mo"),
         "pathfindingCloudId": metadata.get("Pathfinding.cloud ID") or None,
         "interactiveDemo": interactive_demo,
+        "supportsOnlineMode": supports_online_mode,
         "category": metadata.get("Category", ""),
         "subCategory": metadata.get("Sub-Category", ""),
         "pathType": metadata.get("Path Type", ""),

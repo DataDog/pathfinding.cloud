@@ -680,7 +680,7 @@ function renderLabTable() {
         html += `
             <tr class="lab-row" data-slug="${lab.slug}">
                 <td class="lab-name-desc-cell">
-                    <a href="/labs/${lab.slug}" class="lab-name-link" onclick="if (event.ctrlKey || event.metaKey) return; event.preventDefault(); navigateToLab('${lab.slug}')">${escapeHtml(lab.displayName || lab.name)}</a>
+                    <span class="lab-name-text">${escapeHtml(lab.displayName || lab.name)}</span>
                     <div class="lab-table-description">${escapeHtml(truncate(lab.description, 120))}</div>
                 </td>
                 <td><span class="lab-badge ${catConfig.cssClass}">${catConfig.label}</span></td>
@@ -1047,43 +1047,34 @@ function renderPermissionsPills(permissions, labSlug) {
 
     // Per-principal structure (v4+)
     if (permissions.principals?.length) {
-        const principals = permissions.principals;
-        const multiPrincipal = principals.length > 1;
+        // Only show the starting principal's permissions (principals[0]).
+        // Intermediate principals in the chain are not shown here.
+        const principal = permissions.principals[0];
+        const isPublic = principal.principalType === 'public';
+        const required = principal.required ?? [];
+        const helpful = principal.helpful ?? [];
         let html = '';
 
-        for (const principal of principals) {
-            const isPublic = principal.principalType === 'public';
-            const required = principal.required ?? [];
-            const helpful = principal.helpful ?? [];
-            if (!required.length && !helpful.length) continue;
+        if (required.length) {
+            const rowContent = isPublic
+                ? `<span class="lab-perms-public-note">No AWS credentials required — public access</span>`
+                : required.map(p => `<code class="lab-perm-pill">${escapeHtml(p.permission)}</code>`).join('');
+            html += `<div class="lab-perms-pills-section">
+                <div class="lab-perms-pills-label">Required Permissions for Starting User</div>
+                <div class="lab-perms-pills-row">${rowContent}</div>
+            </div>`;
+        }
 
-            // Show principal label when there are multiple principals so context is clear
-            if (multiPrincipal && principal.name) {
-                const labelClass = isPublic ? 'lab-perms-principal-label lab-perms-principal-public' : 'lab-perms-principal-label';
-                html += `<div class="${labelClass}">${escapeHtml(principal.name)}</div>`;
-            }
-
-            if (required.length) {
-                const rowContent = isPublic
-                    ? `<span class="lab-perms-public-note">No AWS credentials required — public access</span>`
-                    : required.map(p => `<code class="lab-perm-pill">${escapeHtml(p.permission)}</code>`).join('');
-                html += `<div class="lab-perms-pills-section">
-                    <div class="lab-perms-pills-label">Required Permissions for Starting User</div>
-                    <div class="lab-perms-pills-row">${rowContent}</div>
-                </div>`;
-            }
-
-            if (helpful.length) {
-                html += `<div class="lab-perms-pills-section">
-                    <button class="lab-perms-pills-toggle" onclick="this.classList.toggle('open'); this.nextElementSibling.classList.toggle('open');">
-                        Helpful Permissions for Starting User (${helpful.length})
-                        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
-                    </button>
-                    <div class="lab-perms-pills-row lab-perms-pills-collapsible">
-                        ${helpful.map(p => `<code class="lab-perm-pill">${escapeHtml(p.permission)}</code>`).join('')}
-                    </div>
-                </div>`;
-            }
+        if (helpful.length) {
+            html += `<div class="lab-perms-pills-section">
+                <button class="lab-perms-pills-toggle" onclick="this.classList.toggle('open'); this.nextElementSibling.classList.toggle('open');">
+                    Helpful Permissions for Starting User (${helpful.length})
+                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
+                </button>
+                <div class="lab-perms-pills-row lab-perms-pills-collapsible">
+                    ${helpful.map(p => `<code class="lab-perm-pill">${escapeHtml(p.permission)}</code>`).join('')}
+                </div>
+            </div>`;
         }
 
         return html;
