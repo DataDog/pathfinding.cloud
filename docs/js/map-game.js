@@ -11,6 +11,16 @@
 // start/pause/complete overlay screens.
 // The HTML panel handles: node details, mission briefing, commands.
 
+// ---- Play Online: flip to true when the API Gateway / Lambda backend is deployed ----
+// When false, all labs show "Coming Soon" tease. When true, labs with
+// supportsOnlineMode: true in their YAML will open a live terminal session.
+const PLAY_ONLINE_GLOBALLY_ENABLED = false;
+
+// ---- Demo/dev mode: when true, the terminal uses mock responses instead of a real API ----
+// Set PLAY_ONLINE_GLOBALLY_ENABLED = true and this = true to test the terminal UI locally.
+// Flip both to false (and set per-lab supportsOnlineMode: true) when the real backend is ready.
+const PLAY_ONLINE_MOCK_MODE = false;
+
 // ---- Labs index / detail / transcript cache (shared across all game instances) ----
 let _gameLabsIndexCache = null;
 let _gameLabDetailCache = {};
@@ -311,6 +321,25 @@ function drawThemedButton(ctx, btn, hoveredId, activeId, palette) {
         ctx.fillText(btn.label, x + w / 2, y + h / 2);
     }
     ctx.restore();
+
+    // Draw "SOON" badge in top-right corner for coming-soon buttons
+    if (btn.comingSoon) {
+        const badgeW = 32;
+        const badgeH = 13;
+        const badgeX = x + w - badgeW + 5;
+        const badgeY = y - 5;
+        const badgeR = 3;
+        ctx.save();
+        drawRoundedRect(ctx, badgeX, badgeY, badgeW, badgeH, badgeR);
+        ctx.fillStyle = '#f59e0b';
+        ctx.fill();
+        ctx.fillStyle = '#000000';
+        ctx.font = 'bold 7px -apple-system, BlinkMacSystemFont, sans-serif';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText('SOON', badgeX + badgeW / 2, badgeY + badgeH / 2);
+        ctx.restore();
+    }
 }
 
 // Distance from point (px,py) to line segment (ax,ay)-(bx,by)
@@ -2558,9 +2587,10 @@ function buildPlayingButtons(w, h, state) {
         onClick: () => { switchDetailMode('guidedv2', state.lab); }
     };
 
-    // --- Bottom bar: fixed 5-button layout ---
-    // [Lab Setup][Lab Overview]          [Back][Next]          [Finish Mission]
-    //  ^-- left edge padded              ^-- centered           ^-- right edge padded
+    // --- Bottom bar layout ---
+    // [Play Online] [Lab Setup][Lab Overview]   [Back][Next]   [Finish Mission][Demo]
+    //  ^-- left edge                            ^-- centered    ^-- right edge
+    const playOnlineW = 110;
     const setupW = 90;
     const overviewW = 110;
     const backW = 70;
@@ -2574,10 +2604,9 @@ function buildPlayingButtons(w, h, state) {
     const backX = (w - centerGroupW) / 2;
     const nextX = backX + backW + gap;
 
-    // Left group: halfway between edge padding and the center group
-    const leftGroupW = setupW + gap + overviewW;
-    const leftGroupX = edgePad + (backX - edgePad - leftGroupW) / 2;
-    const labSetupX = leftGroupX;
+    // Left group: Play Online at far left, then Lab Setup + Lab Overview with fixed spacing
+    const playOnlineX = edgePad;
+    const labSetupX = edgePad + playOnlineW + gap;
     const labOverviewX = labSetupX + setupW + gap;
 
     // Right group: [Finish Mission] [Exploitation Demo] centered between center group and right edge
@@ -2610,6 +2639,27 @@ function buildPlayingButtons(w, h, state) {
             }
         });
     }
+
+    // Play Online button -- leftmost; opens an interactive terminal session
+    const labOnlineEnabled = PLAY_ONLINE_GLOBALLY_ENABLED && (PLAY_ONLINE_MOCK_MODE || !!state.lab?.supportsOnlineMode);
+    buttons.push({
+        id: 'play-online',
+        x: playOnlineX, y: btnY,
+        w: playOnlineW, h: btnH,
+        label: (state.terminalOpen && labOnlineEnabled) ? 'Close Terminal' : 'Play Online',
+        style: 'terminal',
+        fontSize: 12,
+        radius: 8,
+        forceActive: !!state.terminalOpen,
+        comingSoon: !labOnlineEnabled,
+        onClick: () => {
+            if (!labOnlineEnabled) {
+                toggleComingSoonTerminal(state);
+            } else {
+                togglePlayOnlineTerminal(state);
+            }
+        }
+    });
 
     // Lab Setup button -- shows deploy instructions panel without changing navigation position
     buttons.push({
@@ -4486,14 +4536,17 @@ function renderLabDetailContentMapGame(lab, container) {
         return;
     }
 
-    // Two-column layout: HTML detail panel (left) + canvas map (right)
-    // The mg-canvas-wrap is position:relative so the menu overlay can sit on top.
+    // Two-column layout: HTML detail panel (left) + canvas map (right).
+    // .mg-canvas-wrap is a flex column so the terminal panel can slot below the canvas.
+    // .mg-canvas-area is the inner relative container for canvas + menu overlay.
     container.innerHTML = `
         <div class="mg-layout" id="${mapId}">
             <div class="mg-detail-panel" id="${mapId}-panel"></div>
-            <div class="mg-canvas-wrap">
-                <canvas id="${mapId}-canvas" class="mg-canvas"></canvas>
-                <div class="mg-menu-overlay" id="${mapId}-menu"></div>
+            <div class="mg-canvas-wrap" id="${mapId}-canvas-wrap">
+                <div class="mg-canvas-area">
+                    <canvas id="${mapId}-canvas" class="mg-canvas"></canvas>
+                    <div class="mg-menu-overlay" id="${mapId}-menu"></div>
+                </div>
             </div>
         </div>`;
 
@@ -4506,7 +4559,11 @@ function initMapGame(mapId, nodes, edges, companions, lab) {
     const menuEl = document.getElementById(`${mapId}-menu`);
     if (!canvas || !panelEl) return;
 
-    const wrap = canvas.parentElement;
+    // canvas.parentElement is .mg-canvas-area (the inner relative container).
+    // The outer .mg-canvas-wrap holds the terminal panel as a flex sibling.
+    const wrap = canvas.parentElement; // .mg-canvas-area
+    const canvasWrapEl = document.getElementById(`${mapId}-canvas-wrap`); // .mg-canvas-wrap
+    const layoutEl = document.getElementById(mapId); // .mg-layout
     let w = wrap.clientWidth;
     // Use 65% of the viewport height, clamped between 480px and 85vh.
     // This gives large screens a taller map while keeping it usable on small ones.
@@ -4582,13 +4639,20 @@ function initMapGame(mapId, nodes, edges, companions, lab) {
         _redraw: null,
         _panelEl: panelEl,
         _menuEl: menuEl,
-        _container: wrap.parentElement.parentElement, // scrollableContent that holds mg-layout
+        _container: wrap.parentElement.parentElement.parentElement, // scrollableContent that holds mg-layout
         _w: w,
         _h: h,
         menuFocusIdx: 0,
         menuView: 'main',        // 'main' | 'keybindings' | 'labs-browser'
         labsBrowserLabs: null,   // null = not yet loaded, Array = loaded
         labsBrowserFilter: '',
+        // -- Play Online terminal state --
+        terminalOpen: false,
+        _layoutEl: layoutEl,
+        _canvasWrapEl: canvasWrapEl,
+        _terminalPanelEl: null,  // created lazily on first open
+        _xtermInstance: null,    // xterm Terminal instance
+        _mapId: mapId,
     };
 
     function redraw() {
@@ -5134,6 +5198,509 @@ function initMapGame(mapId, nodes, edges, companions, lab) {
         document.removeEventListener('keydown', onKeyDown);
         resizeObserver.disconnect();
     };
+}
+
+// ============================================================
+// Play Online: Terminal Functions
+// ============================================================
+
+// Lazy-load xterm.js v5 from CDN. Resolves immediately if already loaded.
+function loadXterm() {
+    return new Promise((resolve) => {
+        if (window.Terminal && window.FitAddon) { resolve(); return; }
+
+        const link = document.createElement('link');
+        link.rel = 'stylesheet';
+        link.href = 'https://cdn.jsdelivr.net/npm/@xterm/xterm@5/css/xterm.css';
+        document.head.appendChild(link);
+
+        // Load xterm core, then the fit addon (needed to properly size the
+        // terminal to fill its container instead of defaulting to 80x24 fixed)
+        const script = document.createElement('script');
+        script.src = 'https://cdn.jsdelivr.net/npm/@xterm/xterm@5/lib/xterm.min.js';
+        script.onload = () => {
+            const fitScript = document.createElement('script');
+            fitScript.src = 'https://cdn.jsdelivr.net/npm/@xterm/addon-fit@0.10/lib/addon-fit.min.js';
+            fitScript.onload = resolve;
+            document.head.appendChild(fitScript);
+        };
+        document.head.appendChild(script);
+    });
+}
+
+// Create the terminal panel + resize handle DOM elements inside .mg-canvas-wrap.
+// Called once; subsequent calls are no-ops.
+function initTerminalPanel(state) {
+    if (state._terminalPanelEl) return;
+
+    // Drag handle sits between .mg-canvas-area and .mg-terminal-panel.
+    // Dragging it up grows the terminal; down shrinks it.
+    const handle = document.createElement('div');
+    handle.className = 'mg-terminal-resize-handle';
+    state._canvasWrapEl.appendChild(handle);
+    state._terminalResizeHandleEl = handle;
+    initTerminalResizeHandle(handle, state);
+
+    const panel = document.createElement('div');
+    panel.className = 'mg-terminal-panel';
+    state._canvasWrapEl.appendChild(panel);
+
+    panel.addEventListener('click', (e) => {
+        // Prevent clicks inside the terminal from bubbling to canvas hit-tests
+        e.stopPropagation();
+    });
+
+    state._terminalPanelEl = panel;
+}
+
+// Render the "coming soon" placeholder inside the terminal panel.
+function renderComingSoonPanel(state) {
+    const panel = state._terminalPanelEl;
+    panel.innerHTML = `
+        <div class="mg-terminal-header">
+            <div class="mg-terminal-header-title">
+                <span class="mg-terminal-status-dot coming-soon"></span>
+                <span>Online Play &mdash; Coming Soon</span>
+            </div>
+            <div class="mg-terminal-header-actions">
+                <button class="mg-terminal-btn mg-terminal-expand-btn" title="Expand to full height">&#x2B06;</button>
+                <button class="mg-terminal-close" title="Close">&times;</button>
+            </div>
+        </div>
+        <div class="mg-terminal-viewport">
+            <div class="mg-terminal-coming-soon">
+                <div class="mg-terminal-coming-soon-label">Coming Soon</div>
+                <div class="mg-terminal-coming-soon-title">Interactive Lab Environments</div>
+                <div class="mg-terminal-coming-soon-body">
+                    Online play is coming to pathfinding.cloud. You&rsquo;ll be able to run real commands
+                    against deployed emphemeral AWS infrastructure directly from this terminal &mdash; no local setup required.
+                </div>
+            </div>
+        </div>`;
+
+    panel.querySelector('.mg-terminal-close').addEventListener('click', () => {
+        closePlayOnlineTerminal(state);
+    });
+    panel.querySelector('.mg-terminal-expand-btn').addEventListener('click', () => {
+        toggleExpandTerminal(state);
+    });
+}
+
+// Open or close the coming-soon terminal panel (toggled by Play Online button when globally disabled).
+function toggleComingSoonTerminal(state) {
+    if (state.terminalOpen) {
+        closePlayOnlineTerminal(state);
+        return;
+    }
+    initTerminalPanel(state);
+    renderComingSoonPanel(state);
+    state._terminalResizeHandleEl.classList.add('visible');
+    state._layoutEl.classList.add('terminal-open');
+    state.terminalOpen = true;
+    state.buttons = buildPlayingButtons(state._w, state._h, state);
+    state._redraw();
+}
+
+// Open or close the live xterm terminal (used when PLAY_ONLINE_GLOBALLY_ENABLED is true).
+async function togglePlayOnlineTerminal(state) {
+    if (state.terminalOpen) {
+        closePlayOnlineTerminal(state);
+        return;
+    }
+    initTerminalPanel(state);
+
+    // Show header immediately while xterm loads
+    const panel = state._terminalPanelEl;
+    panel.innerHTML = `
+        <div class="mg-terminal-header">
+            <div class="mg-terminal-header-title">
+                <span class="mg-terminal-status-dot"></span>
+                <span>Lab Terminal &mdash; ${state.lab.displayName || state.lab.name || state.lab.slug || ''}</span>
+            </div>
+            <div class="mg-terminal-header-actions">
+                <button class="mg-terminal-btn mg-terminal-expand-btn" title="Expand to full height">&#x2B06;</button>
+                <button class="mg-terminal-close" title="Close">&times;</button>
+            </div>
+        </div>
+        <div class="mg-terminal-viewport" id="${state._mapId}-terminal-vp"></div>`;
+
+    panel.querySelector('.mg-terminal-close').addEventListener('click', () => {
+        closePlayOnlineTerminal(state);
+    });
+    panel.querySelector('.mg-terminal-expand-btn').addEventListener('click', () => {
+        toggleExpandTerminal(state);
+    });
+
+    state._terminalResizeHandleEl.classList.add('visible');
+    state._layoutEl.classList.add('terminal-open');
+    state.terminalOpen = true;
+    state.buttons = buildPlayingButtons(state._w, state._h, state);
+    state._redraw();
+
+    await loadXterm();
+
+    // Only create a new Terminal instance if one doesn't exist yet (survives open/close cycles)
+    if (!state._xtermInstance) {
+        const term = new window.Terminal({
+            theme: {
+                background: '#0d1117',
+                foreground: '#c9d1d9',
+                cursor: '#58a6ff',
+                selectionBackground: '#264f78',
+            },
+            fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace',
+            fontSize: 13,
+            cursorBlink: true,
+            convertEol: true,
+            scrollback: 2000,
+        });
+
+        // addon-fit sizes the terminal to fill its container instead of
+        // defaulting to a fixed 80x24 grid that overflows or leaves gaps
+        const fitAddon = new window.FitAddon.FitAddon();
+        term.loadAddon(fitAddon);
+
+        const vp = document.getElementById(`${state._mapId}-terminal-vp`);
+        term.open(vp);
+        fitAddon.fit();
+        state._xtermFitAddon = fitAddon;
+
+        // Re-fit when the panel resizes (e.g. when the layout height changes)
+        const fitObserver = new ResizeObserver(() => fitAddon.fit());
+        fitObserver.observe(vp);
+        state._xtermFitObserver = fitObserver;
+
+        term.writeln('\x1b[1;32mPathfinding Labs Terminal\x1b[0m');
+        term.writeln('Type \x1b[33mhelp\x1b[0m for available commands.\r\n');
+        term.write('$ ');
+
+        let inputBuffer = '';
+        const cmdHistory = [];
+        let historyIdx = -1;
+
+        term.onData((data) => {
+            if (data === '\r') {
+                // Enter — async handler writes the next prompt after the response
+                term.writeln('');
+                const cmd = inputBuffer.trim();
+                inputBuffer = '';
+                if (cmd) {
+                    cmdHistory.unshift(cmd);
+                    historyIdx = -1;
+                    sendTerminalCommand(cmd, term, state);
+                } else {
+                    term.write('$ ');
+                }
+            } else if (data === '\x7f') {
+                // Backspace
+                if (inputBuffer.length > 0) {
+                    inputBuffer = inputBuffer.slice(0, -1);
+                    term.write('\b \b');
+                }
+            } else if (data === '\x1b[A') {
+                // Arrow up: history recall
+                if (cmdHistory.length > 0 && historyIdx < cmdHistory.length - 1) {
+                    historyIdx++;
+                    // Clear current line and write history entry
+                    term.write('\r\x1b[2K$ ' + cmdHistory[historyIdx]);
+                    inputBuffer = cmdHistory[historyIdx];
+                }
+            } else if (data === '\x1b[B') {
+                // Arrow down: history forward
+                if (historyIdx > 0) {
+                    historyIdx--;
+                    term.write('\r\x1b[2K$ ' + cmdHistory[historyIdx]);
+                    inputBuffer = cmdHistory[historyIdx];
+                } else if (historyIdx === 0) {
+                    historyIdx = -1;
+                    term.write('\r\x1b[2K$ ');
+                    inputBuffer = '';
+                }
+            } else if (data.charCodeAt(0) >= 32) {
+                // Printable character
+                inputBuffer += data;
+                term.write(data);
+            }
+        });
+
+        state._xtermInstance = term;
+    } else {
+        // Re-attach existing terminal to the new DOM node and re-fit
+        const vp = document.getElementById(`${state._mapId}-terminal-vp`);
+        state._xtermInstance.open(vp);
+        state._xtermFitAddon?.fit();
+    }
+}
+
+// Collapse the terminal panel and update button state.
+function closePlayOnlineTerminal(state) {
+    // Reset any manual height so CSS transition starts clean next open
+    if (state._terminalPanelEl) state._terminalPanelEl.style.height = '';
+    if (state._terminalResizeHandleEl) state._terminalResizeHandleEl.classList.remove('visible');
+    state._terminalExpanded = false;
+    state._layoutEl.classList.remove('terminal-open');
+    state.terminalOpen = false;
+    state.buttons = buildPlayingButtons(state._w, state._h, state);
+    state._redraw();
+}
+
+// Wire up pointer-drag resizing on the handle bar.
+function initTerminalResizeHandle(handle, state) {
+    let startY, startTermH;
+
+    handle.addEventListener('pointerdown', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        startY = e.clientY;
+        startTermH = state._terminalPanelEl.getBoundingClientRect().height;
+        handle.setPointerCapture(e.pointerId);
+        handle.classList.add('dragging');
+
+        handle.addEventListener('pointermove', onMove);
+        handle.addEventListener('pointerup', onUp);
+        handle.addEventListener('pointercancel', onUp);
+    });
+
+    function onMove(e) {
+        const delta = startY - e.clientY; // drag up → positive → terminal grows
+        const layoutH = state._layoutEl.getBoundingClientRect().height;
+        const minTermH = 80;
+        const maxTermH = layoutH - 60; // leave room for canvas HUD
+        const newH = Math.max(minTermH, Math.min(maxTermH, startTermH + delta));
+        state._terminalPanelEl.style.height = newH + 'px';
+        state._xtermFitAddon?.fit();
+        // If user dragged away from the expanded state, clear the expanded flag
+        state._terminalExpanded = false;
+        updateExpandButton(state);
+    }
+
+    function onUp() {
+        handle.classList.remove('dragging');
+        handle.removeEventListener('pointermove', onMove);
+        handle.removeEventListener('pointerup', onUp);
+        handle.removeEventListener('pointercancel', onUp);
+        // Persist the dragged height as the new "normal" so restore goes here
+        const currentH = state._terminalPanelEl.getBoundingClientRect().height;
+        state._terminalNormalHeight = currentH;
+        state._xtermFitAddon?.fit();
+    }
+}
+
+// Toggle between expanded (full canvas height) and normal terminal height.
+function toggleExpandTerminal(state) {
+    if (state._terminalExpanded) {
+        restoreTerminalHeight(state);
+    } else {
+        expandTerminalHeight(state);
+    }
+}
+
+function expandTerminalHeight(state) {
+    // Save current height as the restore point
+    const currentH = state._terminalPanelEl.getBoundingClientRect().height;
+    state._terminalNormalHeight = currentH > 60 ? currentH : (state._terminalNormalHeight || 260);
+
+    const layoutH = state._layoutEl.getBoundingClientRect().height;
+    const expandedH = layoutH - 60; // leave 60px for the canvas HUD bar
+    state._terminalPanelEl.style.height = expandedH + 'px';
+    state._terminalExpanded = true;
+    state._xtermFitAddon?.fit();
+    updateExpandButton(state);
+}
+
+function restoreTerminalHeight(state) {
+    const normalH = state._terminalNormalHeight || 260;
+    state._terminalPanelEl.style.height = normalH + 'px';
+    state._terminalExpanded = false;
+    state._xtermFitAddon?.fit();
+    updateExpandButton(state);
+}
+
+// Sync the expand button icon/title to reflect current state.
+function updateExpandButton(state) {
+    const btn = state._terminalPanelEl?.querySelector('.mg-terminal-expand-btn');
+    if (!btn) return;
+    if (state._terminalExpanded) {
+        btn.innerHTML = '&#x2B07;'; // downward arrow = restore
+        btn.title = 'Restore terminal height';
+    } else {
+        btn.innerHTML = '&#x2B06;'; // upward arrow = expand
+        btn.title = 'Expand to full height';
+    }
+}
+
+// Send a command to the lab's API endpoint and echo the response in the terminal.
+async function sendTerminalCommand(command, term, state) {
+    if (PLAY_ONLINE_MOCK_MODE) {
+        await sendTerminalCommandMock(command, term, state);
+        return;
+    }
+
+    // Built-in help command (always available, no API needed)
+    if (command === 'help') {
+        term.writeln('Available commands are provided by the deployed lab environment.');
+        term.writeln('Type any AWS CLI command or lab-specific command to interact with the lab.\r\n');
+        term.write('$ ');
+        return;
+    }
+
+    const endpoint = state.lab?.onlineEndpoint;
+    if (!endpoint) {
+        term.writeln('\x1b[33mNo API endpoint configured for this lab.\x1b[0m\r\n');
+        term.write('$ ');
+        return;
+    }
+
+    try {
+        term.write('\x1b[2m...running\x1b[0m');
+        const resp = await fetch(endpoint, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ command }),
+        });
+        // Clear the "...running" text before printing response
+        term.write('\r\x1b[2K');
+        const text = await resp.text();
+        const lines = text.split('\n');
+        lines.forEach((line, i) => {
+            if (i < lines.length - 1) term.writeln(line);
+            else if (line) term.writeln(line);
+        });
+    } catch (err) {
+        term.write('\r\x1b[2K');
+        term.writeln(`\x1b[31mError: ${err.message}\x1b[0m`);
+    }
+
+    term.write('$ ');
+    term.scrollToBottom();
+}
+
+// Mock backend for local demo/testing. Simulates an AWS lab environment.
+async function sendTerminalCommandMock(command, term, state) {
+    // Simulate a short network round-trip
+    term.write('\x1b[2m  executing...\x1b[0m');
+    await new Promise(r => setTimeout(r, 280 + Math.random() * 220));
+    term.write('\r\x1b[2K');
+
+    const cmd = command.trim();
+    const acct = '123456789012';
+    const region = 'us-east-1';
+    const slug = state.lab?.slug || 'lab';
+
+    // Derive lab-specific names from the slug if possible
+    const labPrefix = `pl-prod-${slug}`;
+    const startingUser = `${labPrefix}-starting-user`;
+    const targetRole = `${labPrefix}-target-role`;
+
+    // Match common AWS CLI patterns and return plausible mock output
+    if (cmd === 'help' || cmd === '--help') {
+        term.writeln('\x1b[1mPathfinding Labs Terminal\x1b[0m');
+        term.writeln('Connected to lab: \x1b[33m' + (state.lab?.displayName || slug) + '\x1b[0m\r\n');
+        term.writeln('Your starting identity has been pre-configured. Try:');
+        term.writeln('  \x1b[32maws sts get-caller-identity\x1b[0m');
+        term.writeln('  \x1b[32maws iam list-attached-user-policies --user-name <user>\x1b[0m');
+        term.writeln('  \x1b[32maws iam get-policy-version ...\x1b[0m');
+        term.writeln('  \x1b[32maws apprunner create-service ...\x1b[0m');
+
+    } else if (cmd.match(/aws sts get-caller-identity/)) {
+        term.writeln('{');
+        term.writeln(`    "UserId": "AIDA${randHex(16).toUpperCase()}",`);
+        term.writeln(`    "Account": "${acct}",`);
+        term.writeln(`    "Arn": "arn:aws:iam::${acct}:user/${startingUser}"`);
+        term.writeln('}');
+
+    } else if (cmd.match(/aws iam list-attached-user-policies/)) {
+        term.writeln('{');
+        term.writeln('    "AttachedPolicies": [');
+        term.writeln('        {');
+        term.writeln(`            "PolicyName": "${labPrefix}-starting-policy",`);
+        term.writeln(`            "PolicyArn": "arn:aws:iam::${acct}:policy/${labPrefix}-starting-policy"`);
+        term.writeln('        }');
+        term.writeln('    ]');
+        term.writeln('}');
+
+    } else if (cmd.match(/aws iam get-policy-version|aws iam get-policy/)) {
+        term.writeln('{');
+        term.writeln('    "PolicyVersion": {');
+        term.writeln('        "Document": {');
+        term.writeln('            "Version": "2012-10-17",');
+        term.writeln('            "Statement": [');
+        term.writeln('                { "Effect": "Allow", "Action": ["apprunner:CreateService", "iam:PassRole", "iam:CreateServiceLinkedRole"], "Resource": "*" }');
+        term.writeln('            ]');
+        term.writeln('        }');
+        term.writeln('    }');
+        term.writeln('}');
+
+    } else if (cmd.match(/aws iam list-roles/)) {
+        term.writeln('{');
+        term.writeln('    "Roles": [');
+        term.writeln('        {');
+        term.writeln(`            "RoleName": "${targetRole}",`);
+        term.writeln(`            "Arn": "arn:aws:iam::${acct}:role/${targetRole}",`);
+        term.writeln('            "AssumeRolePolicyDocument": { "Statement": [{ "Principal": { "Service": "tasks.apprunner.amazonaws.com" } }] }');
+        term.writeln('        }');
+        term.writeln('    ]');
+        term.writeln('}');
+
+    } else if (cmd.match(/aws apprunner create-service/)) {
+        const svcId = randHex(8);
+        term.writeln('{');
+        term.writeln('    "Service": {');
+        term.writeln(`        "ServiceName": "pl-exploit-${svcId}",`);
+        term.writeln(`        "ServiceId": "${svcId}",`);
+        term.writeln(`        "ServiceArn": "arn:aws:apprunner:${region}:${acct}:service/pl-exploit-${svcId}/${randHex(16)}",`);
+        term.writeln('        "Status": "OPERATION_IN_PROGRESS"');
+        term.writeln('    },');
+        term.writeln('    "OperationId": "' + randHex(32) + '"');
+        term.writeln('}');
+        term.writeln('\x1b[33m[i] Service is starting — poll with: aws apprunner describe-service --service-arn <arn>\x1b[0m');
+
+    } else if (cmd.match(/aws apprunner describe-service/)) {
+        term.writeln('{');
+        term.writeln('    "Service": {');
+        term.writeln('        "Status": "RUNNING",');
+        term.writeln(`        "ServiceUrl": "https://${randHex(8)}.${region}.awsapprunner.com"`);
+        term.writeln('    }');
+        term.writeln('}');
+
+    } else if (cmd.match(/aws iam attach-user-policy|aws iam put-user-policy/)) {
+        // This is the payload command that would run inside App Runner
+        term.writeln('\x1b[32m[+] Policy attached successfully.\x1b[0m');
+        term.writeln('\x1b[32m[+] Starting user now has AdministratorAccess.\x1b[0m');
+
+    } else if (cmd.match(/aws sts assume-role/)) {
+        term.writeln('{');
+        term.writeln('    "Credentials": {');
+        term.writeln(`        "AccessKeyId": "ASIA${randHex(16).toUpperCase()}",`);
+        term.writeln(`        "SecretAccessKey": "${randHex(40)}",`);
+        term.writeln(`        "SessionToken": "${randHex(100)}",`);
+        term.writeln(`        "Expiration": "${new Date(Date.now() + 3600000).toISOString()}"`);
+        term.writeln('    }');
+        term.writeln('}');
+
+    } else if (cmd.match(/^aws /)) {
+        // Generic AWS CLI passthrough for anything else
+        term.writeln('\x1b[33mCommand forwarded to lab environment.\x1b[0m');
+        term.writeln('{}');
+
+    } else if (cmd === 'whoami') {
+        term.writeln(startingUser);
+
+    } else if (cmd === 'clear') {
+        term.clear();
+
+    } else {
+        term.writeln(`\x1b[31mbash: ${cmd.split(' ')[0]}: command not found\x1b[0m`);
+        term.writeln('Type \x1b[33mhelp\x1b[0m to see available commands.');
+    }
+
+    term.writeln('');
+    term.write('$ ');
+    term.scrollToBottom();
+}
+
+function randHex(len) {
+    return Array.from({length: len}, () => Math.floor(Math.random() * 16).toString(16)).join('');
 }
 
 
