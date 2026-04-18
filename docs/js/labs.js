@@ -1185,6 +1185,23 @@ function renderInnerTabContent(tab) {
     return renderLabMarkdown(tab.content);
 }
 
+// Outer-level tabs for setup section (underline style, visually distinct from inner bordered tabs)
+function renderSetupTabSection(groupId, tabs) {
+    if (tabs.length === 0) return '';
+    if (tabs.length === 1) {
+        return `<div class="lab-setup-tab-panel-solo">${tabs[0].renderContent()}</div>`;
+    }
+    const buttons = tabs.map((t, i) =>
+        `<button class="lab-outer-tab-btn ${i === 0 ? 'active' : ''}"
+            data-tab-target="${groupId}-${t.id}" data-tab-group="${groupId}">${escapeHtml(t.label)}</button>`
+    ).join('');
+    const panels = tabs.map((t, i) =>
+        `<div id="${groupId}-${t.id}" class="tab-content ${i === 0 ? 'active' : ''}"
+            data-tab-group="${groupId}"><div class="lab-setup-tab-panel">${t.renderContent()}</div></div>`
+    ).join('');
+    return `<div class="lab-setup-tabs"><div class="lab-setup-tab-bar">${buttons}</div>${panels}</div>`;
+}
+
 function renderInnerTabSection(groupId, tabs) {
     const visible = tabs.filter(t => t.show && (t.content || t.rawHtml !== undefined));
     if (visible.length === 0) return '';
@@ -1643,45 +1660,54 @@ function buildGuidedV2Sections(lab) {
 
     // --- Self-hosted Lab Setup ---
     const setup = getSetup(lab);
-    if (setup.prerequisites || setup.deployNonInteractive || setup.deployTui) {
+    const resourcesCreated = getResourcesCreated(lab);
+    if (setup.prerequisites || setup.deployNonInteractive || setup.deployTui || resourcesCreated) {
+        const setupTabs = [];
         if (setup.prerequisites) {
-            sections.push({
-                id: `gv2-prereqs-${slug}`,
-                h2Section: 'Self-hosted Lab Setup',
-                title: 'Prerequisites',
-                level: 3,
-                colorClass: sectionColors['Self-hosted Lab Setup'],
+            setupTabs.push({
+                id: 'prereqs',
+                label: 'Prerequisites',
                 renderContent: () => `<div class="lab-tab-prose">${renderLabMarkdown(setup.prerequisites)}</div>`,
             });
         }
         if (setup.deployNonInteractive || setup.deployTui) {
-            sections.push({
-                id: `gv2-deploy-${slug}`,
-                h2Section: 'Self-hosted Lab Setup',
-                title: 'Deploy',
-                level: 3,
-                colorClass: sectionColors['Self-hosted Lab Setup'],
+            setupTabs.push({
+                id: 'deploy',
+                label: 'Deploy',
                 renderContent: () => renderInnerTabSection(`gv2-deploy-inner-${slug}`, [
                     { id: 'cli', label: 'Non-Interactive', show: !!setup.deployNonInteractive, content: setup.deployNonInteractive },
                     { id: 'tui', label: 'TUI', show: !!setup.deployTui, content: setup.deployTui },
                 ]),
             });
         }
-
-        // Scenario Specific Resources Created (under Setup, collapsed by default)
-        const resourcesCreated = getResourcesCreated(lab);
         if (resourcesCreated) {
-            sections.push({
-                id: `gv2-resources-${slug}`,
-                h2Section: 'Self-hosted Lab Setup',
-                title: 'Scenario Specific Resources Created',
-                level: 3,
-                colorClass: sectionColors['Self-hosted Lab Setup'],
-                collapsed: true,
-                collapsedSummary: 'Show Scenario Specific Resources — collapsed by default as viewing resource names may reveal parts of the challenge.',
-                renderContent: () => renderResourceCards(resourcesCreated),
+            setupTabs.push({
+                id: 'resources',
+                label: 'Resources Created',
+                renderContent: () => `
+                    <details class="lab-gv2-collapsible">
+                        <summary class="lab-gv2-collapsible-summary">
+                            Show Scenario Specific Resources — collapsed by default as viewing resource names may reveal parts of the challenge.
+                            <svg class="lab-gv2-collapsible-chevron" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
+                        </summary>
+                        <div class="lab-gv2-body">${renderResourceCards(resourcesCreated)}</div>
+                    </details>`,
             });
         }
+        const setupTabGroupId = `gv2-setup-tabs-${slug}`;
+        sections.push({
+            id: `gv2-setup-${slug}`,
+            h2Section: 'Self-hosted Lab Setup',
+            title: 'Self-hosted Lab Setup',
+            level: 2,
+            colorClass: sectionColors['Self-hosted Lab Setup'],
+            tabSyncItems: setupTabs.map(t => ({
+                label: t.label,
+                tabGroupId: setupTabGroupId,
+                tabPanelId: `${setupTabGroupId}-${t.id}`,
+            })),
+            renderContent: () => renderSetupTabSection(setupTabGroupId, setupTabs),
+        });
     }
 
     // --- Attack ---
@@ -1829,51 +1855,52 @@ function buildGuidedV2Sections(lab) {
 
     // --- Defend ---
     const cspmData = getDefendCspm(lab);
-    if (cspmData) {
-        if (cspmData.whatToDetect) {
-            sections.push({
-                id: `gv2-cspm-detect-${slug}`,
-                h2Section: 'Defend',
-                title: 'What CSPM Tools Should Detect',
-                level: 3,
-                colorClass: sectionColors['Defend'],
-                renderContent: () => `<div class="lab-tab-prose">${renderLabMarkdown(cspmData.whatToDetect)}</div>`,
-            });
-        }
-    }
     const siemData = getDefendSiem(lab);
-    if (siemData) {
-        if (siemData.cloudTrailEvents) {
-            sections.push({
-                id: `gv2-siem-events-${slug}`,
-                h2Section: 'Defend',
-                title: 'CloudTrail Events to Monitor',
-                level: 3,
-                colorClass: sectionColors['Defend'],
-                renderContent: () => `<div class="lab-tab-prose">${renderLabMarkdown(siemData.cloudTrailEvents)}</div>`,
-            });
-        }
-        if (siemData.detonationLogs) {
-            sections.push({
-                id: `gv2-siem-logs-${slug}`,
-                h2Section: 'Defend',
-                title: 'Detonation Logs',
-                level: 3,
-                colorClass: sectionColors['Defend'],
-                renderContent: () => `<div class="lab-tab-prose">${renderLabMarkdown(siemData.detonationLogs)}</div>`,
-            });
-        }
+    const defendTabGroupId = `gv2-defend-tabs-${slug}`;
+    const defendTabs = [];
+
+    if (cspmData?.whatToDetect) {
+        defendTabs.push({
+            id: 'cspm',
+            label: 'What CSPM Tools Should Detect',
+            renderContent: () => `<div class="lab-tab-prose">${renderLabMarkdown(cspmData.whatToDetect)}</div>`,
+        });
+    }
+    if (siemData?.cloudTrailEvents) {
+        defendTabs.push({
+            id: 'cloudtrail',
+            label: 'CloudTrail Events to Monitor',
+            renderContent: () => `<div class="lab-tab-prose">${renderLabMarkdown(siemData.cloudTrailEvents)}</div>`,
+        });
+    }
+    if (siemData?.detonationLogs) {
+        defendTabs.push({
+            id: 'logs',
+            label: 'Detonation Logs',
+            renderContent: () => `<div class="lab-tab-prose">${renderLabMarkdown(siemData.detonationLogs)}</div>`,
+        });
+    }
+    if (lab.readme?.references) {
+        defendTabs.push({
+            id: 'references',
+            label: 'References',
+            renderContent: () => `<div class="lab-tab-prose">${renderLabMarkdown(lab.readme.references)}</div>`,
+        });
     }
 
-    // References
-    if (lab.readme?.references) {
+    if (defendTabs.length > 0) {
         sections.push({
-            id: `gv2-references-${slug}`,
+            id: `gv2-defend-${slug}`,
             h2Section: 'Defend',
-            title: 'References',
-            level: 3,
+            title: 'Defend',
+            level: 2,
             colorClass: sectionColors['Defend'],
-            renderContent: () => `<div class="lab-tab-prose">${renderLabMarkdown(lab.readme.references)}</div>`,
+            tabSyncItems: defendTabs.map(t => ({
+                label: t.label,
+                tabGroupId: defendTabGroupId,
+                tabPanelId: `${defendTabGroupId}-${t.id}`,
+            })),
+            renderContent: () => renderSetupTabSection(defendTabGroupId, defendTabs),
         });
     }
 
@@ -1939,11 +1966,26 @@ function renderLabDetailContentGuidedV2(lab, container) {
         if (sec.h2Section !== currentH2) {
             if (currentH2) tocHtml += '</div>';
             currentH2 = sec.h2Section;
+            // If the first section under this h2 hides its TOC item, make the heading itself the scroll target
+            const firstSecUnderH2 = sections.find(s => s.h2Section === sec.h2Section);
+            const h2ScrollTarget = firstSecUnderH2?.hideTocItem ? firstSecUnderH2.id : null;
+            const h2HeadingAttrs = h2ScrollTarget
+                ? `class="lab-guided-index-heading ${sectionColors[sec.h2Section] || ''} lab-guided-index-heading-link lab-gv2-toc-item" data-gv2-target="${h2ScrollTarget}" onclick="document.getElementById('${h2ScrollTarget}').scrollIntoView({behavior:'smooth'})"`
+                : `class="lab-guided-index-heading ${sectionColors[sec.h2Section] || ''}"`;
             tocHtml += `<div class="lab-guided-index-section">
-                <div class="lab-guided-index-heading ${sectionColors[sec.h2Section] || ''}">${escapeHtml(sec.h2Section)}</div>`;
+                <div ${h2HeadingAttrs}>${escapeHtml(sec.h2Section)}</div>`;
         }
-        tocHtml += `<div class="lab-guided-index-item lab-gv2-toc-item" data-gv2-target="${sec.id}"
-            onclick="document.getElementById('${sec.id}').scrollIntoView({behavior:'smooth'})">${escapeHtml(sec.title)}</div>`;
+        if (sec.tabSyncItems) {
+            sec.tabSyncItems.forEach((item, i) => {
+                tocHtml += `<div class="lab-guided-index-item lab-gv2-toc-item lab-tabsync-item ${i === 0 ? 'active' : ''}"
+                    data-gv2-target="${sec.id}"
+                    data-tabsync-group="${item.tabGroupId}"
+                    data-tabsync-panel="${item.tabPanelId}">${escapeHtml(item.label)}</div>`;
+            });
+        } else if (!sec.hideTocItem) {
+            tocHtml += `<div class="lab-guided-index-item lab-gv2-toc-item" data-gv2-target="${sec.id}"
+                onclick="document.getElementById('${sec.id}').scrollIntoView({behavior:'smooth'})">${escapeHtml(sec.title)}</div>`;
+        }
     });
     if (currentH2) tocHtml += '</div>';
 
@@ -1991,6 +2033,7 @@ function renderLabDetailContentGuidedV2(lab, container) {
     setupTabListeners();
     setupDemoTranscriptSections();
     setupGuidedV2ScrollSpy(gv2Id);
+    setupGuidedV2TabSync(gv2Id);
 
     // Initialize static map preview after DOM is ready
     setTimeout(() => {
@@ -2023,7 +2066,16 @@ function setupGuidedV2ScrollSpy(containerId) {
 
         if (activeId) {
             tocItems.forEach(item => {
-                item.classList.toggle('active', item.dataset.gv2Target === activeId);
+                if (item.dataset.gv2Target !== activeId) {
+                    item.classList.remove('active');
+                } else if (item.classList.contains('lab-tabsync-item')) {
+                    // Multiple sidebar items share this section — activate only the one whose
+                    // outer tab panel is currently visible.
+                    const panel = document.getElementById(item.dataset.tabsyncPanel);
+                    item.classList.toggle('active', panel?.classList.contains('active') ?? false);
+                } else {
+                    item.classList.add('active');
+                }
             });
         }
     }, {
@@ -2032,6 +2084,55 @@ function setupGuidedV2ScrollSpy(containerId) {
     });
 
     sectionEls.forEach(el => observer.observe(el));
+}
+
+// Syncs outer section tabs ↔ sidebar TOC items bidirectionally.
+// Handles any section using the lab-tabsync-item pattern (Setup, Defend, etc.).
+// Called once per lab detail render. Uses event delegation on the gv2 container.
+function setupGuidedV2TabSync(containerId) {
+    const container = document.getElementById(containerId);
+    if (!container) return;
+
+    // Activate the sidebar item whose panel matches activeTabPanelId, within the same tab group.
+    function syncTocToTab(activeTabPanelId, tabGroupId) {
+        container.querySelectorAll(`.lab-tabsync-item[data-tabsync-group="${tabGroupId}"]`).forEach(item => {
+            item.classList.toggle('active', item.dataset.tabsyncPanel === activeTabPanelId);
+        });
+    }
+
+    container.addEventListener('click', (e) => {
+        // Sidebar item clicked → switch outer tab + update sidebar
+        const tocItem = e.target.closest('.lab-tabsync-item');
+        if (tocItem) {
+            const tabGroupId = tocItem.dataset.tabsyncGroup;
+            const tabPanelId = tocItem.dataset.tabsyncPanel;
+            const sectionId = tocItem.dataset.gv2Target;
+
+            // Switch the outer tab (same logic handleTabClick would do)
+            document.querySelectorAll(`[data-tab-group="${tabGroupId}"][data-tab-target]`)
+                .forEach(b => b.classList.remove('active'));
+            document.querySelectorAll(`.tab-content[data-tab-group="${tabGroupId}"]`)
+                .forEach(p => p.classList.remove('active'));
+            const btn = document.querySelector(`[data-tab-target="${tabPanelId}"]`);
+            if (btn) btn.classList.add('active');
+            const panel = document.getElementById(tabPanelId);
+            if (panel) panel.classList.add('active');
+
+            syncTocToTab(tabPanelId, tabGroupId);
+
+            const sectionEl = document.getElementById(sectionId);
+            if (sectionEl) sectionEl.scrollIntoView({ behavior: 'smooth' });
+            return;
+        }
+
+        // Outer tab button clicked → update sidebar after handleTabClick has switched the tab
+        const tabBtn = e.target.closest('.lab-outer-tab-btn');
+        if (tabBtn) {
+            const tabPanelId = tabBtn.dataset.tabTarget;
+            const tabGroupId = tabBtn.dataset.tabGroup;
+            if (tabPanelId && tabGroupId) setTimeout(() => syncTocToTab(tabPanelId, tabGroupId), 0);
+        }
+    });
 }
 
 function renderGuidedV2CTFChallenge(attackMap, slug) {
