@@ -1628,20 +1628,41 @@ function renderGamePanelOverview(panelEl, state) {
         return parts.length >= 6 ? parts.slice(5).join(':') : arn;
     };
 
-    // Build inline pills for the header row
-    const headerPills = [];
-    if (lab?.category) {
-        headerPills.push(`<span class="mg-category-badge">${escapeHtmlGame(lab.category)}</span>`);
-    }
-    if (lab?.pathType) {
-        headerPills.push(`<span class="mg-category-badge mg-path-type-badge">${escapeHtmlGame(lab.pathType.replace(/-/g, ' '))}</span>`);
-    }
+    // Build KV-style double pills matching the single-page view.
+    // categoryConfig, pathTypeLabels, pathTypeColors, targetColors are defined in labs.js
+    // which loads before map-game.js on the same page.
+    const kvPill = (key, valueClass, valueText) =>
+        `<span class="lab-kv-pill">` +
+        `<span class="lab-kv-pill-key">${key}</span>` +
+        `<span class="lab-badge ${valueClass} lab-kv-pill-value">${escapeHtmlGame(valueText)}</span>` +
+        `</span>`;
+
+    const catConfig = (typeof categoryConfig !== 'undefined' && categoryConfig?.[lab?.category])
+        || { label: lab?.category || '', cssClass: '' };
+    const ptLabel = (typeof pathTypeLabels !== 'undefined' && pathTypeLabels?.[lab?.pathType])
+        || (lab?.pathType || '').replace(/-/g, ' ');
+    const ptClass = (typeof pathTypeColors !== 'undefined' && pathTypeColors?.[lab?.pathType])
+        || 'lab-badge-pathtype';
+    const costIsFree = lab?.costEstimate === 'free' || lab?.costEstimate === '$0/mo';
+    const tgtLabel = lab?.target === 'to-admin' ? 'Admin'
+        : lab?.target === 'to-bucket' ? 'Bucket'
+        : (lab?.target || '');
+    const tgtClass = (typeof targetColors !== 'undefined' && targetColors?.[lab?.target])
+        || 'lab-badge-target';
+
+    const headerKVPills = [
+        lab?.category ? kvPill('Category', catConfig.cssClass, catConfig.label) : '',
+        lab?.pathType ? kvPill('Path Type', ptClass, ptLabel) : '',
+        tgtLabel ? kvPill('Target', tgtClass, tgtLabel) : '',
+        lab?.costEstimate ? kvPill('Est. AWS Cost', costIsFree ? 'lab-cost-free' : 'lab-cost-paid', costIsFree ? 'Free' : lab.costEstimate) : '',
+        ...(lab?.environments || []).map(env => kvPill('Env', 'lab-badge-env', env)),
+    ].filter(Boolean);
 
     panelEl.innerHTML = `
-        ${headerPills.length ? `
         <div class="mg-panel-section">
-            <div class="mg-header-pills">${headerPills.join('')}</div>
-        </div>` : ''}
+            <span class="mg-section-label">LAB OVERVIEW</span>
+            ${headerKVPills.length ? `<div class="mg-header-pills" style="margin:10px 0 6px;">${headerKVPills.join('')}</div>` : ''}
+        </div>
         <div class="mg-panel-section">
             <span class="mg-section-label">OBJECTIVE</span>
             <p class="mg-panel-body">${markdownToSimpleHtml(lab?.description || '')}</p>
@@ -2129,12 +2150,39 @@ function renderGamePanelDeploy(panelEl, state) {
     const deployRaw = lab?.readme?.setup?.deployNonInteractive || '';
     const deployCmd = deployRaw.replace(/^```[a-z]*\n/, '').replace(/\n?```\s*$/, '').trim();
 
+    // KV-style double pills (same as objective page and single-page view)
+    const kvPillDeploy = (key, valueClass, valueText) =>
+        `<span class="lab-kv-pill">` +
+        `<span class="lab-kv-pill-key">${key}</span>` +
+        `<span class="lab-badge ${valueClass} lab-kv-pill-value">${escapeHtmlGame(valueText)}</span>` +
+        `</span>`;
+
+    const deployCatConfig = (typeof categoryConfig !== 'undefined' && categoryConfig?.[lab?.category])
+        || { label: lab?.category || '', cssClass: '' };
+    const deployPtLabel = (typeof pathTypeLabels !== 'undefined' && pathTypeLabels?.[lab?.pathType])
+        || (lab?.pathType || '').replace(/-/g, ' ');
+    const deployPtClass = (typeof pathTypeColors !== 'undefined' && pathTypeColors?.[lab?.pathType])
+        || 'lab-badge-pathtype';
+    const deployCostIsFree = lab?.costEstimate === 'free' || lab?.costEstimate === '$0/mo';
+    const deployTgtLabel = lab?.target === 'to-admin' ? 'Admin'
+        : lab?.target === 'to-bucket' ? 'Bucket'
+        : (lab?.target || '');
+    const deployTgtClass = (typeof targetColors !== 'undefined' && targetColors?.[lab?.target])
+        || 'lab-badge-target';
+
+    const deployKVPills = [
+        lab?.category ? kvPillDeploy('Category', deployCatConfig.cssClass, deployCatConfig.label) : '',
+        lab?.pathType ? kvPillDeploy('Path Type', deployPtClass, deployPtLabel) : '',
+        deployTgtLabel ? kvPillDeploy('Target', deployTgtClass, deployTgtLabel) : '',
+        lab?.costEstimate ? kvPillDeploy('Est. AWS Cost', deployCostIsFree ? 'lab-cost-free' : 'lab-cost-paid', deployCostIsFree ? 'Free' : lab.costEstimate) : '',
+        ...(lab?.environments || []).map(env => kvPillDeploy('Env', 'lab-badge-env', env)),
+    ].filter(Boolean);
+
     let html = `
         <div class="mg-panel-section">
             <span class="mg-section-label">DEPLOY THE SELF-HOSTED LAB</span>
+            ${deployKVPills.length ? `<div class="mg-header-pills" style="margin:10px 0 6px;">${deployKVPills.join('')}</div>` : ''}
             <h2 class="mg-panel-title">Setup Instructions</h2>
-        </div>
-        <div class="mg-panel-section">
             <div class="mg-deploy-step">
                 <p class="mg-deploy-step-title">1. Install plabs</p>
                 <pre class="mg-cmd-block"><code>brew install pathfinding-labs/tap/plabs</code></pre>
@@ -3789,17 +3837,31 @@ function parseAttackMapToGameNodes(attackMap) {
     let rootId = attackMap.nodes.find(n => incomingCount[n.id] === 0)?.id;
     if (!rootId) rootId = attackMap.nodes[0].id;
 
-    // First pass: walk the linear chain to get ordered raw nodes and edges
+    // First pass: walk the linear chain to get ordered raw nodes and edges.
+    // Self-referential edges (e.g. iam:PutRolePolicy on itself) are expanded into
+    // two entries: one for the escalation step, one for the post-escalation state.
     const rawChain = []; // { nodeData, outEdge }
     const visited = new Set();
     let currentId = rootId;
-    while (currentId && !visited.has(currentId)) {
-        visited.add(currentId);
+    while (currentId) {
         const nodeData = nodeById.get(currentId);
         if (!nodeData) break;
-        const outEdge = attackMap.edges.find(e => e.from === currentId && !visited.has(e.to));
-        rawChain.push({ nodeData, outEdge });
-        currentId = outEdge ? outEdge.to : null;
+        // Self-referential edge: the node acts on itself (e.g. iam:PutRolePolicy → same role)
+        const selfEdge = attackMap.edges.find(e => e.from === currentId && e.to === currentId);
+        // Forward edge: to a different node not yet visited
+        const outEdge = attackMap.edges.find(e => e.from === currentId && e.to !== currentId && !visited.has(e.to));
+        if (selfEdge) {
+            // Expand into two entries: "before escalation" (self-edge) then "after escalation" (forward edge or terminal)
+            rawChain.push({ nodeData, outEdge: selfEdge });
+            rawChain.push({ nodeData, outEdge });
+            visited.add(currentId);
+            currentId = outEdge ? outEdge.to : null;
+        } else {
+            if (visited.has(currentId)) break;
+            visited.add(currentId);
+            rawChain.push({ nodeData, outEdge });
+            currentId = outEdge ? outEdge.to : null;
+        }
     }
 
     // Second pass: collapse principal -> resource -> principal into companion nodes.
