@@ -883,6 +883,8 @@ function renderBannerB(lab) {
 // Card Style A: 2-column, background-only banner, name + description + labeled bottom pills
 function renderCardA(lab) {
     const { catConfig, pathTypeLabel, pathTypeClass, targetLabel, targetClass, costLabel, costClass } = getLabDisplayValues(lab);
+    const hopsVal = lab.principalHopCount !== null && lab.principalHopCount !== undefined ? lab.principalHopCount : '?';
+    const hopsLabel = hopsVal === 0 ? '0 (self)' : `${hopsVal} hop${hopsVal === 1 ? '' : 's'}`;
 
     return `
         <div class="lab-card lab-card-a" data-slug="${lab.slug}">
@@ -891,7 +893,7 @@ function renderCardA(lab) {
                 <div class="lab-card-name">${escapeHtml(lab.displayName || lab.name)}</div>
                 <div class="lab-card-description">${escapeHtml(truncate(lab.description, 450))}</div>
                 <div class="lab-card-badges">
-                    <span class="lab-card-badge-item"><span class="lab-card-badge-label">Path Type</span> <span class="lab-badge ${pathTypeClass}">${pathTypeLabel}</span></span>
+                    <span class="lab-card-badge-item"><span class="lab-card-badge-label">Principal Hops</span> <span class="lab-badge lab-hops-badge">${hopsLabel}</span></span>
                     ${targetLabel ? `<span class="lab-card-badge-item"><span class="lab-card-badge-label">Target</span> <span class="lab-badge ${targetClass}">${targetLabel}</span></span>` : ''}
                     <span class="lab-card-badge-item"><span class="lab-card-badge-label">Est. AWS Cost</span> <span class="lab-badge ${costClass}">${costLabel}</span></span>
                 </div>
@@ -902,6 +904,8 @@ function renderCardA(lab) {
 // Card Style B: 1-column, foreground-only banner, name + full description + bottom pills
 function renderCardB(lab) {
     const { catConfig, pathTypeLabel, pathTypeClass, targetLabel, targetClass, costLabel, costClass } = getLabDisplayValues(lab);
+    const hopsVal = lab.principalHopCount !== null && lab.principalHopCount !== undefined ? lab.principalHopCount : '?';
+    const hopsLabel = hopsVal === 0 ? '0 (self)' : `${hopsVal} hop${hopsVal === 1 ? '' : 's'}`;
 
     return `
         <div class="lab-card lab-card-b" data-slug="${lab.slug}">
@@ -910,7 +914,7 @@ function renderCardB(lab) {
                 <div class="lab-card-name">${escapeHtml(lab.displayName || lab.name)}</div>
                 <div class="lab-card-description lab-card-description-full">${escapeHtml(lab.description)}</div>
                 <div class="lab-card-badges">
-                    <span class="lab-badge ${pathTypeClass}">${pathTypeLabel}</span>
+                    <span class="lab-badge lab-hops-badge">${hopsLabel}</span>
                     ${targetLabel ? `<span class="lab-badge ${targetClass}">${targetLabel}</span>` : ''}
                     <span class="lab-badge ${costClass}">${costLabel}</span>
                 </div>
