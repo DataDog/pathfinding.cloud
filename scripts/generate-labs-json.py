@@ -68,6 +68,9 @@ INDEX_FIELDS = [
     "supportsOnlineMode",
     "source",
     "modifications",
+    "principalHopCount",
+    "startAccessType",
+    "services",
 ]
 
 
@@ -1077,6 +1080,47 @@ def transform_readme(readme_text, module_path, readme_dir=None):
             result["readme"]["solution"] = solution
 
     result["hasAttackMap"] = "attackMap" in result
+
+    # Compute principalHopCount: number of IAM principal nodes minus 1 (= hops).
+    # If no attack map, fall back to a value derived from pathType.
+    attack_map = result.get("attackMap")
+    if attack_map and "nodes" in attack_map:
+        principal_node_count = sum(
+            1 for node in attack_map["nodes"] if node.get("type") == "principal"
+        )
+        result["principalHopCount"] = max(0, principal_node_count - 1)
+    else:
+        path_type_hop_defaults = {
+            "self-escalation": 0,
+            "one-hop": 1,
+            "multi-hop": 2,
+        }
+        result["principalHopCount"] = path_type_hop_defaults.get(result.get("pathType"), None)
+
+    # Compute startAccessType: access.type from the attack map node that has an access field.
+    if attack_map and "nodes" in attack_map:
+        start_node = next(
+            (node for node in attack_map["nodes"] if "access" in node), None
+        )
+        result["startAccessType"] = start_node["access"].get("type") if start_node else None
+    else:
+        result["startAccessType"] = None
+
+    # Compute services: unique service prefixes from required permissions across all principals.
+    services = []
+    seen_services = set()
+    permissions = result.get("permissions", {})
+    principals = permissions.get("principals", [])
+    if principals:
+        for principal in principals:
+            for perm in principal.get("required", []):
+                perm_str = perm.get("permission", "")
+                if ":" in perm_str:
+                    svc = perm_str.split(":")[0].lower()
+                    if svc not in seen_services:
+                        seen_services.add(svc)
+                        services.append(svc)
+    result["services"] = services
 
     return result, True
 

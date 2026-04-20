@@ -12,6 +12,22 @@ let currentView = 'cards';
 const cardStyleParam = new URLSearchParams(window.location.search).get('cardStyle');
 const cardStyle = ['A', 'B'].includes(cardStyleParam) ? cardStyleParam : 'A';
 
+// Debug mode: append ?debug to any lab URL to see the JSON field path for each rendered value.
+// Example: /labs/ssm-002?debug
+const DEBUG_MODE = new URLSearchParams(window.location.search).has('debug');
+
+// Returns an inline badge showing the JSON field path, only when DEBUG_MODE is active.
+function debugTag(fieldPath) {
+    if (!DEBUG_MODE) return '';
+    return `<span class="debug-field-tag" title="${escapeHtml(fieldPath)}">[${escapeHtml(fieldPath)}]</span>`;
+}
+
+// Returns a block-level source banner for a section, only when DEBUG_MODE is active.
+function debugSection(fieldPath) {
+    if (!DEBUG_MODE) return '';
+    return `<div class="debug-section-source">source: ${escapeHtml(fieldPath)}</div>`;
+}
+
 // DOM elements
 const labsContainer = document.getElementById('labs-container');
 const searchInput = document.getElementById('search');
@@ -19,6 +35,10 @@ const categoryFilter = document.getElementById('category-filter');
 const pathTypeFilter = document.getElementById('path-type-filter');
 const targetFilter = document.getElementById('target-filter');
 const costFilter = document.getElementById('cost-filter');
+const hopsFilter = document.getElementById('hops-filter');
+const startFilter = document.getElementById('start-filter');
+const serviceFilter = document.getElementById('service-filter');
+const onlineFilter = document.getElementById('online-filter');
 const resetButton = document.getElementById('reset-filters');
 const totalLabsCountEl = document.getElementById('total-labs-count');
 const filteredLabsCountEl = document.getElementById('filtered-labs-count');
@@ -60,7 +80,7 @@ const pathTypeLabels = {
     'single-condition': 'Single',
     'toxic-combination': 'Toxic',
     'ctf': 'CTF',
-    'attack-simulation': 'Simulation',
+    'attack-simulation': 'Atk Sim',
 };
 
 const pathTypeColors = {
@@ -86,7 +106,8 @@ const awsServiceConfig = {
     'kms':            { label: 'KMS',            color: '#BF0816' },
     'secretsmanager': { label: 'Secrets Mgr',    color: '#BF0816' },
     'cognito-idp':    { label: 'Cognito',        color: '#BF0816' },
-    'ec2':            { label: 'EC2',            color: '#E8702A' }, // Compute
+    'ec2':                  { label: 'EC2',            color: '#E8702A' },
+    'ec2-instance-connect': { label: 'EC2 Connect',    color: '#E8702A' }, // Compute
     'lambda':         { label: 'Lambda',         color: '#E8702A' },
     'ecs':            { label: 'ECS',            color: '#E8702A' },
     'eks':            { label: 'EKS',            color: '#E8702A' },
@@ -412,6 +433,10 @@ function setupEventListeners() {
     pathTypeFilter.addEventListener('change', applyFilters);
     targetFilter.addEventListener('change', applyFilters);
     costFilter.addEventListener('change', applyFilters);
+    hopsFilter.addEventListener('change', applyFilters);
+    startFilter.addEventListener('change', applyFilters);
+    serviceFilter.addEventListener('change', applyFilters);
+    onlineFilter.addEventListener('change', applyFilters);
     resetButton.addEventListener('click', resetFilters);
     themeToggle.addEventListener('click', toggleTheme);
 
@@ -419,6 +444,39 @@ function setupEventListeners() {
     if (viewTableBtn) viewTableBtn.addEventListener('click', () => switchView('table'));
 
     window.addEventListener('popstate', () => routeFromURL());
+}
+
+// Populate the hops filter dropdown with all distinct hop counts from labs data
+function populateHopsFilter(labs) {
+    const hopCounts = new Set();
+    labs.forEach(lab => {
+        if (lab.principalHopCount !== null && lab.principalHopCount !== undefined) {
+            hopCounts.add(lab.principalHopCount);
+        }
+    });
+    const sorted = [...hopCounts].sort((a, b) => a - b);
+    sorted.forEach(count => {
+        const opt = document.createElement('option');
+        opt.value = String(count);
+        opt.textContent = count === 0 ? '0 (self)' : `${count} hop${count === 1 ? '' : 's'}`;
+        hopsFilter.appendChild(opt);
+    });
+}
+
+// Populate the service filter dropdown from labs data
+function populateServiceFilter(labs) {
+    const serviceSet = new Set();
+    labs.forEach(lab => {
+        (lab.services || []).forEach(s => serviceSet.add(s));
+    });
+    const sorted = [...serviceSet].sort();
+    sorted.forEach(service => {
+        const cfg = awsServiceConfig[service] || { label: service.toUpperCase() };
+        const opt = document.createElement('option');
+        opt.value = service;
+        opt.textContent = cfg.label;
+        serviceFilter.appendChild(opt);
+    });
 }
 
 // Data loading
@@ -436,6 +494,8 @@ async function loadLabs() {
         filteredLabs = labs;
         pathsData = paths;
 
+        populateHopsFilter(labs);
+        populateServiceFilter(labs);
         updateStats();
         renderLabs();
         initRouter();
@@ -546,6 +606,10 @@ function applyFilters() {
     const selectedPathType = pathTypeFilter.value;
     const selectedTarget = targetFilter.value;
     const selectedCost = costFilter.value;
+    const selectedHops = hopsFilter.value;
+    const selectedStart = startFilter.value;
+    const selectedService = serviceFilter.value;
+    const selectedOnline = onlineFilter.value;
 
     filteredLabs = allLabs.filter(lab => {
         // Search filter
@@ -579,6 +643,19 @@ function applyFilters() {
             if (selectedCost === 'paid' && isFree) return false;
         }
 
+        // Hops filter (exact match against dynamically populated counts)
+        if (selectedHops !== '' && String(lab.principalHopCount) !== selectedHops) return false;
+
+        // Start access type filter
+        if (selectedStart && lab.startAccessType !== selectedStart) return false;
+
+        // Service filter
+        if (selectedService && !(lab.services || []).includes(selectedService)) return false;
+
+        // Online play filter
+        if (selectedOnline === 'yes' && !lab.supportsOnlineMode) return false;
+        if (selectedOnline === 'no' && lab.supportsOnlineMode) return false;
+
         return true;
     });
 
@@ -592,6 +669,10 @@ function resetFilters() {
     pathTypeFilter.value = '';
     targetFilter.value = '';
     costFilter.value = '';
+    hopsFilter.value = '';
+    startFilter.value = '';
+    serviceFilter.value = '';
+    onlineFilter.value = '';
     filteredLabs = allLabs;
     updateStats();
     renderLabs();
@@ -644,8 +725,13 @@ function getSortedLabs() {
             case 'name': aVal = a.displayName || a.name; bVal = b.displayName || b.name; break;
             case 'category': aVal = a.category; bVal = b.category; break;
             case 'pathType': aVal = a.pathType; bVal = b.pathType; break;
+            case 'start': aVal = a.startAccessType; bVal = b.startAccessType; break;
             case 'target': aVal = a.target; bVal = b.target; break;
+            case 'hops': aVal = a.principalHopCount ?? -1; bVal = b.principalHopCount ?? -1;
+                return sortDirection === 'asc' ? aVal - bVal : bVal - aVal;
             case 'cost': aVal = a.costEstimate; bVal = b.costEstimate; break;
+            case 'online': aVal = a.supportsOnlineMode ? 1 : 0; bVal = b.supportsOnlineMode ? 1 : 0;
+                return sortDirection === 'asc' ? aVal - bVal : bVal - aVal;
             default: aVal = a.displayName || a.name; bVal = b.displayName || b.name;
         }
         const cmp = String(aVal || '').localeCompare(String(bVal || ''));
@@ -653,7 +739,14 @@ function getSortedLabs() {
     });
 }
 
-// Rendering - Table View (improved: merged Name+Description, no Docs, renamed Cost)
+// Short display labels for startAccessType
+const startAccessLabels = {
+    'assumed-breach-credentials': 'Creds',
+    'assumed-breach-network':     'Network',
+    'public-network':             'Public',
+};
+
+// Rendering - Table View
 function renderLabTable() {
     const sorted = getSortedLabs();
 
@@ -668,14 +761,21 @@ function renderLabTable() {
                 <th class="sortable labs-name-col" data-sort="name">Name${sortIndicator('name')}</th>
                 <th class="sortable" data-sort="category">Category${sortIndicator('category')}</th>
                 <th class="sortable" data-sort="pathType">Path Type${sortIndicator('pathType')}</th>
+                <th class="sortable" data-sort="start">Start${sortIndicator('start')}</th>
                 <th class="sortable" data-sort="target">Target${sortIndicator('target')}</th>
-                <th class="sortable" data-sort="cost">Est. AWS Cost${sortIndicator('cost')}</th>
+                <th class="sortable" data-sort="hops">Hops${sortIndicator('hops')}</th>
+                <th class="sortable" data-sort="cost">Cost${sortIndicator('cost')}</th>
+                <th>Services</th>
             </tr>
         </thead>
         <tbody>`;
 
     for (const lab of sorted) {
         const { catConfig, pathTypeLabel, pathTypeClass, targetLabel, targetClass, costLabel, costClass } = getLabDisplayValues(lab);
+        const startLabel = startAccessLabels[lab.startAccessType] || '';
+        const hopsVal = lab.principalHopCount !== null && lab.principalHopCount !== undefined ? lab.principalHopCount : '';
+        const serviceIcons = renderServiceIcons(lab.permissions || {});
+        const onlineLabel = lab.supportsOnlineMode ? 'Yes' : '';
 
         html += `
             <tr class="lab-row" data-slug="${lab.slug}">
@@ -685,8 +785,11 @@ function renderLabTable() {
                 </td>
                 <td><span class="lab-badge ${catConfig.cssClass}">${catConfig.label}</span></td>
                 <td><span class="lab-badge ${pathTypeClass}">${pathTypeLabel}</span></td>
+                <td class="lab-table-nowrap">${startLabel ? `<span class="lab-badge lab-badge-start">${escapeHtml(startLabel)}</span>` : ''}</td>
                 <td>${targetLabel ? `<span class="lab-badge ${targetClass}">${targetLabel}</span>` : ''}</td>
+                <td class="lab-table-center">${hopsVal !== '' ? `<span class="lab-hops-count">${hopsVal}</span>` : ''}</td>
                 <td><span class="lab-badge ${costClass}">${costLabel}</span></td>
+                <td class="lab-table-services">${serviceIcons}</td>
             </tr>`;
     }
 
@@ -940,7 +1043,8 @@ function renderLabDetailContent(lab, container) {
             </nav>
         </div>
 
-        <div class="detail-scrollable-content">`;
+        <div class="detail-scrollable-content">
+        ${DEBUG_MODE ? '<div class="debug-mode-banner">Debug mode active — field sources are shown inline. Remove <code>?debug</code> from the URL to hide them.</div>' : ''}`;
 
     html += '</div>'; // close detail-scrollable-content (mode fills it after render)
     container.innerHTML = html;
@@ -1060,7 +1164,7 @@ function renderPermissionsPills(permissions, labSlug) {
                 ? `<span class="lab-perms-public-note">No AWS credentials required — public access</span>`
                 : required.map(p => `<code class="lab-perm-pill">${escapeHtml(p.permission)}</code>`).join('');
             html += `<div class="lab-perms-pills-section">
-                <div class="lab-perms-pills-label">Required Permissions for Starting User</div>
+                <div class="lab-perms-pills-label">Required Permissions for Starting User${debugTag('permissions.principals[0].required[].permission')}</div>
                 <div class="lab-perms-pills-row">${rowContent}</div>
             </div>`;
         }
@@ -1068,7 +1172,7 @@ function renderPermissionsPills(permissions, labSlug) {
         if (helpful.length) {
             html += `<div class="lab-perms-pills-section">
                 <button class="lab-perms-pills-toggle" onclick="this.classList.toggle('open'); this.nextElementSibling.classList.toggle('open');">
-                    Helpful Permissions for Starting User (${helpful.length})
+                    Helpful Permissions for Starting User (${helpful.length})${debugTag('permissions.principals[0].helpful[].permission')}
                     <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
                 </button>
                 <div class="lab-perms-pills-row lab-perms-pills-collapsible">
@@ -1089,7 +1193,7 @@ function renderPermissionsPills(permissions, labSlug) {
 
     if (required.length) {
         html += `<div class="lab-perms-pills-section">
-            <div class="lab-perms-pills-label">Required Permissions for Starting User</div>
+            <div class="lab-perms-pills-label">Required Permissions for Starting User${debugTag('permissions.required[].permission')}</div>
             <div class="lab-perms-pills-row">
                 ${required.map(p =>
                     `<code class="lab-perm-pill">${escapeHtml(p.permission)}</code>`
@@ -1101,7 +1205,7 @@ function renderPermissionsPills(permissions, labSlug) {
     if (helpful.length) {
         html += `<div class="lab-perms-pills-section">
             <button class="lab-perms-pills-toggle" onclick="this.classList.toggle('open'); this.nextElementSibling.classList.toggle('open');">
-                Helpful Permissions for Starting User (${helpful.length})
+                Helpful Permissions for Starting User (${helpful.length})${debugTag('permissions.helpful[].permission')}
                 <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
             </button>
             <div class="lab-perms-pills-row lab-perms-pills-collapsible">
@@ -1456,18 +1560,18 @@ function renderLabKVPills(lab) {
     const targetLabel = lab.target === 'to-admin' ? 'Admin' : lab.target === 'to-bucket' ? 'Bucket' : lab.target;
     const targetClass = targetColors[lab.target] || 'lab-badge-target';
 
-    const pill = (key, valueClass, valueText) =>
+    const pill = (key, valueClass, valueText, fieldPath = '') =>
         `<span class="lab-kv-pill">
             <span class="lab-kv-pill-key">${key}</span>
-            <span class="lab-badge ${valueClass} lab-kv-pill-value">${escapeHtml(valueText)}</span>
+            <span class="lab-badge ${valueClass} lab-kv-pill-value">${escapeHtml(valueText)}</span>${debugTag(fieldPath)}
         </span>`;
 
     const pills = [
-        pill('Category', catConfig.cssClass, catConfig.label),
-        lab.pathType ? pill('Path Type', pathTypeClass, pathTypeLabel) : '',
-        targetLabel ? pill('Target', targetClass, targetLabel) : '',
-        pill('Est. AWS Cost', isFree ? 'lab-cost-free' : 'lab-cost-paid', isFree ? 'Free' : lab.costEstimate),
-        ...(lab.environments || []).map(env => pill('Env', 'lab-badge-env', env)),
+        pill('Category', catConfig.cssClass, catConfig.label, 'category ← README: **Category:**'),
+        lab.pathType ? pill('Path Type', pathTypeClass, pathTypeLabel, 'pathType ← README: **Path Type:**') : '',
+        targetLabel ? pill('Target', targetClass, targetLabel, 'target ← README: **Target:**') : '',
+        pill('Est. AWS Cost', isFree ? 'lab-cost-free' : 'lab-cost-paid', isFree ? 'Free' : lab.costEstimate, 'costEstimate ← README: **Cost Estimate:**'),
+        ...(lab.environments || []).map(env => pill('Env', 'lab-badge-env', env, 'environments[] ← README: **Environments:** (comma list)')),
     ].filter(Boolean);
 
     const serviceIconsHtml = renderServiceIcons(lab.permissions);
@@ -1556,15 +1660,19 @@ function buildGuidedV2Sections(lab) {
             title: 'Objective',
             level: 2,
             colorClass: sectionColors['Objective'],
+            debugSource: 'readme.objective (prose) + attackMap.nodes/edges (cards)',
             renderContent: () => {
                 let html = '';
 
                 // Source attribution (Attack Simulation scenarios)
                 if (lab.source?.title || lab.source?.url) {
                     const titleHtml = lab.source.url
-                        ? `<a href="${escapeHtml(lab.source.url)}" target="_blank" rel="noopener noreferrer" class="lab-source-link">${escapeHtml(lab.source.title || lab.source.url)}</a>`
-                        : escapeHtml(lab.source.title);
-                    const metaParts = [lab.source.author, lab.source.date].filter(Boolean);
+                        ? `<a href="${escapeHtml(lab.source.url)}" target="_blank" rel="noopener noreferrer" class="lab-source-link">${escapeHtml(lab.source.title || lab.source.url)}</a>${debugTag('source.url ← README: **Source URL:**')}`
+                        : escapeHtml(lab.source.title) + debugTag('source.title ← README: **Source Title:**');
+                    const metaParts = [
+                        lab.source.author ? escapeHtml(lab.source.author) + debugTag('source.author ← README: **Source Author:**') : null,
+                        lab.source.date   ? escapeHtml(lab.source.date)   + debugTag('source.date ← README: **Source Date:**')   : null,
+                    ].filter(Boolean);
                     const hasModifications = lab.modifications?.length || lab.readme?.attack?.modificationsFromOriginal;
                     const modLinkHtml = hasModifications
                         ? `<div class="lab-source-modifications-link"><a href="#gv2-modifications-${slug}" onclick="event.preventDefault();document.getElementById('gv2-modifications-${slug}')?.scrollIntoView({behavior:'smooth'})">See what was changed for this lab</a></div>`
@@ -1572,7 +1680,7 @@ function buildGuidedV2Sections(lab) {
                     html += `<div class="lab-source-attribution">
                         <div class="lab-source-label">Based on real-world incident</div>
                         <div class="lab-source-title">${titleHtml}</div>
-                        ${metaParts.length ? `<div class="lab-source-meta">${escapeHtml(metaParts.join(' · '))}</div>` : ''}
+                        ${metaParts.length ? `<div class="lab-source-meta">${metaParts.join(' · ')}</div>` : ''}
                         ${modLinkHtml}
                     </div>`;
                 }
@@ -1622,9 +1730,9 @@ function buildGuidedV2Sections(lab) {
                     html += `<div class="lab-objective-flow${permsPillsHtml ? ' lab-objective-flow-with-perms' : ''}">
                         <div class="lab-objective-flow-cards">
                             <div class="lab-objective-card lab-objective-card-${startClassify.type}">
-                                <div class="lab-objective-card-type">${escapeHtml(startClassify.label)}</div>
-                                <div class="lab-objective-card-label">${escapeHtml(sd.start.label || sd.start.id)}</div>
-                                ${startArnLine}
+                                <div class="lab-objective-card-type">${escapeHtml(startClassify.label)}${debugTag('attackMap.nodes[start].arn → classifyArn().label')}</div>
+                                <div class="lab-objective-card-label">${escapeHtml(sd.start.label || sd.start.id)}${debugTag('attackMap.nodes[start].label')}</div>
+                                ${startArnLine}${DEBUG_MODE ? debugTag('attackMap.nodes[start].arn') : ''}
                             </div>
                             <div class="lab-objective-arrow">
                                 <svg width="32" height="24" viewBox="0 0 32 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -1633,9 +1741,9 @@ function buildGuidedV2Sections(lab) {
                                 </svg>
                             </div>
                             <div class="lab-objective-card lab-objective-card-${destClassify.type}">
-                                <div class="lab-objective-card-type">${escapeHtml(destClassify.label)}</div>
-                                <div class="lab-objective-card-label">${escapeHtml(sd.destination.label || sd.destination.id)}</div>
-                                <div class="lab-objective-card-arn" title="${escapeHtml(sd.destination.arn || '')}">${escapeHtml(destName)}</div>
+                                <div class="lab-objective-card-type">${escapeHtml(destClassify.label)}${debugTag('attackMap.nodes[dest].arn → classifyArn().label')}</div>
+                                <div class="lab-objective-card-label">${escapeHtml(sd.destination.label || sd.destination.id)}${debugTag('attackMap.nodes[dest].label')}</div>
+                                <div class="lab-objective-card-arn" title="${escapeHtml(sd.destination.arn || '')}">${escapeHtml(destName)}${debugTag('attackMap.nodes[dest].arn')}</div>
                             </div>
                         </div>
                         ${permsPillsHtml ? `<div class="lab-objective-flow-perms">${permsPillsHtml}</div>` : ''}
@@ -1692,6 +1800,7 @@ function buildGuidedV2Sections(lab) {
             title: 'Self-hosted Lab Setup',
             level: 2,
             colorClass: sectionColors['Self-hosted Lab Setup'],
+            debugSource: 'readme.setup.{prerequisites, deployNonInteractive, deployTui} + readme.attack.resourcesCreated',
             tabSyncItems: setupTabs.map(t => ({
                 label: t.label,
                 tabGroupId: setupTabGroupId,
@@ -1711,6 +1820,7 @@ function buildGuidedV2Sections(lab) {
             title: 'Guided Challenge',
             level: 3,
             colorClass: sectionColors['Attack'],
+            debugSource: 'attackMap.nodes[].{label, description} + attackMap.edges[].{label, hints[], commands[]}',
             renderContent: () => {
                 let html = '<p class="lab-section-intro">Try to complete the attack path on your own using only the hints below. Each step reveals progressively more detail.</p>';
                 html += renderGuidedV2CTFChallenge(lab.attackMap, slug);
@@ -1811,6 +1921,7 @@ function buildGuidedV2Sections(lab) {
             title: 'Attack Walkthrough',
             level: 3,
             colorClass: sectionColors['Attack'],
+            debugSource: 'readme.solution (Pentest Report) | /labs/demo-transcripts/{slug}.txt (Scripted Demo) | readme.attack.demoAttack.* (Run Yourself)',
             renderContent: () => renderInnerTabSection(`gv2-walkthrough-tabs-${slug}`, walkthroughTabs),
         });
     }
@@ -1824,6 +1935,7 @@ function buildGuidedV2Sections(lab) {
             title: 'Modifications from Original Attack',
             level: 3,
             colorClass: sectionColors['Attack'],
+            debugSource: 'readme.attack.modificationsFromOriginal',
             renderContent: () => `<div class="lab-tab-prose">${renderLabMarkdown(modificationsFromOriginal)}</div>`,
         });
     }
@@ -1837,6 +1949,7 @@ function buildGuidedV2Sections(lab) {
             title: 'Teardown',
             level: 3,
             colorClass: sectionColors['Teardown'],
+            debugSource: 'readme.teardown.{nonInteractive, tui}',
             renderContent: () => renderInnerTabSection(`gv2-teardown-inner-${slug}`, [
                 { id: 'cli', label: 'Non-Interactive', show: !!teardownData.nonInteractive, content: teardownData.nonInteractive },
                 { id: 'tui', label: 'TUI', show: !!teardownData.tui, content: teardownData.tui },
@@ -1886,6 +1999,7 @@ function buildGuidedV2Sections(lab) {
             title: 'Defend',
             level: 2,
             colorClass: sectionColors['Defend'],
+            debugSource: 'readme.defend.cspm.whatToDetect | readme.defend.cloudSiem.{cloudTrailEvents, detonationLogs} | readme.references',
             tabSyncItems: defendTabs.map(t => ({
                 label: t.label,
                 tabGroupId: defendTabGroupId,
@@ -1993,6 +2107,7 @@ function renderLabDetailContentGuidedV2(lab, container) {
         const headingTag = sec.level === 2 ? 'h2' : 'h3';
         const headingHtml = sec.hideHeading ? '' : `<${headingTag} class="lab-gv2-heading ${sec.colorClass || ''}">${escapeHtml(sec.title)}</${headingTag}>`;
         const sectionClass = `lab-gv2-section${sec.noDivider ? ' lab-gv2-section-no-divider' : ''}`;
+        const debugSourceHtml = sec.debugSource ? debugSection(sec.debugSource) : '';
         if (sec.collapsed) {
             const summaryText = sec.collapsedSummary || `Show ${escapeHtml(sec.title)}`;
             mainHtml += `
@@ -2003,14 +2118,14 @@ function renderLabDetailContentGuidedV2(lab, container) {
                             ${summaryText}
                             <svg class="lab-gv2-collapsible-chevron" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
                         </summary>
-                        <div class="lab-gv2-body">${sec.renderContent()}</div>
+                        <div class="lab-gv2-body">${debugSourceHtml}${sec.renderContent()}</div>
                     </details>
                 </div>`;
         } else {
             mainHtml += `
                 <div class="${sectionClass}" id="${sec.id}" data-gv2-h2="${sec.h2Section}">
                     ${headingHtml}
-                    <div class="lab-gv2-body">${sec.renderContent()}</div>
+                    <div class="lab-gv2-body">${debugSourceHtml}${sec.renderContent()}</div>
                 </div>`;
         }
     });
@@ -2160,9 +2275,9 @@ function renderGuidedV2CTFChallenge(attackMap, slug) {
     const startNode = nodeById.get(rootId);
     if (startNode) {
         html += `<div class="lab-gv2-ctf-start">
-            <span class="lab-gv2-ctf-node-label">${escapeHtml(startNode.label || startNode.id)}</span>
-            ${startNode.subType ? `<span class="lab-gv2-ctf-subtype">${escapeHtml(startNode.subType)}</span>` : ''}
-            ${startNode.description ? `<div class="lab-gv2-ctf-desc">${escapeHtml(startNode.description)}</div>` : ''}
+            <span class="lab-gv2-ctf-node-label">${escapeHtml(startNode.label || startNode.id)}${debugTag('attackMap.nodes[start].label')}</span>
+            ${startNode.subType ? `<span class="lab-gv2-ctf-subtype">${escapeHtml(startNode.subType)}${debugTag('attackMap.nodes[start].subType')}</span>` : ''}
+            ${startNode.description ? `<div class="lab-gv2-ctf-desc">${escapeHtml(startNode.description)}${debugTag('attackMap.nodes[start].description')}</div>` : ''}
         </div>`;
     }
 
@@ -2173,22 +2288,22 @@ function renderGuidedV2CTFChallenge(attackMap, slug) {
         const hints = edge.hints || [];
 
         html += `<div class="lab-gv2-ctf-edge" id="${edgeId}">
-            <div class="lab-gv2-ctf-action">${escapeHtml(edge.label || 'Action')}</div>
+            <div class="lab-gv2-ctf-action">${escapeHtml(edge.label || 'Action')}${debugTag('attackMap.edges[n].label')}</div>
             <div class="lab-gv2-ctf-to">
-                <span class="lab-gv2-ctf-node-label">${escapeHtml(toNode?.label || edge.to)}</span>
-                ${toNode?.subType ? `<span class="lab-gv2-ctf-subtype">${escapeHtml(toNode.subType)}</span>` : ''}
-                ${toNode?.description ? `<div class="lab-gv2-ctf-desc">${escapeHtml(toNode.description)}</div>` : ''}
+                <span class="lab-gv2-ctf-node-label">${escapeHtml(toNode?.label || edge.to)}${debugTag('attackMap.nodes[to].label')}</span>
+                ${toNode?.subType ? `<span class="lab-gv2-ctf-subtype">${escapeHtml(toNode.subType)}${debugTag('attackMap.nodes[to].subType')}</span>` : ''}
+                ${toNode?.description ? `<div class="lab-gv2-ctf-desc">${escapeHtml(toNode.description)}${debugTag('attackMap.nodes[to].description')}</div>` : ''}
             </div>`;
 
         // Progressive hint reveal
         if (hints.length > 0) {
             html += `<div class="lab-gv2-ctf-hints" data-edge-id="${edgeId}">
                 <button class="lab-gv2-ctf-hint-btn" onclick="guidedV2RevealHint('${edgeId}', 0)">
-                    Show Hint (1/${hints.length})
+                    Show Hint (1/${hints.length})${debugTag('attackMap.edges[n].hints[]')}
                 </button>`;
             hints.forEach((hint, hIdx) => {
                 html += `<div class="lab-gv2-ctf-hint lab-gv2-ctf-hint-hidden" data-hint-idx="${hIdx}">
-                    ${escapeHtml(hint)}
+                    ${escapeHtml(hint)}${debugTag(`attackMap.edges[n].hints[${hIdx}]`)}
                 </div>`;
             });
             html += '</div>';
