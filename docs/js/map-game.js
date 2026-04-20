@@ -1631,10 +1631,11 @@ function renderGamePanelOverview(panelEl, state) {
     // Build KV-style double pills matching the single-page view.
     // categoryConfig, pathTypeLabels, pathTypeColors, targetColors are defined in labs.js
     // which loads before map-game.js on the same page.
-    const kvPill = (key, valueClass, valueText) =>
+    const kvPill = (key, valueClass, valueText, fieldPath = '') =>
         `<span class="lab-kv-pill">` +
         `<span class="lab-kv-pill-key">${key}</span>` +
         `<span class="lab-badge ${valueClass} lab-kv-pill-value">${escapeHtmlGame(valueText)}</span>` +
+        (typeof debugTag === 'function' ? debugTag(fieldPath) : '') +
         `</span>`;
 
     const catConfig = (typeof categoryConfig !== 'undefined' && categoryConfig?.[lab?.category])
@@ -1651,13 +1652,14 @@ function renderGamePanelOverview(panelEl, state) {
         || 'lab-badge-target';
 
     const headerKVPills = [
-        lab?.category ? kvPill('Category', catConfig.cssClass, catConfig.label) : '',
-        lab?.pathType ? kvPill('Path Type', ptClass, ptLabel) : '',
-        tgtLabel ? kvPill('Target', tgtClass, tgtLabel) : '',
-        lab?.costEstimate ? kvPill('Est. AWS Cost', costIsFree ? 'lab-cost-free' : 'lab-cost-paid', costIsFree ? 'Free' : lab.costEstimate) : '',
-        ...(lab?.environments || []).map(env => kvPill('Env', 'lab-badge-env', env)),
+        lab?.category ? kvPill('Category', catConfig.cssClass, catConfig.label, 'category ← README: **Category:**') : '',
+        lab?.pathType ? kvPill('Path Type', ptClass, ptLabel, 'pathType ← README: **Path Type:**') : '',
+        tgtLabel ? kvPill('Target', tgtClass, tgtLabel, 'target ← README: **Target:**') : '',
+        lab?.costEstimate ? kvPill('Est. AWS Cost', costIsFree ? 'lab-cost-free' : 'lab-cost-paid', costIsFree ? 'Free' : lab.costEstimate, 'costEstimate ← README: **Cost Estimate:**') : '',
+        ...(lab?.environments || []).map(env => kvPill('Env', 'lab-badge-env', env, 'environments[] ← README: **Environments:** (comma list)')),
     ].filter(Boolean);
 
+    const _dbg = typeof debugTag === 'function' ? debugTag : () => '';
     panelEl.innerHTML = `
         <div class="mg-panel-section">
             <span class="mg-section-label">LAB OVERVIEW</span>
@@ -1665,13 +1667,13 @@ function renderGamePanelOverview(panelEl, state) {
         </div>
         <div class="mg-panel-section">
             <span class="mg-section-label">OBJECTIVE</span>
-            <p class="mg-panel-body">${markdownToSimpleHtml(lab?.description || '')}</p>
+            <p class="mg-panel-body">${markdownToSimpleHtml(lab?.description || '')}${_dbg('description ← README: **Technique:**')}</p>
         </div>
         ${startNode ? `
         <div class="mg-panel-section">
             <span class="mg-section-label">${isPublicStart ? 'STARTING POINT' : 'STARTING PRINCIPAL'}</span>
-            <code class="mg-arn">${escapeHtmlGame(shortArn(startNode.arn) || startNode.label)}</code>
-            ${accessEndpoint ? `<code class="mg-access-url">${escapeHtmlGame(accessEndpoint)}</code>` : ''}
+            <code class="mg-arn">${escapeHtmlGame(shortArn(startNode.arn) || startNode.label)}${_dbg('attackMap.nodes[start].arn')}</code>
+            ${accessEndpoint ? `<code class="mg-access-url">${escapeHtmlGame(accessEndpoint)}${_dbg('attackMap.nodes[start].access.url/ip/domain')}</code>` : ''}
             ${isPublicStart ? `<div class="mg-public-access-note">No AWS credentials required</div>` : ''}
         </div>` : ''}
         ${isPublicStart ? `
@@ -1680,7 +1682,7 @@ function renderGamePanelOverview(panelEl, state) {
             <div class="mg-public-access-note">No AWS credentials required — the entry point accepts unauthenticated requests</div>
             ${helpfulPills ? `
             <button class="mg-helpful-toggle" onclick="this.classList.toggle('open'); this.nextElementSibling.classList.toggle('open');">
-                Helpful IAM permissions (${helpfulPermsFlat.length})
+                Helpful IAM permissions (${helpfulPermsFlat.length})${_dbg('permissions.principals[0].helpful[].permission')}
                 <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
             </button>
             <div class="mg-perm-pills mg-helpful-collapsible">
@@ -1688,11 +1690,11 @@ function renderGamePanelOverview(panelEl, state) {
             </div>` : ''}
         </div>` : permPills ? `
         <div class="mg-panel-section">
-            <span class="mg-section-label">STARTING PERMISSIONS</span>
+            <span class="mg-section-label">STARTING PERMISSIONS${_dbg('permissions.principals[0].required[].permission')}</span>
             <div class="mg-perm-pills">${permPills}</div>
             ${helpfulPills ? `
             <button class="mg-helpful-toggle" onclick="this.classList.toggle('open'); this.nextElementSibling.classList.toggle('open');">
-                Helpful (${helpfulPermsFlat.length})
+                Helpful (${helpfulPermsFlat.length})${_dbg('permissions.principals[0].helpful[].permission')}
                 <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
             </button>
             <div class="mg-perm-pills mg-helpful-collapsible">
@@ -1702,7 +1704,7 @@ function renderGamePanelOverview(panelEl, state) {
         ${targetNode ? `
         <div class="mg-panel-section">
             <span class="mg-section-label">TARGET</span>
-            <code class="mg-arn">${escapeHtmlGame(shortArn(targetNode.arn) || targetNode.label)}</code>
+            <code class="mg-arn">${escapeHtmlGame(shortArn(targetNode.arn) || targetNode.label)}${_dbg('attackMap.nodes[last].arn')}</code>
         </div>` : ''}
     `;
 }
@@ -1787,12 +1789,13 @@ function renderGamePanelNode(panelEl, state) {
         </div>`;
     }
 
+    const _dbgN = typeof debugTag === 'function' ? debugTag : () => '';
     let html = `
         <div class="mg-panel-section">
             <span class="mg-section-label">${isFirst ? 'STARTING POSITION' : isLast ? 'TARGET REACHED' : `HOP ${hopNumber} DESTINATION`}</span>
-            <span class="mg-type-badge mg-type-${node.type?.type || 'unknown'}">${escapeHtmlGame(badgeText)}</span>
-            <h2 class="mg-panel-title">${escapeHtmlGame(node.label)}</h2>
-            ${node.arn ? `<code class="mg-arn">${escapeHtmlGame(node.arn)}</code>` : ''}
+            <span class="mg-type-badge mg-type-${node.type?.type || 'unknown'}">${escapeHtmlGame(badgeText)}${_dbgN('attackMap.nodes[n].type + subType')}</span>
+            <h2 class="mg-panel-title">${escapeHtmlGame(node.label)}${_dbgN('attackMap.nodes[n].label')}</h2>
+            ${node.arn ? `<code class="mg-arn">${escapeHtmlGame(node.arn)}${_dbgN('attackMap.nodes[n].arn')}</code>` : ''}
             ${accessBlockHtml}
         </div>`;
 
@@ -1800,7 +1803,7 @@ function renderGamePanelNode(panelEl, state) {
     if (node.description) {
         html += `
         <div class="mg-panel-section">
-            <span class="mg-section-label">ABOUT THIS ${typeLabel.toUpperCase()}</span>
+            <span class="mg-section-label">ABOUT THIS ${typeLabel.toUpperCase()}${_dbgN('attackMap.nodes[n].description')}</span>
             <p class="mg-panel-body">${markdownToSimpleHtml(node.description)}</p>
         </div>`;
     }
@@ -1833,18 +1836,19 @@ function renderGamePanelCompanion(panelEl, state) {
     const subType = companion.subType || '';
     const badgeText = subType ? `${typeLabel} / ${subType}` : typeLabel;
 
+    const _dbgC = typeof debugTag === 'function' ? debugTag : () => '';
     let html = `
         <div class="mg-panel-section">
             <span class="mg-section-label">RESOURCE ON HOP ${hopNumber}</span>
-            <span class="mg-type-badge mg-type-${companion.type?.type || 'resource'}">${escapeHtmlGame(badgeText)}</span>
-            <h2 class="mg-panel-title">${escapeHtmlGame(companion.label)}</h2>
-            ${companion.arn ? `<code class="mg-arn">${escapeHtmlGame(companion.arn)}</code>` : ''}
+            <span class="mg-type-badge mg-type-${companion.type?.type || 'resource'}">${escapeHtmlGame(badgeText)}${_dbgC('attackMap.nodes[n].type + subType')}</span>
+            <h2 class="mg-panel-title">${escapeHtmlGame(companion.label)}${_dbgC('attackMap.nodes[n].label')}</h2>
+            ${companion.arn ? `<code class="mg-arn">${escapeHtmlGame(companion.arn)}${_dbgC('attackMap.nodes[n].arn')}</code>` : ''}
         </div>`;
 
     if (companion.description) {
         html += `
         <div class="mg-panel-section">
-            <span class="mg-section-label">ABOUT THIS RESOURCE</span>
+            <span class="mg-section-label">ABOUT THIS RESOURCE${_dbgC('attackMap.nodes[n].description')}</span>
             <p class="mg-panel-body">${markdownToSimpleHtml(companion.description)}</p>
         </div>`;
     }
@@ -1854,8 +1858,8 @@ function renderGamePanelCompanion(panelEl, state) {
         html += `
         <div class="mg-panel-section mg-via-resource">
             <span class="mg-section-label">VIA RESOURCE</span>
-            <code class="mg-edge-label">${escapeHtmlGame(companion.edgeLabel)}</code>
-            ${companion.edgeDescription ? `<p class="mg-panel-body" style="margin-top:8px;">${markdownToSimpleHtml(companion.edgeDescription)}</p>` : ''}
+            <code class="mg-edge-label">${escapeHtmlGame(companion.edgeLabel)}${_dbgC('attackMap.edges[n].label (companion)')}</code>
+            ${companion.edgeDescription ? `<p class="mg-panel-body" style="margin-top:8px;">${markdownToSimpleHtml(companion.edgeDescription)}${_dbgC('attackMap.edges[n].description (companion)')}</p>` : ''}
         </div>`;
     }
 
@@ -1884,6 +1888,7 @@ function renderGamePanelEdge(panelEl, state) {
     }
     const hopLabel = edge.implicit ? 'AUTOMATIC STEP' : `HOP ${hopNumber}`;
 
+    const _dbgE = typeof debugTag === 'function' ? debugTag : () => '';
     let html = `
         <div class="mg-panel-section">
             <span class="mg-section-label">${escapeHtmlGame(hopLabel)}</span>
@@ -1895,7 +1900,7 @@ function renderGamePanelEdge(panelEl, state) {
         html += `
         <div class="mg-panel-section">
             <span class="mg-section-label">ACTION</span>
-            <code class="mg-edge-label">${escapeHtmlGame(edge.label)}</code>
+            <code class="mg-edge-label">${escapeHtmlGame(edge.label)}${_dbgE('attackMap.edges[n].label')}</code>
         </div>`;
     }
 
@@ -1903,7 +1908,7 @@ function renderGamePanelEdge(panelEl, state) {
     if (edge.implicit) {
         html += `
         <div class="mg-panel-section">
-            <span class="mg-section-label">WHAT HAPPENS</span>
+            <span class="mg-section-label">WHAT HAPPENS${_dbgE('attackMap.edges[n].description')}</span>
             <p class="mg-panel-body">${markdownToSimpleHtml(edge.description || 'This step happens automatically -- no attacker action required.')}</p>
             <p class="mg-panel-body mg-muted" style="margin-top:8px;">This is an automatic step. The attacker does not need to take any action here. Click <strong>Next</strong> to continue.</p>
         </div>`;
@@ -1934,7 +1939,7 @@ function renderGamePanelEdge(panelEl, state) {
     if (edge.description) {
         html += `
         <div class="mg-panel-section">
-            <span class="mg-section-label">HOW IT WORKS</span>
+            <span class="mg-section-label">HOW IT WORKS${_dbgE('attackMap.edges[n].description')}</span>
             <p class="mg-panel-body">${markdownToSimpleHtml(edge.description)}</p>
         </div>`;
     }
@@ -1944,7 +1949,7 @@ function renderGamePanelEdge(panelEl, state) {
     if (pathId) {
         html += `
         <div class="mg-panel-section">
-            <span class="mg-section-label">LEARN MORE</span>
+            <span class="mg-section-label">LEARN MORE${_dbgE('pathfindingCloudId ← README: **Pathfinding.cloud ID:**')}</span>
             <p class="mg-panel-body"><a href="/paths/${escapeHtmlGame(pathId)}" target="_blank" class="mg-path-link">View ${escapeHtmlGame(pathId)} technique details on pathfinding.cloud</a></p>
         </div>`;
     }
@@ -1952,7 +1957,7 @@ function renderGamePanelEdge(panelEl, state) {
     // Progressive hints
     const hints = edge.hints || [];
     if (hints.length > 0) {
-        html += `<div class="mg-panel-section"><span class="mg-section-label">HINTS</span>`;
+        html += `<div class="mg-panel-section"><span class="mg-section-label">HINTS${_dbgE('attackMap.edges[n].hints[]')}</span>`;
         if (!state.revealedHints) state.revealedHints = {};
         if (!state.revealedHints[`edge-${edgeIdx}`]) state.revealedHints[`edge-${edgeIdx}`] = new Set();
         const revealedSet = state.revealedHints[`edge-${edgeIdx}`];
@@ -1973,7 +1978,7 @@ function renderGamePanelEdge(panelEl, state) {
         const isOpen = state.revealedCommands.has(edgeIdx);
         html += `<div class="mg-panel-section">`;
         html += `<div class="mg-commands-toggle" data-edge-idx="${edgeIdx}">
-            <span class="mg-section-label" style="cursor:pointer; user-select:none;">REVEAL EXPLOITATION COMMANDS <span class="mg-deploy-arrow">${isOpen ? '&#9660;' : '&#9654;'}</span></span>
+            <span class="mg-section-label" style="cursor:pointer; user-select:none;">REVEAL EXPLOITATION COMMANDS${_dbgE('attackMap.edges[n].commands[].{description, command}')} <span class="mg-deploy-arrow">${isOpen ? '&#9660;' : '&#9654;'}</span></span>
         </div>`;
         html += `<div class="mg-commands-content" style="display:${isOpen ? 'block' : 'none'};">`;
         for (const cmd of commands) {
@@ -1998,14 +2003,10 @@ function scrollLabsBrowserItemIntoView(state) {
     const list = menuEl.querySelector('.mg-labs-list');
     const focused = menuEl.querySelector('.mg-lab-item.mg-menu-focused');
     if (!list || !focused) return;
-    const buffer = 40;
+    // Always pin the focused item to the top of the visible list area.
     const listRect = list.getBoundingClientRect();
     const itemRect = focused.getBoundingClientRect();
-    if (itemRect.bottom + buffer > listRect.bottom) {
-        list.scrollTop += itemRect.bottom + buffer - listRect.bottom;
-    } else if (itemRect.top - buffer < listRect.top) {
-        list.scrollTop -= listRect.top - itemRect.top + buffer;
-    }
+    list.scrollTop += itemRect.top - listRect.top - 4;
 }
 
 // Scroll the panel so the hint at hintIdx is fully visible, with a small
@@ -2089,12 +2090,13 @@ function renderGamePanelCSPM(panelEl, state) {
             <h2 class="mg-panel-title">How could this have been detected with CSPM?</h2>
         </div>`;
 
+    const _dbgCSPM = typeof debugTag === 'function' ? debugTag : () => '';
     const cspm = readme?.defend?.cspm || readme?.cspm;
     const cspmDetect = cspm?.whatToDetect;
     if (cspmDetect) {
         html += `
         <div class="mg-panel-section">
-            <span class="mg-section-label">WHAT CSPM TOOLS SHOULD DETECT</span>
+            <span class="mg-section-label">WHAT CSPM TOOLS SHOULD DETECT${_dbgCSPM('readme.defend.cspm.whatToDetect')}</span>
             <div class="mg-panel-body">${markdownToSimpleHtml(cspmDetect)}</div>
         </div>`;
     }
@@ -2115,12 +2117,13 @@ function renderGamePanelCloudSIEM(panelEl, state) {
             <h2 class="mg-panel-title">How could this have been detected with CloudSIEM?</h2>
         </div>`;
 
+    const _dbgSIEM = typeof debugTag === 'function' ? debugTag : () => '';
     const siem = readme?.defend?.cloudSiem || readme?.cloudSiem;
     const cloudTrail = siem?.cloudTrailEvents;
     if (cloudTrail) {
         html += `
         <div class="mg-panel-section">
-            <span class="mg-section-label">CLOUDTRAIL EVENTS TO MONITOR</span>
+            <span class="mg-section-label">CLOUDTRAIL EVENTS TO MONITOR${_dbgSIEM('readme.defend.cloudSiem.cloudTrailEvents')}</span>
             <div class="mg-panel-body">${markdownToSimpleHtml(cloudTrail)}</div>
         </div>`;
     }
@@ -2129,7 +2132,7 @@ function renderGamePanelCloudSIEM(panelEl, state) {
     if (detonation) {
         html += `
         <div class="mg-panel-section">
-            <span class="mg-section-label">DETONATION LOGS</span>
+            <span class="mg-section-label">DETONATION LOGS${_dbgSIEM('readme.defend.cloudSiem.detonationLogs')}</span>
             <div class="mg-panel-body">${markdownToSimpleHtml(detonation)}</div>
         </div>`;
     }
@@ -2151,10 +2154,12 @@ function renderGamePanelDeploy(panelEl, state) {
     const deployCmd = deployRaw.replace(/^```[a-z]*\n/, '').replace(/\n?```\s*$/, '').trim();
 
     // KV-style double pills (same as objective page and single-page view)
-    const kvPillDeploy = (key, valueClass, valueText) =>
+    const _dbgD = typeof debugTag === 'function' ? debugTag : () => '';
+    const kvPillDeploy = (key, valueClass, valueText, fieldPath = '') =>
         `<span class="lab-kv-pill">` +
         `<span class="lab-kv-pill-key">${key}</span>` +
         `<span class="lab-badge ${valueClass} lab-kv-pill-value">${escapeHtmlGame(valueText)}</span>` +
+        _dbgD(fieldPath) +
         `</span>`;
 
     const deployCatConfig = (typeof categoryConfig !== 'undefined' && categoryConfig?.[lab?.category])
@@ -2171,11 +2176,11 @@ function renderGamePanelDeploy(panelEl, state) {
         || 'lab-badge-target';
 
     const deployKVPills = [
-        lab?.category ? kvPillDeploy('Category', deployCatConfig.cssClass, deployCatConfig.label) : '',
-        lab?.pathType ? kvPillDeploy('Path Type', deployPtClass, deployPtLabel) : '',
-        deployTgtLabel ? kvPillDeploy('Target', deployTgtClass, deployTgtLabel) : '',
-        lab?.costEstimate ? kvPillDeploy('Est. AWS Cost', deployCostIsFree ? 'lab-cost-free' : 'lab-cost-paid', deployCostIsFree ? 'Free' : lab.costEstimate) : '',
-        ...(lab?.environments || []).map(env => kvPillDeploy('Env', 'lab-badge-env', env)),
+        lab?.category ? kvPillDeploy('Category', deployCatConfig.cssClass, deployCatConfig.label, 'category ← README: **Category:**') : '',
+        lab?.pathType ? kvPillDeploy('Path Type', deployPtClass, deployPtLabel, 'pathType ← README: **Path Type:**') : '',
+        deployTgtLabel ? kvPillDeploy('Target', deployTgtClass, deployTgtLabel, 'target ← README: **Target:**') : '',
+        lab?.costEstimate ? kvPillDeploy('Est. AWS Cost', deployCostIsFree ? 'lab-cost-free' : 'lab-cost-paid', deployCostIsFree ? 'Free' : lab.costEstimate, 'costEstimate ← README: **Cost Estimate:**') : '',
+        ...(lab?.environments || []).map(env => kvPillDeploy('Env', 'lab-badge-env', env, 'environments[] ← README: **Environments:** (comma list)')),
     ].filter(Boolean);
 
     let html = `
@@ -2195,7 +2200,7 @@ function renderGamePanelDeploy(panelEl, state) {
             </div>
             ${deployCmd ? `
             <div class="mg-deploy-step">
-                <p class="mg-deploy-step-title">3. Deploy this scenario</p>
+                <p class="mg-deploy-step-title">3. Deploy this scenario${_dbgD('readme.setup.deployNonInteractive')}</p>
                 <pre class="mg-cmd-block"><code>${escapeHtmlGame(deployCmd)}</code></pre>
             </div>` : ''}
             <div class="mg-deploy-step">
@@ -2616,14 +2621,14 @@ function buildPlayingButtons(w, h, state) {
 
     // In V5 (capcom top-left, the default) the hamburger sits at the top-right corner
     // so it doesn't compete with the left-anchored capcom title text.
-    const menuX = variant === 5 ? w - 44 : 10;
+    const menuX = variant === 5 ? w - 66 : 10;
     const menuBtn = {
         id: 'menu',
-        x: menuX, y: 8,
-        w: 34, h: 30,
-        label: '=',
+        x: menuX, y: 6,
+        w: 56, h: 44,
+        label: '☰',
         style: 'ghost',
-        fontSize: 18,
+        fontSize: 36,
         radius: 6,
         onClick: () => { openGameMenu(state); }
     };
@@ -3061,14 +3066,14 @@ function drawPlayingHUD(ctx, w, h, state) {
         const menuBtn5 = state.buttons.find(b => b.id === 'menu');
         if (menuBtn5) {
             ctx.save();
-            ctx.font = '700 17px -apple-system, BlinkMacSystemFont, sans-serif';
+            ctx.font = '700 34px -apple-system, BlinkMacSystemFont, sans-serif';
             ctx.letterSpacing = '0.12em';
             ctx.textAlign = 'center';
             ctx.textBaseline = 'middle';
             ctx.fillStyle = 'rgba(255, 220, 100, 0.9)';
             ctx.shadowOffsetX = 0; ctx.shadowOffsetY = 0;
             ctx.shadowBlur = 10; ctx.shadowColor = 'rgba(240,180,40,0.5)';
-            ctx.fillText('=', menuBtn5.x + menuBtn5.w / 2, menuBtn5.y + menuBtn5.h / 2);
+            ctx.fillText('☰', menuBtn5.x + menuBtn5.w / 2, menuBtn5.y + menuBtn5.h / 2);
             ctx.letterSpacing = 'normal';
             ctx.restore();
         }
@@ -3098,8 +3103,8 @@ function drawPlayingHUD(ctx, w, h, state) {
         ctx.shadowOffsetX = 0; ctx.shadowOffsetY = 0; ctx.shadowBlur = 8; ctx.shadowColor = 'rgba(240,180,40,0.4)';
         ctx.fillRect(leftPad5, ruleTop5, 300, RULE_H5); ctx.restore();
         // Shrink the lab name font until it fits between the left pad and the hamburger button.
-        // Right edge: hamburger sits at w-44, leave 14px breathing room → w-58.
-        const labMaxWidth5 = w - leftPad5 - 58;
+        // Right edge: hamburger sits at w-66, leave 14px breathing room → w-80.
+        const labMaxWidth5 = w - leftPad5 - 80;
         let labFontSize5 = LAB_SIZE5;
         ctx.save();
         ctx.letterSpacing = '0.04em';
@@ -3262,8 +3267,8 @@ function getFocusableMenuItems(state) {
     if (state.menuView === 'labs-browser') {
         const labs = getFilteredBrowserLabs(state);
         return [
-            { id: 'back' },
             ...labs.map(l => ({ id: `lab-${l.slug}`, slug: l.slug })),
+            { id: 'back' },
         ];
     }
     return getMenuItems(state).filter(item => !item.separator && !item.stub);
@@ -3313,6 +3318,17 @@ async function switchToLab(slug, state) {
 
         // Update the browser URL
         history.pushState(null, '', `/labs/${slug}`);
+
+        // Update breadcrumb text and page title so the sticky header reflects the new lab.
+        // _container is .detail-scrollable-content; its parent is #detail-content which
+        // holds the sticky header as a sibling.
+        const labName = fullLab.displayName || fullLab.name || slug;
+        document.title = `${labName} - Labs - pathfinding.cloud`;
+        const breadcrumbCurrent = container?.parentElement?.querySelector('.breadcrumb-current');
+        if (breadcrumbCurrent) breadcrumbCurrent.textContent = labName;
+
+        // Update the global lab reference so "Switch to Single Page Mode" loads this lab.
+        window._currentLabDetail = fullLab;
 
         // Re-render the game container with the new lab — this wipes the old
         // canvas (and menu overlay) and sets up a fresh game after a short delay.
@@ -3461,11 +3477,13 @@ function renderGameMenu(state) {
                 },
             ];
             for (const group of groups) {
+                html += '<div class="mg-keybindings-group">';
                 html += `<div class="mg-keybindings-group-label">${group.label}</div>`;
                 for (const row of group.rows) {
                     const keyBadges = row.keys.map(k => `<span class="mg-key-badge">${k}</span>`).join(' ');
                     html += `<div class="mg-keybindings-row"><span class="mg-keybindings-keys">${keyBadges}</span><span>${row.desc}</span></div>`;
                 }
+                html += '</div>';
             }
             html += '</div>';
         } else {
@@ -3488,6 +3506,15 @@ function renderGameMenu(state) {
     }
 
     menuEl.innerHTML = html;
+
+    // If the dialog is tall enough to touch the top or bottom of the overlay,
+    // switch to a two-column layout so everything fits without scrolling.
+    if (state.menuView !== 'labs-browser' && state.menuView !== 'demo-transcript') {
+        const dialog = menuEl.querySelector('.mg-menu-dialog');
+        if (dialog && menuEl.offsetHeight > 0 && dialog.scrollHeight >= menuEl.offsetHeight - 48) {
+            dialog.classList.add('mg-menu-cols-2');
+        }
+    }
 
     // Attach click handlers for regular menu buttons
     menuEl.querySelectorAll('.mg-menu-item:not([disabled])').forEach(btn => {
