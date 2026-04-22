@@ -2288,21 +2288,43 @@ function renderGamePanelCompanion(panelEl, state) {
         }
     }
 
-    const typeLabel = companion.type?.label || 'Resource';
     const subType = companion.subType || '';
     const _displaySubTypeCompanion = typeof displaySubType === 'function'
         ? displaySubType
         : (s) => s || '';
     const subTypeLabel = _displaySubTypeCompanion(subType);
-    const badgeText = subTypeLabel ? `${typeLabel} / ${subTypeLabel}` : typeLabel;
+
+    // Lead pill value mirrors the principal-node panel: prefer the shortened
+    // ARN so the ARN is the most prominent identifier, fall back to the label.
+    const leadValue = shortArn(companion.arn) || companion.label || '';
 
     const _dbgC = typeof debugTag === 'function' ? debugTag : () => '';
+    const _fullRowC = (pillHtml) =>
+        pillHtml ? `<div class="lab-kv-pill-row-full">${pillHtml}</div>` : '';
+
+    // Header pill stack matches the principal-node and hop panels so all
+    // three panel kinds read as parts of one visual system. The Action(s)
+    // pill folds in what used to be the standalone "VIA RESOURCE" section:
+    // the edge label now sits inline with the rest of the identifying pills,
+    // which removes the most confusing part of the old layout (a code-block
+    // that looked like a command but was actually just an IAM action name).
     let html = `
         <div class="mg-panel-section">
             <span class="mg-section-label">RESOURCE ON HOP ${hopNumber}</span>
-            <span class="mg-type-badge mg-type-${companion.type?.type || 'resource'}">${escapeHtmlGame(badgeText)}${_dbgC('attackMap.nodes[n].type + subType → displaySubType()')}</span>
-            <h2 class="mg-panel-title">${escapeHtmlGame(companion.label)}${_dbgC('attackMap.nodes[n].label')}</h2>
-            ${companion.arn ? `<code class="mg-arn" title="${escapeHtmlGame(companion.arn)}">${escapeHtmlGame(shortArn(companion.arn))}${_dbgC('attackMap.nodes[n].arn → shortArn()')}</code>` : ''}
+            <div class="lab-kv-pill-stack mg-pill-stack">
+                ${_fullRowC(leadValue
+                    ? labKvPill('Resource', 'lab-kv-pill-value-lead', leadValue, 'attackMap.nodes[n].arn → shortArn()', companion.arn || leadValue)
+                    : '')}
+                ${_fullRowC(subTypeLabel
+                    ? labKvPill('Type', 'lab-kv-pill-node', subTypeLabel, 'attackMap.nodes[n].subType → displaySubType()')
+                    : '')}
+                ${_fullRowC(companion.label
+                    ? labKvPill('Name', 'lab-kv-pill-node', companion.label, 'attackMap.nodes[n].label')
+                    : '')}
+                ${_fullRowC(companion.edgeLabel
+                    ? labKvPill('Action(s)', 'lab-kv-pill-hop', companion.edgeLabel, 'attackMap.edges[n].label (companion)')
+                    : '')}
+            </div>
         </div>`;
 
     if (companion.description) {
@@ -2313,19 +2335,20 @@ function renderGamePanelCompanion(panelEl, state) {
         </div>`;
     }
 
-    // Show the companion edge info (what happens via this resource)
-    if (companion.edgeLabel) {
+    // Edge description -- the "how it works" narrative for the action on
+    // this resource. The action itself is already shown as a pill above, so
+    // this section focuses purely on explaining what that action does here.
+    if (companion.edgeDescription) {
         html += `
-        <div class="mg-panel-section mg-via-resource">
-            <span class="mg-section-label">VIA RESOURCE</span>
-            <code class="mg-edge-label">${escapeHtmlGame(companion.edgeLabel)}${_dbgC('attackMap.edges[n].label (companion)')}</code>
-            ${companion.edgeDescription ? `<p class="mg-panel-body" style="margin-top:8px;">${markdownToSimpleHtml(companion.edgeDescription)}${_dbgC('attackMap.edges[n].description (companion)')}</p>` : ''}
+        <div class="mg-panel-section">
+            <span class="mg-section-label">HOW IT'S USED ON HOP ${hopNumber}${_dbgC('attackMap.edges[n].description (companion)')}</span>
+            <p class="mg-panel-body">${markdownToSimpleHtml(companion.edgeDescription)}</p>
         </div>`;
     }
 
     html += `
         <div class="mg-panel-section mg-next-prompt">
-            <p class="mg-panel-body mg-muted">This resource is used as part of Hop ${hopNumber}. Click the path or a principal island to continue.</p>
+            <p class="mg-panel-body mg-muted">Click the path or a principal island to continue.</p>
         </div>`;
 
     panelEl.innerHTML = html;
