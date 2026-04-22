@@ -61,12 +61,15 @@ const cloudSprites = {
     // zone and wants clouds to extend up into the header band above it).
     // bottomOverride replaces the default cloudMaxY = h * 0.20 so callers can
     // widen or narrow the cloud band without having to fake the `h` argument.
-    draw(ctx, w, h, seed, hudTopOverride, bottomOverride) {
+    // countOverride lets callers pack more clouds into a wide cloud band
+    // (e.g. the hero generator with no title, which needs the top third to
+    // read as a dense cloud layer rather than sparse dots).
+    draw(ctx, w, h, seed, hudTopOverride, bottomOverride, countOverride) {
         if (!this.images.length) return;
         const rng = mapRng(seed || 99);
         const hudTop = hudTopOverride ?? 52;  // generous buffer below top HUD bar
         const cloudMaxY = bottomOverride ?? (h * 0.20);  // default: top ~20% of the map zone
-        const count = Math.max(7, Math.floor(w / 100)); // more clouds
+        const count = countOverride ?? Math.max(7, Math.floor(w / 100)); // more clouds
         for (let i = 0; i < count; i++) {
             const img = this.images[Math.floor(rng() * this.images.length)];
             const scale = 2.0 + rng() * 2.0; // 2x-4x native size for prominent clouds
@@ -543,48 +546,12 @@ function getGameUIPalette() {
 
 function drawGameIslandLabels(ctx, w, h, state) {
     const p = state.palette;
-    const { positions, nodes, revealed } = state;
+    const { positions, nodes } = state;
     const lastIdx = nodes.length - 1;
 
     positions.forEach((pos, i) => {
         const isFirst = i === 0;
         const isLast = i === lastIdx;
-        const isRevealed = revealed.has(i);
-        const nodeType = nodes[i]?.type?.type || '';
-
-        // Type-colored ring around the island base (only for revealed nodes)
-        if (isRevealed && !isFirst && !isLast) {
-            let tint = null;
-            if (nodeType === 'principal') tint = p.typeTintPrincipal;
-            else if (nodeType === 'resource') tint = p.typeTintResource;
-            else if (nodeType === 'target') tint = p.typeTintTarget;
-            if (tint) {
-                ctx.save();
-                ctx.globalAlpha = 0.25;
-                ctx.strokeStyle = tint;
-                ctx.lineWidth = 4;
-                ctx.beginPath();
-                ctx.ellipse(pos.x, pos.y + 2, 52 * 1.15, 52 * 0.42, 0, 0, Math.PI * 2);
-                ctx.stroke();
-                ctx.restore();
-            }
-        }
-
-        // Green ring on the start island when the entry point is public-network or assumed-breach-network
-        if (isFirst) {
-            const startAccess = nodes[0]?.access;
-            if (startAccess?.type === 'public-network' || startAccess?.type === 'assumed-breach-network') {
-                const ringColor = startAccess.type === 'public-network' ? '#4ade80' : '#fbbf24';
-                ctx.save();
-                ctx.globalAlpha = 0.35;
-                ctx.strokeStyle = ringColor;
-                ctx.lineWidth = 3;
-                ctx.beginPath();
-                ctx.ellipse(pos.x, pos.y + 2, 52 * 1.15, 52 * 0.42, 0, 0, Math.PI * 2);
-                ctx.stroke();
-                ctx.restore();
-            }
-        }
 
         // Label -- always show all island names. Game mode uses the whimsical
         // "Startington" / "Targetville" defaults for the start/end islands;
@@ -1370,8 +1337,12 @@ function drawCompanionIslet(ctx, pos, companion, isSelected, state, nodeIndex) {
     drawSmoothShape(ctx, innerShape);
     ctx.fill();
 
-    // AWS icon centered on companion islet (max 50% of islet radius) -- only in 'on-island' mode
-    if ((state.effectiveIconStyle || state.iconStyle) === 'on-island') {
+    // AWS icon centered on companion islet (max 50% of islet radius) -- any
+    // "on-the-island" style (on-island, building, banner, crest) draws a plain
+    // centered icon here: structure variants would be microscopic on a 28px
+    // islet, so we fall back to the simple treatment.
+    const _companionStyle = state.effectiveIconStyle || state.iconStyle;
+    if (ISLAND_MOUNTED_ICON_STYLES.has(_companionStyle)) {
         const companionSubType = companion.subType || '';
         const companionIcon = awsIconSprites.get(companionSubType);
         if (companionIcon) {
@@ -1484,6 +1455,367 @@ function drawCompanionLabel(ctx, x, y, companion, state) {
     if (belowIcon) {
         ctx.drawImage(belowIcon, x - iconSize / 2, y + 14, iconSize, iconSize);
     }
+
+    ctx.restore();
+}
+
+// ---- On-Island Icon Structures ----
+// The 'I' key cycles through icon styles. Three of those styles mount the AWS
+// logo on a decorative structure (building/banner/crest) that sits on the
+// island surface, so the logo reads as a badge on a placed object rather than
+// a flat overlay on the terrain. These structures take up less horizontal
+// space than the below-label layout but keep the logo prominent.
+
+// Membership check: "is this style an on-island variant that draws a node
+// icon somewhere on the island body?" Used by the companion islet renderer
+// (which treats all these styles the same — a small centered icon) and by
+// the auto-compact threshold logic.
+const ISLAND_MOUNTED_ICON_STYLES = new Set(['on-island', 'building', 'banner', 'crest']);
+
+// Plain logo centered on the island surface (no structure). This is the
+// original 'on-island' treatment factored out so the main render loop can
+// dispatch cleanly to one of four on-island variants.
+function drawIconOnIsland(ctx, pos, islandRadius, node) {
+    const iconImg = awsIconSprites.get(node?.subType || '');
+    if (!iconImg) return;
+    const maxIconSize = islandRadius * 0.5; // 50% of island radius = 26px at default
+    const iconSize = Math.min(maxIconSize, iconImg.width);
+    ctx.save();
+    ctx.globalAlpha = 0.85;
+    ctx.drawImage(iconImg, pos.x - iconSize / 2, pos.y - iconSize / 2 - 2, iconSize, iconSize);
+    ctx.restore();
+}
+
+// Modern high-rise tower: tall, narrow, flat-roofed body in concrete/steel
+// gray with a dark cornice ledge and a small rooftop access box. A solid
+// parchment-colored square sits dead-center of the facade holding the AWS
+// logo -- windows continue in a grid above and below that panel so the
+// building still reads as a real tower, but the brand badge is unmistakable.
+function drawIconBuilding(ctx, pos, islandRadius, node, palette) {
+    const iconImg = awsIconSprites.get(node?.subType || '');
+    if (!iconImg) return;
+
+    // Vertically rectangular tower. Anchoring the base slightly below
+    // island center pushes the ground shadow onto the island surface and
+    // leaves the tall body standing cleanly above the terrain.
+    //
+    // Dimensions tuned so the logo panel reads at a glance: ~50% wider and
+    // ~25% taller than the previous iteration so the window grid can carry
+    // more floors and more columns without shrinking each pane.
+    const bodyW    = islandRadius * 0.72;
+    const bodyH    = islandRadius * 1.25;
+    const cx       = pos.x;
+    const bodyBase = pos.y + islandRadius * 0.22;
+    const bodyTop  = bodyBase - bodyH;
+    const x0       = cx - bodyW / 2;
+
+    const isLight = document.documentElement.classList.contains('light-theme');
+
+    // Gray/black concrete-and-steel palette so the tower reads as a real
+    // building regardless of the island style beneath it. The center logo
+    // panel is the one bright element and carries the service identity.
+    const wallColor    = isLight ? '#6b7178' : '#4a5058';
+    const wallShadow   = 'rgba(0, 0, 0, 0.22)';
+    const frameColor   = isLight ? 'rgba(15, 18, 22, 0.9)' : 'rgba(0, 0, 0, 0.85)';
+    const corniceColor = isLight ? '#2a2d31' : '#16181c';
+    const windowFrame  = 'rgba(12, 15, 20, 0.85)';
+    const windowLit    = 'rgba(255, 220, 130, 0.92)';
+    const windowDark   = 'rgba(35, 48, 72, 0.88)';
+
+    ctx.save();
+
+    // Ground shadow
+    ctx.fillStyle = 'rgba(0, 0, 0, 0.30)';
+    ctx.beginPath();
+    ctx.ellipse(cx + 2, bodyBase + 3, bodyW * 0.62, bodyW * 0.16, 0, 0, Math.PI * 2);
+    ctx.fill();
+
+    // Main body (gray concrete walls)
+    drawRoundedRect(ctx, x0, bodyTop, bodyW, bodyH, 1.5);
+    ctx.fillStyle = wallColor;
+    ctx.fill();
+    ctx.strokeStyle = frameColor;
+    ctx.lineWidth = 0.9;
+    ctx.stroke();
+
+    // Right-side depth shadow (hints at 3D massing without a full perspective)
+    ctx.fillStyle = wallShadow;
+    ctx.fillRect(x0 + bodyW - 3, bodyTop + 1, 3, bodyH - 2);
+
+    // Flat roof cornice: a darker, slightly wider ledge that reads as a
+    // squared-off urban rooftop -- matches the flat tops in the inspiration.
+    const corniceH        = 3.5;
+    const corniceOverhang = 2;
+    drawRoundedRect(
+        ctx,
+        x0 - corniceOverhang,
+        bodyTop - corniceH + 1,
+        bodyW + corniceOverhang * 2,
+        corniceH,
+        0.5,
+    );
+    ctx.fillStyle = corniceColor;
+    ctx.fill();
+
+    // Small rooftop HVAC/access box (echoes the equipment silhouettes on top
+    // of the high-rise in the reference photo; small flourish for realism).
+    const rtBoxW = bodyW * 0.22;
+    const rtBoxH = 3;
+    drawRoundedRect(
+        ctx,
+        cx - rtBoxW / 2,
+        bodyTop - corniceH - rtBoxH + 1,
+        rtBoxW,
+        rtBoxH,
+        0.5,
+    );
+    ctx.fillStyle = corniceColor;
+    ctx.fill();
+
+    // Central logo panel: a solid parchment-colored square dead-center on
+    // the facade. Sized proportionally so the logo reads clearly at all
+    // island sizes; the dark gray walls around it provide maximum contrast.
+    const logoBoxSide = Math.min(bodyW * 0.80, bodyH * 0.30);
+    const logoBoxX    = cx - logoBoxSide / 2;
+    const logoBoxY    = bodyTop + (bodyH - logoBoxSide) / 2;
+
+    // Deterministic lit/unlit window pattern per-node so the same building
+    // always looks identical across redraws (pan, zoom, selection changes).
+    const seedStr = (node?.subType || node?.label || '');
+    let windowSeed = 0;
+    for (let i = 0; i < seedStr.length; i++) {
+        windowSeed = (windowSeed + seedStr.charCodeAt(i)) & 0xffff;
+    }
+
+    // Window grid parameters -- columns scale with building width, row count
+    // is computed per-region from available vertical space so small islands
+    // shrink gracefully. Thresholds raised one column compared to the
+    // narrower previous iteration: with 50% more width, we get a denser
+    // ribbon-window grid at each size bucket.
+    const cols   = islandRadius >= 70 ? 5 : 4;
+    const colGap = 1.2;
+    const rowGap = 1.2;
+    const winW   = (bodyW - 4 - colGap * (cols - 1)) / cols;
+    // Slightly-squat windows (winH < winW) so more floors fit per region,
+    // matching the dense ribbon-window look of modern office towers.
+    const targetWinH = winW * 0.9;
+
+    // Fill both window regions: above the logo panel and below it.
+    const padAroundLogo = 2;
+    const regions = [
+        { top: bodyTop + 3,                              bottom: logoBoxY - padAroundLogo },
+        { top: logoBoxY + logoBoxSide + padAroundLogo,  bottom: bodyBase - 3 },
+    ];
+    for (const region of regions) {
+        const regionH = region.bottom - region.top;
+        if (regionH < 4) continue;
+        const rows     = Math.max(1, Math.floor((regionH + rowGap) / (targetWinH + rowGap)));
+        const winH     = (regionH - rowGap * (rows - 1)) / rows;
+        const gridLeft = x0 + 2;
+        for (let r = 0; r < rows; r++) {
+            for (let c = 0; c < cols; c++) {
+                const wx = gridLeft + c * (winW + colGap);
+                const wy = region.top + r * (winH + rowGap);
+
+                // Dark window frame
+                ctx.fillStyle = windowFrame;
+                ctx.fillRect(wx, wy, winW, winH);
+
+                // Pane: most lit (warm yellow), ~1 in 5 dark for variety.
+                const isLit = ((r * 7) + (c * 3) + windowSeed) % 5 !== 0;
+                ctx.fillStyle = isLit ? windowLit : windowDark;
+                const inset = 0.5;
+                ctx.fillRect(wx + inset, wy + inset, winW - inset * 2, winH - inset * 2);
+            }
+        }
+    }
+
+    // Logo panel drawn LAST so it cleanly covers any window edge that might
+    // otherwise bleed into the center region at odd aspect ratios.
+    drawRoundedRect(ctx, logoBoxX, logoBoxY, logoBoxSide, logoBoxSide, 1.5);
+    ctx.fillStyle = palette.parchCenter || 'rgba(245, 230, 200, 0.98)';
+    ctx.fill();
+    ctx.strokeStyle = frameColor;
+    ctx.lineWidth = 0.9;
+    ctx.stroke();
+
+    // AWS logo centered in the panel at 84% of the box side
+    const logoSize = logoBoxSide * 0.84;
+    ctx.drawImage(
+        iconImg,
+        cx - logoSize / 2,
+        logoBoxY + logoBoxSide / 2 - logoSize / 2,
+        logoSize,
+        logoSize,
+    );
+
+    ctx.restore();
+}
+
+// A rectangular banner stretched between two wooden posts planted on the
+// island, with the AWS logo centered on the banner face. Reads as a heraldic
+// standard announcing the island's service.
+function drawIconBanner(ctx, pos, islandRadius, node, palette) {
+    const iconImg = awsIconSprites.get(node?.subType || '');
+    if (!iconImg) return;
+
+    // Banner and supporting structure scaled ~1.5x the initial pass so the
+    // logo reads as clearly as the building/crest variants at the same
+    // distance. Positions are shifted upward to keep the bigger structure
+    // fitting on the island without crowding the label plate below.
+    const bannerW = islandRadius * 1.05;
+    const bannerH = islandRadius * 0.60;
+    const cx = pos.x;
+
+    const bannerTop    = pos.y - islandRadius * 0.40;
+    const bannerBottom = bannerTop + bannerH;
+
+    // Posts frame the banner with a small margin + extend above and below.
+    const leftPoleX  = cx - bannerW / 2 - 4;
+    const rightPoleX = cx + bannerW / 2 + 4;
+    const poleBaseY  = pos.y + islandRadius * 0.25;
+    const poleTopY   = bannerTop - 7;
+
+    ctx.save();
+
+    // Pole shadows
+    ctx.strokeStyle = 'rgba(0,0,0,0.25)';
+    ctx.lineWidth = 3.2;
+    ctx.beginPath(); ctx.moveTo(leftPoleX + 1, poleBaseY + 1);  ctx.lineTo(leftPoleX + 1, poleTopY + 1); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(rightPoleX + 1, poleBaseY + 1); ctx.lineTo(rightPoleX + 1, poleTopY + 1); ctx.stroke();
+
+    // Poles
+    ctx.strokeStyle = palette.flagPole || '#6d3c12';
+    ctx.lineWidth = 3;
+    ctx.beginPath(); ctx.moveTo(leftPoleX, poleBaseY);  ctx.lineTo(leftPoleX, poleTopY);  ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(rightPoleX, poleBaseY); ctx.lineTo(rightPoleX, poleTopY); ctx.stroke();
+
+    // Gold ball caps on pole tops (match the Targetville pennant style)
+    ctx.fillStyle = palette.endFill || '#f59e0b';
+    ctx.beginPath(); ctx.arc(leftPoleX,  poleTopY - 1.5, 3, 0, Math.PI * 2); ctx.fill();
+    ctx.beginPath(); ctx.arc(rightPoleX, poleTopY - 1.5, 3, 0, Math.PI * 2); ctx.fill();
+
+    // Rope/string sagging between pole tops (visual connector above banner)
+    ctx.strokeStyle = 'rgba(60, 35, 10, 0.65)';
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(leftPoleX, poleTopY);
+    ctx.quadraticCurveTo(cx, bannerTop - 2, rightPoleX, poleTopY);
+    ctx.stroke();
+
+    // Banner body -- flat top edge, shallow scalloped (sagging) bottom so it
+    // reads as a hanging cloth banner rather than a flat sign.
+    const bannerX = cx - bannerW / 2;
+    ctx.beginPath();
+    ctx.moveTo(bannerX, bannerTop);
+    ctx.lineTo(bannerX + bannerW, bannerTop);
+    ctx.lineTo(bannerX + bannerW, bannerBottom);
+    ctx.quadraticCurveTo(cx, bannerBottom + 6, bannerX, bannerBottom);
+    ctx.closePath();
+    ctx.fillStyle = palette.parchCenter || 'rgba(245, 230, 200, 0.96)';
+    ctx.fill();
+    ctx.strokeStyle = palette.borderDecor || 'rgba(90, 60, 20, 0.55)';
+    ctx.lineWidth = 1;
+    ctx.stroke();
+
+    // Accent stripe just inside the banner border (heraldic flourish)
+    ctx.strokeStyle = palette.flagColor || 'rgba(140, 60, 40, 0.4)';
+    ctx.lineWidth = 0.8;
+    ctx.strokeRect(bannerX + 3, bannerTop + 3, bannerW - 6, bannerH - 6);
+
+    // AWS logo centered on the banner (~1.5x the previous pass -- insets
+    // scaled proportionally so the logo actually grows with the banner).
+    const iconSize = Math.min(bannerW - 15, bannerH - 9);
+    ctx.drawImage(iconImg, cx - iconSize / 2, (bannerTop + bannerBottom) / 2 - iconSize / 2 - 1, iconSize, iconSize);
+
+    ctx.restore();
+}
+
+// Heraldic crest: a rounded shield shape mounted on a short stand/pedestal,
+// with the AWS logo as the shield's charge. RPG-ish and compact vertically
+// so it works well on smaller (5-6 node) islands.
+function drawIconCrest(ctx, pos, islandRadius, node, palette) {
+    const iconImg = awsIconSprites.get(node?.subType || '');
+    if (!iconImg) return;
+
+    const shieldW = islandRadius * 0.52;
+    const shieldH = islandRadius * 0.56;
+    const cx = pos.x;
+    // Shield centered slightly above island center so the stand base falls on
+    // the island surface without encroaching on the bottom label zone.
+    const shieldCy = pos.y - islandRadius * 0.08;
+    const shieldTop = shieldCy - shieldH / 2;
+    const shieldBottom = shieldCy + shieldH / 2;
+
+    ctx.save();
+
+    // Ground shadow beneath the stand
+    ctx.fillStyle = 'rgba(0,0,0,0.22)';
+    ctx.beginPath();
+    ctx.ellipse(cx + 2, shieldBottom + 4, shieldW * 0.55, 3.5, 0, 0, Math.PI * 2);
+    ctx.fill();
+
+    // Small stand beneath the shield (two short wooden legs + horizontal slab)
+    const standW = shieldW * 0.75;
+    const standH = 4;
+    const standY = shieldBottom - 1;
+    drawRoundedRect(ctx, cx - standW / 2, standY, standW, standH, 1);
+    ctx.fillStyle = palette.flagPole || '#6d3c12';
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(30, 15, 0, 0.6)';
+    ctx.lineWidth = 0.7;
+    ctx.stroke();
+
+    // Shield path: flat top with rounded corners tapering to a point at bottom.
+    // Traced as: top-left corner -> top-right corner -> taper down to the tip.
+    const r = Math.min(4, shieldW * 0.18);
+    const tipY = shieldBottom;
+    const sideY = shieldTop + shieldH * 0.62;  // where the sides start curving inward
+    const leftX  = cx - shieldW / 2;
+    const rightX = cx + shieldW / 2;
+
+    ctx.beginPath();
+    ctx.moveTo(leftX + r, shieldTop);
+    ctx.lineTo(rightX - r, shieldTop);
+    ctx.arcTo(rightX, shieldTop, rightX, shieldTop + r, r);
+    ctx.lineTo(rightX, sideY);
+    ctx.quadraticCurveTo(rightX, tipY - 2, cx, tipY);
+    ctx.quadraticCurveTo(leftX, tipY - 2, leftX, sideY);
+    ctx.lineTo(leftX, shieldTop + r);
+    ctx.arcTo(leftX, shieldTop, leftX + r, shieldTop, r);
+    ctx.closePath();
+
+    // Shield face (parchment/bone colored so the logo reads on any island)
+    ctx.fillStyle = palette.parchCenter || 'rgba(245, 230, 200, 0.96)';
+    ctx.fill();
+    ctx.strokeStyle = palette.borderDecor || 'rgba(90, 60, 20, 0.6)';
+    ctx.lineWidth = 1;
+    ctx.stroke();
+
+    // Inner border (heraldic double-stroke)
+    ctx.save();
+    ctx.globalAlpha = 0.55;
+    ctx.strokeStyle = palette.flagColor || '#8b3a22';
+    ctx.lineWidth = 0.7;
+    ctx.beginPath();
+    const ir2 = r * 0.7;
+    ctx.moveTo(leftX + 3 + ir2, shieldTop + 3);
+    ctx.lineTo(rightX - 3 - ir2, shieldTop + 3);
+    ctx.arcTo(rightX - 3, shieldTop + 3, rightX - 3, shieldTop + 3 + ir2, ir2);
+    ctx.lineTo(rightX - 3, sideY - 1);
+    ctx.quadraticCurveTo(rightX - 3, tipY - 5, cx, tipY - 3);
+    ctx.quadraticCurveTo(leftX + 3, tipY - 5, leftX + 3, sideY - 1);
+    ctx.lineTo(leftX + 3, shieldTop + 3 + ir2);
+    ctx.arcTo(leftX + 3, shieldTop + 3, leftX + 3 + ir2, shieldTop + 3, ir2);
+    ctx.closePath();
+    ctx.stroke();
+    ctx.restore();
+
+    // AWS logo centered on the upper portion of the shield face (above the
+    // tapering point so it doesn't get visually squeezed by the tip curve).
+    const logoCenterY = shieldTop + shieldH * 0.42;
+    const iconSize = Math.min(shieldW * 0.72, shieldH * 0.55);
+    ctx.drawImage(iconImg, cx - iconSize / 2, logoCenterY - iconSize / 2, iconSize, iconSize);
 
     ctx.restore();
 }
@@ -4268,8 +4600,11 @@ function computeMapLayout(count, w, h, hudTopOverride, hudBottomOverride) {
     const cloudBottom = h * 0.22; // clouds end here -- islands start BELOW this
     const padX = w * 0.15;     // 15% margin each side so islands stay central
 
-    // Island zone: entirely below cloud bottom, above bottom HUD
-    const minY = cloudBottom + 20;
+    // Island zone: entirely below the cloud bottom AND the caller-supplied
+    // top margin (hudTop). Taking the max of both lets callers (e.g. the
+    // hero generator with no title) demand islands start well below the
+    // default cloud band when they've widened the cloud zone themselves.
+    const minY = Math.max(cloudBottom + 20, hudTop);
     const maxY = h - hudBottom - 30;
     const centerY = (minY + maxY) / 2;
     const rangeY = (maxY - minY) / 2;
@@ -4834,7 +5169,7 @@ function drawGameMap(ctx, w, h, state) {
     // state._cloudBottom widens the cloud band (used by the single-page / hero
     // renderers to let clouds layer up into the reserved header zone).
     ctx.save();
-    cloudSprites.draw(ctx, w, h, 99, state._cloudHudTop, state._cloudBottom);
+    cloudSprites.draw(ctx, w, h, 99, state._cloudHudTop, state._cloudBottom, state._cloudCount);
     ctx.restore();
 
     // Paths (edges) between islands -- always draw all paths visibly
@@ -4902,64 +5237,31 @@ function drawGameMap(ctx, w, h, state) {
     positions.forEach((pos, i) => {
         const isFirst = i === 0;
         const isLast = i === lastIdx;
-        const isSelected = state.selectedNode === i;
         const seed = i * 997 + 1;  // stable per-island seed, independent of position
 
         ctx.save();
-
-        // Selection ring (dashed circle around selected island) -- skip on first/last
-        // Startington has its own plane indicator; Targetville has its flag
-        if (isSelected && !isFirst && !isLast) {
-            ctx.strokeStyle = p.selectedRing || '#9D4EDD';
-            ctx.lineWidth = 2.5;
-            ctx.setLineDash([6, 4]);
-            ctx.beginPath();
-            ctx.ellipse(pos.x, pos.y + 2, islandRadius * 1.2, islandRadius * 0.45, 0, 0, Math.PI * 2);
-            ctx.stroke();
-            ctx.setLineDash([]);
-        }
 
         // Island terrain layers -- dispatched by style
         const drawIslandTerrain = islandStyleRenderers[state.islandStyle] || drawIslandClassic;
         drawIslandTerrain(ctx, pos, islandRadius, seed, p, isFirst, isLast);
 
-        // AWS icon centered on the island (max 50% of island diameter) -- only in 'on-island' mode
-        if (state.effectiveIconStyle === 'on-island') {
-            const nodeSubType = nodes[i]?.subType || '';
-            const iconImg = awsIconSprites.get(nodeSubType);
-            if (iconImg) {
-                const maxIconSize = islandRadius * 0.5; // 50% of island radius = 26px
-                const iconSize = Math.min(maxIconSize, iconImg.width);
-                ctx.save();
-                ctx.globalAlpha = 0.85;
-                ctx.drawImage(iconImg, pos.x - iconSize / 2, pos.y - iconSize / 2 - 2, iconSize, iconSize);
-                ctx.restore();
-            }
+        // AWS icon on the island -- dispatch based on the active on-island
+        // style. 'on-island' draws a flat centered logo; 'building', 'banner',
+        // and 'crest' draw a decorative structure with the logo mounted on it
+        // as signage so the service identity stands out without taking up
+        // horizontal label-plate space.
+        switch (state.effectiveIconStyle) {
+            case 'on-island': drawIconOnIsland(ctx, pos, islandRadius, nodes[i]);        break;
+            case 'building':  drawIconBuilding(ctx,  pos, islandRadius, nodes[i], p);    break;
+            case 'banner':    drawIconBanner(ctx,    pos, islandRadius, nodes[i], p);    break;
+            case 'crest':     drawIconCrest(ctx,     pos, islandRadius, nodes[i], p);    break;
         }
 
-        // Start island glow + small plane graphic
-        if (isFirst) {
-            ctx.save();
-            ctx.globalAlpha = 0.3;
-            ctx.fillStyle = p.startGlow;
-            ctx.beginPath();
-            ctx.ellipse(pos.x, pos.y, islandRadius * 0.8, islandRadius * 0.3, 0, 0, Math.PI * 2);
-            ctx.fill();
-            ctx.restore();
-
-            // (Plane indicator is drawn separately after all islands/companions)
-        }
+        // Startington: the plane indicator is drawn separately after all
+        // islands/companions; no additional in-loop decoration needed.
 
         // Targetville flag -- centered on the island, taller pole with waving pennant
         if (isLast) {
-            ctx.save();
-            ctx.globalAlpha = 0.3;
-            ctx.fillStyle = p.endGlow;
-            ctx.beginPath();
-            ctx.ellipse(pos.x, pos.y, islandRadius * 0.8, islandRadius * 0.3, 0, 0, Math.PI * 2);
-            ctx.fill();
-            ctx.restore();
-
             // Flag pole centered on island
             const poleX = pos.x;
             const poleBase = pos.y - 4;
@@ -5137,7 +5439,7 @@ function initMapGame(mapId, nodes, edges, companions, lab) {
         companionPositions,
         companions: companions || [],
         companionStyle: 'islet', // 'ship' | 'islet' | 'note'
-        iconStyle: 'below-label',  // 'on-island' | 'below-label' | 'off' -- toggled with I key
+        iconStyle: 'banner',  // 'on-island' | 'below-label' | 'off' | 'building' | 'banner' | 'crest' -- toggled with I key
         islandStyle: 'wooded', // 'classic' | 'wooded' | 'tropical' | 'ruins' -- toggled with T key
         planeStyle: 'helicopter',    // 'jet' | 'biplane' | 'seaplane' | 'helicopter' -- toggled with P key
         nodes,
@@ -5568,9 +5870,15 @@ function initMapGame(mapId, nodes, edges, companions, lab) {
             state.companionStyle = styles[(currentIdx + 1) % styles.length];
             redraw();
         }
-        // I key toggles AWS icon display style (on-island -> below-label -> off)
+        // I key cycles AWS icon display style:
+        //   on-island  -> flat logo on the island surface (original treatment)
+        //   below-label -> 32px logo inside the label plate beneath the island
+        //   off         -> no logo
+        //   building    -> wooden outpost with logo as front signage
+        //   banner      -> banner on two posts with logo as the charge
+        //   crest       -> heraldic shield on a small stand, logo as the charge
         if ((e.key === 'i' || e.key === 'I') && (state.screen === 'playing' || state.screen === 'complete')) {
-            const iconStyles = ['on-island', 'below-label', 'off'];
+            const iconStyles = ['on-island', 'below-label', 'off', 'building', 'banner', 'crest'];
             const currentIdx = iconStyles.indexOf(state.iconStyle);
             state.iconStyle = iconStyles[(currentIdx + 1) % iconStyles.length];
             redraw();
@@ -6384,7 +6692,7 @@ function renderStaticMapPreview(containerEl, lab) {
         companionPositions,
         companions: mapCompanions,
         companionStyle: 'islet',
-        iconStyle: 'on-island',
+        iconStyle: 'banner',
         islandStyle: 'wooded',
         planeStyle: 'helicopter',
         nodes: mapNodes,
