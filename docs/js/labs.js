@@ -185,6 +185,57 @@ function isV3Schema(lab) {
     return lab.schemaVersion?.startsWith('3') || !!lab.readme?.objective;
 }
 
+// Human-readable display labels for access.type enum values. Frontend-only mapping
+// (access.type is used as a semantic enum in code paths, so the YAML keeps the
+// hyphenated form and we translate only for display).
+const ACCESS_TYPE_DISPLAY = {
+    'assumed-breach-credentials': 'Assumed Breach Credentials',
+    'public-network':             'Public Network',
+    'assumed-breach-network':     'Assumed Breach Network',
+};
+
+// Translate a subType (e.g., 'bedrock-agent') into a human-readable label
+// (e.g., 'Bedrock AgentCore'). Uses the SUBTYPE_DISPLAY table in map-game.js
+// (shared lexical scope across scripts on the same page), falling back to a
+// title-cased version of the raw subType so unknown values still render cleanly.
+function displaySubType(subType) {
+    if (!subType) return '';
+    const table = (typeof SUBTYPE_DISPLAY !== 'undefined') ? SUBTYPE_DISPLAY : {};
+    if (table[subType]) return table[subType];
+    return subType.split('-')
+        .map(w => w ? w[0].toUpperCase() + w.slice(1) : '')
+        .join(' ');
+}
+
+function displayAccessType(type) {
+    return ACCESS_TYPE_DISPLAY[type] || type || '';
+}
+
+// For the "Start Point" field on the objective card: network starts prefer the
+// reachable endpoint (url > ip > domain); credential starts use the node's ARN.
+function startPointValue(node) {
+    const a = node?.access;
+    if (a?.url) return a.url;
+    if (a?.ip) return a.ip;
+    if (a?.domain) return a.domain;
+    return node?.arn || '';
+}
+
+// Render a GitHub-style [key | value] pill (shared with map-game.js rendering).
+// Mirrors the inline kvPill helpers in map-game.js L1655/L2179 but lives in
+// labs.js so it can be reused across the single-page view's objective flow and
+// guided challenge without introducing a cross-file helper dependency.
+// `titleText` (optional) sets a tooltip so truncated/short values can reveal
+// their full form on hover (e.g., short ARN name in the pill, full ARN on hover).
+function labKvPill(keyText, valueClass, valueText, debugHint, titleText) {
+    const dbg = debugHint ? debugTag(debugHint) : '';
+    const titleAttr = titleText ? ` title="${escapeHtml(titleText)}"` : '';
+    return `<span class="lab-kv-pill"${titleAttr}>`
+        + `<span class="lab-kv-pill-key">${escapeHtml(keyText)}</span>`
+        + `<span class="lab-kv-pill-value ${valueClass || ''}">${escapeHtml(valueText)}${dbg}</span>`
+        + `</span>`;
+}
+
 // Determine if an ARN represents a principal (IAM user/role), a public entry point, or a resource
 function classifyArn(arn) {
     if (!arn) return { type: 'resource', label: 'Resource' };
@@ -1712,31 +1763,112 @@ function buildGuidedV2Sections(lab) {
                 // Start/Destination cards from attackMap
                 const sd = getStartDestination(lab);
                 if (sd) {
-                    // For public-start scenarios, override the type label so the card communicates
-                    // that no AWS credentials are required, even if the node's ARN is a Lambda ARN.
+                    // Card background tint still keys off classifyArn (principal/resource/public);
+                    // the primary information now lives in the kv-pills.
                     const startClassify = isPublicStart
                         ? { type: 'public', label: 'Public Access' }
                         : classifyArn(sd.start.arn);
                     const destClassify = classifyArn(sd.destination.arn);
-                    const startName = getArnShortName(sd.start.arn);
                     const destName = getArnShortName(sd.destination.arn);
 
-                    // For public-start, show the access endpoint URL/IP/domain as a subtitle.
-                    // Prefer the structured access field over the README regex value.
-                    const displayUrl = startNodeAccess?.url || startNodeAccess?.ip
+                    // For public-start, the "From" value is the access endpoint URL/IP/domain.
+                    // Credential starts use the short ARN name. Prefer structured access over the
+                    // README regex fallback for older data.
+                    const networkEndpoint = startNodeAccess?.url || startNodeAccess?.ip
                         || startNodeAccess?.domain || startLineValue;
-                    const startArnLine = isPublicStart && displayUrl
-                        ? `<div class="lab-objective-card-arn lab-objective-card-public-url" title="${escapeHtml(displayUrl)}">${escapeHtml(displayUrl)}</div>`
-                        : `<div class="lab-objective-card-arn" title="${escapeHtml(sd.start.arn || '')}">${escapeHtml(startName)}</div>`;
+                    const fromValue = (isPublicStart && networkEndpoint)
+                        ? networkEndpoint
+                        : getArnShortName(sd.start.arn);
+                    const fromDebugHint = (isPublicStart && networkEndpoint)
+                        ? 'attackMap.nodes[start].access.{url|ip|domain}'
+                        : 'attackMap.nodes[start].arn';
+
+                    // Access Type only renders on the start card's row-2 pill strip
+                    // (it's entry-point specific; target cards don't get one). Only
+                    // shown when the attack map declares access.type (schema v1.1.0+).
+                    const startAccessTypeLabel = sd.start.access?.type
+                        ? displayAccessType(sd.start.access.type)
+                        : '';
+
+                    // Start pills: From/Type/Name -- the From pill sits at the top so the
+                    // reader sees the identifier first, then the categorical info below.
+                    const startTypeLabel = displaySubType(sd.start.subType);
+                    const startNameLabel = sd.start.label || sd.start.id;
+                    // Helper: wrap a pill (or empty string) in a full-width row so the
+                    // pill stretches to the card width.
+                    const fullRow = (pillHtml) =>
+                        pillHtml ? `<div class="lab-kv-pill-row-full">${pillHtml}</div>` : '';
+
+                    // Row 1: From (lead, full width, violet).
+                    const startLeadHtml = fullRow(
+                        fromValue
+                            ? labKvPill('From', 'lab-kv-pill-value-lead', fromValue, fromDebugHint, sd.start.arn || fromValue)
+                            : ''
+                    );
+                    // Row 2: Type + Name side-by-side at natural width.
+                    const startTypeNameHtml = (startTypeLabel || startNameLabel)
+                        ? `<div class="lab-kv-pill-row">`
+                            + (startTypeLabel
+                                ? labKvPill('Type', 'lab-kv-pill-node', startTypeLabel,
+                                    'attackMap.nodes[start].subType → displaySubType()')
+                                : '')
+                            + (startNameLabel
+                                ? labKvPill('Name', 'lab-kv-pill-node', startNameLabel,
+                                    'attackMap.nodes[start].label')
+                                : '')
+                            + `</div>`
+                        : '';
+                    // Row 3: Access Type (full width, green).
+                    const startAccessRowHtml = fullRow(
+                        startAccessTypeLabel
+                            ? labKvPill('Initial Access Type', 'lab-kv-pill-node-access', startAccessTypeLabel,
+                                'attackMap.nodes[start].access.type → displayAccessType()')
+                            : ''
+                    );
+
+                    // Target pills: To/Type/Name.
+                    const destTypeLabel = displaySubType(sd.destination.subType);
+                    const destNameLabel = sd.destination.label || sd.destination.id;
+                    // Row 1: To (lead, full width, violet).
+                    const destLeadHtml = fullRow(
+                        destName
+                            ? labKvPill('To', 'lab-kv-pill-value-lead', destName,
+                                'attackMap.nodes[dest].arn', sd.destination.arn || destName)
+                            : ''
+                    );
+                    // Row 2: Type + Name side-by-side at natural width.
+                    const destTypeNameHtml = (destTypeLabel || destNameLabel)
+                        ? `<div class="lab-kv-pill-row">`
+                            + (destTypeLabel
+                                ? labKvPill('Type', 'lab-kv-pill-node', destTypeLabel,
+                                    'attackMap.nodes[dest].subType → displaySubType()')
+                                : '')
+                            + (destNameLabel
+                                ? labKvPill('Name', 'lab-kv-pill-node', destNameLabel,
+                                    'attackMap.nodes[dest].label')
+                                : '')
+                            + `</div>`
+                        : '';
+                    // Row 3: Flag -- placeholder for a future per-lab field (the attack's
+                    // objective / flag value). Rendered empty for now; uses the green
+                    // Access-Type variant so start and target cards visually balance.
+                    const destFlagValue = '';
+                    const destFlagRowHtml = fullRow(labKvPill('Flag Location', 'lab-kv-pill-node-access', destFlagValue,
+                        'attackMap.nodes[dest].flag (placeholder)'));
 
                     const permsPillsHtml = renderPermissionsPills(lab.permissions, slug);
 
                     html += `<div class="lab-objective-flow${permsPillsHtml ? ' lab-objective-flow-with-perms' : ''}">
                         <div class="lab-objective-flow-cards">
                             <div class="lab-objective-card lab-objective-card-${startClassify.type}">
-                                <div class="lab-objective-card-type">${escapeHtml(startClassify.label)}${debugTag('attackMap.nodes[start].arn → classifyArn().label')}</div>
-                                <div class="lab-objective-card-label">${escapeHtml(sd.start.label || sd.start.id)}${debugTag('attackMap.nodes[start].label')}</div>
-                                ${startArnLine}${DEBUG_MODE ? debugTag('attackMap.nodes[start].arn') : ''}
+                                <div class="lab-objective-card-header">
+                                    <span class="lab-objective-card-header-title">Start Node</span>
+                                </div>
+                                <div class="lab-kv-pill-stack">
+                                    ${startLeadHtml}
+                                    ${startTypeNameHtml}
+                                    ${startAccessRowHtml}
+                                </div>
                             </div>
                             <div class="lab-objective-arrow">
                                 <svg width="32" height="24" viewBox="0 0 32 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -1745,9 +1877,14 @@ function buildGuidedV2Sections(lab) {
                                 </svg>
                             </div>
                             <div class="lab-objective-card lab-objective-card-${destClassify.type}">
-                                <div class="lab-objective-card-type">${escapeHtml(destClassify.label)}${debugTag('attackMap.nodes[dest].arn → classifyArn().label')}</div>
-                                <div class="lab-objective-card-label">${escapeHtml(sd.destination.label || sd.destination.id)}${debugTag('attackMap.nodes[dest].label')}</div>
-                                <div class="lab-objective-card-arn" title="${escapeHtml(sd.destination.arn || '')}">${escapeHtml(destName)}${debugTag('attackMap.nodes[dest].arn')}</div>
+                                <div class="lab-objective-card-header">
+                                    <span class="lab-objective-card-header-title">Target Node</span>
+                                </div>
+                                <div class="lab-kv-pill-stack">
+                                    ${destLeadHtml}
+                                    ${destTypeNameHtml}
+                                    ${destFlagRowHtml}
+                                </div>
                             </div>
                         </div>
                         ${permsPillsHtml ? `<div class="lab-objective-flow-perms">${permsPillsHtml}</div>` : ''}
@@ -2273,47 +2410,89 @@ function renderGuidedV2CTFChallenge(attackMap, slug) {
 
     if (orderedEdges.length === 0) return '<p>No attack edges found.</p>';
 
+    // Build the ordered node list that corresponds to orderedEdges
+    // (N+1 nodes for N edges: walk starts at rootId and follows each edge's `to`).
+    const orderedNodeIds = [rootId];
+    orderedEdges.forEach(e => orderedNodeIds.push(e.to));
+
+    // Render a single node section. indexLabel is e.g. 'Node 1' or 'Target Node'.
+    const renderNodeSection = (node, indexLabel, labelDebugHint) => {
+        if (!node) return '';
+        const typePill = node.subType
+            ? labKvPill('Type', 'lab-kv-pill-node', displaySubType(node.subType),
+                `attackMap.nodes[${node.id}].subType → displaySubType()`)
+            : '';
+        const namePill = (node.label || node.id)
+            ? labKvPill('Name', 'lab-kv-pill-node', node.label || node.id,
+                `attackMap.nodes[${node.id}].label`)
+            : '';
+        const descHtml = node.description
+            ? `<div class="lab-gv2-ctf-desc">${escapeHtml(node.description)}${debugTag(`attackMap.nodes[${node.id}].description`)}</div>`
+            : '';
+        return `<div class="lab-gv2-ctf-node-section">
+            <div class="lab-gv2-ctf-section-header lab-gv2-ctf-section-header-node">${escapeHtml(indexLabel)}${labelDebugHint ? debugTag(labelDebugHint) : ''}</div>
+            <div class="lab-kv-pill-row">${typePill}${namePill}</div>
+            ${descHtml}
+        </div>`;
+    };
+
     let html = '<div class="lab-gv2-ctf-container">';
 
-    // Show starting node
-    const startNode = nodeById.get(rootId);
-    if (startNode) {
-        html += `<div class="lab-gv2-ctf-start">
-            <span class="lab-gv2-ctf-node-label">${escapeHtml(startNode.label || startNode.id)}${debugTag('attackMap.nodes[start].label')}</span>
-            ${startNode.subType ? `<span class="lab-gv2-ctf-subtype">${escapeHtml(startNode.subType)}${debugTag('attackMap.nodes[start].subType')}</span>` : ''}
-            ${startNode.description ? `<div class="lab-gv2-ctf-desc">${escapeHtml(startNode.description)}${debugTag('attackMap.nodes[start].description')}</div>` : ''}
-        </div>`;
-    }
+    // Render the starting node first
+    html += renderNodeSection(nodeById.get(rootId), 'Node 1');
 
     orderedEdges.forEach((edge, i) => {
         const edgeId = `gv2-ctf-edge-${slug}-${i}`;
-        const fromNode = nodeById.get(edge.from);
         const toNode = nodeById.get(edge.to);
         const hints = edge.hints || [];
+        const commands = edge.commands || [];
 
-        html += `<div class="lab-gv2-ctf-edge" id="${edgeId}">
-            <div class="lab-gv2-ctf-action">${escapeHtml(edge.label || 'Action')}${debugTag('attackMap.edges[n].label')}</div>
-            <div class="lab-gv2-ctf-to">
-                <span class="lab-gv2-ctf-node-label">${escapeHtml(toNode?.label || edge.to)}${debugTag('attackMap.nodes[to].label')}</span>
-                ${toNode?.subType ? `<span class="lab-gv2-ctf-subtype">${escapeHtml(toNode.subType)}${debugTag('attackMap.nodes[to].subType')}</span>` : ''}
-                ${toNode?.description ? `<div class="lab-gv2-ctf-desc">${escapeHtml(toNode.description)}${debugTag('attackMap.nodes[to].description')}</div>` : ''}
-            </div>`;
+        // Hop section
+        const hopPill = labKvPill('Action(s)', 'lab-kv-pill-hop', edge.label || 'Action',
+            `attackMap.edges[${i}].label`);
+        const hopDescHtml = edge.description
+            ? `<div class="lab-gv2-ctf-desc">${escapeHtml(edge.description)}${debugTag(`attackMap.edges[${i}].description`)}</div>`
+            : '';
+
+        html += `<div class="lab-gv2-ctf-hop-section" id="${edgeId}">
+            <div class="lab-gv2-ctf-section-header lab-gv2-ctf-section-header-hop">Hop ${i + 1}</div>
+            <div class="lab-kv-pill-row">${hopPill}</div>
+            ${hopDescHtml}`;
 
         // Progressive hint reveal
         if (hints.length > 0) {
             html += `<div class="lab-gv2-ctf-hints" data-edge-id="${edgeId}">
                 <button class="lab-gv2-ctf-hint-btn" onclick="guidedV2RevealHint('${edgeId}', 0)">
-                    Show Hint (1/${hints.length})${debugTag('attackMap.edges[n].hints[]')}
+                    Show Hint (1/${hints.length})${debugTag(`attackMap.edges[${i}].hints[]`)}
                 </button>`;
             hints.forEach((hint, hIdx) => {
                 html += `<div class="lab-gv2-ctf-hint lab-gv2-ctf-hint-hidden" data-hint-idx="${hIdx}">
-                    ${escapeHtml(hint)}${debugTag(`attackMap.edges[n].hints[${hIdx}]`)}
+                    ${escapeHtml(hint)}${debugTag(`attackMap.edges[${i}].hints[${hIdx}]`)}
                 </div>`;
             });
             html += '</div>';
         }
 
+        // Commands block (optional -- schema v1.3.0+)
+        if (commands.length > 0) {
+            html += `<details class="lab-gv2-ctf-commands">
+                <summary>Show commands (${commands.length})${debugTag(`attackMap.edges[${i}].commands[]`)}</summary>`;
+            commands.forEach((cmd, cIdx) => {
+                const cmdDesc = cmd.description ? `<div class="lab-gv2-ctf-cmd-desc">${escapeHtml(cmd.description)}${debugTag(`attackMap.edges[${i}].commands[${cIdx}].description`)}</div>` : '';
+                const cmdText = cmd.command ? `<pre class="lab-gv2-ctf-cmd-code"><code>${escapeHtml(cmd.command)}${debugTag(`attackMap.edges[${i}].commands[${cIdx}].command`)}</code></pre>` : '';
+                html += `<div class="lab-gv2-ctf-cmd">${cmdDesc}${cmdText}</div>`;
+            });
+            html += '</details>';
+        }
+
         html += '</div>';
+
+        // The target node section after the final hop gets the 'Target Node' header
+        // when the YAML flags it; intermediate nodes get 'Node N'.
+        const nodeIndex = i + 2; // 1-based, starting node was Node 1
+        const isLastHop = i === orderedEdges.length - 1;
+        const indexLabel = (isLastHop && toNode?.isTarget) ? 'Target Node' : `Node ${nodeIndex}`;
+        html += renderNodeSection(toNode, indexLabel, isLastHop && toNode?.isTarget ? `attackMap.nodes[${edge.to}].isTarget` : undefined);
     });
 
     html += '</div>';

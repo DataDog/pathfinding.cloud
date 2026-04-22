@@ -85,6 +85,31 @@ const cloudSprites = {
     },
 };
 
+// Adding a new resource type? Add an entry in BOTH awsIconSprites.iconPaths below
+// AND SUBTYPE_DISPLAY so the icon renders AND the human-readable label shows up
+// in the objective/guided-challenge pills. Keep the keys identical.
+
+// Human-readable display labels for subTypes. Consumed by labs.js (single-page view)
+// and any other view that wants to pill-ify the subType field.
+const SUBTYPE_DISPLAY = {
+    'iam-role':              'IAM Role',
+    'iam-user':              'IAM User',
+    'iam-policy':            'IAM Policy',
+    'iam-group':             'IAM Group',
+    'ec2-instance':          'EC2 Instance',
+    'lambda-function':       'Lambda Function',
+    'codebuild-project':     'CodeBuild Project',
+    'cloudformation-stack':  'CloudFormation Stack',
+    's3-bucket':             'S3 Bucket',
+    'sagemaker-notebook':    'SageMaker Notebook',
+    'glue-job':              'Glue Job',
+    'ecs-task':              'ECS Task',
+    'dynamodb-table':        'DynamoDB Table',
+    'bedrock-agent':         'Bedrock AgentCore',
+    'apprunner-service':     'App Runner Service',
+    'mwaa-environment':      'MWAA Environment',
+};
+
 // AWS icon sprite loader -- maps node subTypes to official AWS architecture/resource icons
 const awsIconSprites = {
     cache: {},  // subType -> Image (or null if failed)
@@ -1607,6 +1632,15 @@ function markdownToSimpleHtml(text) {
     return processed;
 }
 
+// Extract short ARN suffix (type/name) from a full ARN.
+// arn:aws:iam::{account}:type/name -> type/name. Returns the input unchanged
+// if it doesn't look like an ARN (e.g., a URL or IP).
+function shortArn(arn) {
+    if (!arn) return '';
+    const parts = arn.split(':');
+    return parts.length >= 6 ? parts.slice(5).join(':') : arn;
+}
+
 // Render the mission overview (shown on start and when no node is selected)
 function renderGamePanelOverview(panelEl, state) {
     const lab = state.lab;
@@ -1641,14 +1675,6 @@ function renderGamePanelOverview(panelEl, state) {
         `<code class="mg-code-pill">${escapeHtmlGame(pr.permission)}</code>`
     ).join('');
 
-    // Extract short ARN suffix (type/name) from full ARN
-    const shortArn = (arn) => {
-        if (!arn) return '';
-        // arn:aws:iam::{account}:type/name -> type/name
-        const parts = arn.split(':');
-        return parts.length >= 6 ? parts.slice(5).join(':') : arn;
-    };
-
     // Build KV-style double pills matching the single-page view.
     // categoryConfig, pathTypeLabels, pathTypeColors, targetColors are defined in labs.js
     // which loads before map-game.js on the same page.
@@ -1681,6 +1707,35 @@ function renderGamePanelOverview(panelEl, state) {
     ].filter(Boolean);
 
     const _dbg = typeof debugTag === 'function' ? debugTag : () => '';
+
+    // Friendly labels for subType / access.type. Helpers live in labs.js (always
+    // loaded before map-game.js on pages that render this panel). Fall back to
+    // raw values if the helper isn't present so the panel degrades gracefully.
+    const _displaySubType = typeof displaySubType === 'function'
+        ? displaySubType
+        : (s) => s || '';
+    const _displayAccessType = typeof displayAccessType === 'function'
+        ? displayAccessType
+        : (t) => t || '';
+
+    // Short or endpoint value for the "From" pill (matches single-page logic).
+    const startFromValue = isPublicStart && accessEndpoint
+        ? accessEndpoint
+        : (shortArn(startNode?.arn) || startNode?.label || '');
+    const startFromDebug = isPublicStart && accessEndpoint
+        ? 'attackMap.nodes[start].access.{url|ip|domain}'
+        : 'attackMap.nodes[start].arn';
+    const startTypeLabel = _displaySubType(startNode?.subType);
+    const startAccessTypeLabel = startAccess?.type ? _displayAccessType(startAccess.type) : '';
+
+    const targetFromValue = shortArn(targetNode?.arn) || targetNode?.label || '';
+    const targetTypeLabel = _displaySubType(targetNode?.subType);
+
+    // Wrap a pill in a full-width row so it stretches across the narrow game
+    // panel. Mirrors the single-page objective-flow card layout.
+    const _fullRow = (pillHtml) =>
+        pillHtml ? `<div class="lab-kv-pill-row-full">${pillHtml}</div>` : '';
+
     panelEl.innerHTML = `
         <div class="mg-panel-section">
             <span class="mg-section-label">LAB OVERVIEW</span>
@@ -1692,10 +1747,21 @@ function renderGamePanelOverview(panelEl, state) {
         </div>
         ${startNode ? `
         <div class="mg-panel-section">
-            <span class="mg-section-label">${isPublicStart ? 'STARTING POINT' : 'STARTING PRINCIPAL'}</span>
-            <code class="mg-arn">${escapeHtmlGame(shortArn(startNode.arn) || startNode.label)}${_dbg('attackMap.nodes[start].arn')}</code>
-            ${accessEndpoint ? `<code class="mg-access-url">${escapeHtmlGame(accessEndpoint)}${_dbg('attackMap.nodes[start].access.url/ip/domain')}</code>` : ''}
-            ${isPublicStart ? `<div class="mg-public-access-note">No AWS credentials required</div>` : ''}
+            <span class="mg-section-label">STARTING POINT</span>
+            <div class="lab-kv-pill-stack mg-pill-stack">
+                ${_fullRow(startFromValue
+                    ? labKvPill('From', 'lab-kv-pill-value-lead', startFromValue, startFromDebug, startNode?.arn || startFromValue)
+                    : '')}
+                ${_fullRow(startTypeLabel
+                    ? labKvPill('Type', 'lab-kv-pill-node', startTypeLabel, 'attackMap.nodes[start].subType → displaySubType()')
+                    : '')}
+                ${_fullRow(startNode?.label
+                    ? labKvPill('Name', 'lab-kv-pill-node', startNode.label, 'attackMap.nodes[start].label')
+                    : '')}
+                ${_fullRow(startAccessTypeLabel
+                    ? labKvPill('Initial Access Type', 'lab-kv-pill-node-access', startAccessTypeLabel, 'attackMap.nodes[start].access.type → displayAccessType()')
+                    : '')}
+            </div>
         </div>` : ''}
         ${isPublicStart ? `
         <div class="mg-panel-section">
@@ -1725,7 +1791,18 @@ function renderGamePanelOverview(panelEl, state) {
         ${targetNode ? `
         <div class="mg-panel-section">
             <span class="mg-section-label">TARGET</span>
-            <code class="mg-arn">${escapeHtmlGame(shortArn(targetNode.arn) || targetNode.label)}${_dbg('attackMap.nodes[last].arn')}</code>
+            <div class="lab-kv-pill-stack mg-pill-stack">
+                ${_fullRow(targetFromValue
+                    ? labKvPill('To', 'lab-kv-pill-value-lead', targetFromValue, 'attackMap.nodes[last].arn', targetNode?.arn || targetFromValue)
+                    : '')}
+                ${_fullRow(targetTypeLabel
+                    ? labKvPill('Type', 'lab-kv-pill-node', targetTypeLabel, 'attackMap.nodes[last].subType → displaySubType()')
+                    : '')}
+                ${_fullRow(targetNode?.label
+                    ? labKvPill('Name', 'lab-kv-pill-node', targetNode.label, 'attackMap.nodes[last].label')
+                    : '')}
+                ${_fullRow(labKvPill('Flag Location', 'lab-kv-pill-node-access', '', 'attackMap.nodes[last].flag (placeholder)'))}
+            </div>
         </div>` : ''}
     `;
 }
@@ -1787,37 +1864,63 @@ function renderGamePanelNode(panelEl, state) {
 
     const typeLabel = node.type?.label || 'Node';
     const subType = node.subType || '';
-    const badgeText = subType ? `${typeLabel} / ${subType}` : typeLabel;
+    const _displaySubTypeNode = typeof displaySubType === 'function'
+        ? displaySubType
+        : (s) => s || '';
+    const _displayAccessTypeNode = typeof displayAccessType === 'function'
+        ? displayAccessType
+        : (t) => t || '';
+    const subTypeLabel = _displaySubTypeNode(subType);
 
-    // -- Primary section: node identity --
-    // Build access block for nodes that have an access entry point field
-    let accessBlockHtml = '';
-    if (isFirst && node.access) {
-        const accessTypeLabels = {
-            'public-network': 'PUBLIC NETWORK',
-            'assumed-breach-network': 'INTERNAL NETWORK',
-            'assumed-breach-credentials': 'ASSUMED BREACH',
-        };
-        const accessTypeLabel = accessTypeLabels[node.access.type] || node.access.type?.toUpperCase() || 'NETWORK ACCESS';
-        const accessCssClass = node.access.type === 'public-network' ? 'mg-access-public'
-            : node.access.type === 'assumed-breach-network' ? 'mg-access-internal'
-            : 'mg-access-credentials';
-        const endpoint = node.access.url || node.access.ip || node.access.domain || '';
-        accessBlockHtml = `
-        <div class="mg-access-block">
-            <span class="mg-access-badge ${accessCssClass}">${escapeHtmlGame(accessTypeLabel)}</span>
-            ${endpoint ? `<code class="mg-access-endpoint">${escapeHtmlGame(endpoint)}</code>` : ''}
-        </div>`;
-    }
+    // Section label: Node N / Target Node -- matches the single-page guided
+    // challenge numbering. Node 1 is the start; the N-th non-implicit hop
+    // destination is Node N+1. isTarget flips the label on the final node.
+    const nodePositionLabel = isFirst
+        ? 'NODE 1'
+        : (isLast && node.isTarget)
+            ? 'TARGET NODE'
+            : `NODE ${hopNumber + 1}`;
+
+    // Lead pill key: directional. First node = From, last target = To,
+    // intermediate = At. Value is the network endpoint if this node is an
+    // access entry point, otherwise the short ARN.
+    const leadKey = isFirst ? 'From' : (isLast && node.isTarget) ? 'To' : 'At';
+    const accessEndpoint = node.access?.url || node.access?.ip || node.access?.domain || '';
+    const leadValue = (isFirst && accessEndpoint)
+        ? accessEndpoint
+        : (shortArn(node.arn) || node.label || '');
+    const leadDebug = (isFirst && accessEndpoint)
+        ? 'attackMap.nodes[n].access.{url|ip|domain}'
+        : 'attackMap.nodes[n].arn → shortArn()';
+
+    const initialAccessLabel = (isFirst && node.access?.type)
+        ? _displayAccessTypeNode(node.access.type)
+        : '';
 
     const _dbgN = typeof debugTag === 'function' ? debugTag : () => '';
+    const _fullRowN = (pillHtml) =>
+        pillHtml ? `<div class="lab-kv-pill-row-full">${pillHtml}</div>` : '';
+
     let html = `
         <div class="mg-panel-section">
-            <span class="mg-section-label">${isFirst ? 'STARTING POSITION' : isLast ? 'TARGET REACHED' : `HOP ${hopNumber} DESTINATION`}</span>
-            <span class="mg-type-badge mg-type-${node.type?.type || 'unknown'}">${escapeHtmlGame(badgeText)}${_dbgN('attackMap.nodes[n].type + subType')}</span>
-            <h2 class="mg-panel-title">${escapeHtmlGame(node.label)}${_dbgN('attackMap.nodes[n].label')}</h2>
-            ${node.arn ? `<code class="mg-arn">${escapeHtmlGame(node.arn)}${_dbgN('attackMap.nodes[n].arn')}</code>` : ''}
-            ${accessBlockHtml}
+            <span class="mg-section-label">${escapeHtmlGame(nodePositionLabel)}${_dbgN('attackMap.nodes[n] position')}</span>
+            <div class="lab-kv-pill-stack mg-pill-stack">
+                ${_fullRowN(leadValue
+                    ? labKvPill(leadKey, 'lab-kv-pill-value-lead', leadValue, leadDebug, node.arn || leadValue)
+                    : '')}
+                ${_fullRowN(subTypeLabel
+                    ? labKvPill('Type', 'lab-kv-pill-node', subTypeLabel, 'attackMap.nodes[n].subType → displaySubType()')
+                    : '')}
+                ${_fullRowN(node.label
+                    ? labKvPill('Name', 'lab-kv-pill-node', node.label, 'attackMap.nodes[n].label')
+                    : '')}
+                ${initialAccessLabel
+                    ? _fullRowN(labKvPill('Initial Access Type', 'lab-kv-pill-node-access', initialAccessLabel, 'attackMap.nodes[n].access.type → displayAccessType()'))
+                    : ''}
+                ${(isLast && node.isTarget)
+                    ? _fullRowN(labKvPill('Flag Location', 'lab-kv-pill-node-access', '', 'attackMap.nodes[last].flag (placeholder)'))
+                    : ''}
+            </div>
         </div>`;
 
     // Node description -- about this place
@@ -1855,15 +1958,19 @@ function renderGamePanelCompanion(panelEl, state) {
 
     const typeLabel = companion.type?.label || 'Resource';
     const subType = companion.subType || '';
-    const badgeText = subType ? `${typeLabel} / ${subType}` : typeLabel;
+    const _displaySubTypeCompanion = typeof displaySubType === 'function'
+        ? displaySubType
+        : (s) => s || '';
+    const subTypeLabel = _displaySubTypeCompanion(subType);
+    const badgeText = subTypeLabel ? `${typeLabel} / ${subTypeLabel}` : typeLabel;
 
     const _dbgC = typeof debugTag === 'function' ? debugTag : () => '';
     let html = `
         <div class="mg-panel-section">
             <span class="mg-section-label">RESOURCE ON HOP ${hopNumber}</span>
-            <span class="mg-type-badge mg-type-${companion.type?.type || 'resource'}">${escapeHtmlGame(badgeText)}${_dbgC('attackMap.nodes[n].type + subType')}</span>
+            <span class="mg-type-badge mg-type-${companion.type?.type || 'resource'}">${escapeHtmlGame(badgeText)}${_dbgC('attackMap.nodes[n].type + subType → displaySubType()')}</span>
             <h2 class="mg-panel-title">${escapeHtmlGame(companion.label)}${_dbgC('attackMap.nodes[n].label')}</h2>
-            ${companion.arn ? `<code class="mg-arn">${escapeHtmlGame(companion.arn)}${_dbgC('attackMap.nodes[n].arn')}</code>` : ''}
+            ${companion.arn ? `<code class="mg-arn" title="${escapeHtmlGame(companion.arn)}">${escapeHtmlGame(shortArn(companion.arn))}${_dbgC('attackMap.nodes[n].arn → shortArn()')}</code>` : ''}
         </div>`;
 
     if (companion.description) {
@@ -1910,20 +2017,27 @@ function renderGamePanelEdge(panelEl, state) {
     const hopLabel = edge.implicit ? 'AUTOMATIC STEP' : `HOP ${hopNumber}`;
 
     const _dbgE = typeof debugTag === 'function' ? debugTag : () => '';
+    const _fullRowE = (pillHtml) =>
+        pillHtml ? `<div class="lab-kv-pill-row-full">${pillHtml}</div>` : '';
+
+    // Hop header: same pill-stack layout as the node panels so the two kinds
+    // of panels read as parts of a single visual system. From/To anchor the
+    // hop to the adjacent nodes; Action(s) is the lead pill (violet).
     let html = `
         <div class="mg-panel-section">
             <span class="mg-section-label">${escapeHtmlGame(hopLabel)}</span>
-            <h2 class="mg-panel-title">${escapeHtmlGame(fromLabel)} &rarr; ${escapeHtmlGame(toLabel)}</h2>
+            <div class="lab-kv-pill-stack mg-pill-stack">
+                ${_fullRowE(fromLabel && fromLabel !== '?'
+                    ? labKvPill('From Node', 'lab-kv-pill-node', fromLabel, 'attackMap.edges[n].from → nodes[].label')
+                    : '')}
+                ${_fullRowE(toLabel && toLabel !== '?'
+                    ? labKvPill('To Node', 'lab-kv-pill-node', toLabel, 'attackMap.edges[n].to → nodes[].label')
+                    : '')}
+                ${_fullRowE(edge.label
+                    ? labKvPill('Action(s)', 'lab-kv-pill-value-lead', edge.label, 'attackMap.edges[n].label')
+                    : '')}
+            </div>
         </div>`;
-
-    // Edge label (permission/action required for traversal)
-    if (edge.label) {
-        html += `
-        <div class="mg-panel-section">
-            <span class="mg-section-label">ACTION</span>
-            <code class="mg-edge-label">${escapeHtmlGame(edge.label)}${_dbgE('attackMap.edges[n].label')}</code>
-        </div>`;
-    }
 
     // For implicit edges, show a brief explanation
     if (edge.implicit) {
