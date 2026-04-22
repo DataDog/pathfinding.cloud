@@ -55,12 +55,17 @@ const cloudSprites = {
         }));
         return Promise.all(promises).then(() => { this.loaded = true; });
     },
-    // Draw clouds in the upper portion of the canvas, below the top HUD bar
-    draw(ctx, w, h, seed, hudTopOverride) {
+    // Draw clouds in the upper portion of the canvas, below the top HUD bar.
+    // hudTopOverride moves the top boundary (can be negative so clouds drift
+    // above y=0 — useful when the caller draws the map inside a translated
+    // zone and wants clouds to extend up into the header band above it).
+    // bottomOverride replaces the default cloudMaxY = h * 0.20 so callers can
+    // widen or narrow the cloud band without having to fake the `h` argument.
+    draw(ctx, w, h, seed, hudTopOverride, bottomOverride) {
         if (!this.images.length) return;
         const rng = mapRng(seed || 99);
         const hudTop = hudTopOverride ?? 52;  // generous buffer below top HUD bar
-        const cloudMaxY = h * 0.20;           // clouds confined to top ~20%
+        const cloudMaxY = bottomOverride ?? (h * 0.20);  // default: top ~20% of the map zone
         const count = Math.max(7, Math.floor(w / 100)); // more clouds
         for (let i = 0; i < count; i++) {
             const img = this.images[Math.floor(rng() * this.images.length)];
@@ -556,14 +561,23 @@ function drawGameIslandLabels(ctx, w, h, state) {
             }
         }
 
-        // Label -- always show all island names
+        // Label -- always show all island names. Game mode uses the whimsical
+        // "Startington" / "Targetville" defaults for the start/end islands;
+        // a caller can override those (or the middle labels) by setting
+        // nodes[i].displayLabel. Existing lab flows don't set displayLabel,
+        // so they continue to show the game-mode defaults.
         let label;
-        if (isFirst) label = 'Startington';
-        else if (isLast) label = 'Targetlandia';
-        else {
-            const rawLabel = nodes[i]?.label || '';
-            label = rawLabel.length > 20 ? rawLabel.substring(0, 18) + '...' : rawLabel;
+        const overrideLabel = nodes[i]?.displayLabel || '';
+        if (overrideLabel) {
+            label = overrideLabel;
+        } else if (isFirst) {
+            label = 'Startington';
+        } else if (isLast) {
+            label = 'Targetville';
+        } else {
+            label = nodes[i]?.label || '';
         }
+        if (label.length > 20) label = label.substring(0, 18) + '...';
         if (!label) return;
 
         // Position label below the island's bottom edge (ellipse Y-radius is ~0.42 * islandRadius)
@@ -589,7 +603,14 @@ function drawGameIslandLabels(ctx, w, h, state) {
             // Truncate to 24 chars so it fits in the island plate.
             const accessObj = isFirst ? node?.access : null;
             const rawEndpoint = accessObj?.url || accessObj?.ip || accessObj?.domain || '';
-            const subtitleText = rawEndpoint || arnSuffix;
+            // Allow callers to fully override the subtitle string. Only `undefined`
+            // falls through to the access/arn derivation; explicit '' means "no
+            // subtitle" (caller wanted it blank). Existing labs don't set this
+            // field so they keep using the arn/access logic.
+            const overrideSubtitle = node?.displaySubtitle;
+            const subtitleText = (overrideSubtitle !== undefined)
+                ? overrideSubtitle
+                : (rawEndpoint || arnSuffix);
 
             const nameColor = isFirst ? (p.startFill || '#4ade80') : (p.endFill || '#f59e0b');
 
@@ -2829,18 +2850,28 @@ function buildPlayingButtons(w, h, state) {
 // Draw the capcom-style header (brand + shimmer rule + gold gradient lab name) in canvas,
 // matching the .map-preview-title-overlay CSS used in single page mode exactly.
 // zoneTopY is the top of the 80px header zone (usually 0).
-function drawCapcomHeader(ctx, w, zoneTopY, title) {
-    const BRAND_TEXT = 'PATHFINDING.CLOUD — LABS';
-    const labName = title.toUpperCase();
+//
+// opts (optional, all have sensible defaults so existing callers are unchanged):
+//   brandText: override the small top line (default 'PATHFINDING.CLOUD — LABS')
+//   zoneH:     header zone height in px (default 80)
+//   scale:     multiplies font sizes, gaps, and rule width (default 1).
+//              Used by the hero generator to render the exact same style at
+//              larger sizes.
+function drawCapcomHeader(ctx, w, zoneTopY, title, opts) {
+    const o = opts || {};
+    const BRAND_TEXT = (o.brandText != null ? o.brandText : 'PATHFINDING.CLOUD — LABS');
+    const labName = (title || '').toUpperCase();
+    const scale = o.scale || 1;
 
-    // CSS layout: flex column, centered in 80px zone, gap=0
+    // CSS layout: flex column, centered in zone, gap=0
     // brand (13px) + 5px margin + rule (2px) + 6px margin + lab name (26px) = 52px total
-    const ZONE_H = 80;
-    const BRAND_SIZE = 13;
-    const RULE_H = 2;
-    const LAB_SIZE = 26;
-    const BRAND_GAP = 5;   // margin-bottom on brand (.map-preview-brand margin-bottom: 5px)
-    const RULE_GAP = 6;    // margin-bottom on rule  (.map-preview-rule margin-bottom: 6px)
+    const ZONE_H = o.zoneH || 80;
+    const BRAND_SIZE = Math.round(13 * scale);
+    const RULE_H = Math.max(2, Math.round(2 * scale));
+    const LAB_SIZE = Math.round(26 * scale);
+    const BRAND_GAP = Math.round(5 * scale);   // margin-bottom on brand
+    const RULE_GAP = Math.round(6 * scale);    // margin-bottom on rule
+    const ruleW = Math.round(320 * scale);
 
     const totalH = BRAND_SIZE + BRAND_GAP + RULE_H + RULE_GAP + LAB_SIZE;
     const contentTop = zoneTopY + Math.round((ZONE_H - totalH) / 2);
@@ -2848,23 +2879,22 @@ function drawCapcomHeader(ctx, w, zoneTopY, title) {
     const ruleY    = brandY + BRAND_SIZE + BRAND_GAP;
     const labNameY = ruleY + RULE_H + RULE_GAP;
 
-    // Brand line: font-weight:700 font-size:13px letter-spacing:0.22em color:rgba(255,220,100,0.9) text-shadow:0 0 10px rgba(240,180,40,0.5)
+    // Brand line: font-weight:700 letter-spacing:0.22em color:rgba(255,220,100,0.9) text-shadow:0 0 10px rgba(240,180,40,0.5)
     ctx.save();
-    ctx.font = '700 13px -apple-system, BlinkMacSystemFont, sans-serif';
+    ctx.font = `700 ${BRAND_SIZE}px -apple-system, BlinkMacSystemFont, sans-serif`;
     ctx.letterSpacing = '0.22em';
     ctx.textAlign = 'center';
     ctx.textBaseline = 'top';
     ctx.fillStyle = 'rgba(255, 220, 100, 0.9)';
     ctx.shadowOffsetX = 0;
     ctx.shadowOffsetY = 0;
-    ctx.shadowBlur = 10;
+    ctx.shadowBlur = 10 * scale;
     ctx.shadowColor = 'rgba(240, 180, 40, 0.5)';
     ctx.fillText(BRAND_TEXT, w / 2, brandY);
     ctx.letterSpacing = 'normal';
     ctx.restore();
 
-    // Shimmer rule: width:320px height:2px gradient(90deg,transparent,rgba(240,180,40,0.8),#fff8c0,...) box-shadow:0 0 8px rgba(240,180,40,0.4)
-    const ruleW = 320;
+    // Shimmer rule: gradient(90deg,transparent,rgba(240,180,40,0.8),#fff8c0,...) box-shadow:0 0 8px rgba(240,180,40,0.4)
     const ruleX = (w - ruleW) / 2;
     const ruleGrad = ctx.createLinearGradient(ruleX, 0, ruleX + ruleW, 0);
     ruleGrad.addColorStop(0,    'transparent');
@@ -2876,12 +2906,12 @@ function drawCapcomHeader(ctx, w, zoneTopY, title) {
     ctx.fillStyle = ruleGrad;
     ctx.shadowOffsetX = 0;
     ctx.shadowOffsetY = 0;
-    ctx.shadowBlur = 8;
+    ctx.shadowBlur = 8 * scale;
     ctx.shadowColor = 'rgba(240, 180, 40, 0.4)';
     ctx.fillRect(ruleX, ruleY, ruleW, RULE_H);
     ctx.restore();
 
-    // Lab name: font-weight:900 font-size:26px letter-spacing:0.04em
+    // Lab name: font-weight:900 letter-spacing:0.04em
     //           gradient(180deg,#fff8c0 0%,#f0b030 45%,#c06010 100%)
     //           filter:drop-shadow(2px 3px 0 rgba(0,0,0,0.8))
     const nameGrad = ctx.createLinearGradient(0, labNameY, 0, labNameY + LAB_SIZE);
@@ -2889,13 +2919,13 @@ function drawCapcomHeader(ctx, w, zoneTopY, title) {
     nameGrad.addColorStop(0.45, '#f0b030');
     nameGrad.addColorStop(1,    '#c06010');
     ctx.save();
-    ctx.font = '900 26px -apple-system, BlinkMacSystemFont, sans-serif';
+    ctx.font = `900 ${LAB_SIZE}px -apple-system, BlinkMacSystemFont, sans-serif`;
     ctx.letterSpacing = '0.04em';
     ctx.textAlign = 'center';
     ctx.textBaseline = 'top';
     ctx.fillStyle = nameGrad;
-    ctx.shadowOffsetX = 2;
-    ctx.shadowOffsetY = 3;
+    ctx.shadowOffsetX = 2 * scale;
+    ctx.shadowOffsetY = 3 * scale;
     ctx.shadowBlur = 0;
     ctx.shadowColor = 'rgba(0, 0, 0, 0.8)';
     ctx.fillText(labName, w / 2, labNameY);
@@ -3190,7 +3220,10 @@ function drawEdgeHopLabels(ctx, w, h, state) {
 
         const isVisited = ei <= state.currentEdge;
         const isActive = state.selectedEdge === ei;
-        const label = edge.implicit ? 'Auto' : `Hop ${hopCounter}`;
+        // Allow callers (e.g. the hero generator) to override the default
+        // "Hop N" label by setting edge.displayLabel. Implicit edges always
+        // show "Auto".
+        const label = edge.implicit ? 'Auto' : (edge.displayLabel || `Hop ${hopCounter}`);
 
         ctx.save();
         ctx.font = 'bold 11px -apple-system, BlinkMacSystemFont, sans-serif';
@@ -4684,8 +4717,10 @@ function drawGameMap(ctx, w, h, state) {
     ctx.restore();
 
     // Cloud sprites (pixel-art PNGs). Pass a custom hudTop for variants that push content down.
+    // state._cloudBottom widens the cloud band (used by the single-page / hero
+    // renderers to let clouds layer up into the reserved header zone).
     ctx.save();
-    cloudSprites.draw(ctx, w, h, 99, state._cloudHudTop);
+    cloudSprites.draw(ctx, w, h, 99, state._cloudHudTop, state._cloudBottom);
     ctx.restore();
 
     // Paths (edges) between islands -- always draw all paths visibly
@@ -4759,7 +4794,7 @@ function drawGameMap(ctx, w, h, state) {
         ctx.save();
 
         // Selection ring (dashed circle around selected island) -- skip on first/last
-        // Startington has its own plane indicator; Targetlandia has its flag
+        // Startington has its own plane indicator; Targetville has its flag
         if (isSelected && !isFirst && !isLast) {
             ctx.strokeStyle = p.selectedRing || '#9D4EDD';
             ctx.lineWidth = 2.5;
@@ -4801,7 +4836,7 @@ function drawGameMap(ctx, w, h, state) {
             // (Plane indicator is drawn separately after all islands/companions)
         }
 
-        // Targetlandia flag -- centered on the island, taller pole with waving pennant
+        // Targetville flag -- centered on the island, taller pole with waving pennant
         if (isLast) {
             ctx.save();
             ctx.globalAlpha = 0.3;
@@ -6251,6 +6286,20 @@ function renderStaticMapPreview(containerEl, lab) {
         palette,
         _redraw: null,
         _panelEl: null,
+        // Let clouds drift up into the reserved header zone so they layer
+        // behind the title scrim (same feel as game mode where clouds peek
+        // out from beneath the HUD). Without these overrides clouds sit in a
+        // narrow h*0.20 band inside the map zone and look vertically crammed.
+        //
+        // Values are in translated map-zone coords -- the map is drawn at
+        // ctx.translate(0, mapYOffset). The HTML title overlay ends at
+        // approximately y=100 absolute (14 padding + 17 brand + 7 + 2 + 9 +
+        // 46 lab-name ≈ 95); we set the cloud top boundary to -50 translated
+        // (= 100 absolute) so cloud centers start just below the title text.
+        // The scrim gradient on top will still darken any cloud pixels that
+        // happen to extend into the header zone.
+        _cloudHudTop: -50,
+        _cloudBottom: Math.round(mapH * 0.28),
     };
 
     // Shift islands down into the map zone and clamp above footer+label clearance.
