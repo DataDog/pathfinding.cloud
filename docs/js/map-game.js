@@ -111,6 +111,7 @@ const SUBTYPE_DISPLAY = {
     'bedrock-agent':         'Bedrock AgentCore',
     'apprunner-service':     'App Runner Service',
     'mwaa-environment':      'MWAA Environment',
+    'ssm-parameter':         'SSM Parameter',
 };
 
 // AWS icon sprite loader -- maps node subTypes to official AWS architecture/resource icons
@@ -136,6 +137,7 @@ const awsIconSprites = {
         'bedrock-agent':         '/img/aws-icons/Architecture-Service-Icons_01302026/Arch_Artificial-Intelligence/48/Arch_Amazon-Bedrock_48.png',
         'apprunner-service':     '/img/aws-icons/Architecture-Service-Icons_01302026/Arch_Compute/48/Arch_AWS-App-Runner_48.png',
         'mwaa-environment':      '/img/aws-icons/Architecture-Service-Icons_01302026/Arch_Application-Integration/48/Arch_Amazon-Managed-Workflows-for-Apache-Airflow_48.png',
+        'ssm-parameter':         '/img/aws-icons/Resource-Icons_01302026/Res_Management-Governance/Res_AWS-Systems-Manager_Parameter-Store_48.png',
     },
     // Get (or start loading) the icon for a given subType. Returns Image if ready, null otherwise.
     get(subType) {
@@ -2896,7 +2898,7 @@ function drawStartOverlay(ctx, w, h, state) {
     ctx.fillStyle = p.mutedText;
     ctx.font = '11px -apple-system, BlinkMacSystemFont, sans-serif';
     ctx.textBaseline = 'middle';
-    ctx.fillText('Esc = Pause  |  T = Island style  |  P = Plane style  |  Click island = View details', w / 2, lastBtn.y + lastBtn.h + 24);
+    ctx.fillText('Esc = Pause  |  T = Island style  |  G = Target style  |  P = Plane style  |  Click island = View details', w / 2, lastBtn.y + lastBtn.h + 24);
 
     // Highlight deploy button when active
     if (state.gameViewPhase === 'setup' && deployBtn) {
@@ -3963,6 +3965,7 @@ function renderGameMenu(state) {
                         { keys: ['V'], desc: 'Cycle companion style' },
                         { keys: ['I'], desc: 'Cycle icon style' },
                         { keys: ['T'], desc: 'Cycle island style' },
+                        { keys: ['G'], desc: 'Cycle target island style' },
                         { keys: ['P'], desc: 'Cycle plane style' },
                         { keys: ['R'], desc: 'Reset view' },
                         { keys: ['Ctrl+Scroll'], desc: 'Zoom in / out' },
@@ -4409,6 +4412,7 @@ function parseAttackMapToGameNodes(attackMap) {
             arn: nd.arn || '',
             subType: nd.subType || '',
             access: nd.access || null,
+            isTarget: !!nd.isTarget,
         };
     }
 
@@ -5141,6 +5145,334 @@ const islandStyleRenderers = {
     ruins: drawIslandRuins,
 };
 
+// ---- Target Island Renderers ----
+// Applied only to nodes that have `isTarget: true` in the attack map YAML.
+// Three variants are provided so the user can compare visual treatments
+// via the G keyboard shortcut. Each variant MUST preserve enough island
+// surface for the AWS resource/principal icon to remain readable.
+
+// Golden grass colors -- applied to every target island variant so they
+// stand out from green principal islands and small companion islets.
+const TARGET_GOLD_GRASS = '#d9a842';
+const TARGET_GOLD_GRASS_HIGHLIGHT = 'rgba(255, 220, 120, 0.4)';
+const TARGET_GOLD_GRASS_DARK = '#a87820';
+
+// Gold-tint overlay for classic-plus and fortress variants, where the
+// underlying terrain is drawn in green first. A soft radial gold wash
+// converts the grass to gold while keeping trees/ruins details visible
+// underneath. ellipseScaleX lets the fortress variant widen the tint to
+// match its wider island body.
+function drawTargetGoldGrassTint(ctx, pos, islandRadius, ellipseScaleX = 1) {
+    ctx.save();
+    const rx = islandRadius * 0.82 * ellipseScaleX;
+    const ry = islandRadius * 0.30;
+    const grad = ctx.createRadialGradient(pos.x, pos.y - 2, 0, pos.x, pos.y, rx);
+    grad.addColorStop(0,   'rgba(255, 215, 95, 0.72)');
+    grad.addColorStop(0.55, 'rgba(217, 168, 66, 0.62)');
+    grad.addColorStop(1,   'rgba(168, 120, 32, 0)');
+    ctx.fillStyle = grad;
+    ctx.beginPath();
+    ctx.ellipse(pos.x, pos.y - 1, rx, ry, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
+}
+
+// Variant A: classic-plus -- the natural island terrain (whatever the T-key
+// island style is set to) with extra prominence: a gold shoreline halo,
+// a stone plinth at the flagpole base, and a tall rectangular CTF-style
+// flag. The caller has already drawn the standard terrain for this island.
+function drawTargetOverlayClassicPlus(ctx, pos, islandRadius, p) {
+    const gold = p.endFill || '#f59e0b';
+
+    // Gold shoreline halo -- a faint double ring just outside the sand
+    ctx.save();
+    ctx.strokeStyle = gold;
+    ctx.globalAlpha = 0.32;
+    ctx.lineWidth = 8;
+    ctx.beginPath();
+    ctx.ellipse(pos.x, pos.y, islandRadius * 1.18, islandRadius * 0.46, 0, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.globalAlpha = 0.65;
+    ctx.lineWidth = 2.5;
+    ctx.stroke();
+    ctx.restore();
+
+    // Stone plinth at the base of the flagpole
+    const plinthCx = pos.x;
+    const plinthCy = pos.y - 1;
+    const plinthW = 14;
+    const plinthH = 7;
+    ctx.save();
+    ctx.fillStyle = 'rgba(0,0,0,0.28)';
+    ctx.fillRect(plinthCx - plinthW / 2 + 1, plinthCy + 1, plinthW, plinthH);
+    ctx.fillStyle = '#8a8070';
+    ctx.fillRect(plinthCx - plinthW / 2, plinthCy, plinthW, plinthH);
+    ctx.fillStyle = '#aaa090';
+    ctx.fillRect(plinthCx - plinthW / 2, plinthCy, plinthW, 2);
+    ctx.fillStyle = '#6a6050';
+    ctx.fillRect(plinthCx - plinthW / 2, plinthCy + plinthH - 1, plinthW, 1);
+    ctx.restore();
+
+    // Tall flagpole with rectangular CTF-style banner
+    const poleX = pos.x;
+    const poleBase = plinthCy - 1;
+    const poleTop = pos.y - 66;
+    ctx.save();
+    ctx.strokeStyle = 'rgba(0,0,0,0.28)';
+    ctx.lineWidth = 3.5;
+    ctx.beginPath(); ctx.moveTo(poleX + 1, poleBase + 1); ctx.lineTo(poleX + 1, poleTop + 1); ctx.stroke();
+    ctx.strokeStyle = p.flagPole || '#5a4030';
+    ctx.lineWidth = 2.5;
+    ctx.beginPath(); ctx.moveTo(poleX, poleBase); ctx.lineTo(poleX, poleTop); ctx.stroke();
+    ctx.fillStyle = gold;
+    ctx.beginPath(); ctx.arc(poleX, poleTop - 1, 3.5, 0, Math.PI * 2); ctx.fill();
+
+    const flagW = 22;
+    const flagH = 16;
+    const flagY = poleTop + 2;
+    ctx.fillStyle = p.flagColor || '#dc2626';
+    ctx.beginPath();
+    ctx.moveTo(poleX + 1, flagY);
+    ctx.quadraticCurveTo(poleX + flagW * 0.55, flagY + 2.5, poleX + flagW, flagY + 4);
+    ctx.lineTo(poleX + flagW - 2, flagY + flagH);
+    ctx.quadraticCurveTo(poleX + flagW * 0.45, flagY + flagH - 2, poleX + 1, flagY + flagH);
+    ctx.closePath();
+    ctx.fill();
+    ctx.fillStyle = 'rgba(0,0,0,0.25)';
+    ctx.fillRect(poleX, flagY, 1.5, flagH);
+    ctx.fillStyle = '#ffffff';
+    ctx.font = 'bold 11px -apple-system, BlinkMacSystemFont, sans-serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText('F', poleX + flagW * 0.55, flagY + flagH * 0.55);
+    ctx.restore();
+}
+
+// Variant B: flag-shape -- replaces the natural island silhouette with a
+// rectangle-plus-triangular-notch that reads as "a flag laid flat". The
+// caller must NOT draw standard terrain first; this function draws its own
+// full island body using the same palette layers.
+// Dimensions: roughly square-ish (a little wider than tall) so the shape
+// still reads as a flag without being an awkward thin ribbon.
+// Grass is gold so target islands read as distinct from principal islands.
+function drawTargetIslandFlagShape(ctx, pos, islandRadius, seed, p) {
+    // 25% smaller than the original flag dimensions while preserving the
+    // square-ish ratio so the silhouette still reads as a flag.
+    const halfW = islandRadius * 0.71;
+    const halfH = islandRadius * 0.44;
+    const notch = islandRadius * 0.23;
+
+    // Five-point flag polygon (clockwise from top-left).
+    // `offsetY` lets the shore/cliff layers drop down for depth, and
+    // `shrinkW`/`shrinkH` shrink the polygon inward for inner grass layers.
+    const flagPoly = (offsetX, offsetY, shrinkW, shrinkH) => [
+        { x: pos.x - halfW + shrinkW + offsetX, y: pos.y - halfH + shrinkH + offsetY },
+        { x: pos.x + halfW - shrinkW + offsetX, y: pos.y - halfH + shrinkH + offsetY },
+        { x: pos.x + halfW - shrinkW - notch + offsetX, y: pos.y + offsetY },
+        { x: pos.x + halfW - shrinkW + offsetX, y: pos.y + halfH - shrinkH + offsetY },
+        { x: pos.x - halfW + shrinkW + offsetX, y: pos.y + halfH - shrinkH + offsetY },
+    ];
+
+    const fillPoly = (pts) => {
+        ctx.beginPath();
+        ctx.moveTo(pts[0].x, pts[0].y);
+        for (let j = 1; j < pts.length; j++) ctx.lineTo(pts[j].x, pts[j].y);
+        ctx.closePath();
+        ctx.fill();
+    };
+
+    // Deep shadow for pronounced 3D depth (matches the principal-island
+    // wooded terrain so the flag island sits on the water the same way).
+    ctx.fillStyle = 'rgba(0,0,0,0.22)';
+    fillPoly(flagPoly(4, 11, 0, 0));
+    // Outer cliff layer -- darker stone beneath the visible cliff face
+    ctx.fillStyle = '#5a4a30';
+    fillPoly(flagPoly(1, 7, 0, 0));
+    // Inner cliff face
+    ctx.fillStyle = p.cliffDark;
+    fillPoly(flagPoly(0, 4, 0, 0));
+    // Shore (sand)
+    ctx.fillStyle = p.sandLight;
+    fillPoly(flagPoly(0, 0, 0, 0));
+    // Golden grass layer -- shrunk inward. Warm ochre reads as "goal" and
+    // differentiates target islands from principal/companion islands.
+    ctx.fillStyle = TARGET_GOLD_GRASS;
+    fillPoly(flagPoly(0, 0, islandRadius * 0.13, islandRadius * 0.09));
+    // Inner grass highlight -- brighter gold for sun-caught top surface
+    ctx.fillStyle = TARGET_GOLD_GRASS_HIGHLIGHT;
+    fillPoly(flagPoly(0, -1, islandRadius * 0.32, islandRadius * 0.18));
+
+    // Slightly opaque red trim around the shore edge of the flag shape --
+    // classic flag color to complement the golden grass without
+    // overwhelming it.
+    ctx.save();
+    ctx.globalAlpha = 0.6;
+    ctx.strokeStyle = '#c93030';
+    ctx.lineWidth = 2.2;
+    ctx.beginPath();
+    const trim = flagPoly(0, 0, 0, 0);
+    ctx.moveTo(trim[0].x, trim[0].y);
+    for (let j = 1; j < trim.length; j++) ctx.lineTo(trim[j].x, trim[j].y);
+    ctx.closePath();
+    ctx.stroke();
+    ctx.restore();
+}
+
+// Variant C: fortress -- replaces the natural island silhouette with a
+// WIDER island so the resource-type banner (left half) and the castle with
+// flag (right half) fit side by side without occluding each other. This
+// function draws the full island body, gold grass, banner (using the
+// standard banner-icon style), and castle. The caller must NOT draw the
+// standard terrain or icon for this island; this function is authoritative.
+// Island width multiplier -- bumps the horizontal radius so banner + castle
+// fit side by side. Height stays at the default islandRadius proportions.
+const TARGET_FORTRESS_WIDTH_SCALE = 1.45;
+
+function drawTargetIslandFortress(ctx, pos, islandRadius, seed, p, node) {
+    const wScale = TARGET_FORTRESS_WIDTH_SCALE;
+    const shoreRx = islandRadius * 1.1 * wScale;
+    const shoreRy = islandRadius * 0.42;
+    const rockRx  = islandRadius * 0.9 * wScale;
+    const rockRy  = islandRadius * 0.35;
+    const innerRx = islandRadius * 0.65 * wScale;
+    const innerRy = islandRadius * 0.24;
+
+    // Wider shore / cliff / grass layers. Reuses the same procedural
+    // shape generator as the classic terrain so the silhouette still has
+    // organic noise rather than a perfect ellipse.
+    const shore = generateIslandShape(pos.x, pos.y, shoreRx, shoreRy, seed, 24);
+    const rock  = generateIslandShape(pos.x, pos.y, rockRx,  rockRy,  seed + 1, 24);
+    const inner = generateIslandShape(pos.x, pos.y - 1, innerRx, innerRy, seed + 2, 20);
+
+    // Cliff shadow
+    ctx.fillStyle = 'rgba(0,0,0,0.18)';
+    drawSmoothShape(ctx, shore.map(pt => ({ x: pt.x + 3, y: pt.y + 8 })));
+    ctx.fill();
+    // Cliff face
+    ctx.fillStyle = p.cliffDark;
+    drawSmoothShape(ctx, shore.map(pt => ({ x: pt.x, y: pt.y + 4 })));
+    ctx.fill();
+    // Shore ring
+    ctx.fillStyle = p.sandLight;
+    drawSmoothShape(ctx, shore);
+    ctx.fill();
+    // Green base (will be tinted gold by the grass overlay below)
+    ctx.fillStyle = p.islandGreenB;
+    drawSmoothShape(ctx, rock);
+    ctx.fill();
+    // Inner highlight
+    ctx.fillStyle = p.grassHighlight;
+    drawSmoothShape(ctx, inner);
+    ctx.fill();
+
+    // Golden grass tint across the wider body
+    drawTargetGoldGrassTint(ctx, pos, islandRadius, wScale);
+
+    // ---- Banner on the LEFT half ----
+    // drawIconBanner draws relative to its pos argument, so shifting pos
+    // to the left moves the banner, posts, and logo as a unit. We scale
+    // the perceived radius slightly smaller so the banner stays compact
+    // and leaves visual room for the castle on the right.
+    const halfGap = islandRadius * 0.62;
+    const bannerPos = { x: pos.x - halfGap, y: pos.y };
+    const bannerRadius = islandRadius * 0.78;
+    drawIconBanner(ctx, bannerPos, bannerRadius, node, p);
+
+    // ---- Castle on the RIGHT half ----
+    const castleCx = pos.x + halfGap;
+    drawTargetCastleAt(ctx, castleCx, pos.y, islandRadius * 0.82, p);
+}
+
+// Shared castle drawing helper used by the fortress target variant. Takes
+// a center point and an effective radius so the scale matches the right
+// half of the wider fortress island.
+function drawTargetCastleAt(ctx, cx, cy, radius, p) {
+    const gold = p.endFill || '#f59e0b';
+    const wallColor = '#8a7a5a';
+    const wallDark = '#6a5a3a';
+    const wallShadow = 'rgba(0,0,0,0.28)';
+
+    // Crenellated wall fitted to the right half of the island
+    const wallW = radius * 0.95;
+    const wallH = radius * 0.24;
+    const wallX = cx - wallW / 2;
+    const wallY = cy - wallH * 0.35;
+
+    ctx.save();
+    ctx.fillStyle = wallShadow;
+    ctx.fillRect(wallX + 2, wallY + wallH, wallW, 4);
+    ctx.fillStyle = wallColor;
+    ctx.fillRect(wallX, wallY, wallW, wallH);
+    ctx.fillStyle = wallDark;
+    ctx.fillRect(wallX, wallY + wallH - 3, wallW, 3);
+
+    const merlonCount = 6;
+    const merlonGap = wallW / (merlonCount * 2 - 1);
+    const merlonH = wallH * 0.42;
+    for (let m = 0; m < merlonCount; m++) {
+        const mx = wallX + m * merlonGap * 2;
+        ctx.fillStyle = wallColor;
+        ctx.fillRect(mx, wallY - merlonH, merlonGap, merlonH);
+        ctx.fillStyle = wallDark;
+        ctx.fillRect(mx, wallY - merlonH, merlonGap, 2);
+    }
+    ctx.restore();
+
+    // Central tower rising above the wall
+    const towerW = wallW * 0.26;
+    const towerH = wallH * 2.0;
+    const towerX = cx - towerW / 2;
+    const towerY = wallY - towerH * 0.6;
+
+    ctx.save();
+    ctx.fillStyle = wallShadow;
+    ctx.fillRect(towerX + 2, towerY + 2, towerW, towerH);
+    ctx.fillStyle = wallColor;
+    ctx.fillRect(towerX, towerY, towerW, towerH);
+    ctx.fillStyle = wallDark;
+    ctx.fillRect(towerX, towerY + towerH - 3, towerW, 3);
+
+    const tMerlonCount = 3;
+    const tMerlonGap = towerW / (tMerlonCount * 2 - 1);
+    const tMerlonH = towerH * 0.14;
+    for (let m = 0; m < tMerlonCount; m++) {
+        const mx = towerX + m * tMerlonGap * 2;
+        ctx.fillStyle = wallColor;
+        ctx.fillRect(mx, towerY - tMerlonH, tMerlonGap, tMerlonH);
+    }
+    ctx.fillStyle = '#2a2015';
+    ctx.fillRect(cx - 1, towerY + towerH * 0.3, 2, towerH * 0.22);
+    ctx.restore();
+
+    // Flagpole from the tower top with a waving red pennant bearing "F"
+    const poleX = cx;
+    const poleBase = towerY - tMerlonH * 0.5;
+    const poleTop = poleBase - 32;
+    ctx.save();
+    ctx.strokeStyle = 'rgba(0,0,0,0.28)';
+    ctx.lineWidth = 3;
+    ctx.beginPath(); ctx.moveTo(poleX + 1, poleBase + 1); ctx.lineTo(poleX + 1, poleTop + 1); ctx.stroke();
+    ctx.strokeStyle = p.flagPole || '#5a4030';
+    ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.moveTo(poleX, poleBase); ctx.lineTo(poleX, poleTop); ctx.stroke();
+    ctx.fillStyle = gold;
+    ctx.beginPath(); ctx.arc(poleX, poleTop - 1, 3, 0, Math.PI * 2); ctx.fill();
+
+    ctx.fillStyle = p.flagColor || '#dc2626';
+    ctx.beginPath();
+    ctx.moveTo(poleX + 1, poleTop);
+    ctx.quadraticCurveTo(poleX + 16, poleTop + 3, poleX + 24, poleTop + 9);
+    ctx.lineTo(poleX + 1, poleTop + 18);
+    ctx.closePath();
+    ctx.fill();
+    ctx.fillStyle = '#ffffff';
+    ctx.font = 'bold 10px -apple-system, BlinkMacSystemFont, sans-serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText('F', poleX + 9, poleTop + 8);
+    ctx.restore();
+}
+
 // Draw the full base map: ocean/sky, clouds, paths between islands, and islands
 function drawGameMap(ctx, w, h, state) {
     const p = state.palette;
@@ -5261,62 +5593,65 @@ function drawGameMap(ctx, w, h, state) {
         const isFirst = i === 0;
         const isLast = i === lastIdx;
         const seed = i * 997 + 1;  // stable per-island seed, independent of position
+        const isTargetIsland = !!nodes[i]?.isTarget;
+        const targetStyle = state.targetStyle || 'flag-shape';
 
         ctx.save();
 
-        // Island terrain layers -- dispatched by style
-        const drawIslandTerrain = islandStyleRenderers[state.islandStyle] || drawIslandClassic;
-        drawIslandTerrain(ctx, pos, islandRadius, seed, p, isFirst, isLast);
+        // Island terrain / icon dispatch.
+        //
+        // Target islands short-circuit the standard draw path when they
+        // need to replace the silhouette entirely (flag-shape) or when
+        // they draw their own icon placement (fortress: banner+castle
+        // side by side). For classic-plus, the standard terrain renders
+        // first and we tint the grass gold before the icon draws.
+        const isFortressTarget = isTargetIsland && targetStyle === 'fortress';
+        const isFlagShapeTarget = isTargetIsland && targetStyle === 'flag-shape';
+
+        if (isFlagShapeTarget) {
+            // Flag-shape draws its own terrain (with gold grass built in)
+            // and its own mast. Normal icon dispatch still runs below.
+            drawTargetIslandFlagShape(ctx, pos, islandRadius, seed, p);
+        } else if (isFortressTarget) {
+            // Fortress draws a wider island body with gold grass, banner
+            // on the left half, and castle on the right half. It is
+            // authoritative -- the standard icon dispatch is skipped.
+            drawTargetIslandFortress(ctx, pos, islandRadius, seed, p, nodes[i]);
+        } else {
+            const drawIslandTerrain = islandStyleRenderers[state.islandStyle] || drawIslandClassic;
+            drawIslandTerrain(ctx, pos, islandRadius, seed, p, isFirst, isLast);
+            // classic-plus target: tint grass gold before the icon draws
+            // so the icon sits atop the gold field.
+            if (isTargetIsland && targetStyle === 'classic-plus') {
+                drawTargetGoldGrassTint(ctx, pos, islandRadius);
+            }
+        }
 
         // AWS icon on the island -- dispatch based on the active on-island
-        // style. 'on-island' draws a flat centered logo; 'building', 'banner',
-        // and 'crest' draw a decorative structure with the logo mounted on it
-        // as signage so the service identity stands out without taking up
-        // horizontal label-plate space.
-        switch (state.effectiveIconStyle) {
-            case 'on-island': drawIconOnIsland(ctx, pos, islandRadius, nodes[i]);        break;
-            case 'building':  drawIconBuilding(ctx,  pos, islandRadius, nodes[i], p);    break;
-            case 'banner':    drawIconBanner(ctx,    pos, islandRadius, nodes[i], p);    break;
-            case 'crest':     drawIconCrest(ctx,     pos, islandRadius, nodes[i], p);    break;
+        // style. Fortress target handles its own icon internally, so skip.
+        // Flag-shape target gets a 25% smaller icon to match its smaller
+        // island footprint.
+        if (!isFortressTarget) {
+            const iconRadius = isFlagShapeTarget ? islandRadius * 0.60 : islandRadius;
+            switch (state.effectiveIconStyle) {
+                case 'on-island': drawIconOnIsland(ctx, pos, iconRadius, nodes[i]);        break;
+                case 'building':  drawIconBuilding(ctx,  pos, iconRadius, nodes[i], p);    break;
+                case 'banner':    drawIconBanner(ctx,    pos, iconRadius, nodes[i], p);    break;
+                case 'crest':     drawIconCrest(ctx,     pos, iconRadius, nodes[i], p);    break;
+            }
         }
 
         // Startington: the plane indicator is drawn separately after all
         // islands/companions; no additional in-loop decoration needed.
 
-        // Targetville flag -- centered on the island, taller pole with waving pennant
-        if (isLast) {
-            // Flag pole centered on island
-            const poleX = pos.x;
-            const poleBase = pos.y - 4;
-            const poleTop = pos.y - 36;
-            // Pole shadow
-            ctx.strokeStyle = 'rgba(0,0,0,0.2)';
-            ctx.lineWidth = 3;
-            ctx.beginPath(); ctx.moveTo(poleX + 1, poleBase + 1); ctx.lineTo(poleX + 1, poleTop + 1); ctx.stroke();
-            // Pole
-            ctx.strokeStyle = p.flagPole;
-            ctx.lineWidth = 2.5;
-            ctx.beginPath(); ctx.moveTo(poleX, poleBase); ctx.lineTo(poleX, poleTop); ctx.stroke();
-            // Pole cap (gold ball)
-            ctx.fillStyle = p.endFill || '#f59e0b';
-            ctx.beginPath(); ctx.arc(poleX, poleTop - 1, 3, 0, Math.PI * 2); ctx.fill();
-            // Triangular pennant with subtle wave
-            ctx.fillStyle = p.flagColor;
-            ctx.beginPath();
-            ctx.moveTo(poleX + 1, poleTop);
-            ctx.quadraticCurveTo(poleX + 12, poleTop + 2, poleX + 18, poleTop + 7);
-            ctx.lineTo(poleX + 1, poleTop + 14);
-            ctx.closePath();
-            ctx.fill();
-            // Pennant highlight stripe
-            ctx.fillStyle = 'rgba(255,255,255,0.2)';
-            ctx.beginPath();
-            ctx.moveTo(poleX + 1, poleTop + 2);
-            ctx.lineTo(poleX + 10, poleTop + 5);
-            ctx.lineTo(poleX + 1, poleTop + 6);
-            ctx.closePath();
-            ctx.fill();
+        // Target-island decoration -- only drawn when the YAML explicitly
+        // marks a node `isTarget: true`. The flag is the visual signal
+        // that "this is the goal of the lab / where the CTF flag lives".
+        if (isTargetIsland && targetStyle === 'classic-plus') {
+            drawTargetOverlayClassicPlus(ctx, pos, islandRadius, p);
         }
+        // flag-shape and fortress variants draw their own flags inside
+        // their island renderers above.
 
         // Label -- positioned below the island bottom edge
         const label = nodes[i]?.label || '';
@@ -5464,6 +5799,7 @@ function initMapGame(mapId, nodes, edges, companions, lab) {
         companionStyle: 'islet', // 'ship' | 'islet' | 'note'
         iconStyle: 'banner',  // 'on-island' | 'below-label' | 'off' | 'building' | 'banner' | 'crest' -- toggled with I key
         islandStyle: 'wooded', // 'classic' | 'wooded' | 'tropical' | 'ruins' -- toggled with T key
+        targetStyle: 'flag-shape', // 'classic-plus' | 'flag-shape' | 'fortress' -- toggled with G key
         planeStyle: 'helicopter',    // 'jet' | 'biplane' | 'seaplane' | 'helicopter' -- toggled with P key
         nodes,
         edges: edges || [],
@@ -5911,6 +6247,14 @@ function initMapGame(mapId, nodes, edges, companions, lab) {
             const islandStyles = ['classic', 'wooded', 'tropical', 'ruins'];
             const currentIdx = islandStyles.indexOf(state.islandStyle);
             state.islandStyle = islandStyles[(currentIdx + 1) % islandStyles.length];
+            redraw();
+        }
+        // G key cycles target-island visual style (classic-plus -> flag-shape -> fortress)
+        // Applies only to nodes flagged isTarget: true in the attack map YAML.
+        if ((e.key === 'g' || e.key === 'G') && (state.screen === 'playing' || state.screen === 'complete')) {
+            const targetStyles = ['classic-plus', 'flag-shape', 'fortress'];
+            const currentIdx = targetStyles.indexOf(state.targetStyle);
+            state.targetStyle = targetStyles[(currentIdx + 1) % targetStyles.length];
             redraw();
         }
         // P key toggles plane visual style (jet -> biplane -> seaplane -> helicopter)
@@ -6717,6 +7061,7 @@ function renderStaticMapPreview(containerEl, lab) {
         companionStyle: 'islet',
         iconStyle: 'banner',
         islandStyle: 'wooded',
+        targetStyle: 'flag-shape',
         planeStyle: 'helicopter',
         nodes: mapNodes,
         edges: mapEdges,
