@@ -504,6 +504,87 @@ function setupEventListeners() {
     if (viewTableBtn) viewTableBtn.addEventListener('click', () => switchView('table'));
 
     window.addEventListener('popstate', () => routeFromURL());
+    initPillFilters();
+}
+
+function initPillFilters() {
+    // Pill button click: toggle dropdown open/close
+    document.querySelectorAll('.filter-pill').forEach(pill => {
+        pill.addEventListener('click', e => {
+            e.stopPropagation();
+            const filterId = pill.dataset.filter;
+            const menu = document.getElementById(`menu-${filterId}`);
+            const wrapper = pill.closest('.filter-pill-wrapper');
+            const isOpen = wrapper.classList.contains('open');
+            closeAllPillMenus();
+            if (!isOpen) {
+                wrapper.classList.add('open');
+                menu.classList.add('open');
+            }
+        });
+    });
+
+    // Option click: use event delegation on .filters so dynamic items work too
+    const filtersEl = document.querySelector('.filters');
+    if (filtersEl) {
+        filtersEl.addEventListener('click', e => {
+            const item = e.target.closest('.filter-pill-item');
+            if (!item) return;
+            e.stopPropagation();
+            const menu = item.closest('.filter-pill-menu');
+            const wrapper = item.closest('.filter-pill-wrapper');
+            const pill = wrapper.querySelector('.filter-pill');
+            const filterId = pill.dataset.filter;
+            const select = document.getElementById(filterId);
+            const valueEl = pill.querySelector('.filter-pill-value');
+
+            menu.querySelectorAll('.filter-pill-item').forEach(i => i.classList.remove('selected'));
+            item.classList.add('selected');
+            valueEl.textContent = item.textContent;
+            pill.classList.toggle('is-filtered', item.dataset.value !== '');
+
+            select.value = item.dataset.value;
+            select.dispatchEvent(new Event('change'));
+            closeAllPillMenus();
+        });
+    }
+
+    // Close on outside click
+    document.addEventListener('click', closeAllPillMenus);
+}
+
+function closeAllPillMenus() {
+    document.querySelectorAll('.filter-pill-wrapper.open').forEach(w => w.classList.remove('open'));
+    document.querySelectorAll('.filter-pill-menu.open').forEach(m => m.classList.remove('open'));
+}
+
+function resetPillValues() {
+    document.querySelectorAll('.filter-pill-wrapper').forEach(wrapper => {
+        const pill = wrapper.querySelector('.filter-pill');
+        const menu = wrapper.querySelector('.filter-pill-menu');
+        if (!pill || !menu) return;
+        const valueEl = pill.querySelector('.filter-pill-value');
+        const firstItem = menu.querySelector('.filter-pill-item');
+        if (!firstItem || !valueEl) return;
+        menu.querySelectorAll('.filter-pill-item').forEach(i => i.classList.remove('selected'));
+        firstItem.classList.add('selected');
+        valueEl.textContent = firstItem.textContent;
+        pill.classList.remove('is-filtered');
+    });
+}
+
+// Build pill menu items from an options array [{value, label}]
+function buildPillMenu(menuId, options) {
+    const menu = document.getElementById(menuId);
+    if (!menu) return;
+    menu.innerHTML = '';
+    options.forEach((opt, i) => {
+        const item = document.createElement('div');
+        item.className = 'filter-pill-item' + (i === 0 ? ' selected' : '');
+        item.dataset.value = opt.value;
+        item.textContent = opt.label;
+        menu.appendChild(item);
+    });
 }
 
 // Populate the hops filter dropdown with all distinct hop counts from labs data
@@ -521,6 +602,12 @@ function populateHopsFilter(labs) {
         opt.textContent = count === 0 ? '0 (self)' : `${count} hop${count === 1 ? '' : 's'}`;
         hopsFilter.appendChild(opt);
     });
+    const pillOpts = [{ value: '', label: 'Any' }];
+    sorted.forEach(count => pillOpts.push({
+        value: String(count),
+        label: count === 0 ? '0 (self)' : `${count} hop${count === 1 ? '' : 's'}`
+    }));
+    buildPillMenu('menu-hops-filter', pillOpts);
 }
 
 // Populate the service filter dropdown from labs data
@@ -537,6 +624,12 @@ function populateServiceFilter(labs) {
         opt.textContent = cfg.label;
         serviceFilter.appendChild(opt);
     });
+    const pillOpts = [{ value: '', label: 'Any' }];
+    sorted.forEach(service => {
+        const cfg = awsServiceConfig[service] || { label: service.toUpperCase() };
+        pillOpts.push({ value: service, label: cfg.label });
+    });
+    buildPillMenu('menu-service-filter', pillOpts);
 }
 
 // Data loading
@@ -735,6 +828,7 @@ function resetFilters() {
     serviceFilter.value = '';
     onlineFilter.value = '';
     filteredLabs = allLabs;
+    resetPillValues();
     updateStats();
     renderLabs();
 }

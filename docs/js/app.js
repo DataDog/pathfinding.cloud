@@ -117,6 +117,84 @@ function setupEventListeners() {
     viewCardsBtn.addEventListener('click', () => switchView('cards'));
     viewTableBtn.addEventListener('click', () => switchView('table'));
     themeToggle.addEventListener('click', toggleTheme);
+    initPillFilters();
+}
+
+function initPillFilters() {
+    document.querySelectorAll('.filter-pill').forEach(pill => {
+        pill.addEventListener('click', e => {
+            e.stopPropagation();
+            const filterId = pill.dataset.filter;
+            const menu = document.getElementById(`menu-${filterId}`);
+            const wrapper = pill.closest('.filter-pill-wrapper');
+            const isOpen = wrapper.classList.contains('open');
+            closeAllPillMenus();
+            if (!isOpen) {
+                wrapper.classList.add('open');
+                menu.classList.add('open');
+            }
+        });
+    });
+
+    const filtersEl = document.querySelector('.filters');
+    if (filtersEl) {
+        filtersEl.addEventListener('click', e => {
+            const item = e.target.closest('.filter-pill-item');
+            if (!item) return;
+            e.stopPropagation();
+            const menu = item.closest('.filter-pill-menu');
+            const wrapper = item.closest('.filter-pill-wrapper');
+            const pill = wrapper.querySelector('.filter-pill');
+            const filterId = pill.dataset.filter;
+            const select = document.getElementById(filterId);
+            const valueEl = pill.querySelector('.filter-pill-value');
+
+            menu.querySelectorAll('.filter-pill-item').forEach(i => i.classList.remove('selected'));
+            item.classList.add('selected');
+            valueEl.textContent = item.textContent;
+            pill.classList.toggle('is-filtered', item.dataset.value !== '');
+
+            select.value = item.dataset.value;
+            select.dispatchEvent(new Event('change'));
+            closeAllPillMenus();
+        });
+    }
+
+    document.addEventListener('click', closeAllPillMenus);
+}
+
+function closeAllPillMenus() {
+    document.querySelectorAll('.filter-pill-wrapper.open').forEach(w => w.classList.remove('open'));
+    document.querySelectorAll('.filter-pill-menu.open').forEach(m => m.classList.remove('open'));
+}
+
+function resetPillValues() {
+    document.querySelectorAll('.filter-pill-wrapper').forEach(wrapper => {
+        const pill = wrapper.querySelector('.filter-pill');
+        const menu = wrapper.querySelector('.filter-pill-menu');
+        if (!pill || !menu) return;
+        const valueEl = pill.querySelector('.filter-pill-value');
+        const firstItem = menu.querySelector('.filter-pill-item');
+        if (!firstItem || !valueEl) return;
+        menu.querySelectorAll('.filter-pill-item').forEach(i => i.classList.remove('selected'));
+        firstItem.classList.add('selected');
+        valueEl.textContent = firstItem.textContent;
+        pill.classList.remove('is-filtered');
+    });
+}
+
+function buildPillMenu(menuId, options) {
+    const menu = document.getElementById(menuId);
+    if (!menu) return;
+    menu.innerHTML = '';
+    options.forEach((opt, i) => {
+        const item = document.createElement('div');
+        item.className = 'filter-pill-item' + (i === 0 ? ' selected' : '');
+        item.dataset.value = opt.value;
+        item.textContent = opt.label;
+        menu.appendChild(item);
+    });
+}
 
     // Handle browser back/forward navigation
     window.addEventListener('popstate', handlePopState);
@@ -512,12 +590,17 @@ function populateServiceFilter() {
     });
 
     serviceFilter.innerHTML = '<option value="">All Services</option>';
-    Array.from(services).sort().forEach(service => {
+    const sorted = Array.from(services).sort();
+    sorted.forEach(service => {
         const option = document.createElement('option');
         option.value = service;
         option.textContent = service.toUpperCase();
         serviceFilter.appendChild(option);
     });
+
+    const pillOpts = [{ value: '', label: 'Any' }];
+    sorted.forEach(service => pillOpts.push({ value: service, label: service.toUpperCase() }));
+    buildPillMenu('menu-service-filter', pillOpts);
 }
 
 // Apply filters
@@ -583,6 +666,7 @@ function resetFilters() {
     serviceFilter.value = '';
     detectionFilter.value = '';
     lineageFilter.value = '';
+    resetPillValues();
     applyFilters();
 }
 
