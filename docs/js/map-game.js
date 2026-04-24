@@ -4413,6 +4413,7 @@ function parseAttackMapToGameNodes(attackMap) {
             subType: nd.subType || '',
             access: nd.access || null,
             isTarget: !!nd.isTarget,
+            isAdmin: !!nd.isAdmin,
         };
     }
 
@@ -5473,6 +5474,252 @@ function drawTargetCastleAt(ctx, cx, cy, radius, p) {
     ctx.restore();
 }
 
+// Draw small decorative bling icons pinned around a target island perimeter.
+// Items: gold stars, mini flags, tiny rainbow arc, trophy cup, crown.
+// Each pin breathes (gentle scale pulse) independently via Date.now().
+function drawTargetIslandBling(ctx, pos, islandRadius) {
+    // Base icon size scales with island but stays readable at small radii.
+    const bs = Math.max(8, Math.min(16, islandRadius * 0.155));
+
+    // angle: radians from center (canvas y-down; negative = upper half).
+    // dist: multiple of islandRadius. freq/phase drive the breathing animation.
+    const pins = [
+        { angle: -Math.PI * 0.92, dist: 0.92, type: 'flag'    },
+        { angle: -Math.PI * 0.72, dist: 0.96, type: 'star'    },
+        { angle: -Math.PI * 0.50, dist: 1.00, type: 'rainbow' },
+        { angle: -Math.PI * 0.28, dist: 0.96, type: 'star'    },
+        { angle: -Math.PI * 0.08, dist: 0.92, type: 'trophy'  },
+        { angle:  Math.PI * 0.08, dist: 0.92, type: 'flag'    },
+        { angle: -Math.PI * 1.10, dist: 0.92, type: 'crown'   },
+        { angle: -Math.PI * 0.38, dist: 1.02, type: 'star'    },
+        { angle: -Math.PI * 0.62, dist: 1.02, type: 'flag'    },
+    ];
+
+    for (const pin of pins) {
+        const bx = pos.x + Math.cos(pin.angle) * islandRadius * pin.dist;
+        const by = pos.y + Math.sin(pin.angle) * islandRadius * pin.dist;
+        const s = bs;
+
+        ctx.save();
+        ctx.translate(bx, by);
+
+        switch (pin.type) {
+            case 'star': {
+                // 5-pointed gold star.
+                const outerR = s * 0.75;
+                const innerR = outerR * 0.42;
+                ctx.beginPath();
+                for (let i = 0; i < 10; i++) {
+                    const a = (i * Math.PI / 5) - Math.PI / 2;
+                    const r = i % 2 === 0 ? outerR : innerR;
+                    if (i === 0) ctx.moveTo(r * Math.cos(a), r * Math.sin(a));
+                    else ctx.lineTo(r * Math.cos(a), r * Math.sin(a));
+                }
+                ctx.closePath();
+                ctx.fillStyle = '#ffd700';
+                ctx.fill();
+                ctx.strokeStyle = '#b8860b';
+                ctx.lineWidth = 0.8;
+                ctx.stroke();
+                break;
+            }
+
+            case 'flag': {
+                // Small pennant flag on a stick.
+                const poleH = s * 1.25;
+                ctx.strokeStyle = '#5a3020';
+                ctx.lineWidth = 1.2;
+                ctx.beginPath();
+                ctx.moveTo(0, -poleH); ctx.lineTo(0, s * 0.3);
+                ctx.stroke();
+                ctx.fillStyle = '#e63030';
+                ctx.beginPath();
+                ctx.moveTo(0, -poleH);
+                ctx.lineTo(s * 0.85, -poleH + s * 0.42);
+                ctx.lineTo(0, -poleH + s * 0.85);
+                ctx.closePath();
+                ctx.fill();
+                // Tiny golden finial at pole tip.
+                ctx.fillStyle = '#ffd700';
+                ctx.beginPath();
+                ctx.arc(0, -poleH - 1.5, 1.8, 0, Math.PI * 2);
+                ctx.fill();
+                break;
+            }
+
+            case 'rainbow': {
+                // Tiny 3-band rainbow arc, centered slightly above origin.
+                const yCy = s * 0.2;
+                const bands = [
+                    ['rgba(220,50,50,0.9)',   s * 0.90],
+                    ['rgba(80,210,80,0.85)',  s * 0.62],
+                    ['rgba(40,140,230,0.85)', s * 0.35],
+                ];
+                for (const [color, r] of bands) {
+                    ctx.strokeStyle = color;
+                    ctx.lineWidth = s * 0.22;
+                    ctx.lineCap = 'butt';
+                    ctx.beginPath();
+                    ctx.arc(0, yCy, r, Math.PI, 0, false);
+                    ctx.stroke();
+                }
+                break;
+            }
+
+            case 'trophy': {
+                // Simple trophy cup: bowl + stem + base.
+                const hw = s * 0.55;
+                const bowlH = s * 0.70;
+                const stemH = s * 0.35;
+                const baseH = s * 0.20;
+                const topY = -s * 0.75;
+
+                ctx.fillStyle = '#ffd700';
+                ctx.strokeStyle = '#b8860b';
+                ctx.lineWidth = 0.9;
+
+                // Bowl (trapezoid narrowing toward base)
+                ctx.beginPath();
+                ctx.moveTo(-hw,     topY);
+                ctx.lineTo( hw,     topY);
+                ctx.lineTo( hw * 0.50, topY + bowlH);
+                ctx.lineTo(-hw * 0.50, topY + bowlH);
+                ctx.closePath();
+                ctx.fill(); ctx.stroke();
+
+                // Small handles
+                ctx.strokeStyle = '#b8860b';
+                ctx.lineWidth = 1.2;
+                ctx.beginPath();
+                ctx.arc(-hw, topY + bowlH * 0.40, hw * 0.32, Math.PI * 0.5, Math.PI * 1.5, true);
+                ctx.stroke();
+                ctx.beginPath();
+                ctx.arc( hw, topY + bowlH * 0.40, hw * 0.32, Math.PI * 1.5, Math.PI * 0.5, true);
+                ctx.stroke();
+
+                // Stem
+                ctx.fillStyle = '#ffd700';
+                const stemTop = topY + bowlH;
+                ctx.fillRect(-hw * 0.18, stemTop, hw * 0.36, stemH);
+                ctx.strokeRect(-hw * 0.18, stemTop, hw * 0.36, stemH);
+
+                // Base
+                ctx.fillRect(-hw * 0.65, stemTop + stemH, hw * 1.30, baseH);
+                ctx.strokeRect(-hw * 0.65, stemTop + stemH, hw * 1.30, baseH);
+                break;
+            }
+
+            case 'crown': {
+                // Crown with 3 points and tiny gem.
+                const cw = s * 0.65;
+                const baseY = s * 0.40;
+                const baseTopY = -s * 0.10;
+                const midPointY = -s * 0.70;
+                const sidePointY = -s * 0.40;
+
+                ctx.fillStyle = '#ffd700';
+                ctx.strokeStyle = '#b8860b';
+                ctx.lineWidth = 0.9;
+                ctx.beginPath();
+                ctx.moveTo(-cw,  baseY);
+                ctx.lineTo(-cw,  baseTopY);
+                ctx.lineTo(-cw,  sidePointY);   // left point top
+                ctx.lineTo(-cw * 0.35, baseTopY + (baseY - baseTopY) * 0.5);
+                ctx.lineTo(0,    midPointY);     // center peak
+                ctx.lineTo( cw * 0.35, baseTopY + (baseY - baseTopY) * 0.5);
+                ctx.lineTo( cw,  sidePointY);   // right point top
+                ctx.lineTo( cw,  baseTopY);
+                ctx.lineTo( cw,  baseY);
+                ctx.closePath();
+                ctx.fill(); ctx.stroke();
+
+                // Tiny gem at center peak
+                ctx.fillStyle = '#ff4455';
+                ctx.beginPath();
+                ctx.arc(0, midPointY + s * 0.08, s * 0.12, 0, Math.PI * 2);
+                ctx.fill();
+                break;
+            }
+        }
+
+        ctx.restore();
+    }
+}
+
+
+// Draw an admin crown above a node's icon to signal administrator-level access.
+// cx/cy is the crown's visual anchor — the crown base band sits just below cy
+// and the three points rise above it, so placing cy at the top of the icon/banner
+// makes the crown naturally float above the AWS logo.
+function drawAdminCrown(ctx, cx, cy, s) {
+    const cw      =  s * 0.68;   // half-width of crown body
+    const baseY   =  s * 0.30;   // bottom rim (below anchor)
+    const rimTopY = -s * 0.05;   // where rim meets the upward points
+    const sideY   = -s * 0.42;   // height of the two side points
+    const midY    = -s * 0.82;   // height of the tall center peak
+
+    ctx.save();
+    ctx.translate(cx, cy);
+
+    // Drop shadow for depth and legibility against varied terrain.
+    ctx.fillStyle = 'rgba(0, 0, 0, 0.22)';
+    ctx.beginPath();
+    ctx.moveTo(-cw + 2, baseY + 2);
+    ctx.lineTo(-cw + 2, rimTopY + 2);
+    ctx.lineTo(-cw * 0.35 + 2, rimTopY + (baseY - rimTopY) * 0.5 + 2);
+    ctx.lineTo(2,  midY + 2);
+    ctx.lineTo( cw * 0.35 + 2, rimTopY + (baseY - rimTopY) * 0.5 + 2);
+    ctx.lineTo( cw + 2, rimTopY + 2);
+    ctx.lineTo( cw + 2, baseY + 2);
+    ctx.closePath();
+    ctx.fill();
+
+    // Crown body: gold fill, dark-gold stroke.
+    ctx.fillStyle = '#ffd700';
+    ctx.strokeStyle = '#b8860b';
+    ctx.lineWidth = 1.2;
+    ctx.beginPath();
+    ctx.moveTo(-cw,  baseY);
+    ctx.lineTo(-cw,  rimTopY);
+    ctx.lineTo(-cw,  sideY);
+    ctx.lineTo(-cw * 0.35, rimTopY + (baseY - rimTopY) * 0.5);
+    ctx.lineTo(0,    midY);
+    ctx.lineTo( cw * 0.35, rimTopY + (baseY - rimTopY) * 0.5);
+    ctx.lineTo( cw,  sideY);
+    ctx.lineTo( cw,  rimTopY);
+    ctx.lineTo( cw,  baseY);
+    ctx.closePath();
+    ctx.fill();
+    ctx.stroke();
+
+    // Bright highlight band near the top of the rim.
+    ctx.fillStyle = 'rgba(255, 245, 130, 0.48)';
+    ctx.fillRect(-cw + 2, rimTopY, cw * 2 - 4, s * 0.10);
+
+    // Red gem at center peak.
+    const gemR = s * 0.14;
+    ctx.fillStyle = '#ff3344';
+    ctx.strokeStyle = 'rgba(0, 0, 0, 0.35)';
+    ctx.lineWidth = 0.8;
+    ctx.beginPath();
+    ctx.arc(0, midY + gemR * 0.7, gemR, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.stroke();
+
+    // Small gold dot gems at the two side points.
+    ctx.fillStyle = '#ffe44a';
+    ctx.strokeStyle = '#b8860b';
+    ctx.lineWidth = 0.6;
+    for (const px of [-cw, cw]) {
+        ctx.beginPath();
+        ctx.arc(px, sideY, gemR * 0.55, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.stroke();
+    }
+
+    ctx.restore();
+}
+
 // Draw the full base map: ocean/sky, clouds, paths between islands, and islands
 function drawGameMap(ctx, w, h, state) {
     const p = state.palette;
@@ -5598,6 +5845,13 @@ function drawGameMap(ctx, w, h, state) {
 
         ctx.save();
 
+        // Bling icons pinned around the perimeter — drawn first so they sit
+        // slightly behind the island terrain on the lower arc, and in front
+        // of the ocean background on the upper arc.
+        if (isTargetIsland) {
+            drawTargetIslandBling(ctx, pos, islandRadius);
+        }
+
         // Island terrain / icon dispatch.
         //
         // Target islands short-circuit the standard draw path when they
@@ -5639,6 +5893,15 @@ function drawGameMap(ctx, w, h, state) {
                 case 'banner':    drawIconBanner(ctx,    pos, iconRadius, nodes[i], p);    break;
                 case 'crest':     drawIconCrest(ctx,     pos, iconRadius, nodes[i], p);    break;
             }
+        }
+
+        // Admin crown: sits above the icon/banner for any node marked isAdmin.
+        // Crown center is anchored at the banner-top y (pos.y - 0.38 * islandRadius)
+        // so it floats above the AWS logo and may extend above the banner poles.
+        if (nodes[i]?.isAdmin) {
+            const crownS  = Math.max(10, islandRadius * 0.38);
+            const crownCy = pos.y - islandRadius * 0.38;
+            drawAdminCrown(ctx, pos.x, crownCy, crownS);
         }
 
         // Startington: the plane indicator is drawn separately after all
@@ -5860,6 +6123,7 @@ function initMapGame(mapId, nodes, edges, companions, lab) {
     awsIconSprites.onLoadCallbacks.push(() => redraw());
     redraw();
     updateGamePanel(state);
+
 
     // Returns screen-space (sx/sy) for HUD/button hit testing
     // and world-space (x/y) for island/edge/companion hit testing
@@ -7171,6 +7435,7 @@ function renderStaticMapPreview(containerEl, lab) {
     cloudSprites.load().then(() => draw());
     awsIconSprites.onLoadCallbacks.push(() => draw());
     draw();
+
 }
 
 
