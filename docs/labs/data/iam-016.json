@@ -120,15 +120,7 @@
         "access": {
           "type": "assumed-breach-credentials"
         },
-        "description": "You have gained access to this principal's AWS IAM credentials. These could have been obtained through many real-world vectors: phishing a developer and gaining access to their workstation, compromising a browser session, exploiting a vulnerable workload running in this AWS account, discovering credentials in a public S3 bucket, or finding them hardcoded in source code or a CI/CD pipeline.\nRegardless of how you obtained them, you are now operating as this principal. This IAM user has iam:CreatePolicyVersion permission on a customer-managed policy that is attached to a privileged target role, and sts:AssumeRole permission to assume that target role.\n"
-      },
-      {
-        "id": "target-policy",
-        "label": "Target Policy",
-        "type": "resource",
-        "subType": "iam-policy",
-        "arn": "arn:aws:iam::{account_id}:policy/pl-prod-iam-016-to-admin-target-policy",
-        "description": "This customer-managed IAM policy is attached to the target role. By creating a new policy version with administrative permissions, the policy \u2014 and therefore the role it is attached to \u2014 gains full administrator access. AWS automatically sets the newly created version as the default active version.\n"
+        "description": "You have gained access to this principal's AWS IAM credentials. These could have been obtained through many real-world vectors: phishing a developer and gaining access to their workstation, compromising a browser session, exploiting a vulnerable workload running in this AWS account, discovering credentials in a public S3 bucket, or finding them hardcoded in source code or a CI/CD pipeline.\nRegardless of how you obtained them, you are now operating as this principal. This IAM user has iam:CreatePolicyVersion permission on a customer-managed policy that is attached to a target role, and sts:AssumeRole permission to assume that target role, creating a complete two-step privilege escalation path to administrator access.\n"
       },
       {
         "id": "target-role",
@@ -137,7 +129,7 @@
         "subType": "iam-role",
         "isAdmin": true,
         "arn": "arn:aws:iam::{account_id}:role/pl-prod-iam-016-to-admin-target-role",
-        "description": "This IAM role has the customer-managed target policy attached. After the policy version is updated to grant AdministratorAccess, assuming this role yields full administrative control over the AWS account. Admin-equivalent credentials obtained here are used to read the scenario's CTF flag from SSM Parameter Store.\n"
+        "description": "This IAM role has a customer-managed policy attached that currently grants only minimal permissions. By creating a new policy version with administrative permissions, that policy \u2014 and therefore this role \u2014 gains full administrator access. With the trust policy already allowing the starting user to assume it, you can then assume the role and obtain temporary credentials with full administrative control over the AWS account.\n"
       },
       {
         "id": "ctf-flag",
@@ -152,48 +144,26 @@
     "edges": [
       {
         "from": "starting-user",
-        "to": "target-policy",
-        "label": "iam:CreatePolicyVersion",
-        "description": "Create a new version of the customer-managed policy that grants AdministratorAccess (Action: \"*\", Resource: \"*\"). The new version is set as the default, immediately elevating the permissions of any principal that has the policy attached.\n",
+        "to": "target-role",
+        "label": "iam:CreatePolicyVersion + sts:AssumeRole",
+        "description": "Create a new version of the customer-managed policy attached to the target role, granting it AdministratorAccess (Action: \"*\", Resource: \"*\"). The new version is set as the default immediately, elevating the role's permissions. Then assume the now-privileged target role to obtain temporary credentials with full administrative control over the AWS account.\n",
         "hints": [
           "Start by understanding what policy you have write access to. Use iam:GetPolicy to retrieve its metadata and see which version is currently the default.",
           "Use iam:GetPolicyVersion to read the actual document of the current default version and confirm it has no admin permissions yet.",
           "Use iam:ListRoles and iam:GetRole to discover which roles have this policy attached -- that tells you what you'll be able to do once you modify it.",
           "AWS customer-managed policies support versioning. You can create a new version with any content you choose, and the --set-as-default flag makes it active immediately.",
           "A policy granting Action:* on Resource:* is the simplest path to AdministratorAccess. Write that document and create it as a new version.",
+          "IAM policy changes take a moment to propagate; wait at least 15 seconds after creating the new policy version before attempting to assume the role.",
+          "The trust policy on the target role already allows your starting user to assume it -- no trust policy modification is needed.",
+          "Use sts:AssumeRole to obtain temporary credentials for the target role and export the returned AccessKeyId, SecretAccessKey, and SessionToken as environment variables.",
+          "Verify success by attempting a privileged action such as listing IAM users, which would have been denied before the escalation.",
           "Browse to https://pathfinding.cloud/paths/iam-016 for full technique details."
         ],
         "commands": [
           {
             "description": "Create a new policy version with admin permissions",
             "command": "aws iam create-policy-version --policy-arn arn:aws:iam::{account_id}:policy/pl-prod-iam-016-to-admin-target-policy --policy-document '{\"Version\":\"2012-10-17\",\"Statement\":[{\"Effect\":\"Allow\",\"Action\":\"*\",\"Resource\":\"*\"}]}' --set-as-default\n"
-          }
-        ]
-      },
-      {
-        "from": "target-policy",
-        "to": "target-role",
-        "label": "policy attached",
-        "description": "The modified policy is already attached to the target role. Once the new default version grants AdministratorAccess, the role inherits those permissions automatically.\n",
-        "hints": [
-          "You do not need to attach or detach anything -- the policy is already attached to the target role.",
-          "As soon as the new policy version is set as default, the role's effective permissions update automatically.",
-          "Use iam:ListPolicyVersions after creating your new version to confirm it appears and is marked as the default."
-        ],
-        "commands": []
-      },
-      {
-        "from": "starting-user",
-        "to": "target-role",
-        "label": "sts:AssumeRole",
-        "description": "Assume the target role, which now has AdministratorAccess via the modified policy. This yields a temporary set of credentials with full administrative control over the AWS account.\n",
-        "hints": [
-          "IAM policy propagation can take a few seconds. Wait ~15 seconds after creating the new policy version before attempting to assume the role.",
-          "The trust policy on the target role already allows your starting user to assume it -- no trust policy modification is needed.",
-          "Use sts:AssumeRole to obtain temporary credentials for the target role and export them as environment variables.",
-          "Verify success by attempting a privileged action such as listing IAM users, which would have been denied before the escalation."
-        ],
-        "commands": [
+          },
           {
             "description": "Assume the now-privileged target role",
             "command": "aws sts assume-role --role-arn arn:aws:iam::{account_id}:role/pl-prod-iam-016-to-admin-target-role --role-session-name privesc-session\n"
@@ -207,8 +177,8 @@
       {
         "from": "target-role",
         "to": "ctf-flag",
-        "label": "Read CTF flag",
-        "description": "With the assumed target role credentials (which now hold AdministratorAccess via the modified policy), retrieve the scenario flag from SSM Parameter Store. AdministratorAccess grants ssm:GetParameter on all parameters in the account, so no additional permissions are needed beyond the admin session you already have.\n",
+        "label": "ssm:GetParameter",
+        "description": "With temporary admin credentials from the assumed target role, retrieve the scenario flag from SSM Parameter Store. AdministratorAccess grants ssm:GetParameter on all parameters in the account, so no additional permissions are needed beyond the admin session you already have.\n",
         "hints": [
           "You now hold temporary admin credentials from the assumed role. The scenario flag is stored in an AWS service commonly used for configuration values and small secrets.",
           "Scenario flags live under a shared prefix in SSM Parameter Store \u2014 consider what a reasonable naming convention for this lab might look like.",

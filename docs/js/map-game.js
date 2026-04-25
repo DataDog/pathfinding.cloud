@@ -64,15 +64,17 @@ const cloudSprites = {
     // countOverride lets callers pack more clouds into a wide cloud band
     // (e.g. the hero generator with no title, which needs the top third to
     // read as a dense cloud layer rather than sparse dots).
-    draw(ctx, w, h, seed, hudTopOverride, bottomOverride, countOverride) {
+    draw(ctx, w, h, seed, hudTopOverride, bottomOverride, countOverride, scaleRange) {
         if (!this.images.length) return;
         const rng = mapRng(seed || 99);
         const hudTop = hudTopOverride ?? 52;  // generous buffer below top HUD bar
         const cloudMaxY = bottomOverride ?? (h * 0.20);  // default: top ~20% of the map zone
         const count = countOverride ?? Math.max(7, Math.floor(w / 100)); // more clouds
+        const scaleMin = scaleRange?.min ?? 2.0;
+        const scaleMax = scaleRange?.max ?? 4.0;
         for (let i = 0; i < count; i++) {
             const img = this.images[Math.floor(rng() * this.images.length)];
-            const scale = 2.0 + rng() * 2.0; // 2x-4x native size for prominent clouds
+            const scale = scaleMin + rng() * (scaleMax - scaleMin);
             // Distribute clouds evenly across the full canvas width with random jitter
             const drawW = img.width * scale;
             const drawH = img.height * scale;
@@ -80,7 +82,11 @@ const cloudSprites = {
             const baseX = (i + 0.5) * segment;
             const jitter = (rng() - 0.5) * segment * 0.6;
             const x = Math.max(drawW / 2, Math.min(w - drawW / 2, baseX + jitter));
-            const y = hudTop + 10 + rng() * (cloudMaxY - hudTop - 10);
+            // Position so the cloud's bottom edge doesn't exceed cloudMaxY
+            const maxCenterY = cloudMaxY - drawH / 2;
+            const minCenterY = hudTop + drawH / 2;
+            const rawY = hudTop + 10 + rng() * Math.max(0, cloudMaxY - hudTop - 10);
+            const y = Math.max(minCenterY, Math.min(maxCenterY, rawY));
             ctx.globalAlpha = 0.7 + rng() * 0.3;
             ctx.drawImage(img, x - drawW / 2, y - drawH / 2, drawW, drawH);
         }
@@ -1293,7 +1299,8 @@ function drawCompanionIslet(ctx, pos, companion, isSelected, state, nodeIndex) {
     // Scale companion islets proportionally with main islands
     const baseCompanionRadius = 56;
     const companionShrinkSteps = Math.max(0, (state.nodes?.length || 0) - 3);
-    const islandRadius = baseCompanionRadius * Math.pow(0.8, companionShrinkSteps);
+    let islandRadius = baseCompanionRadius * Math.pow(0.8, companionShrinkSteps);
+    if (state._thumbnailMode) islandRadius *= 0.25;
     const seed = (nodeIndex ?? 0) * 997 + 501;  // stable per-companion seed, independent of position
 
     ctx.save();
@@ -1339,37 +1346,40 @@ function drawCompanionIslet(ctx, pos, companion, isSelected, state, nodeIndex) {
     drawSmoothShape(ctx, innerShape);
     ctx.fill();
 
-    // AWS icon centered on companion islet (max 50% of islet radius) -- any
-    // "on-the-island" style (on-island, building, banner, crest) draws a plain
-    // centered icon here: structure variants would be microscopic on a 28px
-    // islet, so we fall back to the simple treatment.
-    const _companionStyle = state.effectiveIconStyle || state.iconStyle;
-    if (ISLAND_MOUNTED_ICON_STYLES.has(_companionStyle)) {
-        const companionSubType = companion.subType || '';
-        const companionIcon = awsIconSprites.get(companionSubType);
-        if (companionIcon) {
-            const maxIconSize = islandRadius * 0.5; // 50% of companion island radius = 14px
-            const iconSize = Math.min(maxIconSize, companionIcon.width);
-            ctx.globalAlpha = 0.85;
-            ctx.drawImage(companionIcon, x - iconSize / 2, y - iconSize / 2 - 1, iconSize, iconSize);
-            ctx.globalAlpha = 1;
+    if (!state._thumbnailMode) {
+        // AWS icon centered on companion islet (max 50% of islet radius) -- any
+        // "on-the-island" style (on-island, building, banner, crest) draws a plain
+        // centered icon here: structure variants would be microscopic on a 28px
+        // islet, so we fall back to the simple treatment.
+        const _companionStyle = state.effectiveIconStyle || state.iconStyle;
+        if (ISLAND_MOUNTED_ICON_STYLES.has(_companionStyle)) {
+            const companionSubType = companion.subType || '';
+            const companionIcon = awsIconSprites.get(companionSubType);
+            if (companionIcon) {
+                const maxIconSize = islandRadius * 0.5; // 50% of companion island radius = 14px
+                const iconSize = Math.min(maxIconSize, companionIcon.width);
+                ctx.globalAlpha = 0.85;
+                ctx.drawImage(companionIcon, x - iconSize / 2, y - iconSize / 2 - 1, iconSize, iconSize);
+                ctx.globalAlpha = 1;
+            }
         }
-    }
 
-    // Resource-type tint ring
-    const tint = p.typeTintResource || '#f59e0b';
-    ctx.globalAlpha = 0.3;
-    ctx.strokeStyle = tint;
-    ctx.lineWidth = 3;
-    ctx.beginPath();
-    ctx.ellipse(x, y + 2, islandRadius * 1.1, islandRadius * 0.42, 0, 0, Math.PI * 2);
-    ctx.stroke();
-    ctx.globalAlpha = 1;
+        // Resource-type tint ring
+        const tint = p.typeTintResource || '#f59e0b';
+        ctx.globalAlpha = 0.3;
+        ctx.strokeStyle = tint;
+        ctx.lineWidth = 3;
+        ctx.beginPath();
+        ctx.ellipse(x, y + 2, islandRadius * 1.1, islandRadius * 0.42, 0, 0, Math.PI * 2);
+        ctx.stroke();
+        ctx.globalAlpha = 1;
+    }
 
     ctx.restore();
 
-    // Label below
-    drawCompanionLabel(ctx, x, y + 16, companion, state);
+    if (!state._thumbnailMode) {
+        drawCompanionLabel(ctx, x, y + 16, companion, state);
+    }
 }
 
 // Treatment 3: Parchment Note -- floating annotation card
@@ -2135,7 +2145,9 @@ function renderGamePanelOverview(panelEl, state) {
                 ${_fullRow(targetNode?.label
                     ? labKvPill('Name', 'lab-kv-pill-node', targetNode.label, 'attackMap.nodes[last].label')
                     : '')}
-                ${_fullRow(labKvPill('Flag Location', 'lab-kv-pill-node-access', '', 'attackMap.nodes[last].flag (placeholder)'))}
+                ${targetNode?.isTarget && targetNode?.arn
+                    ? _fullRow(labKvPill('Flag Location', 'lab-kv-pill-node-access', shortArn(targetNode.arn), 'attackMap.nodes[last].arn → shortArn()'))
+                    : ''}
             </div>
         </div>` : ''}
     `;
@@ -2251,8 +2263,8 @@ function renderGamePanelNode(panelEl, state) {
                 ${initialAccessLabel
                     ? _fullRowN(labKvPill('Initial Access Type', 'lab-kv-pill-node-access', initialAccessLabel, 'attackMap.nodes[n].access.type → displayAccessType()'))
                     : ''}
-                ${(isLast && node.isTarget)
-                    ? _fullRowN(labKvPill('Flag Location', 'lab-kv-pill-node-access', '', 'attackMap.nodes[last].flag (placeholder)'))
+                ${(isLast && node.isTarget && node.arn)
+                    ? _fullRowN(labKvPill('Flag Location', 'lab-kv-pill-node-access', shortArn(node.arn), 'attackMap.nodes[last].arn → shortArn()'))
                     : ''}
             </div>
         </div>`;
@@ -4672,7 +4684,8 @@ function computeMapLayout(count, w, h, hudTopOverride, hudBottomOverride) {
 
 // Compute companion positions offset from their parent edge midpoints.
 // islandRadius is used to define a minimum safe clearance from main island centers.
-function computeCompanionPositions(companions, edges, positions, islandRadius) {
+// offsetScale shrinks the perpendicular offset candidates (use 0.5 for thumbnails).
+function computeCompanionPositions(companions, edges, positions, islandRadius, offsetScale) {
     if (!companions || !companions.length) return [];
     // Companions must stay this far from every main island center
     const safeDistance = (islandRadius || 70) * 1.7;
@@ -4708,8 +4721,10 @@ function computeCompanionPositions(companions, edges, positions, islandRadius) {
         const anchorY = fromPos.y + dy * t;
 
         // Try increasing offsets on each side until we find a position that doesn't
-        // land on a main island. Candidates: +60, -60, +90, -90, +120, -120.
-        const offsets = [60, -60, 90, -90, 120, -120];
+        // land on a main island. Candidates: +60, -60, +90, -90, +120, -120,
+        // scaled down by offsetScale when rendering in a compact space (e.g. thumbnails).
+        const s = offsetScale ?? 1;
+        const offsets = [60 * s, -60 * s, 90 * s, -90 * s, 120 * s, -120 * s];
         let chosen = null;
         for (const off of offsets) {
             const cx = anchorX + perpX * off;
@@ -5771,7 +5786,7 @@ function drawGameMap(ctx, w, h, state) {
     // state._cloudBottom widens the cloud band (used by the single-page / hero
     // renderers to let clouds layer up into the reserved header zone).
     ctx.save();
-    cloudSprites.draw(ctx, w, h, 99, state._cloudHudTop, state._cloudBottom, state._cloudCount);
+    cloudSprites.draw(ctx, w, h, 99, state._cloudHudTop, state._cloudBottom, state._cloudCount, state._cloudScaleRange);
     ctx.restore();
 
     // Paths (edges) between islands -- always draw all paths visibly
@@ -5824,6 +5839,7 @@ function drawGameMap(ctx, w, h, state) {
         }
     }
 
+    if (state._thumbnailMode) islandRadius *= 0.5;
     state.islandRadius = islandRadius; // store for label positioning
 
     // Auto-compact: when islands are small enough that below-label icons (32px) would
@@ -5848,7 +5864,7 @@ function drawGameMap(ctx, w, h, state) {
         // Bling icons pinned around the perimeter — drawn first so they sit
         // slightly behind the island terrain on the lower arc, and in front
         // of the ocean background on the upper arc.
-        if (isTargetIsland) {
+        if (isTargetIsland && !state._thumbnailMode) {
             drawTargetIslandBling(ctx, pos, islandRadius);
         }
 
@@ -5885,7 +5901,7 @@ function drawGameMap(ctx, w, h, state) {
         // style. Fortress target handles its own icon internally, so skip.
         // Flag-shape target gets a 25% smaller icon to match its smaller
         // island footprint.
-        if (!isFortressTarget) {
+        if (!isFortressTarget && !state._thumbnailMode) {
             const iconRadius = isFlagShapeTarget ? islandRadius * 0.60 : islandRadius;
             switch (state.effectiveIconStyle) {
                 case 'on-island': drawIconOnIsland(ctx, pos, iconRadius, nodes[i]);        break;
@@ -5898,7 +5914,7 @@ function drawGameMap(ctx, w, h, state) {
         // Admin crown: sits above the icon/banner for any node marked isAdmin.
         // Crown center is anchored at the banner-top y (pos.y - 0.38 * islandRadius)
         // so it floats above the AWS logo and may extend above the banner poles.
-        if (nodes[i]?.isAdmin) {
+        if (nodes[i]?.isAdmin && !state._thumbnailMode) {
             const crownS  = Math.max(10, islandRadius * 0.38);
             const crownCy = pos.y - islandRadius * 0.38;
             drawAdminCrown(ctx, pos.x, crownCy, crownS);
@@ -5918,7 +5934,7 @@ function drawGameMap(ctx, w, h, state) {
 
         // Label -- positioned below the island bottom edge
         const label = nodes[i]?.label || '';
-        if (label) {
+        if (label && !state._thumbnailMode) {
             const displayLabel = label.length > 20 ? label.substring(0, 18) + '..' : label;
             const labelOffsetY = islandRadius * 0.42 + 10;
             ctx.font = '600 11px -apple-system, BlinkMacSystemFont, sans-serif';
@@ -7562,4 +7578,149 @@ function labShareAction(action, canvas, lab) {
             }
             break;
     }
+}
+
+// ─── Compact game-map thumbnail renderer ──────────────────────────────────────
+// Renders the same island/cloud/path aesthetic as the full lab detail map but
+// into a small container (card thumbnail, getting-started cards, etc.).
+// No title overlay, no badge footer — just the raw map canvas filling the
+// container's current dimensions. Call after layout so clientWidth/clientHeight
+// are non-zero.
+function renderStaticMapThumbnail(containerEl, lab) {
+    let mapNodes = [], mapEdges = [], mapCompanions = [];
+    if (lab.attackMap?.nodes?.length) {
+        const parsed = parseAttackMapToGameNodes(lab.attackMap);
+        mapNodes = parsed.nodes;
+        mapEdges = parsed.edges;
+        mapCompanions = parsed.companions || [];
+    }
+    if (mapNodes.length === 0 && lab.readme?.attackDiagram) {
+        const mermaidData = parseMermaidToSteps(lab.readme.attackDiagram);
+        if (mermaidData.steps.length > 0) {
+            mapNodes.push({ label: mermaidData.steps[0].fromNode.label, type: getNodeTypeFromColor(mermaidData.steps[0].fromNode.color) });
+            mermaidData.steps.forEach((step, i) => {
+                mapNodes.push({ label: step.toNode.label, type: getNodeTypeFromColor(step.toNode.color) });
+                mapEdges.push({ fromIdx: mapNodes.length - 2, toIdx: mapNodes.length - 1, label: step.edgeLabel || '', description: '', commands: [], hints: [], implicit: false });
+            });
+        }
+    }
+    if (mapNodes.length === 0) return null;
+
+    const w = containerEl.clientWidth  || 240;
+    const h = containerEl.clientHeight || 160;
+    const dpr = window.devicePixelRatio || 1;
+
+    const canvas = document.createElement('canvas');
+    canvas.width  = w * dpr;
+    canvas.height = h * dpr;
+    canvas.style.width   = '100%';
+    canvas.style.height  = '100%';
+    canvas.style.display = 'block';
+    containerEl.appendChild(canvas);
+
+    const ctx = canvas.getContext('2d');
+    ctx.scale(dpr, dpr);
+
+    // Islands occupy the bottom 75% of the thumbnail; clouds get the top 25%.
+    // Pass hudTop equal to the 25% boundary so computeMapLayout seeds positions
+    // in roughly the right zone before the amplification step below refines them.
+    const islandTop = Math.round(h * 0.25);
+    const positions = computeMapLayout(mapNodes.length, w, h, islandTop, 0);
+
+    // Remap all positions into the bottom 75% and amplify the zig-zag so the
+    // alternating pattern is clearly visible at thumbnail scale.
+    if (positions.length >= 2) {
+        const zoneTop    = islandTop + 5;
+        const zoneBottom = h - 5;
+        const centerY    = (zoneTop + zoneBottom) / 2;
+        positions.forEach(p => {
+            const delta = p.y - centerY;
+            p.y = Math.max(zoneTop, Math.min(zoneBottom, centerY + delta * 2.2));
+        });
+    }
+
+    // Estimate island radius as drawGameMap will compute it (base → overlap shrink →
+    // thumbnail *0.5) so we know how much buffer to keep from each canvas edge.
+    // Island shapes extend up to ~1.4× the radius from center (jitter + shape overscan).
+    const baseIslandRadius = 104;
+    let estRadius = baseIslandRadius * Math.pow(0.8, Math.max(0, mapNodes.length - 3));
+    if (positions.length >= 2) {
+        let minDist = Infinity;
+        for (let a = 0; a < positions.length; a++) {
+            for (let b = a + 1; b < positions.length; b++) {
+                const dx = positions[b].x - positions[a].x;
+                const dy = positions[b].y - positions[a].y;
+                minDist = Math.min(minDist, Math.sqrt(dx * dx + dy * dy));
+            }
+        }
+        estRadius = Math.min(estRadius, Math.max(30, minDist / 2.4));
+    }
+    estRadius *= 0.5; // thumbnail mode halves radius (mirrors drawGameMap line)
+    const edgeBuf = Math.ceil(estRadius * 1.4) + 4;
+    positions.forEach(p => {
+        p.x = Math.max(edgeBuf, Math.min(w - edgeBuf, p.x));
+        p.y = Math.max(islandTop + edgeBuf, Math.min(h - edgeBuf, p.y));
+    });
+
+    // Companion radius in thumbnail mode mirrors the *0.5 halving applied to main islands.
+    // Pass estRadius (already halved) as the clearance hint and 0.5 as the offset scale
+    // so perpendicular placement candidates stay proportional to the smaller canvas.
+    const companionRadius = 56 * Math.pow(0.8, Math.max(0, mapNodes.length - 3)) * 0.25;
+    const companionPositions = computeCompanionPositions(mapCompanions, mapEdges, positions, companionRadius, 0.5);
+
+    // Clamp companion centers with their own (smaller) edge buffer so they stay on-canvas.
+    const companionEdgeBuf = Math.ceil(companionRadius * 1.4) + 4;
+    companionPositions.forEach(p => {
+        if (p.x === 0 && p.y === 0) return;
+        p.x = Math.max(companionEdgeBuf, Math.min(w - companionEdgeBuf, p.x));
+        p.y = Math.max(islandTop + companionEdgeBuf, Math.min(h - companionEdgeBuf, p.y));
+    });
+
+    const decorations = generateMapDecorations(positions, w, h, islandTop + edgeBuf, edgeBuf).filter(d => d.type !== 'mountain');
+    const palette            = getGameUIPalette();
+
+    const state = {
+        screen: 'playing',
+        revealed:         new Set(mapNodes.map((_, i) => i)),
+        currentNode:      0,
+        currentEdge:      -1,
+        revealedEdges:    new Set(mapEdges.map((_, i) => i)),
+        revealedCommands: new Set(),
+        selectedNode:     null, selectedEdge: null,
+        selectedCompanion: null, completeView: null,
+        gameViewPhase:    'navigation', panelOverride: null,
+        positions, companionPositions,
+        companions:       mapCompanions,
+        companionStyle:   'islet',
+        iconStyle:        'banner',
+        islandStyle:      'wooded',
+        targetStyle:      'flag-shape',
+        planeStyle:       'helicopter',
+        nodes:            mapNodes,
+        edges:            mapEdges,
+        decorations,
+        hintsUsed: 0, revealedHints: {},
+        hoveredButton: null, activeButton: null, hoveredHop: null,
+        buttons: [], lab, palette,
+        _redraw: null, _panelEl: null,
+        // Clouds fill the top 25%; islands fill the bottom 75%. Scale is capped so
+        // cloud sprites stay within their band at thumbnail size — the default 2-4x
+        // native scale overflows a 40px zone on a 160px canvas.
+        _cloudHudTop:      0,
+        _cloudBottom:      Math.round(h * 0.25),
+        _cloudCount:       5,
+        _cloudScaleRange:  { min: 1.0, max: 2.0 },
+        _thumbnailMode:    true,
+    };
+
+    function draw() {
+        ctx.save();
+        ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+        drawGameMap(ctx, w, h, state);
+        drawCompanions(ctx, w, h, state);
+        ctx.restore();
+    }
+
+    cloudSprites.load().then(draw);
+    return canvas;
 }

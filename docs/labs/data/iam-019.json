@@ -124,7 +124,7 @@
         "subType": "iam-role",
         "isAdmin": true,
         "arn": "arn:aws:iam::{account_id}:role/pl-prod-iam-019-to-admin-target-role",
-        "description": "This IAM role starts with minimal permissions. After attaching AdministratorAccess and updating its trust policy to allow the starting user, it becomes a fully privileged, assumable admin role. By assuming it, you gain full administrative control over the AWS account.\n"
+        "description": "This IAM role starts with minimal permissions and a trust policy that does not allow the starting user to assume it. After attaching AdministratorAccess and updating the trust policy to name the starting user as a trusted principal, it becomes a fully privileged, assumable admin role. By assuming it, you gain full administrative control over the AWS account.\n"
       },
       {
         "id": "ctf-flag",
@@ -140,37 +140,24 @@
       {
         "from": "starting-principal",
         "to": "target-role",
-        "label": "iam:AttachRolePolicy",
-        "description": "Attach the AdministratorAccess managed policy to the target role, granting it full administrative permissions.\n",
+        "label": "iam:AttachRolePolicy + iam:UpdateAssumeRolePolicy + sts:AssumeRole",
+        "description": "Attach the AWS-managed AdministratorAccess policy to the target role to elevate its permissions, then modify the role's trust policy to add the starting user as a trusted principal. With both changes in place, assume the now-privileged role to obtain temporary credentials with full administrative access.\n",
         "hints": [
           "Start by understanding what roles exist in this account \u2014 use your helpful permissions to enumerate them.",
           "Use iam:ListRoles to find roles you can interact with, then iam:ListAttachedRolePolicies to see what each one already has.",
           "Look for a role with minimal permissions that you have iam:AttachRolePolicy rights on \u2014 that's your escalation target.",
           "Attach a highly privileged AWS managed policy (like AdministratorAccess) to that role using its name, not its ARN.",
-          "Remember: attaching a policy grants the role those permissions, but you still need a way to assume the role \u2014 that comes next.",
+          "Now that the role has admin permissions, you need a way to assume it \u2014 use iam:GetRole to read its current trust policy (the AssumeRolePolicyDocument field).",
+          "You have iam:UpdateAssumeRolePolicy \u2014 use it to replace the trust policy with one that names your current user ARN as a trusted principal.",
+          "A principal explicitly named in a trust policy can call sts:AssumeRole even without sts:AssumeRole in their own IAM policy \u2014 trust is granted from the role's side.",
+          "After updating the trust policy, wait a few seconds for IAM changes to propagate before attempting to assume the role.",
           "Browse to https://pathfinding.cloud/paths/iam-019 for full technique details."
         ],
         "commands": [
           {
             "description": "Attach AdministratorAccess to the target role",
             "command": "aws iam attach-role-policy --role-name pl-prod-iam-019-to-admin-target-role --policy-arn arn:aws:iam::aws:policy/AdministratorAccess"
-          }
-        ]
-      },
-      {
-        "from": "starting-principal",
-        "to": "target-role",
-        "label": "iam:UpdateAssumeRolePolicy + sts:AssumeRole",
-        "description": "Modify the target role's trust policy to add the starting user as a trusted principal, then assume the now-privileged role to gain full administrative access. Because the starting user is explicitly named in the trust policy, no sts:AssumeRole permission is required in the user's own IAM policy.\n",
-        "hints": [
-          "Now that the role has admin permissions, you need a way to assume it \u2014 check whether you can modify who the role trusts.",
-          "Use iam:GetRole to read the role's current trust policy (the AssumeRolePolicyDocument field).",
-          "You have iam:UpdateAssumeRolePolicy \u2014 use it to replace the trust policy with one that names your current user ARN as a trusted principal.",
-          "A principal explicitly named in a trust policy can call sts:AssumeRole even without sts:AssumeRole in their own IAM policy \u2014 trust is granted from the role's side.",
-          "After updating the trust policy, wait a few seconds for IAM changes to propagate before attempting to assume the role.",
-          "Use iam:GetUserPolicy to verify your starting user does not already have sts:AssumeRole \u2014 this confirms the trust policy change is the enabler."
-        ],
-        "commands": [
+          },
           {
             "description": "Update the role trust policy to trust the starting user",
             "command": "aws iam update-assume-role-policy --role-name pl-prod-iam-019-to-admin-target-role --policy-document '{\"Version\":\"2012-10-17\",\"Statement\":[{\"Effect\":\"Allow\",\"Principal\":{\"AWS\":\"arn:aws:iam::{account_id}:user/pl-prod-iam-019-to-admin-starting-user\"},\"Action\":\"sts:AssumeRole\"}]}'"
@@ -188,7 +175,7 @@
       {
         "from": "target-role",
         "to": "ctf-flag",
-        "label": "Read CTF flag",
+        "label": "ssm:GetParameter",
         "description": "With administrator-equivalent access gained by assuming the target role, retrieve the scenario flag from SSM Parameter Store. AdministratorAccess grants ssm:GetParameter on all parameters in the account, so no additional permissions are needed beyond the admin session you just obtained.\n",
         "hints": [
           "You now hold admin-equivalent credentials via the assumed role session. The scenario flag is stored in an AWS service commonly used to hold configuration values and small secrets.",

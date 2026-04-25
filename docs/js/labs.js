@@ -297,6 +297,15 @@ function getArnShortName(arn) {
     return parts[parts.length - 1] || arn;
 }
 
+// Extract the resource type + path from an ARN (everything after the 5th colon).
+// e.g. arn:aws:ssm:{region}:{account}:parameter/pathfinding-labs/flags/x → parameter/pathfinding-labs/flags/x
+function extractArnResource(arn) {
+    if (!arn) return '';
+    const parts = arn.split(':');
+    if (parts.length < 6) return arn;
+    return parts.slice(5).join(':');
+}
+
 // Format an ARN with the service and resource-type segments highlighted
 // ARN format: arn:partition:service:region:account:resource-type/resource-name
 function formatArnHighlighted(arn) {
@@ -688,11 +697,12 @@ function initRouter() {
 function routeFromURL() {
     const pathname = window.location.pathname;
 
-    // Match /labs/{slug} where slug can contain letters, numbers, hyphens, plus signs
-    const labMatch = pathname.match(/^\/labs\/([a-z0-9+\-]+)$/);
+    // Match /labs/{slug} — decode percent-encoded characters so slugs with spaces
+    // (e.g. "sts-001 + ecs-002") survive round-tripping through the URL bar.
+    const labMatch = pathname.match(/^\/labs\/(.+)$/);
 
     if (labMatch) {
-        const slug = labMatch[1];
+        const slug = decodeURIComponent(labMatch[1]);
         const lab = allLabs.find(l => l.slug === slug);
 
         if (lab) {
@@ -1959,12 +1969,14 @@ function buildGuidedV2Sections(lab) {
                                 : '')
                             + `</div>`
                         : '';
-                    // Row 3: Flag -- placeholder for a future per-lab field (the attack's
-                    // objective / flag value). Rendered empty for now; uses the green
-                    // Access-Type variant so start and target cards visually balance.
-                    const destFlagValue = '';
-                    const destFlagRowHtml = fullRow(labKvPill('Flag Location', 'lab-kv-pill-node-access', destFlagValue,
-                        'attackMap.nodes[dest].flag (placeholder)'));
+                    // Row 3: Flag -- resource type + path from the isTarget node ARN.
+                    const destFlagValue = sd.destination?.isTarget
+                        ? extractArnResource(sd.destination.arn)
+                        : '';
+                    const destFlagRowHtml = destFlagValue
+                        ? fullRow(labKvPill('Flag Location', 'lab-kv-pill-node-access', destFlagValue,
+                            'attackMap.nodes[dest].arn → extractArnResource()'))
+                        : '';
 
                     const permsPillsHtml = renderPermissionsPills(lab.permissions, slug);
 
