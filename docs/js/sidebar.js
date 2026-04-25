@@ -22,7 +22,7 @@
             });
         });
 
-        // Restore group states (labs expanded by default, paths collapsed)
+        // Restore group states (paths collapsed by default, labs expanded by default)
         restoreGroup('paths', false);
         restoreGroup('labs', true);
 
