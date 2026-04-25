@@ -49,6 +49,13 @@ class SPAHTTPRequestHandler(http.server.SimpleHTTPRequestHandler):
 
         # For all other requests, serve the appropriate index.html for SPA routing
         if not is_file:
+            # Check if path/index.html exists on disk (e.g. /labs/getting-started)
+            dir_index_path = url_path.rstrip('/') + '/index.html'
+            dir_index_file = self.translate_path(dir_index_path)
+            if os.path.isfile(dir_index_file):
+                self.path = dir_index_path
+                return super().do_GET()
+
             # If URL starts with /paths/, serve /paths/index.html
             if url_path.startswith('/paths/'):
                 self.path = '/paths/index.html'
