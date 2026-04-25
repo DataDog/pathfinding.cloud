@@ -118,6 +118,12 @@ function setupEventListeners() {
     viewTableBtn.addEventListener('click', () => switchView('table'));
     themeToggle.addEventListener('click', toggleTheme);
     initPillFilters();
+
+    // Handle browser back/forward navigation
+    window.addEventListener('popstate', handlePopState);
+
+    // Handle backward compatibility: redirect old hash URLs to new format
+    window.addEventListener('hashchange', handleLegacyHashRedirect);
 }
 
 function initPillFilters() {
@@ -194,13 +200,6 @@ function buildPillMenu(menuId, options) {
         item.textContent = opt.label;
         menu.appendChild(item);
     });
-}
-
-    // Handle browser back/forward navigation
-    window.addEventListener('popstate', handlePopState);
-
-    // Handle backward compatibility: redirect old hash URLs to new format
-    window.addEventListener('hashchange', handleLegacyHashRedirect);
 }
 
 // Switch between card and table view
