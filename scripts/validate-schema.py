@@ -995,9 +995,15 @@ def main():
     mode = "complete paths only" if not allow_draft else "drafts allowed"
     print(f"Validating {len(yaml_files)} file(s) ({mode})...\n")
 
-    # First pass: collect all path IDs for parent validation
+    # First pass: collect all path IDs for parent validation.
+    # Always scan the full corpus (data/paths/ relative to this script), not
+    # just the target. Otherwise validating a single file produces spurious
+    # "Parent path 'X' does not exist" errors whenever the parent is in a
+    # file the target glob didn't include.
+    corpus_root = Path(__file__).resolve().parent.parent / 'data' / 'paths'
+    corpus_files = find_yaml_files(str(corpus_root)) if corpus_root.is_dir() else yaml_files
     valid_ids = set()
-    for file_path in yaml_files:
+    for file_path in corpus_files:
         try:
             with open(file_path, 'r') as f:
                 data = yaml.safe_load(f)
