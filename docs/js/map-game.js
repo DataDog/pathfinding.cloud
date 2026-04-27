@@ -5817,8 +5817,9 @@ function drawGameMap(ctx, w, h, state) {
     }
 
     // Islands -- always draw all islands fully (no fog/locked state)
-    // Shrink islands by 20% for each main island beyond 3 to avoid crowding
-    const baseIslandRadius = 104;
+    // Shrink islands by 20% for each main island beyond 3 to avoid crowding.
+    // Callers can pass state._baseIslandRadius to use a smaller cap (e.g., mobile preview).
+    const baseIslandRadius = state._baseIslandRadius || 104;
     const shrinkSteps = Math.max(0, nodes.length - 3);
     let islandRadius = baseIslandRadius * Math.pow(0.8, shrinkSteps);
 
@@ -7297,12 +7298,42 @@ function renderStaticMapPreview(containerEl, lab) {
     const canvas = document.createElement('canvas');
 
     const w = containerEl.clientWidth;
-    const h = 460;
-    // Header zone height and bottom clearance for footer + island labels
-    // Matches SCRIM_H5 = 150 in the game mode V5 HUD so both headers look identical.
+    const isMobile = w <= 600;
+
+    // Header zone height matches SCRIM_H5 = 150 in game mode V5 HUD.
     const mapYOffset = 150;
-    const bottomPad = 120;
-    const mapH = h - mapYOffset;
+    const bottomPad = 90;
+
+    let h, mapH, positions;
+    if (isMobile) {
+        // Vertical layout: nodes stacked top-to-bottom so the full path is visible.
+        // Islands are capped at MOBILE_BASE_RADIUS (65px) and shrink further with node count.
+        // perNodeH is computed so the label bottom of node i always clears the island top of
+        // node i+1 with ~20px headroom. Formula accounts for:
+        //   - island body: r * 0.87 vertical (0.45 above + 0.42 below center)
+        //   - tree/terrain clearance above: ~25px
+        //   - label lines + gap below: ~46px
+        //   Total fixed overhead: ~91px, plus 30px safety margin → 3*r + 30 heuristic, min 130.
+        const MOBILE_BASE_RADIUS = 65;
+        const mShrinkSteps = Math.max(0, mapNodes.length - 3);
+        const naturalMobileRadius = MOBILE_BASE_RADIUS * Math.pow(0.8, mShrinkSteps);
+        const perNodeH = Math.max(Math.ceil(naturalMobileRadius * 3.0 + 30), 130);
+        mapH = mapNodes.length * perNodeH + bottomPad;
+        h = mapYOffset + mapH;
+        const rng = mapRng(mapNodes.length * 31);
+        positions = mapNodes.map((_, i) => {
+            const zigzag = (i % 2 === 0 ? 1 : -1) * w * 0.14;
+            const jitter = (rng() - 0.5) * 18;
+            return {
+                x: Math.max(w * 0.25, Math.min(w * 0.75, w * 0.5 + zigzag + jitter)),
+                y: i * perNodeH + perNodeH * 0.5,
+            };
+        });
+    } else {
+        h = 460;
+        mapH = h - mapYOffset;
+        positions = computeMapLayout(mapNodes.length, w, mapH);
+    }
 
     const dpr = window.devicePixelRatio || 1;
     canvas.width = w * dpr;
@@ -7315,8 +7346,6 @@ function renderStaticMapPreview(containerEl, lab) {
     const ctx = canvas.getContext('2d');
     ctx.scale(dpr, dpr);
 
-    // Compute layout within the map zone (below header) so hudBottom is relative to mapH
-    const positions = computeMapLayout(mapNodes.length, w, mapH);
     const companionPositions = computeCompanionPositions(mapCompanions, mapEdges, positions);
     const allDecorations = generateMapDecorations(positions, w, mapH);
     const decorations = allDecorations.filter(d => d.type !== 'mountain');
@@ -7369,14 +7398,18 @@ function renderStaticMapPreview(containerEl, lab) {
         // The scrim gradient on top will still darken any cloud pixels that
         // happen to extend into the header zone.
         _cloudHudTop: -50,
-        _cloudBottom: Math.round(mapH * 0.28),
+        _cloudBottom: Math.round(mapH * (isMobile ? 0.12 : 0.28)),
+        // Mobile: cap island size so the dynamic perNodeH guarantee holds
+        _baseIslandRadius: isMobile ? 65 : undefined,
     };
 
-    // Shift islands down into the map zone and clamp above footer+label clearance.
-    // Done once before any draw() call so repeated redraws don't compound the shift.
-    const shift = Math.round(mapH * 0.25);
-    const maxAllowed = mapH - bottomPad - 30;
-    state.positions.forEach(p => { p.y = Math.min(maxAllowed, p.y + shift); });
+    // Desktop: shift islands down into the map zone and clamp above footer+label clearance.
+    // Mobile: positions are already vertically placed — skip the shift.
+    if (!isMobile) {
+        const shift = Math.round(mapH * 0.25);
+        const maxAllowed = mapH - bottomPad - 30;
+        state.positions.forEach(p => { p.y = Math.min(maxAllowed, p.y + shift); });
+    }
 
     function draw() {
         ctx.save();
@@ -7418,16 +7451,20 @@ function renderStaticMapPreview(containerEl, lab) {
     const titleEl = document.createElement('div');
     titleEl.className = 'map-preview-title-overlay';
     titleEl.innerHTML = `
-        <span class="map-preview-brand">PATHFINDING.CLOUD — LABS</span>
+        <span class="map-preview-brand">Pathfinding Labs</span>
         <div class="map-preview-rule"></div>
         <span class="map-preview-lab-name">${labTitle}</span>
     `;
     containerEl.appendChild(titleEl);
 
-    // Shrink the lab name font until it fits — mirrors the canvas V5 shrink logic.
+    // Set the lab name font size. On mobile CSS allows wrapping so we start smaller
+    // and skip the shrink loop. On desktop shrink until it fits on one line.
     requestAnimationFrame(() => {
         const nameEl = titleEl.querySelector('.map-preview-lab-name');
-        if (nameEl) {
+        if (!nameEl) return;
+        if (isMobile) {
+            nameEl.style.fontSize = '28px';
+        } else {
             const maxW = containerEl.clientWidth - 40; // 20px left pad + 20px right margin
             let size = 46;
             nameEl.style.fontSize = size + 'px';
