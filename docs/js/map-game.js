@@ -631,8 +631,11 @@ function drawGameIslandLabels(ctx, w, h, state) {
             const plateH = contentH + pad * 2;
             const contentW = Math.max(tw + 16, idTw + 12, belowLabelIcon ? belowIconSize + 12 : 0);
 
+            // Clamp draw X so the plate never extends beyond the canvas edges
+            const drawX = Math.max(contentW / 2 + 4, Math.min(w - contentW / 2 - 4, pos.x));
+
             const plateTop = labelY - 2;
-            drawRoundedRect(ctx, pos.x - contentW / 2, plateTop, contentW, plateH, 5);
+            drawRoundedRect(ctx, drawX - contentW / 2, plateTop, contentW, plateH, 5);
             ctx.fillStyle = p.parchCenter || 'rgba(245, 230, 200, 0.9)';
             ctx.fill();
             ctx.strokeStyle = p.borderDecor || 'rgba(120, 80, 20, 0.3)';
@@ -647,13 +650,13 @@ function drawGameIslandLabels(ctx, w, h, state) {
             ctx.fillStyle = nameColor;
             ctx.textAlign = 'center';
             ctx.textBaseline = 'middle';
-            ctx.fillText(label, pos.x, cursorY);
+            ctx.fillText(label, drawX, cursorY);
             cursorY += nameH / 2;
 
             // Icon between name and ARN
             if (belowLabelIcon) {
                 cursorY += iconGap;
-                ctx.drawImage(belowLabelIcon, pos.x - belowIconSize / 2, cursorY, belowIconSize, belowIconSize);
+                ctx.drawImage(belowLabelIcon, drawX - belowIconSize / 2, cursorY, belowIconSize, belowIconSize);
                 cursorY += iconH;
             }
 
@@ -662,7 +665,7 @@ function drawGameIslandLabels(ctx, w, h, state) {
                 cursorY += arnGap + arnH / 2;
                 ctx.font = '500 9px -apple-system, BlinkMacSystemFont, sans-serif';
                 ctx.fillStyle = p.mutedText || 'rgba(180, 160, 120, 0.9)';
-                ctx.fillText(subtitleText, pos.x, cursorY);
+                ctx.fillText(subtitleText, drawX, cursorY);
             }
         } else {
             // Middle islands: label + optional icon below
@@ -677,8 +680,11 @@ function drawGameIslandLabels(ctx, w, h, state) {
             const plateH = contentH + pad * 2;
             const plateW = Math.max(tw + 14, belowLabelIcon ? belowIconSize + 12 : 0);
 
+            // Clamp draw X so the plate never extends beyond the canvas edges
+            const drawX = Math.max(plateW / 2 + 4, Math.min(w - plateW / 2 - 4, pos.x));
+
             const plateTop = labelY - 2;
-            drawRoundedRect(ctx, pos.x - plateW / 2, plateTop, plateW, plateH, 4);
+            drawRoundedRect(ctx, drawX - plateW / 2, plateTop, plateW, plateH, 4);
             ctx.fillStyle = p.parchCenter || 'rgba(245, 230, 200, 0.9)';
             ctx.fill();
             ctx.strokeStyle = p.borderDecor || 'rgba(120, 80, 20, 0.2)';
@@ -689,13 +695,13 @@ function drawGameIslandLabels(ctx, w, h, state) {
             ctx.fillStyle = p.labelFill || '#e4e4e8';
             ctx.textAlign = 'center';
             ctx.textBaseline = 'middle';
-            ctx.fillText(label, pos.x, cursorY);
+            ctx.fillText(label, drawX, cursorY);
             cursorY += nameH / 2;
 
             // Icon below label
             if (belowLabelIcon) {
                 cursorY += iconGap;
-                ctx.drawImage(belowLabelIcon, pos.x - belowIconSize / 2, cursorY, belowIconSize, belowIconSize);
+                ctx.drawImage(belowLabelIcon, drawX - belowIconSize / 2, cursorY, belowIconSize, belowIconSize);
             }
         }
         ctx.restore();
@@ -4395,9 +4401,11 @@ function parseAttackMapToGameNodes(attackMap) {
         // Forward edge: to a different node not yet visited
         const outEdge = attackMap.edges.find(e => e.from === currentId && e.to !== currentId && !visited.has(e.to));
         if (selfEdge) {
-            // Expand into two entries: "before escalation" (self-edge) then "after escalation" (forward edge or terminal)
-            rawChain.push({ nodeData, outEdge: selfEdge });
-            rawChain.push({ nodeData, outEdge });
+            // Expand into two entries: "before escalation" (self-edge) then "after escalation" (forward edge or terminal).
+            // The "before" copy never has isAdmin (the principal hasn't escalated yet).
+            // The "after" copy inherits isAdmin from the node OR from grantsAdmin on the self-loop edge.
+            rawChain.push({ nodeData: { ...nodeData, isAdmin: false }, outEdge: selfEdge });
+            rawChain.push({ nodeData: { ...nodeData, isAdmin: nodeData.isAdmin || !!selfEdge.grantsAdmin }, outEdge });
             visited.add(currentId);
             currentId = outEdge ? outEdge.to : null;
         } else {
@@ -4685,7 +4693,10 @@ function computeMapLayout(count, w, h, hudTopOverride, hudBottomOverride) {
 // Compute companion positions offset from their parent edge midpoints.
 // islandRadius is used to define a minimum safe clearance from main island centers.
 // offsetScale shrinks the perpendicular offset candidates (use 0.5 for thumbnails).
-function computeCompanionPositions(companions, edges, positions, islandRadius, offsetScale) {
+// forcePureHorizontal: when true, companion offsets are purely ±X (no vertical component).
+//   Use this for vertical mobile layouts where the natural perpendicular has a Y component
+//   that would push companions into node labels above or below.
+function computeCompanionPositions(companions, edges, positions, islandRadius, offsetScale, forcePureHorizontal) {
     if (!companions || !companions.length) return [];
     // Companions must stay this far from every main island center
     const safeDistance = (islandRadius || 70) * 1.7;
@@ -4707,16 +4718,23 @@ function computeCompanionPositions(companions, edges, positions, islandRadius, o
         const dx = toPos.x - fromPos.x;
         const dy = toPos.y - fromPos.y;
         const len = Math.sqrt(dx * dx + dy * dy) || 1;
-        const perpX = -dy / len;
-        const perpY = dx / len;
+        // In vertical mobile layouts the natural perpendicular (-dy/len, dx/len) has a
+        // Y component (because edges are slightly diagonal due to zigzag), which pushes
+        // companions up/down into node labels. forcePureHorizontal clamps it to ±X only.
+        const perpX = forcePureHorizontal ? 1 : -dy / len;
+        const perpY = forcePureHorizontal ? 0 : dx / len;
 
         // When multiple companions share an edge, spread them along the edge
         // and offset perpendicular to avoid overlapping the path line
         const siblingIndices = parentEdge.companionIndices || [];
         const siblingPos = siblingIndices.indexOf(ci);
         const siblingCount = siblingIndices.length;
-        // Position along edge: single companion at 0.5, two at 0.35 and 0.65
-        const t = siblingCount <= 1 ? 0.5 : 0.35 + (siblingPos / (siblingCount - 1)) * 0.3;
+        // Position along edge: in horizontal layouts, center at 0.5.
+        // In vertical mobile layouts (forcePureHorizontal), push toward the destination
+        // node so companions don't visually crowd the previous node's label below.
+        const t = forcePureHorizontal
+            ? (siblingCount <= 1 ? 0.72 : 0.60 + (siblingPos / (siblingCount - 1)) * 0.24)
+            : (siblingCount <= 1 ? 0.50 : 0.35 + (siblingPos / (siblingCount - 1)) * 0.30);
         const anchorX = fromPos.x + dx * t;
         const anchorY = fromPos.y + dy * t;
 
@@ -7321,11 +7339,15 @@ function renderStaticMapPreview(containerEl, lab) {
         mapH = mapNodes.length * perNodeH + bottomPad;
         h = mapYOffset + mapH;
         const rng = mapRng(mapNodes.length * 31);
+        // xMargin keeps island bodies (r*1.3 wide) safely inside the canvas.
+        // The label plate can be up to ~170px wide; drawMapWithGameLabels clamps
+        // its draw X independently, so this margin only needs to cover the island body.
+        const xMargin = Math.ceil(naturalMobileRadius * 1.4 + 10);
         positions = mapNodes.map((_, i) => {
-            const zigzag = (i % 2 === 0 ? 1 : -1) * w * 0.14;
-            const jitter = (rng() - 0.5) * 18;
+            const zigzag = (i % 2 === 0 ? 1 : -1) * Math.min(w * 0.12, 44);
+            const jitter = (rng() - 0.5) * 14;
             return {
-                x: Math.max(w * 0.25, Math.min(w * 0.75, w * 0.5 + zigzag + jitter)),
+                x: Math.max(xMargin, Math.min(w - xMargin, w * 0.5 + zigzag + jitter)),
                 y: i * perNodeH + perNodeH * 0.5,
             };
         });
@@ -7346,7 +7368,7 @@ function renderStaticMapPreview(containerEl, lab) {
     const ctx = canvas.getContext('2d');
     ctx.scale(dpr, dpr);
 
-    const companionPositions = computeCompanionPositions(mapCompanions, mapEdges, positions);
+    const companionPositions = computeCompanionPositions(mapCompanions, mapEdges, positions, undefined, undefined, isMobile);
     const allDecorations = generateMapDecorations(positions, w, mapH);
     const decorations = allDecorations.filter(d => d.type !== 'mountain');
     const palette = getGameUIPalette();

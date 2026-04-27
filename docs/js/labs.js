@@ -2027,19 +2027,22 @@ function buildGuidedV2Sections(lab) {
     const setup = getSetup(lab);
     const resourcesCreated = getResourcesCreated(lab);
     if (setup.prerequisites || setup.deployNonInteractive || setup.deployTui || resourcesCreated) {
+        const setupTabGroupId = `gv2-setup-tabs-${slug}`;
         const setupTabs = [];
         if (setup.prerequisites) {
             setupTabs.push({
                 id: 'prereqs',
                 label: 'Prerequisites',
-                renderContent: () => `<div class="lab-tab-prose">${renderLabMarkdown(setup.prerequisites)}</div>`,
+                show: true,
+                rawHtml: `<div class="lab-tab-prose">${renderLabMarkdown(setup.prerequisites)}</div>`,
             });
         }
         if (setup.deployNonInteractive || setup.deployTui) {
             setupTabs.push({
                 id: 'deploy',
                 label: 'Deploy',
-                renderContent: () => renderInnerTabSection(`gv2-deploy-inner-${slug}`, [
+                show: true,
+                rawHtml: renderInnerTabSection(`gv2-deploy-inner-${slug}`, [
                     { id: 'cli', label: 'Non-Interactive', show: !!setup.deployNonInteractive, content: setup.deployNonInteractive },
                     { id: 'tui', label: 'TUI', show: !!setup.deployTui, content: setup.deployTui },
                 ]),
@@ -2049,7 +2052,8 @@ function buildGuidedV2Sections(lab) {
             setupTabs.push({
                 id: 'resources',
                 label: 'Resources Created',
-                renderContent: () => `
+                show: true,
+                rawHtml: `
                     <details class="lab-gv2-collapsible">
                         <summary class="lab-gv2-collapsible-summary">
                             Show Scenario Specific Resources — collapsed by default as viewing resource names may reveal parts of the challenge.
@@ -2059,7 +2063,6 @@ function buildGuidedV2Sections(lab) {
                     </details>`,
             });
         }
-        const setupTabGroupId = `gv2-setup-tabs-${slug}`;
         sections.push({
             id: `gv2-setup-${slug}`,
             h2Section: 'Self-hosted Lab Setup',
@@ -2067,12 +2070,7 @@ function buildGuidedV2Sections(lab) {
             level: 2,
             colorClass: sectionColors['Self-hosted Lab Setup'],
             debugSource: 'readme.setup.{prerequisites, deployNonInteractive, deployTui} + readme.attack.resourcesCreated',
-            tabSyncItems: setupTabs.map(t => ({
-                label: t.label,
-                tabGroupId: setupTabGroupId,
-                tabPanelId: `${setupTabGroupId}-${t.id}`,
-            })),
-            renderContent: () => renderSetupTabSection(setupTabGroupId, setupTabs),
+            renderContent: () => renderInnerTabSection(setupTabGroupId, setupTabs),
         });
     }
 
@@ -2233,28 +2231,32 @@ function buildGuidedV2Sections(lab) {
         defendTabs.push({
             id: 'cspm',
             label: 'What CSPM Tools Should Detect',
-            renderContent: () => `<div class="lab-tab-prose">${renderLabMarkdown(cspmData.whatToDetect)}</div>`,
+            show: true,
+            rawHtml: `<div class="lab-tab-prose">${renderLabMarkdown(cspmData.whatToDetect)}</div>`,
         });
     }
     if (siemData?.cloudTrailEvents) {
         defendTabs.push({
             id: 'cloudtrail',
             label: 'CloudTrail Events to Monitor',
-            renderContent: () => `<div class="lab-tab-prose">${renderLabMarkdown(siemData.cloudTrailEvents)}</div>`,
+            show: true,
+            rawHtml: `<div class="lab-tab-prose">${renderLabMarkdown(siemData.cloudTrailEvents)}</div>`,
         });
     }
     if (siemData?.detonationLogs) {
         defendTabs.push({
             id: 'logs',
             label: 'Detonation Logs',
-            renderContent: () => `<div class="lab-tab-prose">${renderLabMarkdown(siemData.detonationLogs)}</div>`,
+            show: true,
+            rawHtml: `<div class="lab-tab-prose">${renderLabMarkdown(siemData.detonationLogs)}</div>`,
         });
     }
     if (lab.readme?.references) {
         defendTabs.push({
             id: 'references',
             label: 'References',
-            renderContent: () => `<div class="lab-tab-prose">${renderLabMarkdown(lab.readme.references)}</div>`,
+            show: true,
+            rawHtml: `<div class="lab-tab-prose">${renderLabMarkdown(lab.readme.references)}</div>`,
         });
     }
 
@@ -2266,12 +2268,7 @@ function buildGuidedV2Sections(lab) {
             level: 2,
             colorClass: sectionColors['Defend'],
             debugSource: 'readme.defend.cspm.whatToDetect | readme.defend.cloudSiem.{cloudTrailEvents, detonationLogs} | readme.references',
-            tabSyncItems: defendTabs.map(t => ({
-                label: t.label,
-                tabGroupId: defendTabGroupId,
-                tabPanelId: `${defendTabGroupId}-${t.id}`,
-            })),
-            renderContent: () => renderSetupTabSection(defendTabGroupId, defendTabs),
+            renderContent: () => renderInnerTabSection(defendTabGroupId, defendTabs),
         });
     }
 
