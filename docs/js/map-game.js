@@ -94,6 +94,115 @@ const cloudSprites = {
     },
 };
 
+// Floating-island sprite loader -- hand-drawn pixel-art replacements for the
+// procedural wooded principal island, the flag-shape target island, and the
+// rocky companion islet. Loaded async; renderers fall back to the procedural
+// shapes if a sprite fails to load or the first frame paints before the load
+// completes. Callers should push onto onLoadCallbacks to redraw once sprites
+// arrive (mirrors the awsIconSprites pattern).
+const islandSprites = {
+    images: { principal: null, target: null, resource: null },
+    loaded: false,
+    onLoadCallbacks: [],
+    load() {
+        if (this.loaded) return Promise.resolve();
+        const sources = [
+            { key: 'principal', src: '/img/islands/principal-island.png' },
+            { key: 'target',    src: '/img/islands/target-island.png' },
+            { key: 'resource',  src: '/img/islands/resource-island.png' },
+        ];
+        const promises = sources.map(({ key, src }) => new Promise((resolve) => {
+            const img = new Image();
+            img.onload = () => { this.images[key] = img; resolve(); };
+            img.onerror = () => resolve();  // fall back to procedural if the file is missing
+            img.src = src;
+        }));
+        return Promise.all(promises).then(() => {
+            this.loaded = true;
+            this.onLoadCallbacks.forEach(cb => { try { cb(); } catch (_) { /* swallow */ } });
+        });
+    },
+    get(key) { return this.images[key] || null; },
+};
+
+// Draw a floating-island sprite centered horizontally at pos.x, with the
+// grass-top surface anchored near pos.y so AWS icons / banners overlay onto
+// the grass the same way they do on the procedural islands.
+//
+// `footprintWidth` matches the procedural island's outer-shore width so the
+// sprite occupies the same visual footprint:
+//
+//   wooded principal shore = islandRadius * 2.24  -> use ~2.4 * islandRadius
+//   companion islet shore  = islandRadius * 2.4
+//
+// `grassCenterFromTop` (0..1) is the fractional vertical position of the
+// grass center within the PNG. The principal and resource sprites have grass
+// near the top of the PNG (no upward-protruding decorations), but the target
+// sprite has a flag pole that sticks up to the top of the PNG, pushing the
+// grass surface down to about the middle of the PNG. Per-sprite anchors keep
+// every island's grass surface visually aligned at pos.y.
+//
+// Returns true if the sprite was drawn, false if it isn't loaded yet so the
+// caller can fall back to the procedural renderer.
+const ISLAND_SPRITE_GRASS_CENTER = {
+    principal: 0.40,
+    target:    0.50,   // flag pole occupies the top of the PNG
+    resource:  0.40,
+};
+
+// Per-sprite footprint multiplier (sprite display width = islandRadius * scale).
+// Principal islands are bumped 25% over the procedural shore footprint (which
+// the target/resource sprites still match) so the principals read as the
+// dominant nodes on the path; target/resource islands stay at the procedural
+// scale to preserve the visual hierarchy.
+const ISLAND_SPRITE_FOOTPRINT_SCALE = {
+    principal: 2.7,
+    target:    3.0,
+    resource:  3.0,
+};
+function drawIslandSpriteFor(ctx, img, pos, footprintWidth, grassCenterFromTop = 0.40) {
+    if (!img || !img.naturalWidth) return false;
+    const aspect = img.naturalHeight / img.naturalWidth;
+    const w = footprintWidth;
+    const h = w * aspect;
+    const x = pos.x - w / 2;
+    const y = pos.y - h * grassCenterFromTop;
+    ctx.drawImage(img, x, y, w, h);
+    return true;
+}
+
+// Compute the y-coordinate of the visual bottom of the island sprite for a
+// given island, falling back to the procedural ellipse-shore bottom if the
+// sprite isn't loaded. Used to position labels just below the full island
+// silhouette instead of at the (much shallower) procedural shoreline.
+function getIslandBottomY(pos, islandRadius, spriteKey, footprintWidth) {
+    const img = islandSprites.get(spriteKey);
+    if (img && img.naturalWidth) {
+        const scale = ISLAND_SPRITE_FOOTPRINT_SCALE[spriteKey] ?? 2.4;
+        const w = footprintWidth ?? (islandRadius * scale);
+        const h = w * (img.naturalHeight / img.naturalWidth);
+        const grassCenterFromTop = ISLAND_SPRITE_GRASS_CENTER[spriteKey] ?? 0.40;
+        return pos.y + h * (1 - grassCenterFromTop);
+    }
+    // Procedural shore-bottom: ellipse y-radius (0.42 for principal, 0.45 for
+    // companion). Caller can pass islandRadius * 0.45 for companion sites.
+    return pos.y + islandRadius * 0.42;
+}
+
+// Pick the sprite that drawGameMap renders for a given node, so the label
+// code can compute the matching bottom-edge offset. Returns null when the
+// node would render via the procedural fallback (e.g. islandStyle other than
+// wooded, or fortress target style).
+function pickIslandSpriteKey(state, nodeIdx) {
+    const node = state.nodes?.[nodeIdx];
+    const isTarget = !!node?.isTarget;
+    const targetStyle = state.targetStyle || 'flag-shape';
+    if (isTarget && targetStyle === 'flag-shape') return 'target';
+    if (isTarget && targetStyle === 'fortress') return null;  // own renderer, no sprite
+    if (state.islandStyle === 'wooded') return 'principal';
+    return null;
+}
+
 // Adding a new resource type? Add an entry in BOTH awsIconSprites.iconPaths below
 // AND SUBTYPE_DISPLAY so the icon renders AND the human-readable label shows up
 // in the objective/guided-challenge pills. Keep the keys identical.
@@ -580,9 +689,13 @@ function drawGameIslandLabels(ctx, w, h, state) {
         if (label.length > 20) label = label.substring(0, 18) + '...';
         if (!label) return;
 
-        // Position label below the island's bottom edge (ellipse Y-radius is ~0.42 * islandRadius)
+        // Position label below the island's bottom edge. With sprite-backed
+        // islands the silhouette extends ~1 * islandRadius further below pos.y
+        // than the procedural shore ellipse, so we ask getIslandBottomY for
+        // the actual rendered bottom and pad by 10px.
         const ir = state.islandRadius || 52;
-        const labelY = pos.y + ir * 0.42 + 10;
+        const spriteKey = pickIslandSpriteKey(state, i);
+        const labelY = getIslandBottomY(pos, ir, spriteKey) - 20;
         ctx.save();
 
         // Check if below-label icon mode applies to this node
@@ -1075,7 +1188,7 @@ const planeStyleRenderers = {
 function drawPlaneIndicator(ctx, x, y, palette, style) {
     const renderer = planeStyleRenderers[style] || drawPlaneJet;
     const accentColor = palette.startFill || '#4ade80';
-    const liftY = 25; // vertical pixels to raise the plane above its offset position
+    const liftY = 0; // vertical pixels to raise the plane above its offset position
     const scale = 1.5;
     // Offset the plane to the top-right corner of the island
     const offsetX = 30;
@@ -1311,46 +1424,54 @@ function drawCompanionIslet(ctx, pos, companion, isSelected, state, nodeIndex) {
 
     ctx.save();
 
-    // Selection ring
-    if (isSelected) {
-        ctx.strokeStyle = p.selectedRing || '#9D4EDD';
-        ctx.lineWidth = 2.5;
-        ctx.beginPath();
-        ctx.ellipse(x, y + 2, islandRadius * 1.3, islandRadius * 0.5, 0, 0, Math.PI * 2);
-        ctx.stroke();
+    // (Selection ring removed -- the prior purple/blue ellipse around a
+    // selected companion read as a stray UI artifact on top of the resource
+    // sprite. The plane indicator already lands on the selected companion,
+    // so selection is still visible without an extra ring.)
+
+    // Sprite path: hand-drawn rocky islet PNG. Footprint matches the
+    // procedural shore (islandRadius * 1.2 * 2 = 2.4 * islandRadius).
+    const drewSprite = drawIslandSpriteFor(
+        ctx,
+        islandSprites.get('resource'),
+        pos,
+        islandRadius * ISLAND_SPRITE_FOOTPRINT_SCALE.resource,
+        ISLAND_SPRITE_GRASS_CENTER.resource,
+    );
+
+    if (!drewSprite) {
+        // Procedural fallback -- generate shapes at smaller scale
+        const shoreShape = generateIslandShape(x, y, islandRadius * 1.2, islandRadius * 0.45, seed + 1, 16);
+        const rockShape = generateIslandShape(x, y, islandRadius * 1.0, islandRadius * 0.38, seed + 2, 16);
+        const innerShape = generateIslandShape(x, y - 1, islandRadius * 0.7, islandRadius * 0.26, seed + 3, 12);
+
+        // Cliff shadow
+        const shadowShape = shoreShape.map(pt => ({ x: pt.x + 2, y: pt.y + 6 }));
+        ctx.fillStyle = 'rgba(0,0,0,0.15)';
+        drawSmoothShape(ctx, shadowShape);
+        ctx.fill();
+
+        // Cliff face
+        ctx.fillStyle = p.cliffDark || '#2a1a08';
+        drawSmoothShape(ctx, shoreShape.map(pt => ({ x: pt.x, y: pt.y + 3 })));
+        ctx.fill();
+
+        // Shore ring -- sandy/rocky
+        ctx.fillStyle = p.sandDark || '#6a5a32';
+        drawSmoothShape(ctx, shoreShape);
+        ctx.fill();
+
+        // Rock surface (gray/brown instead of green)
+        const isLight = document.documentElement.classList.contains('light-theme');
+        ctx.fillStyle = isLight ? '#9a8a78' : '#5a4a3a';
+        drawSmoothShape(ctx, rockShape);
+        ctx.fill();
+
+        // Inner rock highlight
+        ctx.fillStyle = isLight ? '#b8a898' : '#6a5a48';
+        drawSmoothShape(ctx, innerShape);
+        ctx.fill();
     }
-
-    // Generate shapes at smaller scale
-    const shoreShape = generateIslandShape(x, y, islandRadius * 1.2, islandRadius * 0.45, seed + 1, 16);
-    const rockShape = generateIslandShape(x, y, islandRadius * 1.0, islandRadius * 0.38, seed + 2, 16);
-    const innerShape = generateIslandShape(x, y - 1, islandRadius * 0.7, islandRadius * 0.26, seed + 3, 12);
-
-    // Cliff shadow
-    const shadowShape = shoreShape.map(pt => ({ x: pt.x + 2, y: pt.y + 6 }));
-    ctx.fillStyle = 'rgba(0,0,0,0.15)';
-    drawSmoothShape(ctx, shadowShape);
-    ctx.fill();
-
-    // Cliff face
-    ctx.fillStyle = p.cliffDark || '#2a1a08';
-    drawSmoothShape(ctx, shoreShape.map(pt => ({ x: pt.x, y: pt.y + 3 })));
-    ctx.fill();
-
-    // Shore ring -- sandy/rocky
-    ctx.fillStyle = p.sandDark || '#6a5a32';
-    drawSmoothShape(ctx, shoreShape);
-    ctx.fill();
-
-    // Rock surface (gray/brown instead of green)
-    const isLight = document.documentElement.classList.contains('light-theme');
-    ctx.fillStyle = isLight ? '#9a8a78' : '#5a4a3a';
-    drawSmoothShape(ctx, rockShape);
-    ctx.fill();
-
-    // Inner rock highlight
-    ctx.fillStyle = isLight ? '#b8a898' : '#6a5a48';
-    drawSmoothShape(ctx, innerShape);
-    ctx.fill();
 
     if (!state._thumbnailMode) {
         // AWS icon centered on companion islet (max 50% of islet radius) -- any
@@ -1358,7 +1479,12 @@ function drawCompanionIslet(ctx, pos, companion, isSelected, state, nodeIndex) {
         // centered icon here: structure variants would be microscopic on a 28px
         // islet, so we fall back to the simple treatment.
         const _companionStyle = state.effectiveIconStyle || state.iconStyle;
-        if (ISLAND_MOUNTED_ICON_STYLES.has(_companionStyle)) {
+        if (_companionStyle === 'crest') {
+            // Draw the same shield/crest badge used on principal/target islands,
+            // upscaled so it reads at companion-island size. The crest renderer
+            // pulls the icon from the node's subType, so pass the companion node.
+            drawIconCrest(ctx, pos, islandRadius * 1.5, companion, p);
+        } else if (ISLAND_MOUNTED_ICON_STYLES.has(_companionStyle)) {
             const companionSubType = companion.subType || '';
             const companionIcon = awsIconSprites.get(companionSubType);
             if (companionIcon) {
@@ -1370,21 +1496,18 @@ function drawCompanionIslet(ctx, pos, companion, isSelected, state, nodeIndex) {
             }
         }
 
-        // Resource-type tint ring
-        const tint = p.typeTintResource || '#f59e0b';
-        ctx.globalAlpha = 0.3;
-        ctx.strokeStyle = tint;
-        ctx.lineWidth = 3;
-        ctx.beginPath();
-        ctx.ellipse(x, y + 2, islandRadius * 1.1, islandRadius * 0.42, 0, 0, Math.PI * 2);
-        ctx.stroke();
-        ctx.globalAlpha = 1;
+
     }
 
     ctx.restore();
 
     if (!state._thumbnailMode) {
-        drawCompanionLabel(ctx, x, y + 16, companion, state);
+        // Place label just below the rendered island bottom -- sprite path
+        // extends much further below `y` than the procedural shore ellipse.
+        const labelTopY = drewSprite
+            ? getIslandBottomY(pos, islandRadius, 'resource') - 20
+            : y + 16;
+        drawCompanionLabel(ctx, x, labelTopY, companion, state);
     }
 }
 
@@ -4669,7 +4792,24 @@ function computeMapLayout(count, w, h, hudTopOverride, hudBottomOverride) {
     if (count === 0) return positions;
 
     const hudTop    = hudTopOverride    ?? 48;   // below top HUD bar
-    const hudBottom = hudBottomOverride ?? 110;  // above bottom action bar + label plate space
+    let   hudBottom = hudBottomOverride ?? 110;  // above bottom action bar + label plate space
+
+    // Sprite-backed islands extend further below pos.y than the procedural
+    // ellipse, and labels now sit beneath the sprite bottom. Reserve some
+    // additional bottom space so islands clamp higher up on-canvas. We use
+    // a fraction of the (post-scale) sprite extent rather than the full
+    // delta so tight canvases like the static-map preview's 350px map zone
+    // don't collapse the island band onto a single line.
+    if (islandSprites.images.principal) {
+        const baseRadius = 73;
+        const shrinkSteps = Math.max(0, count - 3);
+        const estimatedRadius = baseRadius * Math.pow(0.8, shrinkSteps);
+        const scale = ISLAND_SPRITE_FOOTPRINT_SCALE.principal;
+        // 0.5 * (radius * scale * (1 - anchor)) approximation. With
+        // scale=3.0, anchor=0.40, this is 0.5 * 1.8 * radius = 0.9 * radius;
+        // we cap at ~0.7 * radius to leave room for the cloud band on top.
+        hudBottom += Math.round(estimatedRadius * Math.min(0.7, scale * 0.25));
+    }
     const cloudBottom = h * 0.22; // clouds end here -- islands start BELOW this
     const padX = w * 0.15;     // 15% margin each side so islands stay central
 
@@ -4880,6 +5020,17 @@ function drawIslandClassic(ctx, pos, islandRadius, seed, p, isFirst, isLast) {
 }
 
 function drawIslandWooded(ctx, pos, islandRadius, seed, p, isFirst, isLast) {
+    // Sprite path: draw the hand-drawn principal-island PNG when loaded.
+    // Principal sprites use a 25%-larger footprint than the procedural shore
+    // so they read as the dominant nodes on the path. Falls back below.
+    if (drawIslandSpriteFor(
+            ctx,
+            islandSprites.get('principal'),
+            pos,
+            islandRadius * ISLAND_SPRITE_FOOTPRINT_SCALE.principal,
+            ISLAND_SPRITE_GRASS_CENTER.principal,
+        )) return;
+
     // Recreates the old look: thicker cliff for depth, scattered round trees with shadows
     const shore = generateIslandShape(pos.x, pos.y, islandRadius * 1.12, islandRadius * 0.44, seed, 22);
     const rock = generateIslandShape(pos.x, pos.y, islandRadius * 0.92, islandRadius * 0.36, seed + 1, 22);
@@ -5315,6 +5466,21 @@ function drawTargetOverlayClassicPlus(ctx, pos, islandRadius, p) {
 // still reads as a flag without being an awkward thin ribbon.
 // Grass is gold so target islands read as distinct from principal islands.
 function drawTargetIslandFlagShape(ctx, pos, islandRadius, seed, p) {
+    // Sprite path: the target-island PNG is a normal-sized floating island with
+    // the CTF flag drawn into the sprite, so we size it the same as principal
+    // islands (2.4 * islandRadius wide). drawGameMap detects this and drops the
+    // 0.60 icon-shrink that compensated for the smaller flag silhouette below.
+    // Use the target-specific grass-center anchor (~0.50) because the flag pole
+    // pushes the grass surface to the middle of the PNG; principal sprites have
+    // grass near the top, so they use a smaller anchor (~0.40).
+    if (drawIslandSpriteFor(
+            ctx,
+            islandSprites.get('target'),
+            pos,
+            islandRadius * ISLAND_SPRITE_FOOTPRINT_SCALE.target,
+            ISLAND_SPRITE_GRASS_CENTER.target,
+        )) return;
+
     // 25% smaller than the original flag dimensions while preserving the
     // square-ish ratio so the silhouette still reads as a flag.
     const halfW = islandRadius * 0.71;
@@ -5939,15 +6105,27 @@ function drawGameMap(ctx, w, h, state) {
 
         // AWS icon on the island -- dispatch based on the active on-island
         // style. Fortress target handles its own icon internally, so skip.
-        // Flag-shape target gets a 25% smaller icon to match its smaller
-        // island footprint.
+        // Flag-shape target's procedural fallback uses a smaller silhouette
+        // and shrinks the icon to 60%; the sprite-backed flag-shape island
+        // is normal-sized, so when the sprite is loaded we use full radius.
         if (!isFortressTarget && !state._thumbnailMode) {
-            const iconRadius = isFlagShapeTarget ? islandRadius * 0.60 : islandRadius;
+            const targetSpriteLoaded = !!islandSprites.images.target;
+            const iconRadius = (isFlagShapeTarget && !targetSpriteLoaded)
+                ? islandRadius * 0.60
+                : islandRadius;
+            // Nudge the AWS-icon badge so it sits more centered against the
+            // island silhouette: principal islands sit lower on their sprite
+            // so push the badge down 10px; target islands sit higher so lift
+            // the badge up 10px. Intermediate principals get the same +10
+            // nudge as the starting principal.
+            const isPrincipalNode = (nodes[i]?.type?.type || nodes[i]?.type) === 'principal';
+            const badgeNudgeY = isLast ? -20 : (isPrincipalNode ? 15 : 0);
+            const badgePos = badgeNudgeY ? { x: pos.x, y: pos.y + badgeNudgeY } : pos;
             switch (state.effectiveIconStyle) {
-                case 'on-island': drawIconOnIsland(ctx, pos, iconRadius, nodes[i]);        break;
-                case 'building':  drawIconBuilding(ctx,  pos, iconRadius, nodes[i], p);    break;
-                case 'banner':    drawIconBanner(ctx,    pos, iconRadius, nodes[i], p);    break;
-                case 'crest':     drawIconCrest(ctx,     pos, iconRadius, nodes[i], p);    break;
+                case 'on-island': drawIconOnIsland(ctx, badgePos, iconRadius, nodes[i]);        break;
+                case 'building':  drawIconBuilding(ctx,  badgePos, iconRadius, nodes[i], p);    break;
+                case 'banner':    drawIconBanner(ctx,    badgePos, iconRadius, nodes[i], p);    break;
+                case 'crest':     drawIconCrest(ctx,     badgePos, iconRadius, nodes[i], p);    break;
             }
         }
 
@@ -6116,7 +6294,7 @@ function initMapGame(mapId, nodes, edges, companions, lab) {
         companionPositions,
         companions: companions || [],
         companionStyle: 'islet', // 'ship' | 'islet' | 'note'
-        iconStyle: 'banner',  // 'on-island' | 'below-label' | 'off' | 'building' | 'banner' | 'crest' -- toggled with I key
+        iconStyle: 'crest',  // 'on-island' | 'below-label' | 'off' | 'building' | 'banner' | 'crest' -- toggled with I key
         islandStyle: 'wooded', // 'classic' | 'wooded' | 'tropical' | 'ruins' -- toggled with T key
         targetStyle: 'flag-shape', // 'classic-plus' | 'flag-shape' | 'fortress' -- toggled with G key
         planeStyle: 'helicopter',    // 'jet' | 'biplane' | 'seaplane' | 'helicopter' -- toggled with P key
@@ -6176,6 +6354,7 @@ function initMapGame(mapId, nodes, edges, companions, lab) {
     state.buttons = buildPlayingButtons(w, h, state);
 
     cloudSprites.load().then(() => redraw());
+    islandSprites.load().then(() => redraw());
     // Redraw when AWS icons finish loading so they appear on islands
     awsIconSprites.onLoadCallbacks.push(() => redraw());
     redraw();
@@ -7432,7 +7611,7 @@ function renderStaticMapPreview(containerEl, lab) {
         companionPositions,
         companions: mapCompanions,
         companionStyle: 'islet',
-        iconStyle: 'banner',
+        iconStyle: 'crest',
         islandStyle: 'wooded',
         targetStyle: 'flag-shape',
         planeStyle: 'helicopter',
@@ -7463,7 +7642,12 @@ function renderStaticMapPreview(containerEl, lab) {
         // The scrim gradient on top will still darken any cloud pixels that
         // happen to extend into the header zone.
         _cloudHudTop: -50,
-        _cloudBottom: Math.round(mapH * (isMobile ? 0.12 : 0.28)),
+        // Sprite-backed islands (taller PNG silhouettes than the procedural
+        // ellipses) need more vertical room in the map zone, so on desktop
+        // we squeeze the cloud band up by ~15% of mapH and shift the island
+        // band up by the same amount (see post-layout shift below). Mobile
+        // stacks islands vertically, so it doesn't need either adjustment.
+        _cloudBottom: Math.round(mapH * (isMobile ? 0.12 : 0.13)),
         // Mobile: cap island size so the dynamic perNodeH guarantee holds
         // (46 = 65 * 0.7 to match the 30% global island shrink).
         _baseIslandRadius: isMobile ? 46 : undefined,
@@ -7472,21 +7656,52 @@ function renderStaticMapPreview(containerEl, lab) {
     // Desktop: shift islands down into the map zone and clamp above footer+label clearance.
     // Mobile: positions are already vertically placed — skip the shift.
     if (!isMobile) {
-        const shift = Math.round(mapH * 0.25);
+        // Shift the island band ~10% of mapH down (was 25%). Sprite-backed
+        // islands extend ~1 * islandRadius further below pos.y than the
+        // procedural shape, and labels now sit beneath the sprite bottom, so
+        // pulling islands up by 15% of mapH keeps the endpoint plate clear
+        // of the badge-footer overlay.
+        const shift = Math.round(mapH * 0.10);
 
         // Clamp pos.y so the endpoint label plate (Startington / Targetville)
         // never slips behind the .map-preview-badge-footer overlay at the
-        // bottom of the canvas. The endpoint plate is ~46px tall and sits at
-        // labelY = pos.y + ir*0.42 + 10 (top = labelY - 2), so its bottom in
-        // map-zone coords = pos.y + ir*0.42 + 54. Use the un-shrunk
-        // baseIslandRadius (73) as the worst case -- post-shrink islands give
-        // even more headroom. Footer overlay is ~44px (9 pad + ~24 pill +
-        // 9 pad + 1 border).
+        // bottom of the canvas. The plate's bottom y in map-zone coords is
+        // pos.y + (island bottom offset) + (-20 label gap) + 46 (plate height).
+        // For procedural islands the bottom offset is ir*0.42 (~31 at ir=73);
+        // for sprite islands it's ir*2.4*0.6 (~105 at ir=73). Use the worst
+        // case for whichever path is currently active.
         const badgeFooterH = 44;
-        const endpointPlateDrop = 73 * 0.42 + 54;   // ~85
+        const baseRadius = 73;
+        const labelGap = -20;        // matches drawGameIslandLabels
+        const plateH   = 46;
+        const proceduralPlateDrop = baseRadius * 0.42 + labelGap + plateH;        // ~57
+        // Plate-bottom worst case is the principal sprite -- it uses the
+        // largest footprint scale (3.0) and the lowest grass-center anchor
+        // among the three sprites, so it extends the furthest below pos.y.
+        const principalScale      = ISLAND_SPRITE_FOOTPRINT_SCALE.principal;
+        const principalAnchor     = ISLAND_SPRITE_GRASS_CENTER.principal;
+        const spritePlateDrop     = baseRadius * principalScale * (1 - principalAnchor)
+                                        + labelGap + plateH;                       // ~157 at scale 3.0
+        const endpointPlateDrop   = islandSprites.images.principal
+                                        ? spritePlateDrop
+                                        : proceduralPlateDrop;
         const safetyGap = 6;
         const maxAllowed = mapH - badgeFooterH - endpointPlateDrop - safetyGap;
         state.positions.forEach(p => { p.y = Math.min(maxAllowed, p.y + shift); });
+
+        // Lift the target (last) island so it never sits below the average y
+        // of the rest of the path. Without this, odd-count chains place the
+        // last island at the natural zigzag low (matching the start island's
+        // y), which combined with its right-edge x position reads as "stuck
+        // in the bottom-right corner." We only ever move it UP, so layouts
+        // where the target naturally sits high (e.g. 4-island zigzag) are
+        // left alone.
+        if (state.positions.length >= 2) {
+            const targetIdx = state.positions.length - 1;
+            const others = state.positions.slice(0, targetIdx);
+            const avgOtherY = others.reduce((s, p) => s + p.y, 0) / others.length;
+            state.positions[targetIdx].y = Math.min(state.positions[targetIdx].y, avgOtherY);
+        }
 
         // Pull the last island's x in so its endpoint plate doesn't get
         // clamped flush against the right edge by drawMapWithGameLabels'
@@ -7607,6 +7822,7 @@ function renderStaticMapPreview(containerEl, lab) {
     awsIconSprites.preload(mapNodes);
     if (mapCompanions) awsIconSprites.preload(mapCompanions);
     cloudSprites.load().then(() => draw());
+    islandSprites.load().then(() => draw());
     awsIconSprites.onLoadCallbacks.push(() => draw());
     draw();
 
@@ -7851,7 +8067,7 @@ function renderStaticMapThumbnail(containerEl, lab) {
         positions, companionPositions,
         companions:       mapCompanions,
         companionStyle:   'islet',
-        iconStyle:        'banner',
+        iconStyle:        'crest',
         islandStyle:      'wooded',
         targetStyle:      'flag-shape',
         planeStyle:       'helicopter',
@@ -7882,5 +8098,6 @@ function renderStaticMapThumbnail(containerEl, lab) {
     }
 
     cloudSprites.load().then(draw);
+    islandSprites.load().then(draw);
     return canvas;
 }
