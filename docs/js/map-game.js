@@ -3985,6 +3985,7 @@ function renderGameMenu(state) {
                         { keys: ['T'], desc: 'Cycle island style' },
                         { keys: ['G'], desc: 'Cycle target island style' },
                         { keys: ['P'], desc: 'Cycle plane style' },
+                        { keys: ['W'], desc: 'Cycle sky (sky / sunset / dusk)' },
                         { keys: ['R'], desc: 'Reset view' },
                         { keys: ['Ctrl+Scroll'], desc: 'Zoom in / out' },
                     ],
@@ -4624,6 +4625,30 @@ function getMapPalette() {
         flagPole: '#8a7a6a', flagColor: '#ef4444',
         typeTintPrincipal: '#ef4444', typeTintResource: '#f59e0b', typeTintTarget: '#a78bfa',
     };
+}
+
+// Sky-style variants for the canvas-wide sky/ocean gradient. Returned values
+// are top / middle / bottom gradient stops in the SAME shape as oceanA/B/Deep
+// in the base palette, so callers can spread the result over the palette to
+// override only those three colors. 'sky' returns null which means "leave the
+// palette alone" (current default look). 'sunset' and 'dusk' rewrite the
+// gradient to evoke a warm horizon or a soft purple twilight.
+//
+// New variants can be added here -- both drawGameMap (interactive game) and
+// renderStaticMapPreview (single-page attack map) read state.skyStyle and
+// apply the result before painting, so any variant added here shows up in
+// both places automatically.
+const SKY_STYLE_LIST = ['sky', 'sunset', 'dusk'];
+function getSkyVariantColors(skyStyle) {
+    switch (skyStyle) {
+        case 'sunset':
+            return { oceanA: '#1a1432', oceanB: '#e8628c', oceanDeep: '#ffb070' };
+        case 'dusk':
+            return { oceanA: '#101030', oceanB: '#583e7a', oceanDeep: '#c89ab0' };
+        case 'sky':
+        default:
+            return null;
+    }
 }
 
 // Deterministic pseudo-random number generator for stable decoration placement
@@ -5776,29 +5801,22 @@ function drawGameMap(ctx, w, h, state) {
     const fillW = fillR - fillX;
     const fillH = fillB - fillY;
 
-    // Ocean/sky gradient background
+    // Ocean/sky gradient background. state.skyStyle ('sky' | 'sunset' | 'dusk')
+    // optionally overrides the palette's oceanA/B/Deep so the same drawGameMap
+    // can paint a default sky, a sunset, or a dusk twilight without touching
+    // the rest of the palette.
+    const sky = getSkyVariantColors(state.skyStyle);
+    const oceanA = sky?.oceanA ?? p.oceanA;
+    const oceanB = sky?.oceanB ?? p.oceanB;
+    const oceanDeep = sky?.oceanDeep ?? p.oceanDeep;
     const oceanGrad = ctx.createLinearGradient(fillX, fillY, fillX, fillB);
-    oceanGrad.addColorStop(0, p.oceanA);
-    oceanGrad.addColorStop(0.6, p.oceanB);
-    oceanGrad.addColorStop(1, p.oceanDeep);
+    oceanGrad.addColorStop(0, oceanA);
+    oceanGrad.addColorStop(0.6, oceanB);
+    oceanGrad.addColorStop(1, oceanDeep);
     ctx.fillStyle = oceanGrad;
     ctx.fillRect(fillX, fillY, fillW, fillH);
 
-    // Subtle wave lines (extended to cover visible area)
-    ctx.save();
-    ctx.strokeStyle = p.waveLine;
-    ctx.lineWidth = 0.8;
-    const waveRng = mapRng(555);
-    for (let wy = fillY + 30; wy < fillB; wy += 35 + waveRng() * 20) {
-        ctx.beginPath();
-        for (let wx = fillX; wx <= fillR; wx += 4) {
-            const yOff = Math.sin(wx * 0.015 + wy * 0.1) * 3;
-            if (wx === fillX) ctx.moveTo(wx, wy + yOff);
-            else ctx.lineTo(wx, wy + yOff);
-        }
-        ctx.stroke();
-    }
-    ctx.restore();
+    // (Wave lines removed -- the canvas reads as sky now, not ocean.)
 
     // Cloud sprites (pixel-art PNGs). Pass a custom hudTop for variants that push content down.
     // state._cloudBottom widens the cloud band (used by the single-page / hero
@@ -5837,7 +5855,11 @@ function drawGameMap(ctx, w, h, state) {
     // Islands -- always draw all islands fully (no fog/locked state)
     // Shrink islands by 20% for each main island beyond 3 to avoid crowding.
     // Callers can pass state._baseIslandRadius to use a smaller cap (e.g., mobile preview).
-    const baseIslandRadius = state._baseIslandRadius || 104;
+    // Base radius shrunk 30% from the original 104 -> 73 so islands and their
+    // banners read more proportionally against the map and labels. Banner /
+    // shoreline / tree dimensions all derive from islandRadius, so they
+    // scale automatically.
+    const baseIslandRadius = state._baseIslandRadius || 73;
     const shrinkSteps = Math.max(0, nodes.length - 3);
     let islandRadius = baseIslandRadius * Math.pow(0.8, shrinkSteps);
 
@@ -5880,12 +5902,11 @@ function drawGameMap(ctx, w, h, state) {
 
         ctx.save();
 
-        // Bling icons pinned around the perimeter — drawn first so they sit
-        // slightly behind the island terrain on the lower arc, and in front
-        // of the ocean background on the upper arc.
-        if (isTargetIsland && !state._thumbnailMode) {
-            drawTargetIslandBling(ctx, pos, islandRadius);
-        }
+        // Bling ring (stars/flags/rainbows around target island perimeter)
+        // is disabled for now -- the function still exists if we want it back.
+        // if (isTargetIsland && !state._thumbnailMode) {
+        //     drawTargetIslandBling(ctx, pos, islandRadius);
+        // }
 
         // Island terrain / icon dispatch.
         //
@@ -6099,6 +6120,7 @@ function initMapGame(mapId, nodes, edges, companions, lab) {
         islandStyle: 'wooded', // 'classic' | 'wooded' | 'tropical' | 'ruins' -- toggled with T key
         targetStyle: 'flag-shape', // 'classic-plus' | 'flag-shape' | 'fortress' -- toggled with G key
         planeStyle: 'helicopter',    // 'jet' | 'biplane' | 'seaplane' | 'helicopter' -- toggled with P key
+        skyStyle: 'sky',     // 'sky' | 'sunset' | 'dusk' -- toggled with W key
         nodes,
         edges: edges || [],
         decorations,
@@ -6561,6 +6583,14 @@ function initMapGame(mapId, nodes, edges, companions, lab) {
             const planeStyles = ['jet', 'biplane', 'seaplane', 'helicopter'];
             const currentIdx = planeStyles.indexOf(state.planeStyle);
             state.planeStyle = planeStyles[(currentIdx + 1) % planeStyles.length];
+            redraw();
+        }
+        // W key cycles sky background (sky -> sunset -> dusk).
+        // Defined in SKY_STYLE_LIST so adding a new variant here requires
+        // only one edit (the list constant) instead of changing this handler.
+        if ((e.key === 'w' || e.key === 'W') && (state.screen === 'playing' || state.screen === 'complete')) {
+            const currentIdx = SKY_STYLE_LIST.indexOf(state.skyStyle);
+            state.skyStyle = SKY_STYLE_LIST[(currentIdx + 1) % SKY_STYLE_LIST.length];
             redraw();
         }
         // R key resets the view (pan/zoom) to default
@@ -7325,14 +7355,15 @@ function renderStaticMapPreview(containerEl, lab) {
     let h, mapH, positions;
     if (isMobile) {
         // Vertical layout: nodes stacked top-to-bottom so the full path is visible.
-        // Islands are capped at MOBILE_BASE_RADIUS (65px) and shrink further with node count.
+        // Islands are capped at MOBILE_BASE_RADIUS (46px, was 65 before the
+        // 30% global island shrink) and shrink further with node count.
         // perNodeH is computed so the label bottom of node i always clears the island top of
         // node i+1 with ~20px headroom. Formula accounts for:
         //   - island body: r * 0.87 vertical (0.45 above + 0.42 below center)
         //   - tree/terrain clearance above: ~25px
         //   - label lines + gap below: ~46px
         //   Total fixed overhead: ~91px, plus 30px safety margin → 3*r + 30 heuristic, min 130.
-        const MOBILE_BASE_RADIUS = 65;
+        const MOBILE_BASE_RADIUS = 46;
         const mShrinkSteps = Math.max(0, mapNodes.length - 3);
         const naturalMobileRadius = MOBILE_BASE_RADIUS * Math.pow(0.8, mShrinkSteps);
         const perNodeH = Math.max(Math.ceil(naturalMobileRadius * 3.0 + 30), 130);
@@ -7352,9 +7383,20 @@ function renderStaticMapPreview(containerEl, lab) {
             };
         });
     } else {
-        h = 460;
+        // Canvas height bumped from 460 -> 500 so the island band gets enough
+        // vertical room to zigzag comfortably AND clear the badge footer
+        // overlay at the bottom (~42px tall: 9px padding + ~24px pill height
+        // + 9px padding + 1px border).
+        h = 500;
         mapH = h - mapYOffset;
-        positions = computeMapLayout(mapNodes.length, w, mapH);
+        // Reserve an extra 10% of the canvas height as a bottom buffer on
+        // top of the default 110. This raises all islands (and their labels)
+        // by ~50px so they sit higher up in the map zone and stay well clear
+        // of the badge-footer overlay. Clouds (capped at h*0.22 from the top
+        // of the map zone) and the title (in the header zone above the map)
+        // are unaffected -- only the island band moves.
+        const previewHudBottom = 110 + Math.round(h * 0.10);
+        positions = computeMapLayout(mapNodes.length, w, mapH, undefined, previewHudBottom);
     }
 
     const dpr = window.devicePixelRatio || 1;
@@ -7394,6 +7436,7 @@ function renderStaticMapPreview(containerEl, lab) {
         islandStyle: 'wooded',
         targetStyle: 'flag-shape',
         planeStyle: 'helicopter',
+        skyStyle: 'sky',
         nodes: mapNodes,
         edges: mapEdges,
         decorations,
@@ -7422,15 +7465,39 @@ function renderStaticMapPreview(containerEl, lab) {
         _cloudHudTop: -50,
         _cloudBottom: Math.round(mapH * (isMobile ? 0.12 : 0.28)),
         // Mobile: cap island size so the dynamic perNodeH guarantee holds
-        _baseIslandRadius: isMobile ? 65 : undefined,
+        // (46 = 65 * 0.7 to match the 30% global island shrink).
+        _baseIslandRadius: isMobile ? 46 : undefined,
     };
 
     // Desktop: shift islands down into the map zone and clamp above footer+label clearance.
     // Mobile: positions are already vertically placed — skip the shift.
     if (!isMobile) {
         const shift = Math.round(mapH * 0.25);
-        const maxAllowed = mapH - bottomPad - 30;
+
+        // Clamp pos.y so the endpoint label plate (Startington / Targetville)
+        // never slips behind the .map-preview-badge-footer overlay at the
+        // bottom of the canvas. The endpoint plate is ~46px tall and sits at
+        // labelY = pos.y + ir*0.42 + 10 (top = labelY - 2), so its bottom in
+        // map-zone coords = pos.y + ir*0.42 + 54. Use the un-shrunk
+        // baseIslandRadius (73) as the worst case -- post-shrink islands give
+        // even more headroom. Footer overlay is ~44px (9 pad + ~24 pill +
+        // 9 pad + 1 border).
+        const badgeFooterH = 44;
+        const endpointPlateDrop = 73 * 0.42 + 54;   // ~85
+        const safetyGap = 6;
+        const maxAllowed = mapH - badgeFooterH - endpointPlateDrop - safetyGap;
         state.positions.forEach(p => { p.y = Math.min(maxAllowed, p.y + shift); });
+
+        // Pull the last island's x in so its endpoint plate doesn't get
+        // clamped flush against the right edge by drawMapWithGameLabels'
+        // drawX clamp. The endpoint plate can be ~160px wide (80 half-width);
+        // leave 12px breathing room from the canvas edge.
+        const lastPos = state.positions[state.positions.length - 1];
+        if (lastPos) {
+            const endpointPlateHalfW = 80;
+            const rightMargin = 12;
+            lastPos.x = Math.min(lastPos.x, w - endpointPlateHalfW - rightMargin);
+        }
     }
 
     function draw() {
@@ -7440,20 +7507,52 @@ function renderStaticMapPreview(containerEl, lab) {
         const isLight = document.documentElement.classList.contains('light-theme');
         const p = state.palette;
 
-        // Fill the full canvas with the ocean/sky background so the header zone has
+        // Apply the chosen sky variant to the canvas-wide pre-paint. Both
+        // this pre-paint AND drawGameMap (called below) read state.skyStyle,
+        // but we only WANT the pre-paint to do the actual ocean fill -- if
+        // we let drawGameMap repaint its own ocean gradient over its
+        // translated map zone, the gradient stops won't line up with the
+        // pre-paint at y = mapYOffset and there's a visible seam right
+        // under the title text. Stripping ocean colors to transparent
+        // makes drawGameMap's fillRect a no-op so the single pre-paint
+        // becomes the only sky paint, fading seamlessly from the dark
+        // header scrim down to the bottom.
+        //
+        // (Game mode doesn't have this seam because there drawGameMap is
+        // called against the full canvas height with no separate pre-paint
+        // -- one gradient does it all.)
+        const sky = getSkyVariantColors(state.skyStyle);
+        const oceanA = sky?.oceanA ?? p.oceanA;
+        const oceanB = sky?.oceanB ?? p.oceanB;
+        const oceanDeep = sky?.oceanDeep ?? p.oceanDeep;
+
+        // Fill the full canvas with the sky background so the header zone has
         // the same sky colour underneath the scrim that the game mode has.
         const skyGrad = ctx.createLinearGradient(0, 0, 0, h);
-        skyGrad.addColorStop(0,   p.oceanA);
-        skyGrad.addColorStop(0.6, p.oceanB);
-        skyGrad.addColorStop(1,   p.oceanDeep);
+        skyGrad.addColorStop(0,   oceanA);
+        skyGrad.addColorStop(0.6, oceanB);
+        skyGrad.addColorStop(1,   oceanDeep);
         ctx.fillStyle = skyGrad;
         ctx.fillRect(0, 0, w, h);
 
-        // Draw the map translated down below the header zone
+        // Draw the map translated down below the header zone. We override
+        // palette ocean colors to transparent only for this draw call (and
+        // restore them afterwards) so drawGameMap doesn't repaint its own
+        // gradient over our pre-paint. Clouds, paths, islands, and labels
+        // all still render normally.
+        const savedOceanA = state.palette.oceanA;
+        const savedOceanB = state.palette.oceanB;
+        const savedOceanDeep = state.palette.oceanDeep;
+        state.palette.oceanA = 'rgba(0,0,0,0)';
+        state.palette.oceanB = 'rgba(0,0,0,0)';
+        state.palette.oceanDeep = 'rgba(0,0,0,0)';
         ctx.save();
         ctx.translate(0, mapYOffset);
         drawMapWithGameLabels(ctx, w, mapH, state);
         ctx.restore();
+        state.palette.oceanA = savedOceanA;
+        state.palette.oceanB = savedOceanB;
+        state.palette.oceanDeep = savedOceanDeep;
 
         // Gradient scrim over the header zone — matches SCRIM_H5 in game mode V5 exactly.
         const scrim = ctx.createLinearGradient(0, 0, 0, mapYOffset);
@@ -7701,7 +7800,8 @@ function renderStaticMapThumbnail(containerEl, lab) {
     // Estimate island radius as drawGameMap will compute it (base → overlap shrink →
     // thumbnail *0.5) so we know how much buffer to keep from each canvas edge.
     // Island shapes extend up to ~1.4× the radius from center (jitter + shape overscan).
-    const baseIslandRadius = 104;
+    // 73 matches the 30% global island shrink in drawGameMap.
+    const baseIslandRadius = 73;
     let estRadius = baseIslandRadius * Math.pow(0.8, Math.max(0, mapNodes.length - 3));
     if (positions.length >= 2) {
         let minDist = Infinity;
@@ -7755,6 +7855,7 @@ function renderStaticMapThumbnail(containerEl, lab) {
         islandStyle:      'wooded',
         targetStyle:      'flag-shape',
         planeStyle:       'helicopter',
+        skyStyle:         'sky',
         nodes:            mapNodes,
         edges:            mapEdges,
         decorations,
