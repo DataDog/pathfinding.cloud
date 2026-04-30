@@ -6383,10 +6383,10 @@ function initMapGame(mapId, nodes, edges, companions, lab) {
     awsIconSprites.preload(nodes);
     if (companions) awsIconSprites.preload(companions);
 
-    // V5 (capcom top-left) is the default. Clouds sit between y=155 (below the
-    // scrim) and cloudBandBottom. Islands start 20px below cloudBandBottom so the
-    // cloud and island zones don't overlap. Using h*0.42 gives a generous cloud
-    // band while still leaving ~55% of the canvas height for islands.
+    // V5 (capcom top-left) is the default. Clouds sit between y=110 (just below
+    // the title text stack, which tops out at ~95px) and cloudBandBottom. Islands
+    // start 20px below cloudBandBottom so cloud and island zones don't overlap.
+    // Using h*0.42 gives a generous cloud band while still leaving ~55% of the canvas height for islands.
     const cloudBandBottom = Math.round(h * 0.42);
     const positions = computeMapLayout(nodes.length, w, h, cloudBandBottom + 20, 110);
     clampIslandsAboveHud(positions, nodes.length, h);
@@ -6442,6 +6442,7 @@ function initMapGame(mapId, nodes, edges, companions, lab) {
         _panStartPointer: null,  // {x, y} screen coords at drag start
         _panStartView: null,     // {panX, panY} at drag start
         _suppressClick: false,   // true after a pan drag to prevent click
+        _islandDrag: null,       // {type:'main'|'companion', idx, phase:'candidate'|'active', sx, sy, offsetX, offsetY}
         _redraw: null,
         _panelEl: panelEl,
         _menuEl: menuEl,
@@ -6457,7 +6458,7 @@ function initMapGame(mapId, nodes, edges, companions, lab) {
         _hudVariantFlashAt: 0,    // timestamp of last variant change, drives the flash indicator fade
         _basePositions: null,     // saved island positions before variant-specific recompute
         _baseDecorations: null,   // saved decorations before variant-specific recompute
-        _cloudHudTop: 155,        // push clouds below the capcom top-left scrim (SCRIM_H5=150)
+        _cloudHudTop: 110,        // push clouds below the title text (~95px bottom) not the gradient (150px)
         _cloudBottom: cloudBandBottom, // cloud band bottom; islands start 20px below this
         // -- Play Online terminal state --
         terminalOpen: false,
@@ -6501,6 +6502,29 @@ function initMapGame(mapId, nodes, edges, companions, lab) {
 
     function onPointerMove(e) {
         const { sx, sy, x, y } = canvasCoords(e);
+
+        // Handle island drag (candidate -> active once moved > 5px)
+        if (state._islandDrag) {
+            const drag = state._islandDrag;
+            if (drag.phase === 'candidate') {
+                if (Math.hypot(sx - drag.sx, sy - drag.sy) > 5) drag.phase = 'active';
+            }
+            if (drag.phase === 'active') {
+                const newX = x - drag.offsetX;
+                const newY = y - drag.offsetY;
+                if (drag.type === 'main') {
+                    state.positions[drag.idx] = { x: newX, y: newY };
+                    // Recompute companions so they follow their edge midpoints
+                    state.companionPositions = computeCompanionPositions(
+                        state.companions, state.edges, state.positions, state.islandRadius);
+                } else {
+                    state.companionPositions[drag.idx] = { x: newX, y: newY };
+                }
+                canvas.style.cursor = 'grabbing';
+                redraw();
+                return;
+            }
+        }
 
         // Handle active pan drag
         if (state._isPanning) {
@@ -6554,7 +6578,7 @@ function initMapGame(mapId, nodes, edges, companions, lab) {
                         }
                     }
                     if (overIsland) {
-                        canvas.style.cursor = 'pointer';
+                        canvas.style.cursor = 'grab';
                     } else {
                         // Check companions. Match the click hit-test: full
                         // silhouette + badge + label plate are hoverable.
@@ -6580,7 +6604,7 @@ function initMapGame(mapId, nodes, edges, companions, lab) {
                             }
                         }
                         if (overCompanion) {
-                            canvas.style.cursor = 'pointer';
+                            canvas.style.cursor = 'grab';
                         } else {
                             // Check edges (clickable if source is revealed)
                             let overEdge = false;
@@ -6601,21 +6625,77 @@ function initMapGame(mapId, nodes, edges, companions, lab) {
     }
 
     function onPointerDown(e) {
-        const { sx, sy } = canvasCoords(e);
+        const { sx, sy, x, y } = canvasCoords(e);
         const hit = hitTestButtons(state.buttons, sx, sy);
         if (hit) {
             state.activeButton = hit;
             redraw();
         }
 
-        // Start tracking for potential pan drag (playing/complete screens only)
         if ((state.screen === 'playing' || state.screen === 'complete') && !hit) {
+            // Check main islands first -- if pointer is over one, begin island drag
+            // tracking instead of pan tracking so the island can be repositioned.
+            const ir = state.islandRadius || 52;
+            let islandIdx = -1;
+            for (let i = 0; i < state.positions.length; i++) {
+                const pos = state.positions[i];
+                const spriteKey = pickIslandSpriteKey(state, i);
+                const islandBottom = getIslandBottomY(pos, ir, spriteKey);
+                if (x >= pos.x - ir * 1.4 && x <= pos.x + ir * 1.4
+                    && y >= pos.y - ir * 1.2 && y <= islandBottom + 56) {
+                    islandIdx = i; break;
+                }
+            }
+            if (islandIdx >= 0) {
+                const pos = state.positions[islandIdx];
+                state._islandDrag = { type: 'main', idx: islandIdx, phase: 'candidate',
+                    sx, sy, offsetX: x - pos.x, offsetY: y - pos.y };
+                return;
+            }
+
+            // Check companion islands
+            const baseCR = 56;
+            const cShrink = Math.max(0, (state.nodes?.length || 0) - 3);
+            const cRadius = baseCR * Math.pow(0.8, cShrink);
+            for (let ci = 0; ci < state.companions.length; ci++) {
+                const cPos = state.companionPositions[ci];
+                if (!cPos || (cPos.x === 0 && cPos.y === 0)) continue;
+                const parentEdge = state.edges.find(e => e.companionIndices && e.companionIndices.includes(ci));
+                if (!parentEdge) continue;
+                const edgeIdx = state.edges.indexOf(parentEdge);
+                if (!state.revealedEdges.has(edgeIdx) && state.screen !== 'complete') continue;
+                let inside = false;
+                if (state.companionStyle === 'note') {
+                    inside = Math.hypot(cPos.x - x, cPos.y - y) < 40;
+                } else {
+                    const islandBottom = getIslandBottomY(cPos, cRadius, 'resource');
+                    inside = (x >= cPos.x - cRadius * 1.4 && x <= cPos.x + cRadius * 1.4
+                        && y >= cPos.y - cRadius * 1.0 && y <= islandBottom + 36);
+                }
+                if (inside) {
+                    state._islandDrag = { type: 'companion', idx: ci, phase: 'candidate',
+                        sx, sy, offsetX: x - cPos.x, offsetY: y - cPos.y };
+                    return;
+                }
+            }
+
+            // Not over any island -- start pan tracking
             state._panStartPointer = { x: sx, y: sy };
             state._panStartView = { panX: state.viewPanX, panY: state.viewPanY };
         }
     }
 
     function onPointerUp(e) {
+        // Island drag cleanup
+        if (state._islandDrag) {
+            if (state._islandDrag.phase === 'active') {
+                state._suppressClick = true;
+                canvas.style.cursor = 'grab';
+            }
+            state._islandDrag = null;
+            return;
+        }
+
         if (state._isPanning) {
             state._suppressClick = true;
             state._isPanning = false;
@@ -7008,7 +7088,7 @@ function initMapGame(mapId, nodes, edges, companions, lab) {
                 const allDeco5    = generateMapDecorations(state.positions, w, h, 150, 56);
                 state.decorations = allDeco5.filter(d => d.type !== 'mountain');
                 state.companionPositions = computeCompanionPositions(state.companions, state.edges, state.positions);
-                state._cloudHudTop = 155; // push clouds below the capcom title zone
+                state._cloudHudTop = 110; // push clouds below the title text, not the gradient bottom
             } else {
                 // Restore original layout for all other variants
                 state.positions   = state._basePositions;
