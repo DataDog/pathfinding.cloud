@@ -665,89 +665,192 @@ function drawGameIslandLabels(ctx, w, h, state) {
     const p = state.palette;
     const { positions, nodes } = state;
     const lastIdx = nodes.length - 1;
+    const ir = state.islandRadius || 52;
+    const n = nodes.length;
 
-    positions.forEach((pos, i) => {
-        const isFirst = i === 0;
-        const isLast = i === lastIdx;
+    // ---- 1. Font scale ---------------------------------------------------
+    // Shrink label fonts on narrow canvases so plates don't crowd each other.
+    // Effective per-island X budget (matches padX = w*0.15 in computeMapLayout).
+    const xSpacing = n > 1 ? (w * 0.70) / (n - 1) : w;
+    // "Startington" at bold 13px is ~110px wide — use that as the full-size budget.
+    const S = Math.max(0.68, Math.min(1.0, xSpacing / 110));
 
-        // Label -- always show all island names. Game mode uses the whimsical
-        // "Startington" / "Targetville" defaults for the start/end islands;
-        // a caller can override those (or the middle labels) by setting
-        // nodes[i].displayLabel. Existing lab flows don't set displayLabel,
-        // so they continue to show the game-mode defaults.
-        let label;
-        const overrideLabel = nodes[i]?.displayLabel || '';
-        if (overrideLabel) {
-            label = overrideLabel;
-        } else if (isFirst) {
-            label = 'Startington';
-        } else if (isLast) {
-            label = 'Targetville';
-        } else {
-            label = nodes[i]?.label || '';
-        }
+    // Pre-computed scaled sizes so both passes share one definition.
+    const fz = {
+        name: Math.round(13 * S),
+        sub:  Math.max(7,  Math.round(9  * S)),
+        mid:  Math.round(12 * S),
+        icon: Math.round(32 * S),
+        padE: Math.round(Math.max(4, 8 * S)),
+        padM: Math.round(Math.max(3, 6 * S)),
+        gapI: Math.round(Math.max(2, 4 * S)),
+        gapA: Math.round(Math.max(4, 8 * S)),
+        margE: Math.round(Math.max(10, 16 * S)),
+        margS: Math.round(Math.max(8,  12 * S)),
+        margM: Math.round(Math.max(8,  14 * S)),
+        margI: Math.round(Math.max(8,  12 * S)),
+    };
+
+    // ---- 2. Measurement pass: compute plate geometry for every island ----
+    // Returns all the sizing info needed for both collision detection and drawing.
+    function measureNode(i) {
+        const pos = positions[i];
+        const isFirst = i === 0, isLast = i === lastIdx;
+        const node = nodes[i];
+
+        let label = node?.displayLabel || '';
+        if (!label) label = isFirst ? 'Startington' : isLast ? 'Targetville' : (node?.label || '');
         if (label.length > 20) label = label.substring(0, 18) + '...';
-        if (!label) return;
+        if (!label) return null;
 
-        // Position label below the island's bottom edge. With sprite-backed
-        // islands the silhouette extends ~1 * islandRadius further below pos.y
-        // than the procedural shore ellipse, so we ask getIslandBottomY for
-        // the actual rendered bottom and pad by 10px.
-        const ir = state.islandRadius || 52;
-        const spriteKey = pickIslandSpriteKey(state, i);
-        const labelY = getIslandBottomY(pos, ir, spriteKey) - 20;
-        ctx.save();
-
-        // Check if below-label icon mode applies to this node
-        // Use effectiveIconStyle if set (auto-compact override), otherwise the user's choice.
         const resolvedIconStyle = state.effectiveIconStyle || state.iconStyle;
-        const belowLabelIcon = (resolvedIconStyle === 'below-label')
-            ? awsIconSprites.get(nodes[i]?.subType || '')
-            : null;
-        const belowIconSize = 32; // prominent icon size for below-label mode
+        const blIcon = resolvedIconStyle === 'below-label'
+            ? awsIconSprites.get(node?.subType || '') : null;
 
+        const spriteKey = pickIslandSpriteKey(state, i);
+        const labelY   = getIslandBottomY(pos, ir, spriteKey) - 20;
+        const plateTop = labelY - 2;
+
+        let plateW, plateH, subtitleText = '';
         if (isFirst || isLast) {
-            // Extract principal identifier from ARN (e.g., "user/my-user" or "role/my-role")
-            const node = nodes[i];
             const arn = node?.arn || '';
             const arnSuffix = arn.includes(':') ? arn.substring(arn.lastIndexOf(':') + 1) : '';
-
-            // For nodes with an access field, show the URL/IP/domain instead of the ARN suffix.
-            // Truncate to 24 chars so it fits in the island plate.
             const accessObj = isFirst ? node?.access : null;
             const rawEndpoint = accessObj?.url || accessObj?.ip || accessObj?.domain || '';
-            // Allow callers to fully override the subtitle string. Only `undefined`
-            // falls through to the access/arn derivation; explicit '' means "no
-            // subtitle" (caller wanted it blank). Existing labs don't set this
-            // field so they keep using the arn/access logic.
-            const overrideSubtitle = node?.displaySubtitle;
-            const subtitleText = (overrideSubtitle !== undefined)
-                ? overrideSubtitle
-                : (rawEndpoint || arnSuffix);
+            // Suppress the resource name subtitle on narrow viewports to avoid label crowding.
+            const suppressSubtitle = window.innerWidth < 1600;
+            subtitleText = suppressSubtitle ? '' : (node?.displaySubtitle !== undefined
+                ? node.displaySubtitle
+                : (rawEndpoint || arnSuffix));
 
-            const nameColor = isFirst ? (p.startFill || '#4ade80') : (p.endFill || '#f59e0b');
-
-            // Measure text widths
-            ctx.font = 'bold 13px -apple-system, BlinkMacSystemFont, sans-serif';
-            const tw = ctx.measureText(label).width;
-            ctx.font = '500 9px -apple-system, BlinkMacSystemFont, sans-serif';
+            ctx.font = `bold ${fz.name}px -apple-system, BlinkMacSystemFont, sans-serif`;
+            const tw   = ctx.measureText(label).width;
+            ctx.font = `500 ${fz.sub}px -apple-system, BlinkMacSystemFont, sans-serif`;
             const idTw = subtitleText ? ctx.measureText(subtitleText).width : 0;
 
-            // Calculate total content height to center vertically in plate
-            const nameH = 13;  // font size
-            const iconGap = belowLabelIcon ? 4 : 0;
-            const iconH = belowLabelIcon ? belowIconSize : 0;
-            const arnGap = subtitleText ? (belowLabelIcon ? 4 : 8) : 0;
-            const arnH = subtitleText ? 9 : 0;
-            const contentH = nameH + iconGap + iconH + arnGap + arnH;
-            const pad = 8; // equal top and bottom padding
-            const plateH = contentH + pad * 2;
-            const contentW = Math.max(tw + 16, idTw + 12, belowLabelIcon ? belowIconSize + 12 : 0);
+            const iconH  = blIcon ? fz.icon : 0;
+            const iconGp = blIcon ? fz.gapI : 0;
+            const arnH   = subtitleText ? fz.sub : 0;
+            const arnGp  = subtitleText ? (blIcon ? fz.gapI : fz.gapA) : 0;
+            const contentH = fz.name + iconGp + iconH + arnGp + arnH;
+            plateH = contentH + fz.padE * 2;
+            plateW = Math.max(tw + fz.margE, idTw + fz.margS, blIcon ? fz.icon + fz.margI : 0);
+        } else {
+            ctx.font = `600 ${fz.mid}px -apple-system, BlinkMacSystemFont, sans-serif`;
+            const tw   = ctx.measureText(label).width;
+            const iconH  = blIcon ? fz.icon : 0;
+            const iconGp = blIcon ? fz.gapI : 0;
+            const contentH = fz.mid + iconGp + iconH;
+            plateH = contentH + fz.padM * 2;
+            plateW = Math.max(tw + fz.margM, blIcon ? fz.icon + fz.margI : 0);
+        }
 
-            // Clamp draw X so the plate never extends beyond the canvas edges
-            const drawX = Math.max(contentW / 2 + 4, Math.min(w - contentW / 2 - 4, pos.x));
+        // Unconstrained center X (will be adjusted by xAdj in step 3, then clamped)
+        const nominalX = pos.x;
+        return { i, pos, label, isFirst, isLast, node, subtitleText,
+                 blIcon, plateTop, plateH, plateW, nominalX };
+    }
 
-            const plateTop = labelY - 2;
+    const infos = positions.map((_, i) => measureNode(i));
+
+    // ---- 3. Collision detection + iterative horizontal push --------------
+    // Check label plates against each other AND against island bodies.
+    // Push overlapping pairs apart horizontally until stable.
+
+    const xAdj = new Float32Array(n); // X adjustment per label (added to nominalX before clamping)
+
+    // Island body AABB (axis-aligned bounding box) used as a fixed obstacle.
+    // Sprite body spans ir*2.7 wide, centered on pos.x; vertically pos.y ± ~ir*1.35.
+    function islandBodyRect(pos) {
+        const hw = ir * 1.35, hh = ir * 1.35;
+        return { x: pos.x - hw, y: pos.y - hh, w: hw * 2, h: hh * 2 };
+    }
+
+    function effectiveLabelRect(info, adj) {
+        const cx = Math.max(info.plateW / 2 + 4, Math.min(w - info.plateW / 2 - 4, info.nominalX + adj));
+        return { x: cx - info.plateW / 2, y: info.plateTop, w: info.plateW, h: info.plateH, cx };
+    }
+
+    function rectsOverlap(a, b) {
+        return a.x < b.x + b.w && a.x + a.w > b.x
+            && a.y < b.y + b.h && a.y + a.h > b.y;
+    }
+
+    for (let pass = 0; pass < 6; pass++) {
+        let moved = false;
+
+        // Label–label overlaps: push apart
+        for (let i = 0; i < n; i++) {
+            if (!infos[i]) continue;
+            for (let j = i + 1; j < n; j++) {
+                if (!infos[j]) continue;
+                const ra = effectiveLabelRect(infos[i], xAdj[i]);
+                const rb = effectiveLabelRect(infos[j], xAdj[j]);
+                if (!rectsOverlap(ra, rb)) continue;
+                const xOverlap = Math.min(ra.x + ra.w, rb.x + rb.w) - Math.max(ra.x, rb.x);
+                const push = xOverlap / 2 + 1;
+                if (ra.cx <= rb.cx) { xAdj[i] -= push; xAdj[j] += push; }
+                else                { xAdj[i] += push; xAdj[j] -= push; }
+                moved = true;
+            }
+        }
+
+        // Label–island-body overlaps: push label away from the obstructing island
+        for (let i = 0; i < n; i++) {
+            if (!infos[i]) continue;
+            for (let j = 0; j < n; j++) {
+                if (i === j) continue;
+                const rl = effectiveLabelRect(infos[i], xAdj[i]);
+                const rb = islandBodyRect(positions[j]);
+                if (!rectsOverlap(rl, rb)) continue;
+                const xOverlap = Math.min(rl.x + rl.w, rb.x + rb.w) - Math.max(rl.x, rb.x);
+                // Push label away from island center
+                const dir = rl.cx < positions[j].x ? -1 : 1;
+                xAdj[i] += dir * (xOverlap + 1);
+                moved = true;
+            }
+        }
+
+        if (!moved) break;
+    }
+
+    // Final clamp: keep every plate inside canvas bounds
+    for (let i = 0; i < n; i++) {
+        if (!infos[i]) continue;
+        const pw = infos[i].plateW;
+        const adjCx = infos[i].nominalX + xAdj[i];
+        const clampedCx = Math.max(pw / 2 + 4, Math.min(w - pw / 2 - 4, adjCx));
+        xAdj[i] = clampedCx - infos[i].nominalX;
+    }
+
+    // ---- 4. Draw pass ----------------------------------------------------
+    infos.forEach(info => {
+        if (!info) return;
+        const { i, pos, label, isFirst, isLast, node, subtitleText,
+                blIcon, plateTop, plateH, plateW } = info;
+
+        // Final clamped center X after overlap resolution
+        const drawX = Math.max(plateW / 2 + 4,
+                        Math.min(w - plateW / 2 - 4, info.nominalX + xAdj[i]));
+
+        ctx.save();
+        if (isFirst || isLast) {
+            const nameColor = isFirst ? (p.startFill || '#4ade80') : (p.endFill || '#f59e0b');
+
+            // Re-measure with the same scaled fonts for accurate text centering
+            ctx.font = `bold ${fz.name}px -apple-system, BlinkMacSystemFont, sans-serif`;
+            const tw   = ctx.measureText(label).width;
+            ctx.font = `500 ${fz.sub}px -apple-system, BlinkMacSystemFont, sans-serif`;
+            const idTw = subtitleText ? ctx.measureText(subtitleText).width : 0;
+
+            const iconH  = blIcon ? fz.icon : 0;
+            const iconGp = blIcon ? fz.gapI : 0;
+            const arnH   = subtitleText ? fz.sub : 0;
+            const arnGp  = subtitleText ? (blIcon ? fz.gapI : fz.gapA) : 0;
+            const contentH = fz.name + iconGp + iconH + arnGp + arnH;
+            const contentW = Math.max(tw + fz.margE, idTw + fz.margS,
+                                      blIcon ? fz.icon + fz.margI : 0);
+
             drawRoundedRect(ctx, drawX - contentW / 2, plateTop, contentW, plateH, 5);
             ctx.fillStyle = p.parchCenter || 'rgba(245, 230, 200, 0.9)';
             ctx.fill();
@@ -755,66 +858,52 @@ function drawGameIslandLabels(ctx, w, h, state) {
             ctx.lineWidth = 0.8;
             ctx.stroke();
 
-            // Draw content centered in plate
-            let cursorY = plateTop + pad + nameH / 2;
-
-            // Island name
-            ctx.font = 'bold 13px -apple-system, BlinkMacSystemFont, sans-serif';
+            let cursorY = plateTop + fz.padE + fz.name / 2;
+            ctx.font = `bold ${fz.name}px -apple-system, BlinkMacSystemFont, sans-serif`;
             ctx.fillStyle = nameColor;
             ctx.textAlign = 'center';
             ctx.textBaseline = 'middle';
             ctx.fillText(label, drawX, cursorY);
-            cursorY += nameH / 2;
+            cursorY += fz.name / 2;
 
-            // Icon between name and ARN
-            if (belowLabelIcon) {
-                cursorY += iconGap;
-                ctx.drawImage(belowLabelIcon, drawX - belowIconSize / 2, cursorY, belowIconSize, belowIconSize);
+            if (blIcon) {
+                cursorY += iconGp;
+                ctx.drawImage(blIcon, drawX - fz.icon / 2, cursorY, fz.icon, fz.icon);
                 cursorY += iconH;
             }
-
-            // Subtitle: access URL/IP/domain (preferred) or ARN identifier
             if (subtitleText) {
-                cursorY += arnGap + arnH / 2;
-                ctx.font = '500 9px -apple-system, BlinkMacSystemFont, sans-serif';
+                cursorY += arnGp + arnH / 2;
+                ctx.font = `500 ${fz.sub}px -apple-system, BlinkMacSystemFont, sans-serif`;
                 ctx.fillStyle = p.mutedText || 'rgba(180, 160, 120, 0.9)';
                 ctx.fillText(subtitleText, drawX, cursorY);
             }
         } else {
-            // Middle islands: label + optional icon below
-            ctx.font = '600 12px -apple-system, BlinkMacSystemFont, sans-serif';
+            ctx.font = `600 ${fz.mid}px -apple-system, BlinkMacSystemFont, sans-serif`;
             const tw = ctx.measureText(label).width;
 
-            const nameH = 12; // font size
-            const iconGap = belowLabelIcon ? 4 : 0;
-            const iconH = belowLabelIcon ? belowIconSize : 0;
-            const contentH = nameH + iconGap + iconH;
-            const pad = 6;
-            const plateH = contentH + pad * 2;
-            const plateW = Math.max(tw + 14, belowLabelIcon ? belowIconSize + 12 : 0);
+            const iconH  = blIcon ? fz.icon : 0;
+            const iconGp = blIcon ? fz.gapI : 0;
+            const contentH = fz.mid + iconGp + iconH;
+            const computedPlateH = contentH + fz.padM * 2;
+            const plateWM = Math.max(tw + fz.margM, blIcon ? fz.icon + fz.margI : 0);
 
-            // Clamp draw X so the plate never extends beyond the canvas edges
-            const drawX = Math.max(plateW / 2 + 4, Math.min(w - plateW / 2 - 4, pos.x));
-
-            const plateTop = labelY - 2;
-            drawRoundedRect(ctx, drawX - plateW / 2, plateTop, plateW, plateH, 4);
+            drawRoundedRect(ctx, drawX - plateWM / 2, plateTop, plateWM, computedPlateH, 4);
             ctx.fillStyle = p.parchCenter || 'rgba(245, 230, 200, 0.9)';
             ctx.fill();
             ctx.strokeStyle = p.borderDecor || 'rgba(120, 80, 20, 0.2)';
             ctx.lineWidth = 0.6;
             ctx.stroke();
 
-            let cursorY = plateTop + pad + nameH / 2;
+            let cursorY = plateTop + fz.padM + fz.mid / 2;
             ctx.fillStyle = p.labelFill || '#e4e4e8';
             ctx.textAlign = 'center';
             ctx.textBaseline = 'middle';
             ctx.fillText(label, drawX, cursorY);
-            cursorY += nameH / 2;
+            cursorY += fz.mid / 2;
 
-            // Icon below label
-            if (belowLabelIcon) {
-                cursorY += iconGap;
-                ctx.drawImage(belowLabelIcon, drawX - belowIconSize / 2, cursorY, belowIconSize, belowIconSize);
+            if (blIcon) {
+                cursorY += iconGp;
+                ctx.drawImage(blIcon, drawX - fz.icon / 2, cursorY, fz.icon, fz.icon);
             }
         }
         ctx.restore();
@@ -3296,10 +3385,14 @@ function buildPlayingButtons(w, h, state) {
     const backX = (w - centerGroupW) / 2;
     const nextX = backX + backW + gap;
 
-    // Left group: Play Online at far left, then Lab Setup + Lab Overview
+    // Left group: Play Online at far left, then Lab Setup + Lab Overview.
+    // Lab Setup + Lab Overview are hidden when the canvas is too narrow to fit them
+    // without overlapping Back/Next — they remain accessible via Back/Next navigation.
     const playOnlineX = edgePad;
     const labSetupX = edgePad + playOnlineW + gap;
     const labOverviewX = labSetupX + setupW + gap;
+    // Overlap threshold: left group right edge (340) vs backX = (w-148)/2 → collide at w≈828.
+    const showOverviewSetupBtns = w >= 850;
 
     // Right group: [Finish Mission] [Exploitation Demo] centered between center group and right edge
     const centerRightEdge = nextX + nextW;
@@ -3356,41 +3449,42 @@ function buildPlayingButtons(w, h, state) {
         }
     });
 
-    // Lab Setup button -- shows deploy instructions panel without changing navigation position
-    buttons.push({
-        id: 'lab-setup',
-        x: labSetupX, y: btnY,
-        w: setupW, h: btnH,
-        label: 'Lab Setup',
-        style: state.gameViewPhase === 'setup' ? 'primary' : 'secondary',
-        fontSize: 12,
-        radius: 8,
-        forceActive: state.gameViewPhase === 'setup',
-        onClick: () => {
-            state.panelOverride = state.panelOverride === 'setup' ? null : 'setup';
-            state.completeView = null;
-            state._redraw();
-            updateGamePanel(state);
-        }
-    });
+    // Lab Setup / Lab Overview buttons — hidden on narrow canvases to avoid overlapping Back/Next.
+    if (showOverviewSetupBtns) {
+        buttons.push({
+            id: 'lab-setup',
+            x: labSetupX, y: btnY,
+            w: setupW, h: btnH,
+            label: 'Lab Setup',
+            style: state.gameViewPhase === 'setup' ? 'primary' : 'secondary',
+            fontSize: 12,
+            radius: 8,
+            forceActive: state.gameViewPhase === 'setup',
+            onClick: () => {
+                state.panelOverride = state.panelOverride === 'setup' ? null : 'setup';
+                state.completeView = null;
+                state._redraw();
+                updateGamePanel(state);
+            }
+        });
 
-    // Lab Overview button -- shows mission briefing panel without changing navigation position
-    buttons.push({
-        id: 'lab-overview',
-        x: labOverviewX, y: btnY,
-        w: overviewW, h: btnH,
-        label: 'Lab Overview',
-        style: state.gameViewPhase === 'overview' ? 'primary' : 'secondary',
-        fontSize: 12,
-        radius: 8,
-        forceActive: state.gameViewPhase === 'overview',
-        onClick: () => {
-            state.panelOverride = state.panelOverride === 'overview' ? null : 'overview';
-            state.completeView = null;
-            state._redraw();
-            updateGamePanel(state);
-        }
-    });
+        buttons.push({
+            id: 'lab-overview',
+            x: labOverviewX, y: btnY,
+            w: overviewW, h: btnH,
+            label: 'Lab Overview',
+            style: state.gameViewPhase === 'overview' ? 'primary' : 'secondary',
+            fontSize: 12,
+            radius: 8,
+            forceActive: state.gameViewPhase === 'overview',
+            onClick: () => {
+                state.panelOverride = state.panelOverride === 'overview' ? null : 'overview';
+                state.completeView = null;
+                state._redraw();
+                updateGamePanel(state);
+            }
+        });
+    }
 
     // Back button (disabled at setup phase)
     buttons.push({
@@ -4794,20 +4888,16 @@ function computeMapLayout(count, w, h, hudTopOverride, hudBottomOverride) {
     const hudTop    = hudTopOverride    ?? 48;   // below top HUD bar
     let   hudBottom = hudBottomOverride ?? 110;  // above bottom action bar + label plate space
 
-    // Sprite-backed islands extend further below pos.y than the procedural
-    // ellipse, and labels now sit beneath the sprite bottom. Reserve some
-    // additional bottom space so islands clamp higher up on-canvas. We use
-    // a fraction of the (post-scale) sprite extent rather than the full
-    // delta so tight canvases like the static-map preview's 350px map zone
-    // don't collapse the island band onto a single line.
-    if (islandSprites.images.principal) {
+    // Always reserve extra bottom space for sprite-backed islands.
+    // The sprite bottom + label plate sits ~1.62*r below pos.y; callers
+    // that pass an explicit hudBottomOverride already account for this, but
+    // the default path (no override) gets a conservative bump so the band
+    // doesn't collapse on tight canvases.
+    {
         const baseRadius = 73;
         const shrinkSteps = Math.max(0, count - 3);
         const estimatedRadius = baseRadius * Math.pow(0.8, shrinkSteps);
         const scale = ISLAND_SPRITE_FOOTPRINT_SCALE.principal;
-        // 0.5 * (radius * scale * (1 - anchor)) approximation. With
-        // scale=3.0, anchor=0.40, this is 0.5 * 1.8 * radius = 0.9 * radius;
-        // we cap at ~0.7 * radius to leave room for the cloud band on top.
         hudBottom += Math.round(estimatedRadius * Math.min(0.7, scale * 0.25));
     }
     const cloudBottom = h * 0.22; // clouds end here -- islands start BELOW this
@@ -6029,20 +6119,34 @@ function drawGameMap(ctx, w, h, state) {
     const shrinkSteps = Math.max(0, nodes.length - 3);
     let islandRadius = baseIslandRadius * Math.pow(0.8, shrinkSteps);
 
-    // Overlap detection: if the zig-zag layout placed any two islands closer than
-    // 2.4× the radius (island body + breathing room), shrink further to fit.
+    // Overlap detection: shrink radius so island bodies don't collide.
+    // Also account for label plates below each island — labels need at least
+    // ~90px horizontal separation (approximate plate half-widths) so that the
+    // drawGameIslandLabels overlap resolver has less work to do.
     if (positions.length >= 2) {
         let minDist = Infinity;
+        let minHorizDist = Infinity;
         for (let a = 0; a < positions.length; a++) {
             for (let b = a + 1; b < positions.length; b++) {
-                const dx = positions[b].x - positions[a].x;
-                const dy = positions[b].y - positions[a].y;
+                const dx = Math.abs(positions[b].x - positions[a].x);
+                const dy = Math.abs(positions[b].y - positions[a].y);
                 minDist = Math.min(minDist, Math.sqrt(dx * dx + dy * dy));
+                // Only count pairs that are close enough vertically that their
+                // label plates could overlap (labels are below islands, so check
+                // whether the label Y bands of adjacent islands are in the same range).
+                if (dy < islandRadius * 3.5) minHorizDist = Math.min(minHorizDist, dx);
             }
         }
-        const radiusForMinDist = minDist / 2.4;
-        if (radiusForMinDist < islandRadius) {
-            islandRadius = Math.max(30, radiusForMinDist);
+        // Body clearance: islands must be 2.4r apart
+        const radiusForBody = minDist / 2.4;
+        // Label clearance: horizontally close islands need ~90px per side of breathing room.
+        // radiusForBody already covers body; scale radius so body + label plate fits.
+        // Effective label half-width at current radius: ~ir * 0.70 (font-scale-corrected estimate).
+        // We want ir such that: minHorizDist / 2 >= ir * 0.70 * 2 → ir <= minHorizDist / 2.8
+        const radiusForLabels = minHorizDist < Infinity ? minHorizDist / 2.8 : Infinity;
+        const radiusLimit = Math.min(radiusForBody, radiusForLabels);
+        if (radiusLimit < islandRadius) {
+            islandRadius = Math.max(25, radiusLimit);
         }
     }
 
@@ -6221,6 +6325,7 @@ function renderLabDetailContentMapGame(lab, container) {
     container.innerHTML = `
         <div class="mg-layout" id="${mapId}">
             <div class="mg-detail-panel" id="${mapId}-panel"></div>
+            <div class="mg-divider" id="${mapId}-divider"></div>
             <div class="mg-canvas-wrap" id="${mapId}-canvas-wrap">
                 <div class="mg-canvas-area">
                     <canvas id="${mapId}-canvas" class="mg-canvas"></canvas>
@@ -6230,6 +6335,20 @@ function renderLabDetailContentMapGame(lab, container) {
         </div>`;
 
     setTimeout(() => initMapGame(mapId, mapNodes, mapEdges, mapCompanions, lab), 60);
+}
+
+// Hard-clamp island Y positions so the label plate never slides behind the
+// bottom HUD bar. Called after computeMapLayout in all game-mode layout sites.
+// Bottom bar geometry: barH=40 + gap=6 → bar top at canvasH - 46.
+// Worst-case label plate bottom below pos.y:
+//   islandRadius * footprintScale * (1 - grassAnchor) - labelGap(20) + plateH(46)
+function clampIslandsAboveHud(positions, nodeCount, canvasH) {
+    const shrinkSteps = Math.max(0, nodeCount - 3);
+    const r = 73 * Math.pow(0.8, shrinkSteps);
+    const plateDrop = r * ISLAND_SPRITE_FOOTPRINT_SCALE.principal
+                      * (1 - ISLAND_SPRITE_GRASS_CENTER.principal) - 20 + 46;
+    const maxY = canvasH - 46 /* bar zone */ - 10 /* safety */ - plateDrop;
+    positions.forEach(p => { p.y = Math.min(p.y, maxY); });
 }
 
 function initMapGame(mapId, nodes, edges, companions, lab) {
@@ -6244,10 +6363,10 @@ function initMapGame(mapId, nodes, edges, companions, lab) {
     const canvasWrapEl = document.getElementById(`${mapId}-canvas-wrap`); // .mg-canvas-wrap
     const layoutEl = document.getElementById(mapId); // .mg-layout
     let w = wrap.clientWidth;
-    // Use 65% of the viewport height, clamped between 480px and 85vh.
-    // This gives large screens a taller map while keeping it usable on small ones.
-    const maxH = Math.floor(window.innerHeight * 0.85);
-    let h = Math.max(480, Math.min(maxH, Math.round(window.innerHeight * 0.65)));
+    // Use 78% of the viewport height, clamped between 420px and 92vh.
+    // This matches the CSS .mg-layout height values and uses more vertical space.
+    const maxH = Math.floor(window.innerHeight * 0.92);
+    let h = Math.max(420, Math.min(maxH, Math.round(window.innerHeight * 0.78)));
     const dpr = window.devicePixelRatio || 1;
     canvas.width = w * dpr;
     canvas.height = h * dpr;
@@ -6264,8 +6383,13 @@ function initMapGame(mapId, nodes, edges, companions, lab) {
     awsIconSprites.preload(nodes);
     if (companions) awsIconSprites.preload(companions);
 
-    // V5 (capcom top-left) is the default; use its margins so islands start below the scrim.
-    const positions = computeMapLayout(nodes.length, w, h, 160, 110);
+    // V5 (capcom top-left) is the default. Clouds sit between y=155 (below the
+    // scrim) and cloudBandBottom. Islands start 20px below cloudBandBottom so the
+    // cloud and island zones don't overlap. Using h*0.42 gives a generous cloud
+    // band while still leaving ~55% of the canvas height for islands.
+    const cloudBandBottom = Math.round(h * 0.42);
+    const positions = computeMapLayout(nodes.length, w, h, cloudBandBottom + 20, 110);
+    clampIslandsAboveHud(positions, nodes.length, h);
     // Pre-compute the island radius (same formula as renderMapGame) so companion
     // placement can avoid landing on main island bodies.
     const initShrinkSteps = Math.max(0, nodes.length - 3);
@@ -6334,6 +6458,7 @@ function initMapGame(mapId, nodes, edges, companions, lab) {
         _basePositions: null,     // saved island positions before variant-specific recompute
         _baseDecorations: null,   // saved decorations before variant-specific recompute
         _cloudHudTop: 155,        // push clouds below the capcom top-left scrim (SCRIM_H5=150)
+        _cloudBottom: cloudBandBottom, // cloud band bottom; islands start 20px below this
         // -- Play Online terminal state --
         terminalOpen: false,
         _layoutEl: layoutEl,
@@ -6875,8 +7000,11 @@ function initMapGame(mapId, nodes, edges, companions, lab) {
                 state.companionPositions = computeCompanionPositions(state.companions, state.edges, state.positions);
                 state._cloudHudTop = undefined; // clouds stay near top
             } else if (state.hudVariant === 5) {
-                // SCRIM_H5=150px from top; add gap → 160 for layout, 150 for decos, 155 for clouds
-                state.positions   = computeMapLayout(state.nodes.length, w, h, 160, 110);
+                // SCRIM_H5=150px from top; clouds span 155 → cloudBandBottom, islands start below
+                const v5CloudBottom = Math.round(h * 0.42);
+                state._cloudBottom = v5CloudBottom;
+                state.positions   = computeMapLayout(state.nodes.length, w, h, v5CloudBottom + 20, 110);
+                clampIslandsAboveHud(state.positions, state.nodes.length, h);
                 const allDeco5    = generateMapDecorations(state.positions, w, h, 150, 56);
                 state.decorations = allDeco5.filter(d => d.type !== 'mountain');
                 state.companionPositions = computeCompanionPositions(state.companions, state.edges, state.positions);
@@ -6963,6 +7091,50 @@ function initMapGame(mapId, nodes, edges, companions, lab) {
     canvas.addEventListener('wheel', onWheel, { passive: false });
     document.addEventListener('keydown', onKeyDown);
 
+    // Draggable panel/canvas divider
+    const dividerEl = document.getElementById(`${mapId}-divider`);
+    if (dividerEl) {
+        // Restore saved panel width from previous session
+        const savedPanelW = localStorage.getItem('mg-panel-width');
+        if (savedPanelW) {
+            panelEl.style.width = savedPanelW + 'px';
+            panelEl.style.maxWidth = 'none';
+            panelEl.style.minWidth = '0';
+        }
+
+        let divDragging = false;
+        let divStartX = 0;
+        let divStartW = 0;
+
+        dividerEl.addEventListener('pointerdown', e => {
+            divDragging = true;
+            divStartX = e.clientX;
+            divStartW = panelEl.getBoundingClientRect().width;
+            dividerEl.setPointerCapture(e.pointerId);
+            dividerEl.classList.add('dragging');
+            e.preventDefault();
+        });
+
+        dividerEl.addEventListener('pointermove', e => {
+            if (!divDragging) return;
+            const layoutW = layoutEl.getBoundingClientRect().width;
+            const newW = Math.round(Math.max(200, Math.min(layoutW * 0.65, divStartW + (e.clientX - divStartX))));
+            panelEl.style.width = newW + 'px';
+            panelEl.style.maxWidth = 'none';
+            panelEl.style.minWidth = '0';
+        });
+
+        const stopDividerDrag = () => {
+            if (!divDragging) return;
+            divDragging = false;
+            dividerEl.classList.remove('dragging');
+            localStorage.setItem('mg-panel-width', Math.round(panelEl.getBoundingClientRect().width));
+        };
+
+        dividerEl.addEventListener('pointerup', stopDividerDrag);
+        dividerEl.addEventListener('pointercancel', stopDividerDrag);
+    }
+
     // ResizeObserver: recompute layout when container is resized
     const resizeObserver = new ResizeObserver(() => {
         const newW = wrap.clientWidth;
@@ -6987,7 +7159,10 @@ function initMapGame(mapId, nodes, edges, companions, lab) {
             const rd4 = generateMapDecorations(state.positions, w, h, 48, 180);
             state.decorations = rd4.filter(d => d.type !== 'mountain');
         } else if (resizeV === 5) {
-            state.positions = computeMapLayout(state.nodes.length, w, h, 160, 110);
+            const resizeCloudBottom = Math.round(h * 0.42);
+            state._cloudBottom = resizeCloudBottom;
+            state.positions = computeMapLayout(state.nodes.length, w, h, resizeCloudBottom + 20, 110);
+            clampIslandsAboveHud(state.positions, state.nodes.length, h);
             const rd5 = generateMapDecorations(state.positions, w, h, 150, 56);
             state.decorations = rd5.filter(d => d.type !== 'mountain');
         } else {

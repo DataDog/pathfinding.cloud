@@ -46,8 +46,9 @@
             if (savedTheme === 'light') {
                 document.documentElement.classList.add('light-theme');
             }
-            // Sidebar anti-flicker: apply collapsed class before paint
-            if (localStorage.getItem('sidebarCollapsed') === 'true') {
+            // Sidebar anti-flicker: apply collapsed class before paint.
+            // Also force-collapse on narrow viewports regardless of saved preference.
+            if (localStorage.getItem('sidebarCollapsed') === 'true' || window.innerWidth < 1600) {
                 document.documentElement.classList.add('sidebar-collapsed');
             }
         })();
@@ -462,7 +463,6 @@
         .gs-cta-content-link {
             display: grid;
             grid-template-columns: 500px 1fr;
-            min-height: 118px;
             text-decoration: none;
             color: inherit;
         }
@@ -504,18 +504,18 @@
         .gs-cta-visual {
             position: relative;
             overflow: hidden;
+            height: 200px;
+            align-self: start;
             border-left: 1px solid var(--border-color);
             transition: border-left-color 0.15s;
         }
         .gs-cta-banner:hover .gs-cta-visual {
             border-left-color: var(--accent-color);
         }
-        .gs-cta-visual img {
+        .gs-cta-visual canvas {
             display: block;
             width: 100%;
             height: 100%;
-            object-fit: cover;
-            object-position: center center;
         }
         .gs-cta-dismiss {
             position: absolute;
@@ -565,7 +565,7 @@
                         </div>
                     </div>
                     <div class="gs-cta-visual">
-                        <img src="/images/getting%20started.png" alt="Getting Started Guide">
+                        <canvas id="gs-cta-canvas" aria-label="Interactive attack path map preview"></canvas>
                     </div>
                 </a>
                 <button class="gs-cta-dismiss" id="gs-cta-dismiss" aria-label="Dismiss getting started banner">
@@ -621,6 +621,72 @@
                 localStorage.setItem('gsCtaDismissed', '1');
                 banner.style.display = 'none';
             });
+        }());
+
+        // Live canvas banner -- "Getting Started" in the game's gold capcom font
+        // on the ocean-gradient background. No islands, no clouds.
+        (function () {
+            const canvas = document.getElementById('gs-cta-canvas');
+            if (!canvas) return;
+            const visual = canvas.closest('.gs-cta-visual');
+            if (!visual) return;
+
+            function renderBanner() {
+                const rect = visual.getBoundingClientRect();
+                const w = Math.round(rect.width);
+                const h = Math.round(rect.height);
+                if (w < 10 || h < 10) return;
+
+                const dpr = window.devicePixelRatio || 1;
+                canvas.width = w * dpr;
+                canvas.height = h * dpr;
+                canvas.style.width = w + 'px';
+                canvas.style.height = h + 'px';
+
+                const ctx = canvas.getContext('2d');
+                ctx.scale(dpr, dpr);
+
+                // Ocean gradient background (same as the game map)
+                const p = getMapPalette();
+                const bg = ctx.createLinearGradient(0, 0, 0, h);
+                bg.addColorStop(0,   p.oceanA);
+                bg.addColorStop(0.6, p.oceanB);
+                bg.addColorStop(1,   p.oceanDeep);
+                ctx.fillStyle = bg;
+                ctx.fillRect(0, 0, w, h);
+
+                // Dark gradient scrim from the top (matches variant-5 game map)
+                const isLight = document.documentElement.classList.contains('light-theme');
+                const scrim = ctx.createLinearGradient(0, 0, 0, h);
+                scrim.addColorStop(0,   isLight ? 'rgba(0,0,0,0.82)' : 'rgba(0,0,0,0.92)');
+                scrim.addColorStop(0.6, isLight ? 'rgba(0,0,0,0.40)' : 'rgba(0,0,0,0.50)');
+                scrim.addColorStop(1,   'rgba(0,0,0,0)');
+                ctx.fillStyle = scrim;
+                ctx.fillRect(0, 0, w, h);
+
+                // Scale the heading so "GETTING STARTED" fills 80% of canvas width.
+                // Measure at the reference LAB_SIZE (26px at scale=1) to get the ratio.
+                const REF_SIZE = 26;
+                ctx.font = `900 ${REF_SIZE}px -apple-system, BlinkMacSystemFont, sans-serif`;
+                ctx.letterSpacing = '0.04em';
+                const refW = ctx.measureText('GETTING STARTED').width;
+                ctx.letterSpacing = 'normal';
+                const scale = Math.max(0.3, (w * 0.60) / refW);
+                drawCapcomHeader(ctx, w, 0, 'Getting Started', {
+                    brandText: 'PATHFINDING LABS',
+                    zoneH: h,
+                    scale: scale,
+                });
+            }
+
+            // Defer first render so the element has a computed layout size.
+            requestAnimationFrame(function () { renderBanner(); });
+
+            new ResizeObserver(function () { renderBanner(); }).observe(visual);
+
+            new MutationObserver(function () { renderBanner(); }).observe(
+                document.documentElement, { attributes: true, attributeFilter: ['class'] }
+            );
         }());
     </script>
 </body>
