@@ -46,7 +46,7 @@ const cloudSprites = {
     loaded: false,
     load() {
         if (this.loaded) return Promise.resolve();
-        const ids = [1, 3, 5, 7, 10, 14, 17, 20];
+        const ids = [2, 4, 5, 6, 7, 10, 14, 17, 20];
         const promises = ids.map(id => new Promise((resolve) => {
             const img = new Image();
             img.onload = () => { this.images.push(img); resolve(); };
@@ -91,6 +91,28 @@ const cloudSprites = {
             ctx.drawImage(img, x - drawW / 2, y - drawH / 2, drawW, drawH);
         }
         ctx.globalAlpha = 1;
+    },
+};
+
+// Helicopter sprite loader -- pixel-art PNG replaces the procedural helicopter drawing.
+// Falls back to the procedural renderer if the image hasn't loaded yet.
+const helicopterSprite = {
+    img: null,
+    loaded: false,
+    onLoadCallbacks: [],
+    load() {
+        if (this.loaded) return Promise.resolve();
+        return new Promise((resolve) => {
+            const img = new Image();
+            img.onload = () => {
+                this.img = img;
+                this.loaded = true;
+                this.onLoadCallbacks.forEach(cb => { try { cb(); } catch (_) {} });
+                resolve();
+            };
+            img.onerror = () => { this.loaded = true; resolve(); };
+            img.src = '/img/helicopter.png';
+        });
     },
 };
 
@@ -1180,6 +1202,18 @@ function drawPlaneSeaplane(ctx, x, y, palette) {
 }
 
 function drawPlaneHelicopter(ctx, x, y, palette) {
+    const img = helicopterSprite.img;
+    if (img && img.naturalWidth) {
+        // Sprite: draw at 52px wide, vertically centered so the body sits above the island surface.
+        // The sprite faces right and has a transparent background, so no extra compositing needed.
+        const displayW = 65;
+        const displayH = displayW * (img.naturalHeight / img.naturalWidth);
+        // Center the sprite on (x+4, y-28) so it aligns with the glow ring in drawPlaneIndicator.
+        ctx.drawImage(img, x - displayW / 2 + 4, y - displayH / 2 - 28, displayW, displayH);
+        return;
+    }
+
+    // Procedural fallback while sprite loads
     const p = palette;
     ctx.save();
     ctx.translate(x + 6, y - 30);
@@ -1228,7 +1262,6 @@ function drawPlaneHelicopter(ctx, x, y, palette) {
     // Landing skids
     ctx.strokeStyle = '#666';
     ctx.lineWidth = 1.2;
-    // Left skid
     ctx.beginPath();
     ctx.moveTo(-6, 6); ctx.lineTo(-6, 10);
     ctx.moveTo(8, 6); ctx.lineTo(8, 10);
@@ -1272,49 +1305,22 @@ const planeStyleRenderers = {
 };
 
 // Draw the plane indicator using the selected style, with glow ring + drop shadow for visibility.
-// The plane is offset to the top-right of the island so the shadow doesn't overlap the AWS icon.
 // The plane is drawn at 1.5x scale for better visibility.
 function drawPlaneIndicator(ctx, x, y, palette, style) {
     const renderer = planeStyleRenderers[style] || drawPlaneJet;
-    const accentColor = palette.startFill || '#4ade80';
-    const liftY = 0; // vertical pixels to raise the plane above its offset position
-    const scale = 1.5;
+    const scale = 1.8;
     // Offset the plane to the top-right corner of the island
-    const offsetX = 30;
-    const offsetY = -18;
+    const offsetX = 14;
+    const offsetY = -10;
     const baseX = x + offsetX;
     const baseY = y + offsetY;
 
-    // Drop shadow at the offset position on the island surface
+    // Draw the plane at 1.5x scale at the offset position
     ctx.save();
-    ctx.globalAlpha = 0.25;
-    ctx.fillStyle = '#000';
-    ctx.beginPath();
-    ctx.ellipse(baseX + 4, baseY - 6, 27, 8, 0, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.restore();
-
-    // Glow ring around the lifted plane
-    const liftedY = baseY - liftY;
-    ctx.save();
-    const glowX = baseX + 4;
-    const glowY = liftedY - 28 * scale;
-    const grad = ctx.createRadialGradient(glowX, glowY, 5, glowX, glowY, 40);
-    grad.addColorStop(0, accentColor + 'aa');
-    grad.addColorStop(0.5, accentColor + '44');
-    grad.addColorStop(1, accentColor + '00');
-    ctx.fillStyle = grad;
-    ctx.beginPath();
-    ctx.ellipse(glowX, glowY, 40, 28, 0, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.restore();
-
-    // Draw the plane at 1.5x scale at the offset+lifted position
-    ctx.save();
-    ctx.translate(baseX, liftedY);
+    ctx.translate(baseX, baseY);
     ctx.scale(scale, scale);
-    ctx.translate(-baseX, -liftedY);
-    renderer(ctx, baseX, liftedY, palette);
+    ctx.translate(-baseX, -baseY);
+    renderer(ctx, baseX, baseY, palette);
     ctx.restore();
 }
 
@@ -4204,6 +4210,8 @@ function renderGameMenu(state) {
                         { keys: ['P'], desc: 'Cycle plane style' },
                         { keys: ['W'], desc: 'Cycle sky (sky / sunset / dusk)' },
                         { keys: ['R'], desc: 'Reset view' },
+                        { keys: ['F'], desc: 'Toggle fullscreen' },
+                        { keys: ['Scroll'],      desc: 'Resize islands' },
                         { keys: ['Ctrl+Scroll'], desc: 'Zoom in / out' },
                     ],
                 },
@@ -6342,12 +6350,35 @@ function renderLabDetailContentMapGame(lab, container) {
 // Bottom bar geometry: barH=40 + gap=6 → bar top at canvasH - 46.
 // Worst-case label plate bottom below pos.y:
 //   islandRadius * footprintScale * (1 - grassAnchor) - labelGap(20) + plateH(46)
-function clampIslandsAboveHud(positions, nodeCount, canvasH) {
+// Clamp island positions so their label plates never overlap the bottom HUD bar.
+// baseIslandRadius must reflect the current _baseIslandRadius (not hardcoded) so
+// the clamp stays correct after scroll-wheel resizes or canvas size changes.
+function clampIslandsAboveHud(positions, nodeCount, canvasH, baseIslandRadius) {
+    const base = baseIslandRadius || 73;
     const shrinkSteps = Math.max(0, nodeCount - 3);
-    const r = 73 * Math.pow(0.8, shrinkSteps);
-    const plateDrop = r * ISLAND_SPRITE_FOOTPRINT_SCALE.principal
-                      * (1 - ISLAND_SPRITE_GRASS_CENTER.principal) - 20 + 46;
-    const maxY = canvasH - 46 /* bar zone */ - 10 /* safety */ - plateDrop;
+    const ir = base * Math.pow(0.8, shrinkSteps);
+
+    // Distance from island center (pos.y) down to the bottom of the sprite body.
+    // Use the loaded sprite's real aspect ratio; fall back to procedural approximation.
+    let spriteDrop;
+    const principalImg = islandSprites.get('principal');
+    if (principalImg && principalImg.naturalWidth) {
+        const spriteW = ir * ISLAND_SPRITE_FOOTPRINT_SCALE.principal;
+        const spriteH = spriteW * (principalImg.naturalHeight / principalImg.naturalWidth);
+        spriteDrop = spriteH * (1 - ISLAND_SPRITE_GRASS_CENTER.principal);
+    } else {
+        // Procedural shore bottom is shallower; use a generous estimate so the
+        // clamp still protects before sprites load.
+        spriteDrop = ir * 1.1;
+    }
+
+    // labelDrop = distance from pos.y to the bottom of the label plate.
+    // labelY = spriteDrop - 20 (matches drawGameIslandLabels), plateTop = labelY - 2,
+    // plateH is conservatively 50px (covers name + subtitle + padding at any font scale).
+    const labelDrop = spriteDrop - 22 + 50;
+
+    // HUD bar top is at canvasH - 46. Leave 10px breathing room above it.
+    const maxY = canvasH - 46 - 10 - labelDrop;
     positions.forEach(p => { p.y = Math.min(p.y, maxY); });
 }
 
@@ -6388,12 +6419,16 @@ function initMapGame(mapId, nodes, edges, companions, lab) {
     // start 20px below cloudBandBottom so cloud and island zones don't overlap.
     // Using h*0.42 gives a generous cloud band while still leaving ~55% of the canvas height for islands.
     const cloudBandBottom = Math.round(h * 0.42);
+    // Base island radius scales with canvas width so islands feel appropriately
+    // sized on large screens and in fullscreen. w*0.09 yields ~73 at ~810px
+    // (matching the old fixed value) and grows for wider canvases.
+    const initialBaseRadius = Math.round(Math.max(45, Math.min(120, w * 0.09)));
     const positions = computeMapLayout(nodes.length, w, h, cloudBandBottom + 20, 110);
-    clampIslandsAboveHud(positions, nodes.length, h);
-    // Pre-compute the island radius (same formula as renderMapGame) so companion
+    clampIslandsAboveHud(positions, nodes.length, h, initialBaseRadius);
+    // Pre-compute the island radius (same formula as drawGameMap) so companion
     // placement can avoid landing on main island bodies.
     const initShrinkSteps = Math.max(0, nodes.length - 3);
-    const initIslandRadius = 104 * Math.pow(0.8, initShrinkSteps);
+    const initIslandRadius = initialBaseRadius * Math.pow(0.8, initShrinkSteps);
     // Compute companion positions offset from their parent edge midpoints
     const companionPositions = computeCompanionPositions(companions, edges, positions, initIslandRadius);
     // Filter out mountains from decorations for game mode
@@ -6458,6 +6493,7 @@ function initMapGame(mapId, nodes, edges, companions, lab) {
         _hudVariantFlashAt: 0,    // timestamp of last variant change, drives the flash indicator fade
         _basePositions: null,     // saved island positions before variant-specific recompute
         _baseDecorations: null,   // saved decorations before variant-specific recompute
+        _baseIslandRadius: initialBaseRadius, // canvas-size-derived base; scroll wheel adjusts from here
         _cloudHudTop: 110,        // push clouds below the title text (~95px bottom) not the gradient (150px)
         _cloudBottom: cloudBandBottom, // cloud band bottom; islands start 20px below this
         // -- Play Online terminal state --
@@ -6480,7 +6516,12 @@ function initMapGame(mapId, nodes, edges, companions, lab) {
     state.buttons = buildPlayingButtons(w, h, state);
 
     cloudSprites.load().then(() => redraw());
-    islandSprites.load().then(() => redraw());
+    islandSprites.load().then(() => {
+        // Re-clamp now that the real sprite aspect ratio is available
+        clampIslandsAboveHud(state.positions, state.nodes.length, h, state._baseIslandRadius);
+        redraw();
+    });
+    helicopterSprite.load().then(() => redraw());
     // Redraw when AWS icons finish loading so they appear on islands
     awsIconSprites.onLoadCallbacks.push(() => redraw());
     redraw();
@@ -7040,6 +7081,15 @@ function initMapGame(mapId, nodes, edges, companions, lab) {
             state.skyStyle = SKY_STYLE_LIST[(currentIdx + 1) % SKY_STYLE_LIST.length];
             redraw();
         }
+        // F key toggles fullscreen on the game layout container
+        if ((e.key === 'f' || e.key === 'F') && (state.screen === 'playing' || state.screen === 'complete')) {
+            const fsEl = state._layoutEl || document.documentElement;
+            if (!document.fullscreenElement) {
+                fsEl.requestFullscreen?.();
+            } else {
+                document.exitFullscreen?.();
+            }
+        }
         // R key resets the view (pan/zoom) to default
         if ((e.key === 'r' || e.key === 'R') && (state.screen === 'playing' || state.screen === 'complete')) {
             if (state.viewZoom !== 1 || state.viewPanX !== 0 || state.viewPanY !== 0) {
@@ -7084,7 +7134,7 @@ function initMapGame(mapId, nodes, edges, companions, lab) {
                 const v5CloudBottom = Math.round(h * 0.42);
                 state._cloudBottom = v5CloudBottom;
                 state.positions   = computeMapLayout(state.nodes.length, w, h, v5CloudBottom + 20, 110);
-                clampIslandsAboveHud(state.positions, state.nodes.length, h);
+                clampIslandsAboveHud(state.positions, state.nodes.length, h, state._baseIslandRadius);
                 const allDeco5    = generateMapDecorations(state.positions, w, h, 150, 56);
                 state.decorations = allDeco5.filter(d => d.type !== 'mountain');
                 state.companionPositions = computeCompanionPositions(state.companions, state.edges, state.positions);
@@ -7144,24 +7194,31 @@ function initMapGame(mapId, nodes, edges, companions, lab) {
 
     function onWheel(e) {
         if (state.screen !== 'playing' && state.screen !== 'complete') return;
-        // Require Ctrl/Cmd to zoom; without it let the page scroll normally
-        if (!e.ctrlKey && !e.metaKey) return;
-        e.preventDefault();
-        const { sx, sy } = canvasCoords(e);
-        const oldZoom = state.viewZoom;
-        const zoomFactor = e.deltaY < 0 ? 1.1 : 0.9;
-        const newZoom = Math.max(0.4, Math.min(3.0, oldZoom * zoomFactor));
 
-        // Adjust pan so the point under cursor stays fixed
-        state.viewPanX = sx - (sx - state.viewPanX) * (newZoom / oldZoom);
-        state.viewPanY = sy - (sy - state.viewPanY) * (newZoom / oldZoom);
-        state.viewZoom = newZoom;
-
-        // Rebuild buttons so reset-view button appears/disappears
-        if (state.screen === 'playing') {
-            state.buttons = buildPlayingButtons(w, h, state);
+        if (e.ctrlKey || e.metaKey) {
+            // Ctrl/Cmd + scroll: zoom, keeping the point under the cursor fixed
+            e.preventDefault();
+            const { sx, sy } = canvasCoords(e);
+            const oldZoom = state.viewZoom;
+            const zoomFactor = e.deltaY < 0 ? 1.1 : 0.9;
+            const newZoom = Math.max(0.4, Math.min(3.0, oldZoom * zoomFactor));
+            state.viewPanX = sx - (sx - state.viewPanX) * (newZoom / oldZoom);
+            state.viewPanY = sy - (sy - state.viewPanY) * (newZoom / oldZoom);
+            state.viewZoom = newZoom;
+            if (state.screen === 'playing') state.buttons = buildPlayingButtons(w, h, state);
+            redraw();
+        } else {
+            // Plain scroll: resize islands
+            e.preventDefault();
+            const factor = e.deltaY < 0 ? 1.08 : 0.92;
+            const current = state._baseIslandRadius || 73;
+            state._baseIslandRadius = Math.max(30, Math.min(150, current * factor));
+            // Re-clamp positions so larger islands don't push labels into the HUD
+            clampIslandsAboveHud(state.positions, state.nodes.length, h, state._baseIslandRadius);
+            state.companionPositions = computeCompanionPositions(
+                state.companions, state.edges, state.positions, state._baseIslandRadius);
+            redraw();
         }
-        redraw();
     }
 
     canvas.addEventListener('pointermove', onPointerMove);
@@ -7232,6 +7289,9 @@ function initMapGame(mapId, nodes, edges, companions, lab) {
         canvas.style.height = h + 'px';
         ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
 
+        // Recompute base island radius for new canvas width
+        state._baseIslandRadius = Math.round(Math.max(45, Math.min(120, w * 0.09)));
+
         // Recompute layout for new dimensions, respecting the active HUD variant's margins.
         const resizeV = state.hudVariant || 0;
         if (resizeV === 4) {
@@ -7242,7 +7302,7 @@ function initMapGame(mapId, nodes, edges, companions, lab) {
             const resizeCloudBottom = Math.round(h * 0.42);
             state._cloudBottom = resizeCloudBottom;
             state.positions = computeMapLayout(state.nodes.length, w, h, resizeCloudBottom + 20, 110);
-            clampIslandsAboveHud(state.positions, state.nodes.length, h);
+            clampIslandsAboveHud(state.positions, state.nodes.length, h, state._baseIslandRadius);
             const rd5 = generateMapDecorations(state.positions, w, h, 150, 56);
             state.decorations = rd5.filter(d => d.type !== 'mountain');
         } else {
@@ -8141,6 +8201,7 @@ function renderStaticMapPreview(containerEl, lab) {
     if (mapCompanions) awsIconSprites.preload(mapCompanions);
     cloudSprites.load().then(() => draw());
     islandSprites.load().then(() => draw());
+    helicopterSprite.load().then(() => draw());
     awsIconSprites.onLoadCallbacks.push(() => draw());
     draw();
 
@@ -8417,5 +8478,6 @@ function renderStaticMapThumbnail(containerEl, lab) {
 
     cloudSprites.load().then(draw);
     islandSprites.load().then(draw);
+    helicopterSprite.load().then(draw);
     return canvas;
 }
