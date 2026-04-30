@@ -6414,17 +6414,29 @@ function initMapGame(mapId, nodes, edges, companions, lab) {
                 if (overHop) {
                     canvas.style.cursor = 'pointer';
                 } else {
-                    // Check if hovering over an island or edge
+                    // Check if hovering over an island or edge. Match the
+                    // click hit-test: the full silhouette + badge + label
+                    // plate are all hoverable.
                     let overIsland = false;
-                    for (const pos of state.positions) {
-                        if (Math.hypot(pos.x - x, pos.y - y) < 42) { overIsland = true; break; }
+                    const irHover = state.islandRadius || 52;
+                    for (let i = 0; i < state.positions.length; i++) {
+                        const pos = state.positions[i];
+                        const spriteKey = pickIslandSpriteKey(state, i);
+                        const islandBottom = getIslandBottomY(pos, irHover, spriteKey);
+                        if (x >= pos.x - irHover * 1.4 && x <= pos.x + irHover * 1.4
+                            && y >= pos.y - irHover * 1.2 && y <= islandBottom + 56) {
+                            overIsland = true; break;
+                        }
                     }
                     if (overIsland) {
                         canvas.style.cursor = 'pointer';
                     } else {
-                        // Check companions
+                        // Check companions. Match the click hit-test: full
+                        // silhouette + badge + label plate are hoverable.
                         let overCompanion = false;
-                        const cHitR = state.companionStyle === 'note' ? 40 : 28;
+                        const baseCR = 56;
+                        const cShrink = Math.max(0, (state.nodes?.length || 0) - 3);
+                        const cRadius = baseCR * Math.pow(0.8, cShrink);
                         for (let ci = 0; ci < state.companions.length; ci++) {
                             const cPos = state.companionPositions[ci];
                             if (!cPos || (cPos.x === 0 && cPos.y === 0)) continue;
@@ -6432,7 +6444,15 @@ function initMapGame(mapId, nodes, edges, companions, lab) {
                             if (!parentEdge) continue;
                             const edgeIdx = state.edges.indexOf(parentEdge);
                             if (!state.revealedEdges.has(edgeIdx) && state.screen !== 'complete') continue;
-                            if (Math.hypot(cPos.x - x, cPos.y - y) < cHitR) { overCompanion = true; break; }
+                            if (state.companionStyle === 'note') {
+                                if (Math.hypot(cPos.x - x, cPos.y - y) < 40) { overCompanion = true; break; }
+                            } else {
+                                const islandBottom = getIslandBottomY(cPos, cRadius, 'resource');
+                                if (x >= cPos.x - cRadius * 1.4 && x <= cPos.x + cRadius * 1.4
+                                    && y >= cPos.y - cRadius * 1.0 && y <= islandBottom + 36) {
+                                    overCompanion = true; break;
+                                }
+                            }
                         }
                         if (overCompanion) {
                             canvas.style.cursor = 'pointer';
@@ -6519,16 +6539,36 @@ function initMapGame(mapId, nodes, edges, companions, lab) {
                 state.selectedCompanion = null;
                 state.completeView = null;
                 state.panelOverride = null;
+                // Clicking on the map switches the side panel to the
+                // navigation (per-node/edge) view, even from setup/overview.
+                if (state.screen === 'playing') {
+                    state.gameViewPhase = 'navigation';
+                    state.buttons = buildPlayingButtons(w, h, state);
+                }
                 redraw();
                 updateGamePanel(state);
                 return;
             }
 
-            // Hit-test islands (main principal nodes)
+            // Hit-test islands (main principal nodes). The clickable region
+            // covers the full silhouette: badge/banner above the island, the
+            // island body itself, and the label plate below. Use a bounding
+            // box keyed off the rendered sprite + a generous label allowance,
+            // and tie-break with a center-distance score so adjacent islands
+            // don't fight over an overlapping click region.
+            const ir = state.islandRadius || 52;
             let closest = -1, closestDist = Infinity;
             state.positions.forEach((pos, i) => {
-                const d = Math.hypot(pos.x - x, pos.y - y);
-                if (d < 42 && d < closestDist) { closest = i; closestDist = d; }
+                const spriteKey = pickIslandSpriteKey(state, i);
+                const islandBottom = getIslandBottomY(pos, ir, spriteKey);
+                const left   = pos.x - ir * 1.4;
+                const right  = pos.x + ir * 1.4;
+                const top    = pos.y - ir * 1.2;     // covers banner/crest above
+                const bottom = islandBottom + 56;    // covers label plate below
+                if (x >= left && x <= right && y >= top && y <= bottom) {
+                    const d = Math.hypot(pos.x - x, pos.y - y);
+                    if (d < closestDist) { closest = i; closestDist = d; }
+                }
             });
             if (closest >= 0) {
                 state.selectedNode = closest;
@@ -6550,9 +6590,15 @@ function initMapGame(mapId, nodes, edges, companions, lab) {
                 }
             } else {
                 // Hit-test companion nodes (between islands and edges in priority)
-                // Companions are always clickable if their parent edge is revealed
+                // Companions are always clickable if their parent edge is revealed.
+                // Like the main islands, the clickable region covers the full
+                // companion silhouette: badge above, islet body, and label
+                // plate below. Note-style companions stay as a tight card hit.
                 let companionHit = -1;
-                const companionHitRadius = state.companionStyle === 'note' ? 40 : 28;
+                let companionBest = Infinity;
+                const baseCompanionRadius = 56;
+                const companionShrinkSteps = Math.max(0, (state.nodes?.length || 0) - 3);
+                const companionRadius = baseCompanionRadius * Math.pow(0.8, companionShrinkSteps);
                 for (let ci = 0; ci < state.companions.length; ci++) {
                     const cPos = state.companionPositions[ci];
                     if (!cPos || (cPos.x === 0 && cPos.y === 0)) continue;
@@ -6561,8 +6607,21 @@ function initMapGame(mapId, nodes, edges, companions, lab) {
                     const edgeIdx = state.edges.indexOf(parentEdge);
                     // Clickable if edge is revealed, selected, or on complete screen
                     if (!state.revealedEdges.has(edgeIdx) && state.selectedEdge !== edgeIdx && state.screen !== 'complete') continue;
-                    const d = Math.hypot(cPos.x - x, cPos.y - y);
-                    if (d < companionHitRadius) { companionHit = ci; break; }
+                    let inside = false;
+                    if (state.companionStyle === 'note') {
+                        inside = Math.hypot(cPos.x - x, cPos.y - y) < 40;
+                    } else {
+                        const islandBottom = getIslandBottomY(cPos, companionRadius, 'resource');
+                        const left   = cPos.x - companionRadius * 1.4;
+                        const right  = cPos.x + companionRadius * 1.4;
+                        const top    = cPos.y - companionRadius * 1.0;
+                        const bottom = islandBottom + 36;
+                        inside = (x >= left && x <= right && y >= top && y <= bottom);
+                    }
+                    if (inside) {
+                        const d = Math.hypot(cPos.x - x, cPos.y - y);
+                        if (d < companionBest) { companionBest = d; companionHit = ci; }
+                    }
                 }
 
                 if (companionHit >= 0) {
@@ -6605,6 +6664,10 @@ function initMapGame(mapId, nodes, edges, companions, lab) {
                 }
             }
             if (state.screen === 'playing') {
+                // Clicking any map element (island, companion, edge) drops
+                // out of setup/overview into the per-node/edge navigation
+                // panel so the side page tracks the helicopter.
+                state.gameViewPhase = 'navigation';
                 state.buttons = buildPlayingButtons(w, h, state);
             }
             redraw();
