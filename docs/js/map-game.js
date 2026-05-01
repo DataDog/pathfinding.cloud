@@ -3187,18 +3187,24 @@ function drawIdleHintArrow(ctx, w, h, state) {
         ctx.textBaseline = 'middle';
         ctx.letterSpacing = 'normal';
 
+        // Pass 1: dark offset backings — no shadow so adjacent-line glow can't bleed in
+        ctx.shadowBlur = 0;
+        ctx.shadowOffsetX = 0;
+        ctx.shadowOffsetY = 0;
+        ctx.shadowColor = 'transparent';
+        ctx.fillStyle = 'rgba(0,0,0,0.75)';
         lines.forEach((line, i) => {
-            const lineY = textStartY + i * lineH;
-            // Dark backing for readability
-            ctx.fillStyle = 'rgba(0,0,0,0.7)';
-            ctx.fillText(line, textX + 1, lineY + 1);
-            // Gold text with glow matching Capcom brand line style
-            ctx.fillStyle = 'rgba(255,220,100,0.9)';
-            ctx.shadowColor = 'rgba(240,180,40,0.5)';
-            ctx.shadowBlur = 6;
-            ctx.fillText(line, textX, lineY);
-            ctx.shadowBlur = 0;
+            ctx.fillText(line, textX + 1, textStartY + i * lineH + 1);
         });
+        // Pass 2: amber-orange text with warm glow over the backings
+        ctx.shadowColor = 'rgba(200,90,10,0.55)';
+        ctx.shadowBlur = 7;
+        ctx.fillStyle = 'rgba(255,165,45,0.97)';
+        lines.forEach((line, i) => {
+            ctx.fillText(line, textX, textStartY + i * lineH);
+        });
+        ctx.shadowBlur = 0;
+        ctx.shadowColor = 'transparent';
     }
 
     // Arrow glyph — hard drop shadow then gold gradient fill
@@ -3614,36 +3620,45 @@ function buildPlayingButtons(w, h, state) {
     // [Play Online] [Lab Setup][Lab Overview]   [Back][Next]   [Finish Mission][Demo]
     //  ^-- left edge                            ^-- centered    ^-- right edge
 
-    const playOnlineW = 110;
-    const setupW = 90;
-    const overviewW = 110;
     const backW = 70;
     const nextW = 70;
-    const finishW = 125;
-    const demoW = 140;
     const edgePad = 14; // padding from bar edges
 
     // Center Back/Next in the middle of the bar
     const centerGroupW = backW + gap + nextW;
     const backX = (w - centerGroupW) / 2;
     const nextX = backX + backW + gap;
-
-    // Left group: Play Online at far left, then Lab Setup + Lab Overview.
-    // Lab Setup + Lab Overview are hidden when the canvas is too narrow to fit them
-    // without overlapping Back/Next — they remain accessible via Back/Next navigation.
-    const playOnlineX = edgePad;
-    const labSetupX = edgePad + playOnlineW + gap;
-    const labOverviewX = labSetupX + setupW + gap;
-    // Overlap threshold: left group right edge (340) vs backX = (w-148)/2 → collide at w≈828.
-    const showOverviewSetupBtns = w >= 850;
-
-    // Right group: [Finish Mission] [Exploitation Demo] centered between center group and right edge
     const centerRightEdge = nextX + nextW;
     const rightEdge = w - edgePad;
+
+    // Responsive labels: switch to short versions when groups would touch Back/Next.
+    // Left group full widths: Play Online(110) + Lab Setup(90) + Lab Overview(110) + gaps/padding = 340
+    const leftGroupRightFull = edgePad + 110 + gap + 90 + gap + 110; // 340
+    const useShortLeft = leftGroupRightFull > backX - gap;
+    const playOnlineW   = useShortLeft ? 55  : 110;
+    const setupW        = useShortLeft ? 65  : 90;
+    const overviewW     = useShortLeft ? 82  : 110;
+    const playOnlineLabel = useShortLeft ? 'Play'     : 'Play Online';
+    const setupLabel      = useShortLeft ? 'Setup'    : 'Lab Setup';
+    const overviewLabel   = useShortLeft ? 'Overview' : 'Lab Overview';
+
+    // Right group check — full widths: Finish Mission(125) + Exploitation Demo(140) = 273 + gap
+    const rightGroupWFull = 125 + gap + 140; // 273
+    const useShortRight = (rightEdge - centerRightEdge - rightGroupWFull) < gap;
+    const finishW    = useShortRight ? 65  : 125;
+    const demoW      = useShortRight ? 100 : 140;
+    const finishLabel    = useShortRight ? 'Finish'       : 'Finish Mission';
+    const demoLabel      = useShortRight ? 'Demo' : 'Exploitation Demo';
+
+    const playOnlineX  = edgePad;
+    const labSetupX    = edgePad + playOnlineW + gap;
+    const labOverviewX = labSetupX + setupW + gap;
+
+    // Right group flush against the right edge
     const rightGroupW = finishW + gap + demoW;
-    const rightGroupX = centerRightEdge + (rightEdge - centerRightEdge - rightGroupW) / 2;
+    const rightGroupX = rightEdge - rightGroupW;
     const finishX = rightGroupX;
-    const demoX = rightGroupX + finishW + gap;
+    const demoX   = rightGroupX + finishW + gap;
 
     // V0: top bar has menu + switch-to-single; V1-5: top bar has only the hamburger
     const buttons = variant === 0
@@ -3677,7 +3692,7 @@ function buildPlayingButtons(w, h, state) {
         id: 'play-online',
         x: playOnlineX, y: btnY,
         w: playOnlineW, h: btnH,
-        label: (state.terminalOpen && labOnlineEnabled) ? 'Close Terminal' : 'Play Online',
+        label: (state.terminalOpen && labOnlineEnabled) ? 'Close Terminal' : playOnlineLabel,
         style: 'terminal',
         fontSize: 12,
         radius: 8,
@@ -3692,42 +3707,40 @@ function buildPlayingButtons(w, h, state) {
         }
     });
 
-    // Lab Setup / Lab Overview buttons — hidden on narrow canvases to avoid overlapping Back/Next.
-    if (showOverviewSetupBtns) {
-        buttons.push({
-            id: 'lab-setup',
-            x: labSetupX, y: btnY,
-            w: setupW, h: btnH,
-            label: 'Lab Setup',
-            style: state.gameViewPhase === 'setup' ? 'primary' : 'secondary',
-            fontSize: 12,
-            radius: 8,
-            forceActive: state.gameViewPhase === 'setup',
-            onClick: () => {
-                state.panelOverride = state.panelOverride === 'setup' ? null : 'setup';
-                state.completeView = null;
-                state._redraw();
-                updateGamePanel(state);
-            }
-        });
+    // Lab Setup / Lab Overview — always visible; labels shorten responsively
+    buttons.push({
+        id: 'lab-setup',
+        x: labSetupX, y: btnY,
+        w: setupW, h: btnH,
+        label: setupLabel,
+        style: state.gameViewPhase === 'setup' ? 'primary' : 'secondary',
+        fontSize: 12,
+        radius: 8,
+        forceActive: state.gameViewPhase === 'setup',
+        onClick: () => {
+            state.panelOverride = state.panelOverride === 'setup' ? null : 'setup';
+            state.completeView = null;
+            state._redraw();
+            updateGamePanel(state);
+        }
+    });
 
-        buttons.push({
-            id: 'lab-overview',
-            x: labOverviewX, y: btnY,
-            w: overviewW, h: btnH,
-            label: 'Lab Overview',
-            style: state.gameViewPhase === 'overview' ? 'primary' : 'secondary',
-            fontSize: 12,
-            radius: 8,
-            forceActive: state.gameViewPhase === 'overview',
-            onClick: () => {
-                state.panelOverride = state.panelOverride === 'overview' ? null : 'overview';
-                state.completeView = null;
-                state._redraw();
-                updateGamePanel(state);
-            }
-        });
-    }
+    buttons.push({
+        id: 'lab-overview',
+        x: labOverviewX, y: btnY,
+        w: overviewW, h: btnH,
+        label: overviewLabel,
+        style: state.gameViewPhase === 'overview' ? 'primary' : 'secondary',
+        fontSize: 12,
+        radius: 8,
+        forceActive: state.gameViewPhase === 'overview',
+        onClick: () => {
+            state.panelOverride = state.panelOverride === 'overview' ? null : 'overview';
+            state.completeView = null;
+            state._redraw();
+            updateGamePanel(state);
+        }
+    });
 
     // Back button (disabled at setup phase)
     buttons.push({
@@ -3761,7 +3774,7 @@ function buildPlayingButtons(w, h, state) {
         id: 'finish-mission',
         x: finishX, y: btnY,
         w: finishW, h: btnH,
-        label: 'Finish Mission',
+        label: finishLabel,
         style: 'primary',
         fontSize: 13,
         radius: 8,
@@ -3785,7 +3798,7 @@ function buildPlayingButtons(w, h, state) {
         id: 'demo',
         x: demoX, y: btnY,
         w: demoW, h: btnH,
-        label: 'Exploitation Demo',
+        label: demoLabel,
         style: demoStyle,
         fontSize: 12,
         radius: 8,
