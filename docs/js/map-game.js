@@ -856,6 +856,7 @@ function drawGameIslandLabels(ctx, w, h, state) {
                         Math.min(w - plateW / 2 - 4, info.nominalX + xAdj[i]));
 
         ctx.save();
+        if (!isHeliRevealed(state, `node:${i}`)) ctx.globalAlpha = 0.25;
         if (isFirst || isLast) {
             const nameColor = isFirst ? (p.startFill || '#4ade80') : (p.endFill || '#f59e0b');
 
@@ -1326,6 +1327,9 @@ function drawPlaneIndicator(ctx, x, y, palette, style) {
 
 // Compute the plane's current position based on game state
 function getPlanePosition(state) {
+    // Free-flight mode: helicopter moves independently of selected node
+    if (state.heliPos) return state.heliPos;
+
     const { positions, edges, companionPositions } = state;
 
     // Companion selected -> plane on companion island
@@ -1362,12 +1366,6 @@ function drawMapWithGameLabels(ctx, w, h, state) {
     state.nodes.forEach((n, i) => { n.label = origLabels[i]; });
     drawGameIslandLabels(ctx, w, h, state);
     drawCompanions(ctx, w, h, state);
-
-    // Draw plane at current position (on top of everything)
-    if (state.screen === 'playing' || state.screen === 'complete') {
-        const planePos = getPlanePosition(state);
-        drawPlaneIndicator(ctx, planePos.x, planePos.y, state.palette, state.planeStyle);
-    }
 }
 
 // ---- Companion Node Drawing ----
@@ -1386,6 +1384,8 @@ function drawCompanions(ctx, w, h, state) {
         const pos = companionPositions[ci];
         if (!pos || (pos.x === 0 && pos.y === 0)) continue;
 
+        const companionAlpha = isHeliRevealed(state, `companion:${ci}`) ? 1 : 0.25;
+
         // Draw branch line from companion to its anchor point on the edge
         const fromPos = positions[parentEdge.fromIdx];
         const toPos = positions[parentEdge.toIdx];
@@ -1395,6 +1395,8 @@ function drawCompanions(ctx, w, h, state) {
         const t = siblingCount <= 1 ? 0.5 : 0.35 + (siblingPos / (siblingCount - 1)) * 0.3;
         const mx = fromPos.x + (toPos.x - fromPos.x) * t;
         const my = fromPos.y + (toPos.y - fromPos.y) * t;
+        ctx.save();
+        ctx.globalAlpha = companionAlpha;
         drawCompanionBranchLine(ctx, pos.x, pos.y, mx, my, state);
 
         // Dispatch to visual treatment
@@ -1411,6 +1413,7 @@ function drawCompanions(ctx, w, h, state) {
                 drawCompanionIslet(ctx, pos, companions[ci], isSelected, state, ci);
                 break;
         }
+        ctx.restore();
     }
 }
 
@@ -2994,6 +2997,229 @@ function updateGamePanel(state) {
 }
 
 
+// ---- Helicopter Reveal Mechanic ----
+
+// Builds the ordered sequence of hitKeys the helicopter must visit to progressively
+// reveal the map. Order mirrors advanceGameState: node0 → edge0 → companions → node1 → ...
+function buildRevealSequence(edges) {
+    // Sequence starts with HUD buttons before the first island
+    const seq = ['hud:lab-setup', 'hud:lab-overview', 'node:0'];
+    for (let ei = 0; ei < edges.length; ei++) {
+        const edge = edges[ei];
+        seq.push(`edge:${ei}`);
+        for (const ci of (edge.companionIndices || [])) {
+            seq.push(`companion:${ci}`);
+        }
+        seq.push(`node:${edge.toIdx}`);
+    }
+    return seq;
+}
+
+// Auto-reveals implicit (automatic) edges so the player never has to manually
+// hover them — they become bright as soon as the surrounding nodes are revealed.
+function advanceRevealImplicit(state) {
+    const seq = state._heliRevealSeq;
+    while (state._heliRevealNextIdx < seq.length) {
+        const next = seq[state._heliRevealNextIdx];
+        if (next.startsWith('edge:')) {
+            const ei = parseInt(next.split(':')[1], 10);
+            if (state.edges[ei]?.implicit) {
+                state._heliRevealed.add(next);
+                state._heliRevealNextIdx++;
+                continue;
+            }
+        }
+        break;
+    }
+}
+
+// Returns true if the given element (hitKey) should render at full opacity.
+// When the reveal mechanic is not active (_heliRevealSeq is null), everything is visible.
+function isHeliRevealed(state, key) {
+    if (!state._heliRevealSeq) return true;
+    return state._heliRevealed?.has(key) ?? true;
+}
+
+// Moves the helicopter to the position of a given hitKey element.
+function moveHeliToElement(state, hitKey) {
+    if (!state.heliPos || !hitKey) return;
+    const [type, idxStr] = hitKey.split(':');
+    const idx = parseInt(idxStr, 10);
+    let pos = null;
+    if (type === 'node') {
+        pos = state.positions?.[idx];
+    } else if (type === 'companion') {
+        pos = state.companionPositions?.[idx];
+        if (pos && pos.x === 0 && pos.y === 0) pos = null;
+    } else if (type === 'edge') {
+        const edge = state.edges?.[idx];
+        const from = edge && state.positions[edge.fromIdx];
+        const to   = edge && state.positions[edge.toIdx];
+        if (from && to) pos = { x: (from.x + to.x) / 2, y: (from.y + to.y) / 2 };
+    } else if (type === 'hud') {
+        // idxStr is the button ID; convert screen-space button center → world space
+        const btn = state.buttons?.find(b => b.id === idxStr);
+        if (btn) {
+            const zoom = state.viewZoom || 1;
+            const panX = state.viewPanX || 0;
+            const panY = state.viewPanY || 0;
+            const btnCx = btn.x + btn.w / 2;
+            // Place visual center (heliPos+21, heliPos-60) 40px above button top
+            const targetScreenX = btnCx;
+            const targetScreenY = btn.y - 40;
+            pos = {
+                x: (targetScreenX - panX) / zoom - 21,
+                y: (targetScreenY - panY) / zoom + 60,
+            };
+        }
+    }
+    if (pos) { state.heliPos.x = pos.x; state.heliPos.y = pos.y; }
+}
+
+// Called after advanceGameState / retreatGameState to keep the reveal mechanic and
+// helicopter position in sync with wherever the navigation just moved to.
+function syncRevealToNavigation(state) {
+    if (!state._heliRevealSeq) return;
+
+    // Determine which hitKey the navigation just landed on
+    let currentKey = null;
+    if (state.selectedNode !== null && state.selectedNode !== undefined) {
+        currentKey = `node:${state.selectedNode}`;
+    } else if (state.selectedEdge !== null && state.selectedEdge !== undefined) {
+        currentKey = `edge:${state.selectedEdge}`;
+    } else if (state.selectedCompanion !== null && state.selectedCompanion !== undefined) {
+        currentKey = `companion:${state.selectedCompanion}`;
+    }
+    // Map HUD view phases to their reveal keys when no island/edge is selected
+    if (!currentKey && state._heliRevealSeq?.includes('hud:lab-setup')) {
+        if (state.gameViewPhase === 'setup') currentKey = 'hud:lab-setup';
+        else if (state.gameViewPhase === 'overview') currentKey = 'hud:lab-overview';
+    }
+    if (!currentKey) return;
+
+    // Reveal everything in sequence up to and including this element
+    const seq = state._heliRevealSeq;
+    const targetIdx = seq.indexOf(currentKey);
+    if (targetIdx !== -1) {
+        for (let i = 0; i <= targetIdx; i++) state._heliRevealed.add(seq[i]);
+        state._heliRevealNextIdx = Math.max(state._heliRevealNextIdx, targetIdx + 1);
+        advanceRevealImplicit(state);
+        state._heliLastRevealTime = Date.now();
+    }
+
+    // Teleport helicopter to the element
+    moveHeliToElement(state, currentKey);
+}
+
+// Draw a Capcom-gold arrow pointing to the next element in the reveal sequence.
+// Shows immediately (no delay) for the initial HUD intro; after 30 s idle for all others.
+// Drawn in screen space so size stays constant regardless of zoom.
+function drawIdleHintArrow(ctx, w, h, state) {
+    if (!state._heliRevealSeq) return;
+    if (state._heliRevealNextIdx >= state._heliRevealSeq.length) return;
+    if (!state._heliLastRevealTime) return;
+
+    const targetKey = state._heliRevealSeq[state._heliRevealNextIdx];
+    const isInitialIntro = targetKey === 'hud:lab-overview';
+
+    // Initial intro arrow shows immediately; all others require 30 s of idle
+    if (!isInitialIntro && Date.now() - state._heliLastRevealTime < 30000) return;
+
+    const colonIdx = targetKey.indexOf(':');
+    const type   = targetKey.slice(0, colonIdx);
+    const idxStr = targetKey.slice(colonIdx + 1);
+    const idx = parseInt(idxStr, 10);
+
+    // Resolve screen-space anchor
+    let sx = null, sy = null;
+    if (type === 'hud') {
+        const btn = state.buttons?.find(b => b.id === idxStr);
+        if (!btn) return;
+        sx = btn.x + btn.w / 2;
+        sy = btn.y;
+    } else {
+        let worldPos = null;
+        if (type === 'node') {
+            worldPos = state.positions?.[idx];
+        } else if (type === 'companion') {
+            const p = state.companionPositions?.[idx];
+            if (p && !(p.x === 0 && p.y === 0)) worldPos = p;
+        } else if (type === 'edge') {
+            const edge = state.edges?.[idx];
+            const from = edge && state.positions[edge.fromIdx];
+            const to = edge && state.positions[edge.toIdx];
+            if (from && to) worldPos = { x: (from.x + to.x) / 2, y: (from.y + to.y) / 2 };
+        }
+        if (!worldPos) return;
+        const zoom = state.viewZoom || 1;
+        sx = worldPos.x * zoom + (state.viewPanX || 0);
+        sy = worldPos.y * zoom + (state.viewPanY || 0);
+    }
+
+    // Initial intro arrow is static; all others bounce at 1 Hz
+    const bounce = isInitialIntro ? 0 : Math.sin(performance.now() / 1000 * Math.PI * 2) * 10;
+    const arrowSize = 34;
+    const arrowX = sx;
+    const arrowBaseY = type === 'hud' ? sy - 55 : sy - 95;
+    const arrowY = arrowBaseY + bounce;
+
+    ctx.save();
+    ctx.shadowBlur = 0;
+    ctx.shadowOffsetX = 0;
+    ctx.shadowOffsetY = 0;
+
+    // Instruction text for the initial intro arrow — drawn to the right, vertically centered on the arrow
+    if (isInitialIntro) {
+        const fontSize = 13;
+        const lineH = 17;
+        const lines = [
+            'Use arrows to move helicopter',
+            'Hover over items in order to unlock them and learn',
+            'To start, move to the right to view your objective',
+        ];
+        const textX = arrowX + arrowSize / 2 + 14;
+        const arrowMidY = arrowY + arrowSize / 2;
+        const totalTextH = lines.length * lineH;
+        const textStartY = arrowMidY - totalTextH / 2 + lineH / 2;
+
+        ctx.font = `700 ${fontSize}px -apple-system, BlinkMacSystemFont, sans-serif`;
+        ctx.textAlign = 'left';
+        ctx.textBaseline = 'middle';
+        ctx.letterSpacing = 'normal';
+
+        lines.forEach((line, i) => {
+            const lineY = textStartY + i * lineH;
+            // Dark backing for readability
+            ctx.fillStyle = 'rgba(0,0,0,0.7)';
+            ctx.fillText(line, textX + 1, lineY + 1);
+            // Gold text with glow matching Capcom brand line style
+            ctx.fillStyle = 'rgba(255,220,100,0.9)';
+            ctx.shadowColor = 'rgba(240,180,40,0.5)';
+            ctx.shadowBlur = 6;
+            ctx.fillText(line, textX, lineY);
+            ctx.shadowBlur = 0;
+        });
+    }
+
+    // Arrow glyph — hard drop shadow then gold gradient fill
+    ctx.font = `900 ${arrowSize}px -apple-system, BlinkMacSystemFont, sans-serif`;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'top';
+    ctx.letterSpacing = 'normal';
+
+    ctx.fillStyle = 'rgba(0,0,0,0.85)';
+    ctx.fillText('▼', arrowX + 2, arrowY + 3);
+
+    const grad = ctx.createLinearGradient(arrowX, arrowY, arrowX, arrowY + arrowSize);
+    grad.addColorStop(0,    '#fff8c0');
+    grad.addColorStop(0.45, '#f0b030');
+    grad.addColorStop(1,    '#c06010');
+    ctx.fillStyle = grad;
+    ctx.fillText('▼', arrowX, arrowY);
+
+    ctx.restore();
+}
+
 // ---- Canvas Screen Renderers ----
 
 function renderMapGame(ctx, w, h, state) {
@@ -3018,6 +3244,12 @@ function renderMapGame(ctx, w, h, state) {
                 drawEdgeHopLabels(ctx, w, h, state);
             });
             drawPlayingHUD(ctx, w, h, state);  // HUD stays in screen space
+            drawIdleHintArrow(ctx, w, h, state); // screen space, above HUD
+            // Helicopter drawn last so it always renders above the HUD
+            withViewTransform(() => {
+                const planePos = getPlanePosition(state);
+                drawPlaneIndicator(ctx, planePos.x, planePos.y, state.palette, state.planeStyle);
+            });
             break;
         case 'paused':
             withViewTransform(() => {
@@ -3031,6 +3263,11 @@ function renderMapGame(ctx, w, h, state) {
                 drawEdgeHopLabels(ctx, w, h, state);
             });
             drawCompleteOverlay(ctx, w, h, state);
+            // Helicopter drawn last so it always renders above the overlay
+            withViewTransform(() => {
+                const planePos = getPlanePosition(state);
+                drawPlaneIndicator(ctx, planePos.x, planePos.y, state.palette, state.planeStyle);
+            });
             break;
     }
 }
@@ -3127,7 +3364,7 @@ function drawStartOverlay(ctx, w, h, state) {
         ctx.fillText('After you have reviewed the mission briefing:', w / 2, missionBtn.y - 4);
     }
 
-    state.buttons.forEach(btn => drawThemedButton(ctx, btn, state.hoveredButton, state.activeButton, p));
+    state.buttons.forEach(btn => drawThemedButton(ctx, btn, state.hoveredButton || state._heliHoveredButton, state.activeButton, p));
 
     // Keyboard hint below last button
     const lastBtn = state.buttons[state.buttons.length - 1];
@@ -3502,7 +3739,7 @@ function buildPlayingButtons(w, h, state) {
         fontSize: 12,
         radius: 8,
         disabled: !canGoBack,
-        onClick: () => { retreatGameState(w, h, state); }
+        onClick: () => { retreatGameState(w, h, state); syncRevealToNavigation(state); state._redraw(); }
     });
 
     // Next button (disabled at final node)
@@ -3516,7 +3753,7 @@ function buildPlayingButtons(w, h, state) {
         radius: 8,
         disabled: !canGoNext,
         forceActive: state.gameViewPhase === 'navigation' && !allRevealed,
-        onClick: () => { advanceGameState(w, h, state); }
+        onClick: () => { advanceGameState(w, h, state); syncRevealToNavigation(state); state._redraw(); }
     });
 
     // Finish Mission button (disabled until all revealed)
@@ -3672,7 +3909,7 @@ function drawPlayingHUD(ctx, w, h, state) {
         ctx.stroke();
 
         state.buttons.forEach(btn => {
-            if (topBarBtnIds.has(btn.id)) drawThemedButton(ctx, btn, state.hoveredButton, state.activeButton, p);
+            if (topBarBtnIds.has(btn.id)) drawThemedButton(ctx, btn, state.hoveredButton || state._heliHoveredButton, state.activeButton, p);
         });
 
         const menuBtnRight = 10 + 34 + 6;
@@ -3707,7 +3944,7 @@ function drawPlayingHUD(ctx, w, h, state) {
         ctx.fillRect(0, 0, w, 80);
         drawCapcomHeader(ctx, w, 0, labTitle);
         state.buttons.forEach(btn => {
-            if (topBarBtnIds.has(btn.id)) drawThemedButton(ctx, btn, state.hoveredButton, state.activeButton, p);
+            if (topBarBtnIds.has(btn.id)) drawThemedButton(ctx, btn, state.hoveredButton || state._heliHoveredButton, state.activeButton, p);
         });
 
     } else if (variant === 2) {
@@ -3720,7 +3957,7 @@ function drawPlayingHUD(ctx, w, h, state) {
         ctx.fillRect(0, 0, w, 90);
         drawCapcomHeader(ctx, w, 0, labTitle);
         state.buttons.forEach(btn => {
-            if (topBarBtnIds.has(btn.id)) drawThemedButton(ctx, btn, state.hoveredButton, state.activeButton, p);
+            if (topBarBtnIds.has(btn.id)) drawThemedButton(ctx, btn, state.hoveredButton || state._heliHoveredButton, state.activeButton, p);
         });
 
     } else if (variant === 3) {
@@ -3732,7 +3969,7 @@ function drawPlayingHUD(ctx, w, h, state) {
         ctx.lineWidth = 1;
         ctx.beginPath(); ctx.moveTo(0, stripH); ctx.lineTo(w, stripH); ctx.stroke();
         state.buttons.forEach(btn => {
-            if (topBarBtnIds.has(btn.id)) drawThemedButton(ctx, btn, state.hoveredButton, state.activeButton, p);
+            if (topBarBtnIds.has(btn.id)) drawThemedButton(ctx, btn, state.hoveredButton || state._heliHoveredButton, state.activeButton, p);
         });
         // Small lab name in center
         if (labTitle) {
@@ -3759,7 +3996,7 @@ function drawPlayingHUD(ctx, w, h, state) {
         // SCRIM_H4 defines the forbidden zone — must match hudBottom in the backtick handler exactly.
         // Forbidden zone from canvas bottom = SCRIM_H4 + bottom bar height (46px).
         state.buttons.forEach(btn => {
-            if (topBarBtnIds.has(btn.id)) drawThemedButton(ctx, btn, state.hoveredButton, state.activeButton, p);
+            if (topBarBtnIds.has(btn.id)) drawThemedButton(ctx, btn, state.hoveredButton || state._heliHoveredButton, state.activeButton, p);
         });
         const barY4   = h - 40 - 6;   // top of bottom action bar
         const SCRIM_H4 = 180;          // gradient height — matches layout margin in backtick handler
@@ -3802,7 +4039,7 @@ function drawPlayingHUD(ctx, w, h, state) {
         // SCRIM_H5 defines the forbidden zone — must match hudTop in the backtick handler exactly.
         // Clouds and islands are pushed below SCRIM_H5 when this variant is active.
         state.buttons.forEach(btn => {
-            if (topBarBtnIds.has(btn.id)) drawThemedButton(ctx, btn, state.hoveredButton, state.activeButton, p);
+            if (topBarBtnIds.has(btn.id)) drawThemedButton(ctx, btn, state.hoveredButton || state._heliHoveredButton, state.activeButton, p);
         });
         // Draw hamburger at top-right in capcom gold style (matches brand text color + glow).
         const menuBtn5 = state.buttons.find(b => b.id === 'menu');
@@ -3879,7 +4116,7 @@ function drawPlayingHUD(ctx, w, h, state) {
 
     // Bottom bar buttons (everything not in the top bar set)
     state.buttons.forEach(btn => {
-        if (!topBarBtnIds.has(btn.id)) drawThemedButton(ctx, btn, state.hoveredButton, state.activeButton, p);
+        if (!topBarBtnIds.has(btn.id)) drawThemedButton(ctx, btn, state.hoveredButton || state._heliHoveredButton, state.activeButton, p);
     });
 
     // ---- HUD variant flash indicator (shown briefly after cycling with backtick) ----
@@ -3938,6 +4175,7 @@ function drawEdgeHopLabels(ctx, w, h, state) {
         const label = edge.implicit ? 'Auto' : (edge.displayLabel || `Hop ${hopCounter}`);
 
         ctx.save();
+        if (!isHeliRevealed(state, `edge:${ei}`)) ctx.globalAlpha = 0.25;
         ctx.font = 'bold 11px -apple-system, BlinkMacSystemFont, sans-serif';
         const tw = ctx.measureText(label).width;
         const pw = tw + 14;
@@ -4579,7 +4817,7 @@ function drawCompleteOverlay(ctx, w, h, state) {
         }
     });
 
-    state.buttons.forEach(btn => drawThemedButton(ctx, btn, state.hoveredButton, state.activeButton, p));
+    state.buttons.forEach(btn => drawThemedButton(ctx, btn, state.hoveredButton || state._heliHoveredButton, state.activeButton, p));
 
     // Highlight the active detection button
     const activeId = state.completeView === 'cspm' ? 'show-cspm' : state.completeView === 'cloudsiem' ? 'show-cloudsiem' : null;
@@ -6091,17 +6329,21 @@ function drawGameMap(ctx, w, h, state) {
 
     // Paths (edges) between islands -- always draw all paths visibly
     if (edges) {
-        for (const edge of edges) {
+        for (let ei = 0; ei < edges.length; ei++) {
+            const edge = edges[ei];
             if (edge.implicit) continue;
             const from = positions[edge.fromIdx];
             const to = positions[edge.toIdx];
             if (!from || !to) continue;
 
+            const edgeRevealed = isHeliRevealed(state, `edge:${ei}`);
+            const edgeDim = edgeRevealed ? 1 : 0.25;
+
             // Path glow
             ctx.save();
             ctx.strokeStyle = p.pathGlow;
             ctx.lineWidth = 6;
-            ctx.globalAlpha = 0.5;
+            ctx.globalAlpha = 0.5 * edgeDim;
             ctx.beginPath(); ctx.moveTo(from.x, from.y); ctx.lineTo(to.x, to.y); ctx.stroke();
             ctx.restore();
 
@@ -6109,6 +6351,7 @@ function drawGameMap(ctx, w, h, state) {
             ctx.save();
             ctx.strokeStyle = p.pathStroke;
             ctx.lineWidth = 2;
+            ctx.globalAlpha = edgeDim;
             ctx.setLineDash([8, 6]);
             ctx.beginPath(); ctx.moveTo(from.x, from.y); ctx.lineTo(to.x, to.y); ctx.stroke();
             ctx.setLineDash([]);
@@ -6179,6 +6422,7 @@ function drawGameMap(ctx, w, h, state) {
         const targetStyle = state.targetStyle || 'flag-shape';
 
         ctx.save();
+        if (!isHeliRevealed(state, `node:${i}`)) ctx.globalAlpha = 0.25;
 
         // Bling ring (stars/flags/rainbows around target island perimeter)
         // is disabled for now -- the function still exists if we want it back.
@@ -6503,6 +6747,19 @@ function initMapGame(mapId, nodes, edges, companions, lab) {
         _terminalPanelEl: null,  // created lazily on first open
         _xtermInstance: null,    // xterm Terminal instance
         _mapId: mapId,
+        // Free-flight helicopter controls
+        heliPos: null,           // world-space position; set after init
+        _heliVelX: 0,
+        _heliVelY: 0,
+        _heliKeys: { ArrowUp: false, ArrowDown: false, ArrowLeft: false, ArrowRight: false },
+        _heliLastHit: null,      // last hit key "node:N"|"companion:N"|"edge:N"|null
+        _heliAnimFrame: null,
+        // Progressive reveal mechanic
+        _heliRevealSeq: null,    // ordered array of hitKeys; set after init
+        _heliRevealed: null,     // Set of hitKeys that have been revealed
+        _heliRevealNextIdx: 0,   // index of next hitKey to reveal in sequence
+        _heliHoveredButton: null, // button id the helicopter is hovering in the HUD
+        _heliLastRevealTime: Date.now(), // timestamp of last reveal (or game start) for idle arrow
     };
 
     function redraw() {
@@ -6514,6 +6771,224 @@ function initMapGame(mapId, nodes, edges, companions, lab) {
     }
     state._redraw = redraw;
     state.buttons = buildPlayingButtons(w, h, state);
+
+    // Build reveal sequence first so we can compute the starting position
+    state._heliRevealSeq = buildRevealSequence(state.edges);
+    // lab-setup is already showing (gameViewPhase defaults to 'setup'), so pre-reveal it
+    state._heliRevealed = new Set(['hud:lab-setup']);
+    state._heliRevealNextIdx = 1; // next: 'hud:lab-overview'
+
+    // Park helicopter above the lab-setup button; fall back to first island if button is hidden
+    const _labSetupBtn = state.buttons.find(b => b.id === 'lab-setup');
+    if (_labSetupBtn) {
+        const _btnCx = _labSetupBtn.x + _labSetupBtn.w / 2;
+        // Visual center (heliPos+21, heliPos-60) → place it 40px above button top
+        state.heliPos = { x: _btnCx - 21, y: _labSetupBtn.y - 40 + 60 };
+    } else {
+        const _heliStart = state.positions[0] || { x: w / 2, y: h / 2 };
+        state.heliPos = { x: _heliStart.x, y: _heliStart.y };
+    }
+
+    // Free-flight game loop: arrow keys move the helicopter; touching an island selects it.
+    function startHeliLoop() {
+        let lastTime = null;
+        const SCREEN_SPEED = 220; // pixels per second on screen (constant regardless of zoom)
+
+        function tick(timestamp) {
+            state._heliAnimFrame = requestAnimationFrame(tick);
+            if (state.screen !== 'playing' && state.screen !== 'complete') {
+                lastTime = null;
+                return;
+            }
+
+            const dt = lastTime !== null ? Math.min((timestamp - lastTime) / 1000, 0.05) : 0;
+            lastTime = timestamp;
+
+            const keys = state._heliKeys;
+            let dx = 0, dy = 0;
+            if (keys.ArrowLeft)  dx -= 1;
+            if (keys.ArrowRight) dx += 1;
+            if (keys.ArrowUp)    dy -= 1;
+            if (keys.ArrowDown)  dy += 1;
+
+            let changed = false;
+
+            if (dx !== 0 || dy !== 0) {
+                // Normalize diagonal so speed is consistent in all directions
+                if (dx !== 0 && dy !== 0) { dx *= 0.707; dy *= 0.707; }
+
+                // Move in world space; divide by zoom so screen speed is constant
+                const zoom = state.viewZoom || 1;
+                const worldSpeed = SCREEN_SPEED / zoom;
+                state.heliPos.x += dx * worldSpeed * dt;
+                state.heliPos.y += dy * worldSpeed * dt;
+
+                // Soft clamp: allow flying down into the HUD zone
+                state.heliPos.x = Math.max(-w * 0.5, Math.min(w * 1.5, state.heliPos.x));
+                state.heliPos.y = Math.max(-h * 0.5, Math.min(h * 1.5, state.heliPos.y));
+                changed = true;
+            }
+
+            // Visual helicopter center in world space (sprite offset after scale transform)
+            const vx = state.heliPos.x + 21;
+            const vy = state.heliPos.y - 60;
+
+            // Convert to screen space for HUD hit-testing
+            const zoom = state.viewZoom || 1;
+            const panX = state.viewPanX || 0;
+            const panY = state.viewPanY || 0;
+            const vScreenX = vx * zoom + panX;
+            const vScreenY = vy * zoom + panY;
+
+            // HUD button hover: when the helicopter descends near the bottom bar,
+            // highlight whichever bottom-bar button it is aligned with horizontally.
+            const hudBarY = h - 46; // matches barY = h - barH - 6 in buildPlayingButtons
+            let newHoveredBtn = null;
+            if (vScreenY >= hudBarY - 80) {
+                let bestBtn = null, bestDist = Infinity;
+                for (const btn of state.buttons) {
+                    if (btn.disabled || btn.comingSoon || btn.visible === false) continue;
+                    if (btn.y < h * 0.5) continue; // skip top-bar buttons
+                    const btnCx = btn.x + btn.w / 2;
+                    const dist = Math.abs(vScreenX - btnCx);
+                    if (dist <= btn.w / 2 + 24 && dist < bestDist) {
+                        bestDist = dist;
+                        bestBtn = btn;
+                    }
+                }
+                newHoveredBtn = bestBtn?.id ?? null;
+            }
+            if (newHoveredBtn !== state._heliHoveredButton) {
+                const prevHoveredBtn = state._heliHoveredButton;
+                state._heliHoveredButton = newHoveredBtn;
+                changed = true;
+
+                // Always open the corresponding panel when hovering lab-setup or lab-overview.
+                // Leaving either restores whatever the navigation state was showing.
+                if (newHoveredBtn === 'lab-setup') {
+                    state.panelOverride = 'setup';
+                    updateGamePanel(state);
+                } else if (newHoveredBtn === 'lab-overview') {
+                    state.panelOverride = 'overview';
+                    updateGamePanel(state);
+                } else if (prevHoveredBtn === 'lab-setup' || prevHoveredBtn === 'lab-overview') {
+                    state.panelOverride = null;
+                    updateGamePanel(state);
+                }
+            }
+
+            // HUD hover advances the reveal sequence only when visiting the next expected step
+            if (newHoveredBtn) {
+                const hudKey = `hud:${newHoveredBtn}`;
+                if (hudKey === state._heliRevealSeq?.[state._heliRevealNextIdx]) {
+                    state._heliRevealed.add(hudKey);
+                    state._heliRevealNextIdx++;
+                    advanceRevealImplicit(state);
+                    state._heliLastRevealTime = Date.now();
+                    // Update gameViewPhase for button highlighting and Back/Next logic
+                    if (newHoveredBtn === 'lab-overview') state.gameViewPhase = 'overview';
+                    else if (newHoveredBtn === 'lab-setup') state.gameViewPhase = 'setup';
+                    state.buttons = buildPlayingButtons(w, h, state);
+                    changed = true;
+                }
+            }
+
+            // Island / companion / hop collision detection (world space)
+            const ir = state._baseIslandRadius || 73;
+
+            // "node:N" | "companion:N" | "edge:N" | null
+            let hitKey = null;
+
+            // Main islands: circle for island body + rect for label plate below
+            for (let i = 0; i < state.positions.length; i++) {
+                const pos = state.positions[i];
+                const inBody = Math.hypot(vx - pos.x, vy - pos.y) <= ir * 1.1;
+                const inLabel = Math.abs(vx - pos.x) <= ir * 1.1
+                    && vy >= pos.y + ir * 0.1
+                    && vy <= pos.y + ir * 0.9;
+                if (inBody || inLabel) { hitKey = `node:${i}`; break; }
+            }
+
+            // Companion islands
+            if (!hitKey && state.companionPositions) {
+                const companionHitR = ir * 0.45 * 1.2;
+                for (let ci = 0; ci < state.companionPositions.length; ci++) {
+                    const pos = state.companionPositions[ci];
+                    if (!pos || (pos.x === 0 && pos.y === 0)) continue;
+                    if (Math.hypot(vx - pos.x, vy - pos.y) <= companionHitR) {
+                        hitKey = `companion:${ci}`; break;
+                    }
+                }
+            }
+
+            // Hop labels
+            if (!hitKey && state.edges) {
+                for (let ei = 0; ei < state.edges.length; ei++) {
+                    const edge = state.edges[ei];
+                    const from = state.positions[edge.fromIdx];
+                    const to = state.positions[edge.toIdx];
+                    if (!from || !to) continue;
+                    const mx = (from.x + to.x) / 2;
+                    const my = (from.y + to.y) / 2;
+                    if (Math.abs(vx - mx) <= 70 && Math.abs(vy - my) <= 50) {
+                        hitKey = `edge:${ei}`; break;
+                    }
+                }
+            }
+
+            if (hitKey !== state._heliLastHit) {
+                state._heliLastHit = hitKey;
+                changed = true;
+                if (hitKey) {
+                    // Reveal if this is the next expected element in sequence
+                    if (hitKey === state._heliRevealSeq[state._heliRevealNextIdx]) {
+                        state._heliRevealed.add(hitKey);
+                        state._heliRevealNextIdx++;
+                        advanceRevealImplicit(state);
+                        state._heliLastRevealTime = Date.now();
+                    }
+
+                    // Only navigate/show panel for revealed elements
+                    if (state._heliRevealed.has(hitKey)) {
+                        if (state.gameViewPhase === 'setup' || state.gameViewPhase === 'overview') {
+                            state.gameViewPhase = 'navigation';
+                        }
+                        const [hitType, hitIdxStr] = hitKey.split(':');
+                        const hitIdx = parseInt(hitIdxStr, 10);
+                        if (hitType === 'node') {
+                            state.selectedNode = hitIdx;
+                            state.selectedEdge = null;
+                            state.selectedCompanion = null;
+                        } else if (hitType === 'companion') {
+                            state.selectedCompanion = hitIdx;
+                            state.selectedNode = null;
+                            state.selectedEdge = null;
+                        } else if (hitType === 'edge') {
+                            state.selectedEdge = hitIdx;
+                            state.selectedNode = null;
+                            state.selectedCompanion = null;
+                        }
+                        state.buttons = buildPlayingButtons(w, h, state);
+                        updateGamePanel(state);
+                    }
+                }
+            }
+
+            // Keep animating while the idle hint arrow is visible or bouncing.
+            // The initial intro arrow (targeting hud:lab-overview) shows immediately;
+            // subsequent arrows appear after 30 s of idle.
+            if (!changed && state._heliRevealNextIdx < (state._heliRevealSeq?.length ?? 0)) {
+                const _nextKey = state._heliRevealSeq[state._heliRevealNextIdx];
+                const _isIntro = _nextKey === 'hud:lab-overview';
+                if (_isIntro || Date.now() - (state._heliLastRevealTime ?? 0) >= 30000) changed = true;
+            }
+
+            if (changed) redraw();
+        }
+
+        state._heliAnimFrame = requestAnimationFrame(tick);
+    }
+    startHeliLoop();
 
     cloudSprites.load().then(() => redraw());
     islandSprites.load().then(() => {
@@ -7157,13 +7632,24 @@ function initMapGame(mapId, nodes, edges, companions, lab) {
             state.buttons = buildPlayingButtons(w, h, state);
             redraw();
         }
-        // Left arrow: same as Back button
-        if (e.key === 'ArrowLeft' && state.screen === 'playing') {
-            retreatGameState(w, h, state);
+        // Arrow keys fly the helicopter when playing
+        if (['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'].includes(e.key)
+                && state.screen === 'playing') {
+            e.preventDefault();
+            state._heliKeys[e.key] = true;
         }
-        // Right arrow: same as Next button
-        if (e.key === 'ArrowRight' && state.screen === 'playing') {
+        // Space = Next, Backspace = Back (mirror the on-screen buttons + reveal mechanic)
+        if (e.key === ' ' && state.screen === 'playing') {
+            e.preventDefault();
             advanceGameState(w, h, state);
+            syncRevealToNavigation(state);
+            redraw();
+        }
+        if (e.key === 'Backspace' && state.screen === 'playing') {
+            e.preventDefault();
+            retreatGameState(w, h, state);
+            syncRevealToNavigation(state);
+            redraw();
         }
         // A key: progressively reveal the next hidden hint on the current edge panel
         if ((e.key === 'a' || e.key === 'A') && state.screen === 'playing') {
@@ -7189,6 +7675,12 @@ function initMapGame(mapId, nodes, edges, companions, lab) {
                     }
                 }
             }
+        }
+    }
+
+    function onKeyUp(e) {
+        if (Object.prototype.hasOwnProperty.call(state._heliKeys, e.key)) {
+            state._heliKeys[e.key] = false;
         }
     }
 
@@ -7227,6 +7719,7 @@ function initMapGame(mapId, nodes, edges, companions, lab) {
     canvas.addEventListener('click', onClick);
     canvas.addEventListener('wheel', onWheel, { passive: false });
     document.addEventListener('keydown', onKeyDown);
+    document.addEventListener('keyup', onKeyUp);
 
     // Draggable panel/canvas divider
     const dividerEl = document.getElementById(`${mapId}-divider`);
@@ -7336,6 +7829,8 @@ function initMapGame(mapId, nodes, edges, companions, lab) {
         canvas.removeEventListener('click', onClick);
         canvas.removeEventListener('wheel', onWheel);
         document.removeEventListener('keydown', onKeyDown);
+        document.removeEventListener('keyup', onKeyUp);
+        if (state._heliAnimFrame) cancelAnimationFrame(state._heliAnimFrame);
         resizeObserver.disconnect();
     };
 }
