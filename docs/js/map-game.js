@@ -855,10 +855,13 @@ function drawGameIslandLabels(ctx, w, h, state) {
         const drawX = Math.max(plateW / 2 + 4,
                         Math.min(w - plateW / 2 - 4, info.nominalX + xAdj[i]));
 
+        const isActiveNode = state.selectedNode === i;
+
         ctx.save();
         if (!isHeliRevealed(state, `node:${i}`)) ctx.globalAlpha = 0.25;
         if (isFirst || isLast) {
-            const nameColor = isFirst ? (p.startFill || '#4ade80') : (p.endFill || '#f59e0b');
+            const defaultNameColor = isFirst ? (p.startFill || '#4ade80') : (p.endFill || '#f59e0b');
+            const nameColor = isActiveNode ? '#fff' : defaultNameColor;
 
             // Re-measure with the same scaled fonts for accurate text centering
             ctx.font = `bold ${fz.name}px -apple-system, BlinkMacSystemFont, sans-serif`;
@@ -875,9 +878,13 @@ function drawGameIslandLabels(ctx, w, h, state) {
                                       blIcon ? fz.icon + fz.margI : 0);
 
             drawRoundedRect(ctx, drawX - contentW / 2, plateTop, contentW, plateH, 5);
-            ctx.fillStyle = p.parchCenter || 'rgba(245, 230, 200, 0.9)';
+            if (isActiveNode) {
+                ctx.fillStyle = p.hudProgressFill || '#7c3aed';
+            } else {
+                ctx.fillStyle = p.parchCenter || 'rgba(245, 230, 200, 0.9)';
+            }
             ctx.fill();
-            ctx.strokeStyle = p.borderDecor || 'rgba(120, 80, 20, 0.3)';
+            ctx.strokeStyle = isActiveNode ? (p.hudProgressFill || '#7c3aed') : (p.borderDecor || 'rgba(120, 80, 20, 0.3)');
             ctx.lineWidth = 0.8;
             ctx.stroke();
 
@@ -897,7 +904,7 @@ function drawGameIslandLabels(ctx, w, h, state) {
             if (subtitleText) {
                 cursorY += arnGp + arnH / 2;
                 ctx.font = `500 ${fz.sub}px -apple-system, BlinkMacSystemFont, sans-serif`;
-                ctx.fillStyle = p.mutedText || 'rgba(180, 160, 120, 0.9)';
+                ctx.fillStyle = isActiveNode ? 'rgba(255,255,255,0.75)' : (p.mutedText || 'rgba(180, 160, 120, 0.9)');
                 ctx.fillText(subtitleText, drawX, cursorY);
             }
         } else {
@@ -911,14 +918,18 @@ function drawGameIslandLabels(ctx, w, h, state) {
             const plateWM = Math.max(tw + fz.margM, blIcon ? fz.icon + fz.margI : 0);
 
             drawRoundedRect(ctx, drawX - plateWM / 2, plateTop, plateWM, computedPlateH, 4);
-            ctx.fillStyle = p.parchCenter || 'rgba(245, 230, 200, 0.9)';
+            if (isActiveNode) {
+                ctx.fillStyle = p.hudProgressFill || '#7c3aed';
+            } else {
+                ctx.fillStyle = p.parchCenter || 'rgba(245, 230, 200, 0.9)';
+            }
             ctx.fill();
-            ctx.strokeStyle = p.borderDecor || 'rgba(120, 80, 20, 0.2)';
+            ctx.strokeStyle = isActiveNode ? (p.hudProgressFill || '#7c3aed') : (p.borderDecor || 'rgba(120, 80, 20, 0.2)');
             ctx.lineWidth = 0.6;
             ctx.stroke();
 
             let cursorY = plateTop + fz.padM + fz.mid / 2;
-            ctx.fillStyle = p.labelFill || '#e4e4e8';
+            ctx.fillStyle = isActiveNode ? '#fff' : (p.labelFill || '#e4e4e8');
             ctx.textAlign = 'center';
             ctx.textBaseline = 'middle';
             ctx.fillText(label, drawX, cursorY);
@@ -1505,7 +1516,7 @@ function drawCompanionShip(ctx, pos, companion, isSelected, state) {
     ctx.restore();
 
     // Label below
-    drawCompanionLabel(ctx, x, y + hullH + 14, companion, state);
+    drawCompanionLabel(ctx, x, y + hullH + 14, companion, isSelected, state);
 }
 
 // Treatment 2: Rocky Islet -- smaller island with barren rock tones
@@ -1605,7 +1616,7 @@ function drawCompanionIslet(ctx, pos, companion, isSelected, state, nodeIndex) {
         const labelTopY = drewSprite
             ? getIslandBottomY(pos, islandRadius, 'resource') - 20
             : y + 16;
-        drawCompanionLabel(ctx, x, labelTopY, companion, state);
+        drawCompanionLabel(ctx, x, labelTopY, companion, isSelected, state);
     }
 }
 
@@ -1630,37 +1641,38 @@ function drawCompanionNote(ctx, pos, companion, isSelected, state) {
     drawRoundedRect(ctx, cardX + 2, cardY + 2, cardW, cardH, 6);
     ctx.fill();
 
-    // Card background (parchment-colored)
+    // Card background
     drawRoundedRect(ctx, cardX, cardY, cardW, cardH, 6);
-    ctx.fillStyle = p.parchCenter || 'rgba(245, 230, 200, 0.95)';
+    ctx.fillStyle = isSelected ? (p.hudProgressFill || '#7c3aed') : (p.parchCenter || 'rgba(245, 230, 200, 0.95)');
     ctx.fill();
 
     // Border
-    const borderColor = isSelected ? (p.selectedRing || '#9D4EDD') : (p.borderDecor || 'rgba(120, 80, 20, 0.3)');
-    ctx.strokeStyle = borderColor;
+    ctx.strokeStyle = isSelected ? (p.hudProgressFill || '#7c3aed') : (p.borderDecor || 'rgba(120, 80, 20, 0.3)');
     ctx.lineWidth = isSelected ? 2 : 1;
     ctx.stroke();
 
-    // Resource type colored dot
-    const tint = p.typeTintResource || '#f59e0b';
-    ctx.fillStyle = tint;
-    ctx.beginPath();
-    ctx.arc(cardX + 12, y, 4, 0, Math.PI * 2);
-    ctx.fill();
+    // Resource type colored dot (hidden when selected — purple fill is enough)
+    if (!isSelected) {
+        const tint = p.typeTintResource || '#f59e0b';
+        ctx.fillStyle = tint;
+        ctx.beginPath();
+        ctx.arc(cardX + 12, y, 4, 0, Math.PI * 2);
+        ctx.fill();
+    }
 
     // Resource name
     const displayLabel = label.length > 18 ? label.substring(0, 16) + '..' : label;
-    ctx.fillStyle = p.bodyText || '#5a4a2a';
+    ctx.fillStyle = isSelected ? '#fff' : (p.bodyText || '#5a4a2a');
     ctx.font = '600 10px -apple-system, BlinkMacSystemFont, sans-serif';
-    ctx.textAlign = 'left';
+    ctx.textAlign = isSelected ? 'center' : 'left';
     ctx.textBaseline = 'middle';
-    ctx.fillText(displayLabel, cardX + 22, y);
+    ctx.fillText(displayLabel, isSelected ? x : cardX + 22, y);
 
     ctx.restore();
 }
 
 // Shared label drawing for ship and islet treatments
-function drawCompanionLabel(ctx, x, y, companion, state) {
+function drawCompanionLabel(ctx, x, y, companion, isSelected, state) {
     const p = state.palette;
     const label = companion.label || '';
     const displayLabel = label;
@@ -1679,13 +1691,13 @@ function drawCompanionLabel(ctx, x, y, companion, state) {
     const plateH = 16 + iconRowH;
 
     drawRoundedRect(ctx, x - plateW / 2, y - 2, plateW, plateH, 3);
-    ctx.fillStyle = p.parchCenter || 'rgba(245, 230, 200, 0.9)';
+    ctx.fillStyle = isSelected ? (p.hudProgressFill || '#7c3aed') : (p.parchCenter || 'rgba(245, 230, 200, 0.9)');
     ctx.fill();
-    ctx.strokeStyle = p.borderDecor || 'rgba(120, 80, 20, 0.2)';
+    ctx.strokeStyle = isSelected ? (p.hudProgressFill || '#7c3aed') : (p.borderDecor || 'rgba(120, 80, 20, 0.2)');
     ctx.lineWidth = 0.5;
     ctx.stroke();
 
-    ctx.fillStyle = p.typeTintResource || '#f59e0b';
+    ctx.fillStyle = isSelected ? '#fff' : (p.typeTintResource || '#f59e0b');
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
     ctx.fillText(displayLabel, x, y + 6);
@@ -3173,9 +3185,9 @@ function drawIdleHintArrow(ctx, w, h, state) {
         const fontSize = 13;
         const lineH = 17;
         const lines = [
-            'Use arrows to move helicopter',
-            'Hover over items in order to unlock them and learn',
-            'To start, move to the right to view your objective',
+            'Use arrows keys to move helicopter',
+            'Hover over items (in order) to unlock them and learn',
+            'To start, move the helicpoter to the right and view your objective',
         ];
         const textX = arrowX + arrowSize / 2 + 14;
         const arrowMidY = arrowY + arrowSize / 2;
@@ -3544,22 +3556,17 @@ function retreatGameState(w, h, state) {
         state.selectedCompanion = null;
         state.selectedNode = edge ? edge.fromIdx : 0;
     } else if (state.selectedNode !== null && state.currentEdge >= 0) {
-        // Currently viewing a destination node -- go back to the last companion of this edge, or to the edge
+        // Currently viewing a destination node -- go back to the edge view directly.
+        // Companions are skipped on backward navigation (they remain accessible by
+        // clicking the companion island on the map). This keeps Back predictable:
+        // each Back undoes exactly one edge crossing (destination → hop → source node).
         const lastEdge = state.edges[state.currentEdge];
         if (lastEdge) {
-            const companions = lastEdge.companionIndices || [];
-            if (companions.length > 0) {
-                // Go to last companion on this edge
-                state.selectedCompanion = companions[companions.length - 1];
-                state.selectedNode = null;
-            } else {
-                // No companions -- go back to edge view
-                state.selectedEdge = state.currentEdge;
-                state.selectedNode = null;
-                state.selectedCompanion = null;
-                state.currentNode = lastEdge.fromIdx;
-                state.currentEdge = state.currentEdge - 1;
-            }
+            state.selectedEdge = state.currentEdge;
+            state.selectedNode = null;
+            state.selectedCompanion = null;
+            state.currentNode = lastEdge.fromIdx;
+            state.currentEdge = state.currentEdge - 1;
         }
     }
 
