@@ -21,6 +21,17 @@ const PLAY_ONLINE_GLOBALLY_ENABLED = false;
 // Flip both to false (and set per-lab supportsOnlineMode: true) when the real backend is ready.
 const PLAY_ONLINE_MOCK_MODE = false;
 
+// ---- Preload pixel font for arcade start overlay ----
+(function () {
+    if (!document.getElementById('arcade-font-link')) {
+        const link = document.createElement('link');
+        link.id = 'arcade-font-link';
+        link.rel = 'stylesheet';
+        link.href = 'https://fonts.googleapis.com/css2?family=Press+Start+2P&display=swap';
+        document.head.appendChild(link);
+    }
+}());
+
 // ---- Labs index / detail / transcript cache (shared across all game instances) ----
 let _gameLabsIndexCache = null;
 let _gameLabDetailCache = {};
@@ -2796,96 +2807,65 @@ function attachEdgePanelHandlers(panelEl, state) {
     });
 }
 
-// Render the completion summary
+// Render the completion summary with teardown and detection content
 function renderGamePanelComplete(panelEl, state) {
-    const totalEdges = state.edges.length;
+    const lab = state.lab;
+    const slug = lab?.name || '';
 
     let html = `
         <div class="mg-panel-section mg-complete-header">
             <span class="mg-section-label">MISSION COMPLETE</span>
-            <h2 class="mg-panel-title">${escapeHtmlGame(state.lab?.name || '')}</h2>
-        </div>
-        <div class="mg-panel-section">
-            <div class="mg-stats-grid">
-                <div class="mg-stat">
-                    <span class="mg-section-label">HOPS</span>
-                    <span class="mg-stat-value">${totalEdges} / ${totalEdges}</span>
-                </div>
-                <div class="mg-stat">
-                    <span class="mg-section-label">HINTS</span>
-                    <span class="mg-stat-value">${state.hintsUsed}</span>
-                </div>
-            </div>
-        </div>
-        <div class="mg-panel-section">
-            <p class="mg-panel-body mg-muted">Select any island or hop label on the map to review the attack path, or use the buttons below to explore detection strategies.</p>
         </div>`;
 
-    panelEl.innerHTML = html;
-}
-
-// Render CSPM detection info in the panel (triggered by canvas button)
-function renderGamePanelCSPM(panelEl, state) {
-    const readme = state.lab?.readme;
-    let html = `
-        <div class="mg-panel-section">
-            <span class="mg-section-label">CSPM DETECTION</span>
-            <h2 class="mg-panel-title">How could this have been detected with CSPM?</h2>
-        </div>`;
-
-    const _dbgCSPM = typeof debugTag === 'function' ? debugTag : () => '';
-    const cspm = readme?.defend?.cspm || readme?.cspm;
-    const cspmDetect = cspm?.whatToDetect;
-    if (cspmDetect) {
+    // Teardown
+    const teardownData = typeof getTeardown === 'function' ? getTeardown(lab) : {};
+    if (teardownData.nonInteractive || teardownData.tui) {
+        const teardownHtml = typeof renderInnerTabSection === 'function'
+            ? renderInnerTabSection(`mc-teardown-${slug}`, [
+                { id: 'cli', label: 'Non-Interactive', show: !!teardownData.nonInteractive, content: teardownData.nonInteractive },
+                { id: 'tui', label: 'TUI', show: !!teardownData.tui, content: teardownData.tui },
+            ]) : '';
         html += `
         <div class="mg-panel-section">
-            <span class="mg-section-label">WHAT CSPM TOOLS SHOULD DETECT${_dbgCSPM('readme.defend.cspm.whatToDetect')}</span>
-            <div class="mg-panel-body">${markdownToSimpleHtml(cspmDetect)}</div>
+            <span class="mg-section-label">TEARDOWN</span>
+            ${teardownHtml}
         </div>`;
     }
 
-    if (!cspmDetect) {
-        html += `<div class="mg-panel-section"><p class="mg-panel-body mg-muted">No CSPM detection data available for this lab.</p></div>`;
+    // Detection: CSPM + CloudSIEM tabs
+    const cspmData = typeof getDefendCspm === 'function' ? getDefendCspm(lab) : (lab?.readme?.defend?.cspm || lab?.readme?.cspm);
+    const siemData = typeof getDefendSiem === 'function' ? getDefendSiem(lab) : (lab?.readme?.defend?.cloudSiem || lab?.readme?.cloudSiem);
+    const detectTabs = [];
+    if (cspmData?.whatToDetect) {
+        detectTabs.push({ id: 'cspm', label: 'What CSPM Tools Should Detect', show: true,
+            rawHtml: `<div class="lab-tab-prose">${typeof renderLabMarkdown === 'function' ? renderLabMarkdown(cspmData.whatToDetect) : markdownToSimpleHtml(cspmData.whatToDetect)}</div>` });
     }
-
-    panelEl.innerHTML = html;
-}
-
-// Render CloudSIEM detection info in the panel (triggered by canvas button)
-function renderGamePanelCloudSIEM(panelEl, state) {
-    const readme = state.lab?.readme;
-    let html = `
-        <div class="mg-panel-section">
-            <span class="mg-section-label">CLOUDSIEM DETECTION</span>
-            <h2 class="mg-panel-title">How could this have been detected with CloudSIEM?</h2>
-        </div>`;
-
-    const _dbgSIEM = typeof debugTag === 'function' ? debugTag : () => '';
-    const siem = readme?.defend?.cloudSiem || readme?.cloudSiem;
-    const cloudTrail = siem?.cloudTrailEvents;
-    if (cloudTrail) {
+    if (siemData?.cloudTrailEvents) {
+        detectTabs.push({ id: 'cloudtrail', label: 'CloudTrail Events to Monitor', show: true,
+            rawHtml: `<div class="lab-tab-prose">${typeof renderLabMarkdown === 'function' ? renderLabMarkdown(siemData.cloudTrailEvents) : markdownToSimpleHtml(siemData.cloudTrailEvents)}</div>` });
+    }
+    if (siemData?.detonationLogs) {
+        detectTabs.push({ id: 'logs', label: 'Detonation Logs', show: true,
+            rawHtml: `<div class="lab-tab-prose">${typeof renderLabMarkdown === 'function' ? renderLabMarkdown(siemData.detonationLogs) : markdownToSimpleHtml(siemData.detonationLogs)}</div>` });
+    }
+    if (detectTabs.length > 0 && typeof renderInnerTabSection === 'function') {
         html += `
         <div class="mg-panel-section">
-            <span class="mg-section-label">CLOUDTRAIL EVENTS TO MONITOR${_dbgSIEM('readme.defend.cloudSiem.cloudTrailEvents')}</span>
-            <div class="mg-panel-body">${markdownToSimpleHtml(cloudTrail)}</div>
+            <span class="mg-section-label">DETECTION</span>
+            ${renderInnerTabSection(`mc-detect-${slug}`, detectTabs)}
         </div>`;
     }
 
-    const detonation = siem?.detonationLogs;
-    if (detonation) {
-        html += `
-        <div class="mg-panel-section">
-            <span class="mg-section-label">DETONATION LOGS${_dbgSIEM('readme.defend.cloudSiem.detonationLogs')}</span>
-            <div class="mg-panel-body">${markdownToSimpleHtml(detonation)}</div>
-        </div>`;
-    }
-
-    if (!cloudTrail && !detonation) {
-        html += `<div class="mg-panel-section"><p class="mg-panel-body mg-muted">No CloudSIEM detection data available for this lab.</p></div>`;
+    if (!teardownData.nonInteractive && !teardownData.tui && detectTabs.length === 0) {
+        html += `<div class="mg-panel-section"><p class="mg-panel-body mg-muted">Select any island or hop label on the map to review the attack path.</p></div>`;
     }
 
     panelEl.innerHTML = html;
+
+    // Wire up tab click handlers for any inner tabs rendered
+    if (typeof setupTabListeners === 'function') setupTabListeners();
 }
+
 
 // Render deploy instructions in the panel (triggered by canvas button)
 function renderGamePanelDeploy(panelEl, state) {
@@ -2972,12 +2952,7 @@ function updateGamePanel(state) {
             renderGamePanelOverview(panelEl, state);
         }
     } else if (state.screen === 'complete') {
-        // Complete screen can show CSPM/CloudSIEM panels via canvas buttons
-        if (state.completeView === 'cspm') {
-            renderGamePanelCSPM(panelEl, state);
-        } else if (state.completeView === 'cloudsiem') {
-            renderGamePanelCloudSIEM(panelEl, state);
-        } else if (hasCompanion) {
+        if (hasCompanion) {
             renderGamePanelCompanion(panelEl, state);
         } else if (hasNode) {
             renderGamePanelNode(panelEl, state);
@@ -3127,6 +3102,7 @@ function syncRevealToNavigation(state) {
 // Shows immediately (no delay) for the initial HUD intro; after 30 s idle for all others.
 // Drawn in screen space so size stays constant regardless of zoom.
 function drawIdleHintArrow(ctx, w, h, state) {
+    if (state.arcadeStartShown) return; // don't show while arcade start overlay is up
     if (!state._heliRevealSeq) return;
     if (state._heliRevealNextIdx >= state._heliRevealSeq.length) return;
     if (!state._heliLastRevealTime) return;
@@ -3168,8 +3144,8 @@ function drawIdleHintArrow(ctx, w, h, state) {
         sy = worldPos.y * zoom + (state.viewPanY || 0);
     }
 
-    // Initial intro arrow is static; all others bounce at 1 Hz
-    const bounce = isInitialIntro ? 0 : Math.sin(performance.now() / 1000 * Math.PI * 2) * 10;
+    // All arrows bounce at 1 Hz
+    const bounce = Math.sin(performance.now() / 1000 * Math.PI * 2) * 10;
     const arrowSize = 34;
     const arrowX = sx;
     const arrowBaseY = type === 'hud' ? sy - 55 : sy - 95;
@@ -3179,45 +3155,6 @@ function drawIdleHintArrow(ctx, w, h, state) {
     ctx.shadowBlur = 0;
     ctx.shadowOffsetX = 0;
     ctx.shadowOffsetY = 0;
-
-    // Instruction text for the initial intro arrow — drawn to the right, vertically centered on the arrow
-    if (isInitialIntro) {
-        const fontSize = 13;
-        const lineH = 17;
-        const lines = [
-            'Use arrows keys to move helicopter',
-            'Hover over items (in order) to unlock them and learn',
-            'To start, move the helicpoter to the right and view your objective',
-        ];
-        const textX = arrowX + arrowSize / 2 + 14;
-        const arrowMidY = arrowY + arrowSize / 2;
-        const totalTextH = lines.length * lineH;
-        const textStartY = arrowMidY - totalTextH / 2 + lineH / 2;
-
-        ctx.font = `700 ${fontSize}px -apple-system, BlinkMacSystemFont, sans-serif`;
-        ctx.textAlign = 'left';
-        ctx.textBaseline = 'middle';
-        ctx.letterSpacing = 'normal';
-
-        // Pass 1: dark offset backings — no shadow so adjacent-line glow can't bleed in
-        ctx.shadowBlur = 0;
-        ctx.shadowOffsetX = 0;
-        ctx.shadowOffsetY = 0;
-        ctx.shadowColor = 'transparent';
-        ctx.fillStyle = 'rgba(0,0,0,0.75)';
-        lines.forEach((line, i) => {
-            ctx.fillText(line, textX + 1, textStartY + i * lineH + 1);
-        });
-        // Pass 2: amber-orange text with warm glow over the backings
-        ctx.shadowColor = 'rgba(200,90,10,0.55)';
-        ctx.shadowBlur = 7;
-        ctx.fillStyle = 'rgba(255,165,45,0.97)';
-        lines.forEach((line, i) => {
-            ctx.fillText(line, textX, textStartY + i * lineH);
-        });
-        ctx.shadowBlur = 0;
-        ctx.shadowColor = 'transparent';
-    }
 
     // Arrow glyph — hard drop shadow then gold gradient fill
     ctx.font = `900 ${arrowSize}px -apple-system, BlinkMacSystemFont, sans-serif`;
@@ -3234,6 +3171,166 @@ function drawIdleHintArrow(ctx, w, h, state) {
     grad.addColorStop(1,    '#c06010');
     ctx.fillStyle = grad;
     ctx.fillText('▼', arrowX, arrowY);
+
+    ctx.restore();
+}
+
+// ---- Arcade Start Overlay (NES/Capcom style) ----
+
+// Pixel font helpers — use "Press Start 2P" if loaded, fallback to monospace
+const PIXEL_FONT = '"Press Start 2P", "Courier New", Courier, monospace';
+
+function drawArcadeStartOverlay(ctx, w, h, state) {
+    ctx.save();
+
+    // No background dimming — game world shows through fully behind the box.
+
+    // "Press Start 2P" is a pixel font — it renders taller than its em size.
+    // All font sizes here are tuned for the pixel font; fallback Courier is close enough.
+    const P = 8;    // base pixel unit (1 "pixel" in 8-bit terms)
+    const boxPadX = 20;
+
+    // Row heights per font size
+    const titleH    = P * 2 + 10;  // large title + gap
+    const subtitleH = P + 10;      // small subtext + gap
+    const secHeadH  = P + 8;       // section label row
+    const ctrlRowH  = P + 10;      // control key row
+    const divH      = 18;          // total height of a section divider
+    const pressKeyH = P * 2 + 14; // blinking CTA
+
+    // Sum up total box height
+    const boxH =
+        20 +                   // top pad
+        titleH +
+        subtitleH +
+        divH +
+        secHeadH +
+        3 * ctrlRowH +         // 3 control rows
+        divH +
+        secHeadH +
+        ctrlRowH +             // objective desc line
+        ctrlRowH +             // objective step flow (one line)
+        divH +
+        pressKeyH +
+        16;                    // bottom pad
+
+    const boxW = Math.min(Math.max(w * 0.70, 340), 500);
+    const boxX = Math.round((w - boxW) / 2);
+    const boxY = Math.round((h - boxH) / 2);
+
+    // Box background — deep arcade dark, slightly blue-tinted
+    ctx.fillStyle = '#0a0c14';
+    ctx.fillRect(boxX, boxY, boxW, boxH);
+
+    // Outer border: bright arcade gold, 3 px
+    ctx.strokeStyle = '#e8a800';
+    ctx.lineWidth = 3;
+    ctx.strokeRect(boxX + 1.5, boxY + 1.5, boxW - 3, boxH - 3);
+
+    // Inner border: muted gold, 1 px, 7 px inset
+    ctx.strokeStyle = '#7a5200';
+    ctx.lineWidth = 1;
+    ctx.strokeRect(boxX + 7.5, boxY + 7.5, boxW - 15, boxH - 15);
+
+    // Corner pixel accents — 4×4 bright gold squares at the inner border corners
+    ctx.fillStyle = '#e8a800';
+    [[boxX + 6, boxY + 6], [boxX + boxW - 10, boxY + 6],
+     [boxX + 6, boxY + boxH - 10], [boxX + boxW - 10, boxY + boxH - 10]]
+        .forEach(([cx, cy]) => ctx.fillRect(cx, cy, 4, 4));
+
+    let curY   = boxY + 20;
+    const midX = w / 2;
+    const leftX = boxX + boxPadX;
+
+    ctx.textBaseline = 'top';
+
+    // Section divider helper
+    function divider() {
+        curY += 5;
+        ctx.strokeStyle = '#2a2000';
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.moveTo(boxX + 12, curY);
+        ctx.lineTo(boxX + boxW - 12, curY);
+        ctx.stroke();
+        curY += divH - 5;
+    }
+
+    // ---- TITLE ----
+    ctx.textAlign   = 'center';
+    ctx.font        = `${P * 2}px ${PIXEL_FONT}`;
+    ctx.fillStyle   = '#e8a800';
+    ctx.shadowColor = 'rgba(232,168,0,0.6)';
+    ctx.shadowBlur  = 8;
+    ctx.fillText('PATHFINDING LABS', midX, curY);
+    ctx.shadowBlur  = 0;
+    curY += titleH;
+
+    ctx.font      = `${P}px ${PIXEL_FONT}`;
+    ctx.fillStyle = '#8a7040';
+    ctx.fillText('LEARN TO HOP AROUND IN THE CLOUDS', midX, curY);
+    curY += subtitleH;
+
+    divider();
+
+    // ---- CONTROLS ----
+    ctx.textAlign = 'left';
+    ctx.font      = `${P}px ${PIXEL_FONT}`;
+    ctx.fillStyle = '#e8a800';
+    ctx.fillText('CONTROLS', leftX, curY);
+    curY += secHeadH;
+
+    // Press Start 2P only covers ASCII — use text labels for arrow keys so all
+    // four directions render in the pixel font instead of falling back to system glyphs.
+    const controls = [
+        ['ARROW KEYS', 'FLY HELICOPTER'],
+        ['HOVER',  'REVEAL PATH NODES'],
+        ['ESC',    'OPEN MENU'],
+    ];
+    const valX = leftX + Math.round(boxW * 0.34);
+    controls.forEach(([key, val]) => {
+        ctx.fillStyle = '#e8a800';
+        ctx.fillText(key, leftX, curY);
+        ctx.fillStyle = '#a08848';
+        ctx.fillText(val, valX, curY);
+        curY += ctrlRowH;
+    });
+
+    divider();
+
+    // ---- OBJECTIVE ----
+    ctx.textAlign = 'left';
+    ctx.font      = `${P}px ${PIXEL_FONT}`;
+    ctx.fillStyle = '#e8a800';
+    ctx.fillText('OBJECTIVE', leftX, curY);
+    curY += secHeadH;
+
+    ctx.fillStyle = '#8a7040';
+    ctx.fillText('FLY TO EACH ISLAND IN ORDER:', leftX, curY);
+    curY += ctrlRowH;
+
+    // Single-line step flow — no bullets, just text with ASCII arrows
+    ctx.fillStyle = '#f0e0a0';
+    ctx.fillText('LAB SETUP -> LAB OVERVIEW -> STARTINGTON -> ...', leftX, curY);
+    curY += ctrlRowH;
+
+    divider();
+
+    // ---- PRESS ANY KEY (blinking at ~0.8 Hz) ----
+    const blink = Math.floor(performance.now() / 620) % 2 === 0;
+    ctx.textAlign = 'center';
+    ctx.font      = `${P}px ${PIXEL_FONT}`;
+    if (blink) {
+        ctx.fillStyle   = '#e8a800';
+        ctx.shadowColor = 'rgba(232,168,0,0.9)';
+        ctx.shadowBlur  = 14;
+    } else {
+        ctx.fillStyle   = '#ffffff';
+        ctx.shadowColor = 'rgba(255,255,255,0.5)';
+        ctx.shadowBlur  = 6;
+    }
+    ctx.fillText('- PRESS ANY KEY TO START -', midX, curY + 6);
+    ctx.shadowBlur = 0;
 
     ctx.restore();
 }
@@ -3268,6 +3365,10 @@ function renderMapGame(ctx, w, h, state) {
                 const planePos = getPlanePosition(state);
                 drawPlaneIndicator(ctx, planePos.x, planePos.y, state.palette, state.planeStyle);
             });
+            // Arcade start overlay sits on top of everything until dismissed
+            if (state.arcadeStartShown) {
+                drawArcadeStartOverlay(ctx, w, h, state);
+            }
             break;
         case 'paused':
             withViewTransform(() => {
@@ -3280,6 +3381,7 @@ function renderMapGame(ctx, w, h, state) {
                 drawMapWithGameLabels(ctx, w, h, state);
                 drawEdgeHopLabels(ctx, w, h, state);
             });
+            drawPlayingHUD(ctx, w, h, state);
             drawCompleteOverlay(ctx, w, h, state);
             // Helicopter drawn last so it always renders above the overlay
             withViewTransform(() => {
@@ -4656,17 +4758,25 @@ function buildCompleteButtons(w, h, state) {
     const smallBtnH = 38;
     const gap = 16;
 
-    // Layout: vertically stacked, centered
-    const baseY = h * 0.48;
+    // Layout: vertically stacked, centered below the title/lab name
+    const baseY = h * 0.38;
     const btnX = (w - btnW) / 2;
     const smallBtnX = (w - smallBtnW) / 2;
 
-    const cspm = state.lab?.readme?.defend?.cspm || state.lab?.readme?.cspm;
-    const cloudSiem = state.lab?.readme?.defend?.cloudSiem || state.lab?.readme?.cloudSiem;
-    const hasCSPM = !!cspm?.whatToDetect;
-    const hasCloudSIEM = !!(cloudSiem?.cloudTrailEvents);
+    const variant = state.hudVariant || 0;
+    const menuX = variant === 5 ? w - 66 : 10;
 
     const buttons = [
+        {
+            id: 'menu',
+            x: menuX, y: 6,
+            w: 56, h: 44,
+            label: '☰',
+            style: 'ghost',
+            fontSize: 36,
+            radius: 6,
+            onClick: () => { openGameMenu(state); }
+        },
         {
             id: 'play-again', x: btnX, y: baseY,
             w: btnW, h: btnH, label: 'Play Again',
@@ -4690,166 +4800,23 @@ function buildCompleteButtons(w, h, state) {
                 updateGamePanel(state);
             }
         },
+        {
+            id: 'download-map', x: smallBtnX, y: baseY + btnH + gap,
+            w: smallBtnW, h: smallBtnH, label: 'Download Map',
+            style: 'secondary', fontSize: 12, radius: 10,
+            onClick: () => {
+                const offscreen = buildCleanMapCanvas(w, h, state);
+                if (offscreen) labShareAction('download', offscreen, state.lab);
+            }
+        },
     ];
-
-    let nextY = baseY + btnH + gap;
-
-    if (hasCSPM) {
-        buttons.push({
-            id: 'show-cspm', x: smallBtnX, y: nextY,
-            w: smallBtnW, h: smallBtnH, label: 'Detected with CSPM?',
-            style: 'secondary', fontSize: 12, radius: 10,
-            onClick: () => {
-                state.selectedNode = null;
-                state.selectedEdge = null;
-                state.completeView = state.completeView === 'cspm' ? null : 'cspm';
-                state._redraw();
-                updateGamePanel(state);
-            }
-        });
-        nextY += smallBtnH + gap;
-    }
-
-    if (hasCloudSIEM) {
-        buttons.push({
-            id: 'show-cloudsiem', x: smallBtnX, y: nextY,
-            w: smallBtnW, h: smallBtnH, label: 'Detected with CloudSIEM?',
-            style: 'secondary', fontSize: 12, radius: 10,
-            onClick: () => {
-                state.selectedNode = null;
-                state.selectedEdge = null;
-                state.completeView = state.completeView === 'cloudsiem' ? null : 'cloudsiem';
-                state._redraw();
-                updateGamePanel(state);
-            }
-        });
-        nextY += smallBtnH + gap;
-    }
-
-    // Share row 1: Download + LinkedIn (primary share target)
-    const shareRowGap = 10;
-    const shareBtnW = Math.floor((smallBtnW - shareRowGap) / 2);
-    buttons.push({
-        id: 'download-map', x: smallBtnX, y: nextY,
-        w: shareBtnW, h: smallBtnH, label: 'Download Map',
-        style: 'secondary', fontSize: 11, radius: 10,
-        onClick: () => {
-            const offscreen = buildCleanMapCanvas(w, h, state);
-            if (offscreen) labShareAction('download', offscreen, state.lab);
-        }
-    });
-    buttons.push({
-        id: 'share-linkedin', x: smallBtnX + shareBtnW + shareRowGap, y: nextY,
-        w: shareBtnW, h: smallBtnH, label: 'Share on LinkedIn',
-        style: 'secondary', fontSize: 11, radius: 10,
-        onClick: () => {
-            const offscreen = buildCleanMapCanvas(w, h, state);
-            labShareAction('linkedin', offscreen, state.lab);
-        }
-    });
-    nextY += smallBtnH + gap;
-
-    // Share row 2: X, Bluesky, Mastodon
-    const socialGap = 6;
-    const socialBtnW = Math.floor((smallBtnW - socialGap * 2) / 3);
-    buttons.push({
-        id: 'share-twitter', x: smallBtnX, y: nextY,
-        w: socialBtnW, h: smallBtnH, label: 'X',
-        style: 'secondary', fontSize: 11, radius: 10,
-        onClick: () => {
-            const offscreen = buildCleanMapCanvas(w, h, state);
-            labShareAction('twitter', offscreen, state.lab);
-        }
-    });
-    buttons.push({
-        id: 'share-bluesky', x: smallBtnX + socialBtnW + socialGap, y: nextY,
-        w: socialBtnW, h: smallBtnH, label: 'Bluesky',
-        style: 'secondary', fontSize: 11, radius: 10,
-        onClick: () => {
-            const offscreen = buildCleanMapCanvas(w, h, state);
-            labShareAction('bluesky', offscreen, state.lab);
-        }
-    });
-    buttons.push({
-        id: 'share-mastodon', x: smallBtnX + (socialBtnW + socialGap) * 2, y: nextY,
-        w: socialBtnW, h: smallBtnH, label: 'Mastodon',
-        style: 'secondary', fontSize: 11, radius: 10,
-        onClick: () => {
-            const offscreen = buildCleanMapCanvas(w, h, state);
-            labShareAction('mastodon', offscreen, state.lab);
-        }
-    });
-    nextY += smallBtnH + gap;
-
-    buttons.push({
-        id: 'no-gamification', x: smallBtnX, y: nextY,
-        w: smallBtnW, h: smallBtnH, label: 'View as Single Page',
-        style: 'secondary', fontSize: 12, radius: 10,
-        onClick: () => { switchDetailMode('guidedv2', state.lab); }
-    });
 
     return buttons;
 }
 
 function drawCompleteOverlay(ctx, w, h, state) {
     const p = state.palette;
-    // Subtle dark overlay so map is dimmed
-    ctx.fillStyle = 'rgba(0,0,0,0.3)';
-    ctx.fillRect(0, 0, w, h);
-
-    ctx.fillStyle = p.accentGold;
-    ctx.font = 'bold 28px -apple-system, BlinkMacSystemFont, sans-serif';
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'middle';
-    ctx.fillText('MISSION COMPLETE', w / 2, h * 0.15);
-
-    // Lab name
-    ctx.fillStyle = p.hudText;
-    ctx.font = '16px -apple-system, BlinkMacSystemFont, sans-serif';
-    ctx.fillText(state.lab?.name || '', w / 2, h * 0.23);
-
-    // Stats row
-    const totalEdges = state.edges.length;
-    const stats = [
-        { label: 'HOPS', value: `${totalEdges}/${totalEdges}` },
-        { label: 'HINTS', value: String(state.hintsUsed) },
-    ];
-    const statW = 90;
-    const totalStatW = stats.length * statW;
-    const statStartX = (w - totalStatW) / 2;
-    const statY = h * 0.34;
-
-    stats.forEach((stat, i) => {
-        const sx = statStartX + i * statW + statW / 2;
-        ctx.fillStyle = p.hudTextMuted;
-        ctx.font = 'bold 11px -apple-system, BlinkMacSystemFont, sans-serif';
-        ctx.fillText(stat.label, sx, statY);
-        ctx.fillStyle = p.hudText;
-        ctx.font = 'bold 24px -apple-system, BlinkMacSystemFont, sans-serif';
-        ctx.fillText(stat.value, sx, statY + 26);
-        if (i < stats.length - 1) {
-            ctx.strokeStyle = p.separator;
-            ctx.lineWidth = 0.8;
-            ctx.beginPath();
-            ctx.moveTo(sx + statW / 2, statY - 6);
-            ctx.lineTo(sx + statW / 2, statY + 36);
-            ctx.stroke();
-        }
-    });
-
     state.buttons.forEach(btn => drawThemedButton(ctx, btn, state.hoveredButton || state._heliHoveredButton, state.activeButton, p));
-
-    // Highlight the active detection button
-    const activeId = state.completeView === 'cspm' ? 'show-cspm' : state.completeView === 'cloudsiem' ? 'show-cloudsiem' : null;
-    if (activeId) {
-        const activeBtn = state.buttons.find(b => b.id === activeId);
-        if (activeBtn) {
-            ctx.strokeStyle = p.hudProgressFill || '#7c3aed';
-            ctx.lineWidth = 2;
-            drawRoundedRect(ctx, activeBtn.x - 2, activeBtn.y - 2, activeBtn.w + 4, activeBtn.h + 4, 12);
-            ctx.stroke();
-        }
-    }
 }
 
 
@@ -6702,6 +6669,7 @@ function initMapGame(mapId, nodes, edges, companions, lab) {
 
     const state = {
         screen: 'playing',       // skip start screen, go directly to map
+        arcadeStartShown: true,  // show NES-style start overlay until any key/click
         revealed: new Set(nodes.map((_, i) => i)),
         currentNode: 0,
         currentEdge: -1,         // index of the last completed edge (-1 = none)
@@ -6832,6 +6800,9 @@ function initMapGame(mapId, nodes, edges, companions, lab) {
             if (keys.ArrowDown)  dy += 1;
 
             let changed = false;
+
+            // Keep redrawing while arcade start overlay is showing so the blink animates
+            if (state.arcadeStartShown) changed = true;
 
             if (dx !== 0 || dy !== 0) {
                 // Normalize diagonal so speed is consistent in all directions
@@ -7247,6 +7218,12 @@ function initMapGame(mapId, nodes, edges, companions, lab) {
     }
 
     function onClick(e) {
+        // Dismiss arcade start overlay on any click
+        if (state.arcadeStartShown) {
+            state.arcadeStartShown = false;
+            redraw();
+            return;
+        }
         // Suppress click after a pan drag
         if (state._suppressClick) {
             state._suppressClick = false;
@@ -7417,6 +7394,16 @@ function initMapGame(mapId, nodes, edges, companions, lab) {
     }
 
     function onKeyDown(e) {
+        // Dismiss arcade start overlay on any key press
+        if (state.arcadeStartShown) {
+            state.arcadeStartShown = false;
+            state._heliLastRevealTime = Date.now(); // reset idle timer after dismissal
+            redraw();
+            // Let arrow keys fall through so the helicopter starts moving immediately
+            if (!['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'].includes(e.key)) {
+                return;
+            }
+        }
         if (e.key === 'Escape') {
             if (state.screen === 'playing') {
                 openGameMenu(state);
@@ -7652,6 +7639,13 @@ function initMapGame(mapId, nodes, edges, companions, lab) {
             state.buttons = buildPlayingButtons(w, h, state);
             redraw();
         }
+        // -/+ keys resize islands
+        if ((e.key === '-' || e.key === '_') && (state.screen === 'playing' || state.screen === 'complete')) {
+            resizeIslands(0.92);
+        }
+        if ((e.key === '=' || e.key === '+') && (state.screen === 'playing' || state.screen === 'complete')) {
+            resizeIslands(1.08);
+        }
         // Arrow keys fly the helicopter when playing
         if (['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'].includes(e.key)
                 && state.screen === 'playing') {
@@ -7719,18 +7713,18 @@ function initMapGame(mapId, nodes, edges, companions, lab) {
             state.viewZoom = newZoom;
             if (state.screen === 'playing') state.buttons = buildPlayingButtons(w, h, state);
             redraw();
-        } else {
-            // Plain scroll: resize islands
-            e.preventDefault();
-            const factor = e.deltaY < 0 ? 1.08 : 0.92;
-            const current = state._baseIslandRadius || 73;
-            state._baseIslandRadius = Math.max(30, Math.min(150, current * factor));
-            // Re-clamp positions so larger islands don't push labels into the HUD
-            clampIslandsAboveHud(state.positions, state.nodes.length, h, state._baseIslandRadius);
-            state.companionPositions = computeCompanionPositions(
-                state.companions, state.edges, state.positions, state._baseIslandRadius);
-            redraw();
         }
+        // Plain scroll does nothing — island size is controlled with -/+ keys
+    }
+
+    // Helper: resize islands by a multiplicative factor (shared by +/- key handlers)
+    function resizeIslands(factor) {
+        const current = state._baseIslandRadius || 73;
+        state._baseIslandRadius = Math.max(30, Math.min(150, current * factor));
+        clampIslandsAboveHud(state.positions, state.nodes.length, h, state._baseIslandRadius);
+        state.companionPositions = computeCompanionPositions(
+            state.companions, state.edges, state.positions, state._baseIslandRadius);
+        redraw();
     }
 
     canvas.addEventListener('pointermove', onPointerMove);

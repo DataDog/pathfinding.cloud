@@ -168,9 +168,8 @@
         "label": "ecs:RunTask + iam:PassRole",
         "description": "The attacker calls ecs:RunTask against the existing task definition, using --overrides to set taskRoleArn to the admin role (requiring iam:PassRole) and to inject a command that attaches AdministratorAccess to the starting user.\n",
         "hints": [
-          "You can run ECS tasks and pass roles. Think about what happens when you override both the command and the task role at runtime.",
-          "Look at existing task definitions in the account \u2014 you don't need to register a new one.",
-          "Use ecs:RunTask with --overrides to set taskRoleArn to an admin role and inject an AWS CLI command that attaches AdministratorAccess to your user.",
+          "Use ecs:RunTask with --overrides to set taskRoleArn to the admin role ARN and inject a containerOverrides command that calls iam:AttachUserPolicy on the starting user. No new task definition is needed \u2014 use the existing one. Fargate requires a VPC subnet and assignPublicIp=ENABLED.",
+          "Poll ecs:DescribeTasks until STOPPED, then allow ~15 seconds for IAM policy propagation before verifying with iam:ListAttachedUserPolicies.",
           "Browse to https://pathfinding.cloud/paths/ecs-008 for technique details."
         ],
         "commands": [
@@ -197,12 +196,7 @@
         "to": "target-role",
         "label": "assumes role + iam:AttachUserPolicy",
         "description": "The Fargate task assumes the admin role via the taskRoleArn override. The ECS platform injects temporary credentials for this role into the task container automatically. Running as the admin role, the task calls iam:AttachUserPolicy to attach AdministratorAccess to the starting user. After the task completes, the attacker uses their original credentials to verify and exercise full admin access.\n",
-        "hints": [
-          "Poll the task status using ecs:DescribeTasks until the task reports STOPPED -- this confirms the injected command has finished executing.",
-          "Use iam:ListAttachedUserPolicies on your starting user to verify that AdministratorAccess was successfully attached after the task stops.",
-          "Wait a few seconds after the task stops before checking IAM -- policy attachments can take a moment to propagate across AWS infrastructure.",
-          "Once the policy is attached, confirm admin access by attempting a privileged operation such as listing IAM users -- this should now succeed."
-        ],
+        "hints": [],
         "commands": [
           {
             "description": "Verify privilege escalation succeeded",
@@ -220,9 +214,7 @@
         "label": "Read CTF flag",
         "description": "With administrator-equivalent permissions now attached to the starting user, retrieve the scenario flag from SSM Parameter Store. AdministratorAccess grants ssm:GetParameter on all parameters in the account, so no additional permissions are needed beyond the admin access you just gained.\n",
         "hints": [
-          "You now hold admin-equivalent credentials. The scenario flag is stored in an AWS service commonly used to hold configuration values and small secrets.",
-          "Scenario flags live under a shared prefix in SSM Parameter Store \u2014 consider what a reasonable naming convention for this lab might look like.",
-          "Use ssm:GetParameter with the full parameter name to retrieve the flag value."
+          "Use ssm:GetParameter with the full parameter path to retrieve the flag value."
         ],
         "commands": [
           {

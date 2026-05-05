@@ -195,11 +195,7 @@
         "label": "sts:AssumeRole",
         "description": "The starting user assumes the escalation role, gaining PassRole and compute service creation permissions.\n",
         "hints": [
-          "Your starting user can assume a role -- start by discovering which roles are available to you.",
-          "Use iam:ListRoles to enumerate roles in the account and look for one your identity can assume.",
-          "Check the trust policies of discovered roles to see which ones trust your user ARN.",
-          "Once you identify the assumable role, review its attached and inline policies to understand what it can do.",
-          "Look for roles whose policies combine iam:PassRole with compute service creation permissions -- that combination is the escalation path."
+          "Call sts:AssumeRole with the escalation role ARN to obtain temporary credentials with PassRole and compute service creation permissions."
         ],
         "commands": [
           {
@@ -214,12 +210,7 @@
         "label": "iam:PassRole + ec2:RunInstances",
         "description": "Launch an EC2 instance with the admin role attached as the instance profile. The instance user-data script runs a payload under AdministratorAccess.\n",
         "hints": [
-          "You have iam:PassRole -- identify which service admin roles you can pass by looking for roles whose trust policy allows ec2.amazonaws.com.",
-          "Use iam:ListRoles to find roles trusted by EC2, Lambda, and CloudFormation service principals.",
-          "With ec2:RunInstances and iam:PassRole, you can launch an EC2 instance that operates under an admin role.",
-          "EC2 user-data runs as root on launch -- a user-data payload can perform IAM operations using the instance profile's credentials.",
-          "The payload should create a new IAM role with AdministratorAccess and a trust policy that allows your starting user to assume it.",
-          "After the instance completes its user-data, you can assume the newly created role from your local machine."
+          "Launch an EC2 instance with the admin role as its instance profile and a user-data script that calls iam:CreateRole and iam:AttachRolePolicy to create a new admin role trusted by your starting user. The script runs as root under the instance profile's credentials \u2014 call iam:CreateRole with a trust policy for your starting user, then iam:AttachRolePolicy with AdministratorAccess. Once the instance finishes, assume the new role from your local machine."
         ],
         "commands": [
           {
@@ -234,11 +225,7 @@
         "label": "iam:PassRole + lambda:CreateFunction",
         "description": "Create a Lambda function with the admin role as its execution role, then invoke it to run a payload under AdministratorAccess.\n",
         "hints": [
-          "You have iam:PassRole -- identify which service admin roles you can pass by looking for roles whose trust policy allows lambda.amazonaws.com.",
-          "With lambda:CreateFunction and iam:PassRole, you can create a Lambda function that executes under an admin role.",
-          "Write a short Python function that calls iam:CreateRole and iam:AttachRolePolicy to provision a new admin role trusting your starting identity.",
-          "After creating the function, invoke it explicitly -- Lambda functions do not run until invoked.",
-          "Check the invocation response or CloudWatch Logs to confirm the payload succeeded before attempting to assume the new role."
+          "Create a Lambda function with the admin role as its execution role, then invoke it. The function code should call iam:CreateRole and iam:AttachRolePolicy to provision a new admin role with a trust policy pointing to your starting user. Check the function response to confirm success before assuming the new role."
         ],
         "commands": [
           {
@@ -257,11 +244,7 @@
         "label": "iam:PassRole + cloudformation:CreateStack",
         "description": "Deploy a CloudFormation stack using the admin role. The stack template includes an IAM role resource, executed under AdministratorAccess via CAPABILITY_NAMED_IAM.\n",
         "hints": [
-          "You have iam:PassRole -- identify which service admin roles you can pass by looking for roles whose trust policy allows cloudformation.amazonaws.com.",
-          "With cloudformation:CreateStack and iam:PassRole, you can deploy a stack that executes IAM operations under an admin role.",
-          "Write a CloudFormation template that defines an AWS::IAM::Role resource with AdministratorAccess and a trust policy for your starting user.",
-          "Pass the admin role ARN to the stack using the --role-arn parameter and include CAPABILITY_NAMED_IAM in --capabilities.",
-          "Wait for the stack to reach CREATE_COMPLETE status before attempting to assume the role the stack created."
+          "Deploy a CloudFormation stack using --role-arn pointing to the admin role and --capabilities CAPABILITY_NAMED_IAM. The template should define an AWS::IAM::Role with AdministratorAccess and a trust policy for your starting user \u2014 CloudFormation executes under the passed admin role, so the role resource is created with full admin permissions. Poll cloudformation:DescribeStacks until CREATE_COMPLETE before assuming the new role."
         ],
         "commands": [
           {
@@ -275,12 +258,7 @@
         "to": "new-admin-role",
         "label": "iam:CreateRole + iam:AttachRolePolicy",
         "description": "The EC2 instance payload (running under AdministratorAccess) creates a new IAM role with AdministratorAccess and a trust policy allowing the starting user to assume it.\n",
-        "hints": [
-          "The EC2 instance runs its user-data script as root using the instance profile's admin credentials.",
-          "Your payload should call iam:CreateRole to create a new role with a trust policy pointing to your starting user ARN.",
-          "After creating the role, attach AdministratorAccess using iam:AttachRolePolicy.",
-          "Once the instance finishes its user-data, switch back to your starting user credentials and assume the new role."
-        ],
+        "hints": [],
         "commands": []
       },
       {
@@ -288,12 +266,7 @@
         "to": "new-admin-role",
         "label": "iam:CreateRole + iam:AttachRolePolicy",
         "description": "The Lambda function payload (running under AdministratorAccess) creates a new IAM role with AdministratorAccess and a trust policy allowing the starting user to assume it.\n",
-        "hints": [
-          "The Lambda function executes using the execution role's admin credentials.",
-          "Your function code should call iam:CreateRole with a trust policy that includes your starting user ARN as a principal.",
-          "After creating the role, call iam:AttachRolePolicy with the AdministratorAccess managed policy ARN.",
-          "Check the function's response payload or CloudWatch Logs to confirm the role was created successfully."
-        ],
+        "hints": [],
         "commands": []
       },
       {
@@ -301,12 +274,7 @@
         "to": "new-admin-role",
         "label": "iam:CreateRole + iam:AttachRolePolicy",
         "description": "The CloudFormation stack (executed under AdministratorAccess) provisions a new IAM role resource with AdministratorAccess and a trust policy allowing the starting user to assume it.\n",
-        "hints": [
-          "CloudFormation executes your template using the role you passed -- it has full admin permissions.",
-          "Define an AWS::IAM::Role resource in your template with a trust policy principal set to your starting user ARN.",
-          "Add AdministratorAccess to ManagedPolicyArns in the role definition.",
-          "Use cloudformation:DescribeStacks or cloudformation:DescribeStackResources to confirm the role was created once the stack completes."
-        ],
+        "hints": [],
         "commands": []
       },
       {
@@ -315,9 +283,7 @@
         "label": "ssm:GetParameter",
         "description": "With AdministratorAccess now available via the newly created admin role, retrieve the scenario flag from SSM Parameter Store. AdministratorAccess grants ssm:GetParameter on all parameters in the account, so no additional permissions are needed.\n",
         "hints": [
-          "You now hold admin-equivalent credentials via one of the newly created roles. The scenario flag is stored in an AWS service commonly used to hold configuration values and small secrets.",
-          "Scenario flags live under a shared prefix in SSM Parameter Store -- consider what a reasonable naming convention for this lab might look like.",
-          "Use ssm:GetParameter with the full parameter name to retrieve the flag value."
+          "Assume the newly created admin role and call ssm:GetParameter with the full parameter name to retrieve the flag."
         ],
         "commands": [
           {

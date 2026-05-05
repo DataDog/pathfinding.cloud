@@ -82,36 +82,8 @@
             "purpose": "list tasks in the cluster to get the task ARN for monitoring"
           },
           {
-            "permission": "ecs:UpdateService",
-            "purpose": "scale down the service during cleanup"
-          },
-          {
-            "permission": "ecs:DeleteService",
-            "purpose": "clean up the ECS service after demonstration"
-          },
-          {
-            "permission": "ecs:StopTask",
-            "purpose": "stop running tasks during cleanup"
-          },
-          {
-            "permission": "ecs:DeregisterTaskDefinition",
-            "purpose": "clean up the task definition after demonstration"
-          },
-          {
-            "permission": "ecs:DeleteCluster",
-            "purpose": "clean up the ECS cluster after demonstration"
-          },
-          {
             "permission": "iam:ListAttachedUserPolicies",
             "purpose": "verify privilege escalation success by listing attached policies"
-          },
-          {
-            "permission": "iam:ListUsers",
-            "purpose": "verify administrator access by listing IAM users"
-          },
-          {
-            "permission": "iam:DetachUserPolicy",
-            "purpose": "remove the admin policy from the starting user during cleanup"
           }
         ]
       }
@@ -208,10 +180,7 @@
         "label": "ecs:CreateCluster",
         "description": "Create a new ECS cluster to host the malicious Fargate service. This is a prerequisite step before registering a task definition and service.\n",
         "hints": [
-          "Start by reviewing the policy attached to this principal -- you have permissions over ECS and the ability to pass a specific IAM role.",
-          "Use ec2:DescribeVpcs and ec2:DescribeSubnets to gather the network details you will need for Fargate's awsvpc network mode.",
-          "Create an ECS cluster as the first step -- it is the container for your future Fargate service.",
-          "Combine cluster creation, task definition registration, and service creation to execute code as a privileged role.",
+          "Create an ECS cluster with ecs:CreateCluster as the execution environment for your Fargate service. You will need a VPC subnet for Fargate's awsvpc network mode in a later step.",
           "Browse to https://pathfinding.cloud/paths/ecs-001 for technique details."
         ],
         "commands": [
@@ -227,11 +196,7 @@
         "label": "ecs:RegisterTaskDefinition + iam:PassRole",
         "description": "Register a task definition that sets the privileged target role as the task role. The iam:PassRole permission is consumed here to authorize assigning the admin role to the ECS task.\n",
         "hints": [
-          "Use sts:GetCallerIdentity to retrieve your account ID so you can construct the full ARN of the target role.",
-          "Set both taskRoleArn and executionRoleArn to the privileged target role when registering the task definition.",
-          "Use a container image that already has the AWS CLI available -- the task needs to call IAM APIs.",
-          "The container's command should call iam:AttachUserPolicy to escalate your starting user's permissions.",
-          "Use aws ecs register-task-definition with the --task-role-arn flag pointing to the target role ARN."
+          "Register a task definition with ecs:RegisterTaskDefinition, setting taskRoleArn to the target role (consumed via iam:PassRole). Use the amazon/aws-cli image and set the container command to call iam:AttachUserPolicy to attach AdministratorAccess to your starting user."
         ],
         "commands": [
           {
@@ -246,12 +211,7 @@
         "label": "ecs:CreateService",
         "description": "Create an ECS Fargate service that launches the malicious task definition. The service starts a task that runs as the privileged target role and attaches AdministratorAccess to the starting user.\n",
         "hints": [
-          "You need to deploy a Fargate service that actually runs the task definition you just registered.",
-          "Use ecs:DescribeServices to monitor when the service becomes ACTIVE and has running tasks.",
-          "Use ecs:ListTasks and ecs:DescribeTasks to watch the task progress toward STOPPED status.",
-          "Once the task stops, allow 15 seconds for IAM policy propagation before verifying.",
-          "Verify escalation by calling an admin-only API (like iam:ListUsers) with your starting user credentials.",
-          "Browse to https://pathfinding.cloud/paths/ecs-001 for technique details."
+          "Create the ECS Fargate service with ecs:CreateService using desired-count 1 and awsvpc network mode. Monitor with ecs:DescribeTasks until the task reaches STOPPED, then wait 15 seconds for IAM propagation before verifying admin access."
         ],
         "commands": [
           {
@@ -270,8 +230,6 @@
         "label": "Read CTF flag",
         "description": "With administrator-equivalent permissions now attached to the starting user, retrieve the scenario flag from SSM Parameter Store. AdministratorAccess grants ssm:GetParameter on all parameters in the account, so no additional permissions are needed beyond the admin access you just gained.\n",
         "hints": [
-          "You now hold admin-equivalent credentials. The scenario flag is stored in an AWS service commonly used to hold configuration values and small secrets.",
-          "Scenario flags live under a shared prefix in SSM Parameter Store \u2014 consider what a reasonable naming convention for this lab might look like.",
           "Use ssm:GetParameter with the full parameter name to retrieve the flag value."
         ],
         "commands": [

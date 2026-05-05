@@ -205,11 +205,8 @@
         "label": "iam:PassRole + airflow:CreateEnvironment",
         "description": "The attacker creates an MWAA environment, passing the admin execution role via iam:PassRole and specifying a malicious startup script hosted in an attacker-controlled S3 bucket.\n",
         "hints": [
-          "Start by understanding what IAM roles exist and which ones you can pass. Use iam:GetRole to inspect a role's trust policy and see what services it trusts.",
-          "You have airflow:CreateEnvironment -- look at what parameters this API call accepts. Pay special attention to ExecutionRoleArn and StartupScriptS3Path.",
-          "MWAA environments can reference S3 buckets for DAGs and startup scripts. You need a bucket with a dags/ folder and a startup script. Check the Terraform output for a pre-staged attacker bucket.",
-          "The startup script runs before Airflow initializes and executes with the full permissions of the execution role. Think about what AWS CLI commands that role can run.",
-          "You need several EC2 networking permissions alongside airflow:CreateEnvironment -- MWAA validates that the caller has permissions it will need for VPC setup. Check the Terraform output for VPC, subnet, and security group IDs.",
+          "Create the MWAA environment passing the admin role as ExecutionRoleArn and pointing StartupScriptS3Path at a malicious bash script in the attacker-controlled S3 bucket. The startup script executes with the full permissions of the execution role before Airflow initializes, so it will run iam:AttachUserPolicy to grant your user AdministratorAccess.",
+          "MWAA requires several EC2 networking parameters at creation time -- check the Terraform output for pre-staged VPC, subnet, and security group IDs. Environment creation is asynchronous: poll airflow:GetEnvironment until Status reaches AVAILABLE (20-30 minutes), then verify AdministratorAccess is attached to your starting user.",
           "Browse to https://pathfinding.cloud/paths/mwaa-001 for technique details."
         ],
         "commands": [
@@ -228,11 +225,7 @@
         "to": "admin-role",
         "label": "Startup script execution",
         "description": "When the MWAA environment initializes, the startup script runs with the execution role's credentials and attaches AdministratorAccess to the starting user, completing the privilege escalation.\n",
-        "hints": [
-          "MWAA environment creation is asynchronous -- use airflow:GetEnvironment to poll the status. You are waiting for the AVAILABLE state, which takes 20-30 minutes.",
-          "Once the environment reaches AVAILABLE status, the startup script has already run. Check whether AdministratorAccess is now attached to your starting user using iam:ListAttachedUserPolicies.",
-          "If the policy is attached, verify the escalation by attempting an action that requires admin privileges -- for example, listing IAM users with iam:ListUsers."
-        ],
+        "hints": [],
         "commands": [
           {
             "description": "Poll until the environment reaches AVAILABLE status (checks every 60 seconds)",
@@ -254,8 +247,6 @@
         "label": "Read CTF flag",
         "description": "With administrator-equivalent permissions now attached to the starting user, retrieve the scenario flag from SSM Parameter Store. AdministratorAccess grants ssm:GetParameter on all parameters in the account, so no additional permissions are needed beyond the admin access you just gained.\n",
         "hints": [
-          "You now hold admin-equivalent credentials. The scenario flag is stored in an AWS service commonly used to hold configuration values and small secrets.",
-          "Scenario flags live under a shared prefix in SSM Parameter Store \u2014 consider what a reasonable naming convention for this lab might look like.",
           "Use ssm:GetParameter with the full parameter name to retrieve the flag value."
         ],
         "commands": [

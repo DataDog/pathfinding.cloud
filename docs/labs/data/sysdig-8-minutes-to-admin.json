@@ -1,7 +1,7 @@
 {
   "displayName": "AI-Assisted Cloud Intrusion: 8 Minutes to Admin",
   "name": "sysdig-8-minutes-to-admin",
-  "description": "Recreation of the Nov 2025 Sysdig TRT breach: IAM credentials embedded in a private S3 RAG bucket, Lambda code injection, and admin access achieved in under 8 minutes",
+  "description": "Recreation of the attack documented by Sysdig Threat Research Team: IAM credentials embedded in a private S3 RAG bucket, Lambda code injection, and admin access achieved in under 8 minutes",
   "costEstimate": "$0/mo",
   "pathfindingCloudId": null,
   "interactiveDemo": false,
@@ -273,6 +273,7 @@
         "id": "persistence-identities",
         "label": "Persistence Identities",
         "type": "collection",
+        "isTarget": true,
         "description": "After gaining admin access, the attacker spreads across multiple principals to complicate detection and ensure persistence. The blog documents 19 unique AWS principals: 5 IAM roles assumed across 12 sessions (sysadmin, account, netadmin with sessions explore/test/pwned; sysadmin with escalation; developer and external with test), plus access keys created for 5 pre-existing IAM users (rocker with BedrockFullAccess, azureadmanager for Azure AD integration, deploy-svc, monitoring, ci-runner), and one newly created backdoor-admin user with AdministratorAccess.\nThis distribution ensures the attacker only needs one surviving principal to maintain access. Even if frick's credentials are rotated, any of the other compromised users or assumed role sessions can be used to re-establish full control.\n"
       }
     ],
@@ -297,11 +298,8 @@
           }
         ],
         "hints": [
-          "Your starting user has read access to an S3 bucket. Enumerate its contents \u2014 data pipeline buckets often contain configuration files that developers embed credentials in for convenience.",
-          "Use s3:ListBucket to see what files exist in the bucket. Look for configuration or settings files at any path depth.",
-          "Once you find a configuration file, download it and look for any AWS credential fields \u2014 access key IDs start with AKIA or ASIA.",
-          "Pipeline configuration files often contain credentials embedded as JSON fields with names like aws_access_key_id, access_key, or similar variations.",
-          "After extracting the credentials, test them with sts:GetCallerIdentity to identify the new principal before proceeding."
+          "Use s3:ListBucket to enumerate the bucket recursively, then s3:GetObject to download any configuration files you find \u2014 look for JSON fields like aws_access_key_id or aws_secret_access_key.",
+          "Access key IDs start with AKIA (long-term) or ASIA (temporary). Once you find credentials, export them and verify with sts:GetCallerIdentity."
         ]
       },
       {
@@ -344,12 +342,7 @@
           }
         ],
         "hints": [
-          "You now have credentials for a more capable user. Start with sts:GetCallerIdentity to confirm your new identity, then enumerate your environment methodically.",
-          "Use iam:ListUsers to discover all users in the account. Look for usernames that suggest administrative roles \u2014 the original attacker specifically searched for admin-sounding names.",
-          "For each interesting user, use iam:ListAttachedUserPolicies to check if they have AdministratorAccess or other broad policies attached.",
-          "Use lambda:ListFunctions to discover what Lambda functions exist. Pay close attention to the Role field \u2014 a Lambda whose execution role name suggests system-level access is worth investigating further.",
-          "Use lambda:GetFunction on interesting functions to see their full configuration, including the execution role ARN. Then use iam:GetRole to inspect what that role's trust policy and permissions look like.",
-          "Try assuming roles in the account. Failed assumptions (for roles like 'admin' or 'Administrator') narrow down where not to focus. Successful assumptions expand your visibility for reconnaissance."
+          "Export the credentials from the config file and verify with sts:GetCallerIdentity. This user has lambda:UpdateFunctionCode and lambda:InvokeFunction \u2014 use them to inject code into a Lambda whose execution role holds iam:CreateAccessKey."
         ]
       },
       {
@@ -376,9 +369,9 @@
           }
         ],
         "hints": [
-          "You have lambda:UpdateFunctionCode and lambda:InvokeFunction on pl-prod-8min-ec2-init. The function's execution role can create access keys for IAM users. Think about what you can do by replacing the function's code.",
-          "Write a Python Lambda handler that calls boto3's iam.create_access_key() with a target username. The handler will execute with the permissions of the Lambda execution role \u2014 not your current user.",
-          "Zip the handler, upload it with lambda:UpdateFunctionCode, then use lambda:UpdateFunctionConfiguration to set an environment variable with the target username. This avoids hardcoding the target in the zip."
+          "Fetch the existing function configuration to confirm the handler name, then write a Python handler that calls boto3's iam.create_access_key() with a target username read from an environment variable. Zip and upload with lambda:UpdateFunctionCode, then set the target via lambda:UpdateFunctionConfiguration so you can retarget without re-uploading.",
+          "Invoke the function and parse the JSON response for AccessKeyId and SecretAccessKey. Lambda returns HTTP 200 even when the handler throws \u2014 always check the response body. If the first target's keys have no useful permissions, update the environment variable to the admin user and invoke again.",
+          "Lambda code updates are not instantaneous \u2014 wait a few seconds after lambda:UpdateFunctionCode before invoking to ensure the new handler is active."
         ]
       },
       {
@@ -400,11 +393,7 @@
             "command": "aws lambda invoke \\\n  --function-name pl-prod-8min-ec2-init \\\n  --payload '{}' \\\n  /tmp/lambda_response_frick.json\ncat /tmp/lambda_response_frick.json"
           }
         ],
-        "hints": [
-          "The Lambda's execution role is what gives the injected code its power. The attacker's own user cannot call iam:CreateAccessKey directly, but the execution role can.",
-          "Your first target might not have useful permissions even if key creation succeeds \u2014 the execution role can create keys for multiple users. Target the admin user.",
-          "After invoking the function, parse the JSON response to extract the AccessKeyId and SecretAccessKey."
-        ]
+        "hints": []
       },
       {
         "from": "ec2-init-role",
@@ -450,11 +439,9 @@
           }
         ],
         "hints": [
-          "You now have access keys for frick \u2014 an admin user. Start by verifying the identity and confirming full access, then focus on establishing persistence before doing anything else.",
-          "Create a backdoor IAM user with AdministratorAccess as a persistent foothold. This mirrors what the original attacker did: create a new user + attach AdministratorAccess in rapid succession.",
-          "The account has Bedrock-enabled users. Check whether Bedrock model invocation logging is enabled before invoking models \u2014 the original attacker checked this to assess detection risk.",
-          "After collecting credentials and data, the original attacker launched a GPU instance for ML model training. The instance type matters: p-series instances are GPU-accelerated and expensive. Always terminate GPU instances immediately after demo.",
-          "Cross-account role assumption will fail \u2014 the original attack included attempts against hallucinated account IDs that all returned AccessDenied. Run the attempts to replicate the attack fidelity, then continue with data collection."
+          "Export frick's credentials and create a backdoor IAM user with AdministratorAccess immediately \u2014 this mirrors the original attacker's first persistence move.",
+          "Check whether Bedrock model invocation logging is enabled before invoking models; the original attacker inspected this to assess detection risk before calling bedrock-runtime.",
+          "Always terminate GPU instances (p3.2xlarge) immediately after demo \u2014 they are expensive and the demo includes launching one to replicate the original attack."
         ]
       },
       {
@@ -477,9 +464,8 @@
           }
         ],
         "hints": [
-          "After gaining admin, the priority is persistence. Spread across as many identities as possible so that revoking one doesn't cut off access.",
-          "Assume roles with different session names to distribute CloudTrail entries \u2014 this makes incident response harder because the same role appears under multiple session identifiers.",
-          "Create access keys for pre-existing service accounts. These are less likely to trigger alerts than newly created users because the accounts already have established usage patterns."
+          "Assume roles with different session names (explore, test, pwned, escalation) to distribute CloudTrail entries across principal identifiers, making correlation harder during incident response.",
+          "Create access keys for pre-existing service accounts rather than only newly created users \u2014 established accounts have normal usage patterns that are less likely to trigger anomaly alerts."
         ]
       },
       {

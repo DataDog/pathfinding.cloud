@@ -191,11 +191,7 @@
         "label": "iam:PassRole + ecs:RegisterTaskDefinition",
         "description": "The attacker uses iam:PassRole to authorize passing the admin role to an ECS task, and ecs:RegisterTaskDefinition to register a new task definition that specifies the admin role and a malicious container command.\n",
         "hints": [
-          "Review the policy attached to this starting user -- what IAM roles can you pass, and to which AWS services?",
-          "You can pass an IAM role to an ECS task definition. Think about what happens when a container runs with an admin role.",
-          "Use ecs:DescribeServices or check the AWS console to find existing ECS clusters you could target for service creation.",
-          "A task definition specifies which container image to run and what command to execute. Consider using the aws-cli image to run an IAM command as the admin role.",
-          "The container command in the task definition runs with the task role's permissions -- craft a command that modifies IAM policy on your starting user.",
+          "Register a task definition with ecs:RegisterTaskDefinition, setting taskRoleArn to the target role via iam:PassRole. Use the amazon/aws-cli image and set the container command to call iam:AttachUserPolicy to attach AdministratorAccess to your starting user.",
           "Browse to https://pathfinding.cloud/paths/ecs-003 for technique details."
         ],
         "commands": [
@@ -211,10 +207,7 @@
         "label": "ecs:CreateService",
         "description": "The attacker deploys the malicious task definition as an ECS Fargate service, causing AWS to launch a task that runs with the admin role's credentials.\n",
         "hints": [
-          "A task definition alone doesn't run anything -- you need to deploy it. What ECS construct launches and manages running tasks?",
-          "Fargate services require a VPC subnet. Use ec2:DescribeVpcs and ec2:DescribeSubnets to find one in the default VPC.",
-          "Create the service with desired-count 1 and launch-type FARGATE, referencing the task definition family and revision you just registered.",
-          "Once the service is running, monitor it with ecs:DescribeServices and ecs:DescribeTasks to watch for the task to reach STOPPED status, which means the container command completed."
+          "Deploy the task definition as a Fargate service using ecs:CreateService with desired-count 1 and awsvpc network mode. Monitor with ecs:DescribeTasks until the task reaches STOPPED, then wait 15 seconds for IAM propagation."
         ],
         "commands": [
           {
@@ -233,9 +226,7 @@
         "label": "Assumes role at runtime",
         "description": "When the ECS service launches the Fargate task, the task automatically assumes the specified task role (the admin target role) and receives temporary credentials with administrative permissions. The container then runs the IAM attach-user-policy command as the admin role, granting AdministratorAccess to the starting user.\n",
         "hints": [
-          "After the task stops, wait about 15 seconds for IAM policy changes to propagate before testing your new permissions.",
-          "Use iam:ListAttachedUserPolicies on your starting user to confirm AdministratorAccess was successfully attached.",
-          "Verify the escalation worked by attempting an admin-only action such as iam:ListUsers -- it should now succeed."
+          "After the task stops, wait 15 seconds for IAM policy changes to propagate, then verify AdministratorAccess was attached via iam:ListAttachedUserPolicies on your starting user."
         ],
         "commands": []
       },
@@ -245,8 +236,6 @@
         "label": "Read CTF flag",
         "description": "With administrator-equivalent permissions now attached to the starting user, retrieve the scenario flag from SSM Parameter Store. AdministratorAccess grants ssm:GetParameter on all parameters in the account, so no additional permissions are needed beyond the admin access you just gained.\n",
         "hints": [
-          "You now hold admin-equivalent credentials. The scenario flag is stored in an AWS service commonly used to hold configuration values and small secrets.",
-          "Scenario flags live under a shared prefix in SSM Parameter Store \u2014 consider what a reasonable naming convention for this lab might look like.",
           "Use ssm:GetParameter with the full parameter name to retrieve the flag value."
         ],
         "commands": [

@@ -75,10 +75,6 @@
           {
             "permission": "sts:GetCallerIdentity",
             "purpose": "verify current identity and account ID"
-          },
-          {
-            "permission": "iam:ListUsers",
-            "purpose": "verify admin access after privilege escalation"
           }
         ]
       }
@@ -168,11 +164,8 @@
         "label": "iam:PassRole + glue:UpdateJob",
         "description": "Update the existing Glue job to use the admin target role as its execution role and replace the script location with a malicious Python script stored in S3. iam:PassRole authorises handing the privileged role to the Glue service.\n",
         "hints": [
-          "Start by understanding what Glue jobs exist in the account and what role they currently run under.",
-          "Use glue:GetJob to inspect the existing job configuration -- pay attention to the Role and ScriptLocation fields.",
-          "You have iam:PassRole on a privileged role -- consider what would happen if you passed that role to a Glue job.",
-          "glue:UpdateJob lets you change both the execution role and script location of an existing job in a single API call.",
-          "The malicious script is already staged in the scenario's S3 bucket -- check the Terraform output for the script path.",
+          "Use glue:UpdateJob to change both the execution role and script location in a single API call, passing the admin role ARN via iam:PassRole. The malicious script is already staged in the scenario's S3 bucket \u2014 use glue:GetJob to find the current script location and derive the bucket path.",
+          "Create a SCHEDULED trigger with --start-on-creation so it fires the job immediately upon creation without needing glue:StartJobRun. Poll glue:GetTrigger until ACTIVATED, then glue:GetJobRuns until SUCCEEDED, then wait ~15 seconds for IAM policy propagation before verifying.",
           "Browse to https://pathfinding.cloud/paths/glue-006 for technique details."
         ],
         "commands": [
@@ -191,13 +184,7 @@
         "to": "target-role",
         "label": "glue:CreateTrigger (--start-on-creation)",
         "description": "Create a SCHEDULED trigger with StartOnCreation=true so the job executes automatically (every minute via cron) without requiring glue:StartJobRun. The job runs under the admin role and attaches AdministratorAccess to the starting user, completing the privilege escalation.\n",
-        "hints": [
-          "Now that the job is updated with the admin role, you need to execute it -- but you don't have glue:StartJobRun.",
-          "Look at what other Glue permissions you have. A trigger can run a job without StartJobRun.",
-          "A SCHEDULED trigger with --start-on-creation fires the job immediately upon trigger creation, then continues on the cron schedule.",
-          "Use glue:GetTrigger to verify the trigger reaches ACTIVATED state, then glue:GetJobRuns to watch for the job run to appear and complete.",
-          "Once the job run shows SUCCEEDED, wait ~15 seconds for IAM policy propagation before verifying the escalation with iam:ListUsers."
-        ],
+        "hints": [],
         "commands": [
           {
             "description": "Create a scheduled trigger that starts the job immediately on creation",
@@ -219,9 +206,7 @@
         "label": "Read CTF flag",
         "description": "With administrator-equivalent permissions now attached to the starting user, retrieve the scenario flag from SSM Parameter Store. AdministratorAccess grants ssm:GetParameter on all parameters in the account, so no additional permissions are needed beyond the admin access you just gained.\n",
         "hints": [
-          "You now hold admin-equivalent credentials. The scenario flag is stored in an AWS service commonly used to hold configuration values and small secrets.",
-          "Scenario flags live under a shared prefix in SSM Parameter Store \u2014 consider what a reasonable naming convention for this lab might look like.",
-          "Use ssm:GetParameter with the full parameter name to retrieve the flag value."
+          "Use ssm:GetParameter with the parameter name /pathfinding-labs/flags/glue-006-to-admin to retrieve the flag value."
         ],
         "commands": [
           {

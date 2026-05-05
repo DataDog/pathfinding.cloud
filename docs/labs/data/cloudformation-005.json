@@ -147,11 +147,8 @@
         "label": "cloudformation:CreateChangeSet",
         "description": "Create a malicious change set against the target stack. The change set template adds a new IAM role with AdministratorAccess to the stack. The change set itself is harmless until executed.\n",
         "hints": [
-          "Start by discovering what CloudFormation stacks exist in this account and their current status.",
-          "Use cloudformation:DescribeStacks to inspect each stack \u2014 pay attention to whether a RoleARN is attached. A stack with a service role is a potential escalation target.",
-          "Once you find a stack with an admin service role, examine its current template with cloudformation:GetTemplate to understand what resources it manages.",
-          "A change set lets you propose template modifications without applying them immediately. Craft a new template that keeps all existing resources and adds a new IAM role with AdministratorAccess and a trust policy allowing your user to assume it.",
-          "You will need the CAPABILITY_NAMED_IAM capability flag when creating a change set that defines a named IAM role.",
+          "Fetch the existing stack template with cloudformation:GetTemplate, add a new IAM role with AdministratorAccess and a trust policy allowing your starting user to assume it, then call cloudformation:CreateChangeSet with --capabilities CAPABILITY_NAMED_IAM against the target stack. Wait for the change set to reach CREATE_COMPLETE before executing.",
+          "Execute the change set with cloudformation:ExecuteChangeSet \u2014 CloudFormation performs all resource operations as the stack's admin service role, not as you. Poll cloudformation:DescribeStacks until UPDATE_COMPLETE, then wait ~15 seconds for IAM propagation before assuming the new role.",
           "Browse to https://pathfinding.cloud/paths/cloudformation-005 for technique details."
         ],
         "commands": [
@@ -174,13 +171,7 @@
         "to": "escalated-role",
         "label": "cloudformation:ExecuteChangeSet",
         "description": "Execute the change set. CloudFormation uses the stack's admin service role to perform all operations defined in the change set, including creating the new IAM role with AdministratorAccess \u2014 bypassing the caller's own limited permissions.\n",
-        "hints": [
-          "Before executing, use cloudformation:DescribeChangeSet to review the planned changes and confirm the new IAM role is listed as an Add action.",
-          "Execute the change set \u2014 CloudFormation will perform all resource operations as the stack's service role, not as you. This is the key: you trigger it, the admin role does the work.",
-          "After initiating execution, poll the stack status with cloudformation:DescribeStacks until it reaches UPDATE_COMPLETE \u2014 the IAM role will not exist until the stack update finishes.",
-          "Allow a short wait after the stack update completes for IAM propagation before attempting to assume the newly created role.",
-          "The new role's trust policy was baked into your template \u2014 it should already allow your starting user to assume it via sts:AssumeRole."
-        ],
+        "hints": [],
         "commands": [
           {
             "description": "Execute the change set using the stack's privileged service role",
@@ -206,9 +197,7 @@
         "label": "ssm:GetParameter",
         "description": "With the escalated admin role assumed, retrieve the scenario flag from SSM Parameter Store. AdministratorAccess grants ssm:GetParameter on all parameters in the account, so no additional permissions are needed beyond the admin access just gained.\n",
         "hints": [
-          "You now hold admin-equivalent credentials via the assumed escalated role. The scenario flag is stored in an AWS service commonly used to hold configuration values and small secrets.",
-          "Scenario flags live under a shared prefix in SSM Parameter Store \u2014 consider what a reasonable naming convention for this lab might look like.",
-          "Use ssm:GetParameter with the full parameter name to retrieve the flag value."
+          "Use ssm:GetParameter with the parameter name /pathfinding-labs/flags/cloudformation-005-to-admin to retrieve the flag."
         ],
         "commands": [
           {

@@ -56,10 +56,6 @@
           {
             "permission": "codebuild:BatchGetBuildBatches",
             "purpose": "monitor build batch execution status"
-          },
-          {
-            "permission": "iam:ListUsers",
-            "purpose": "verify admin access after escalation"
           }
         ]
       }
@@ -148,12 +144,8 @@
         "label": "codebuild:StartBuildBatch",
         "description": "Trigger a batch build on the existing project using --buildspec-override to inject a malicious buildspec that will execute under the project's privileged service role.\n",
         "hints": [
-          "Use your helpful permissions to enumerate CodeBuild projects in the account and identify which ones exist.",
-          "Once you have a project name, use codebuild:BatchGetProjects to inspect the project details -- pay close attention to the serviceRole field.",
-          "Consider what the project's service role is allowed to do. A role with IAM modification permissions is your target.",
-          "CodeBuild allows callers to override the buildspec at invocation time using --buildspec-override. Think about what code you could run using the project's role.",
-          "The buildspec override for a batch build must use the batch format (with a top-level 'batch:' key and a 'build-list'). Write your malicious commands in the nested buildspec's phases.build.commands section.",
-          "Your injected commands will run as the project's service role -- use that to make an IAM change that grants your starting user elevated permissions.",
+          "Use codebuild:StartBuildBatch with --buildspec-override to inject a malicious buildspec that runs as the project's service role. The override must use the batch format with a top-level 'batch:' key and a 'build-list'; write your commands in the nested buildspec's phases.build.commands section. Use iam:AttachUserPolicy to attach AdministratorAccess to your starting user.",
+          "Poll codebuild:BatchGetBuildBatches with the batch build ID until buildBatchStatus reaches SUCCEEDED \u2014 batch orchestration takes 2-3 minutes. After the build succeeds, wait 15 seconds for IAM policy changes to propagate before verifying access.",
           "Browse to https://pathfinding.cloud/paths/codebuild-003 for technique details."
         ],
         "commands": [
@@ -180,12 +172,7 @@
         "to": "target-role",
         "label": "iam:AttachUserPolicy (via buildspec)",
         "description": "CodeBuild assumes the attached service role when executing the build, granting the injected buildspec commands the permissions of that role. The malicious buildspec runs as the service role and attaches the AdministratorAccess managed policy to the starting user, completing the privilege escalation.\n",
-        "hints": [
-          "Wait for the build batch status to reach SUCCEEDED before verifying the outcome -- batch orchestration takes 2-3 minutes.",
-          "Use codebuild:BatchGetBuildBatches with the batch build ID to poll the buildBatchStatus field.",
-          "After the build succeeds, allow 15 seconds for IAM policy changes to propagate before testing access.",
-          "Verify the escalation by attempting an operation that requires admin access, such as listing IAM users."
-        ],
+        "hints": [],
         "commands": [
           {
             "description": "Verify admin access after the build completes",
@@ -199,8 +186,6 @@
         "label": "Read CTF flag",
         "description": "With administrator-equivalent permissions now attached to the starting user, retrieve the scenario flag from SSM Parameter Store. AdministratorAccess grants ssm:GetParameter on all parameters in the account, so no additional permissions are needed beyond the admin access you just gained.\n",
         "hints": [
-          "You now hold admin-equivalent credentials. The scenario flag is stored in an AWS service commonly used to hold configuration values and small secrets.",
-          "Scenario flags live under a shared prefix in SSM Parameter Store \u2014 consider what a reasonable naming convention for this lab might look like.",
           "Use ssm:GetParameter with the full parameter name to retrieve the flag value."
         ],
         "commands": [

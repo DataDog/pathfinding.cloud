@@ -149,12 +149,8 @@
         "label": "lambda:UpdateFunctionCode",
         "description": "Replace the Lambda function's existing code with a malicious payload that calls iam:AttachUserPolicy to grant the starting user AdministratorAccess.\n",
         "hints": [
-          "Start by enumerating Lambda functions available to you -- look for any that are named in your IAM policy or visible via lambda:ListFunctions.",
-          "Once you identify the target function, use lambda:GetFunction to retrieve its configuration. Pay close attention to the Handler field and the Role ARN.",
-          "The Handler field (e.g., lambda_function.lambda_handler) tells you the filename your replacement code must use -- the module name must match exactly or the function will fail to execute.",
-          "Check the execution role's permissions using iam:GetRole -- if it has AdministratorAccess, you can make it do anything you want, including granting your own user elevated privileges.",
-          "Write a Python handler that uses boto3 to call iam:AttachUserPolicy, then package it into a zip file matching the handler's expected filename.",
-          "Deploy your payload with lambda:UpdateFunctionCode, then wait a few seconds for Lambda to finish processing the update before invoking.",
+          "Fetch the existing function config with lambda:GetFunction to confirm the Handler field, then append your AttachUserPolicy call to the handler. The handler filename must match the existing Handler field exactly or the invocation will fail.",
+          "Package as a zip and deploy with lambda:UpdateFunctionCode using the fileb:// prefix, then invoke with lambda:InvokeFunction. Lambda returns HTTP 200 even when the handler throws an exception -- always check the response body for errors. After a successful invocation, wait ~15 seconds for IAM policy propagation before verifying with iam:ListAttachedUserPolicies.",
           "Browse to https://pathfinding.cloud/paths/lambda-003 for technique details."
         ],
         "commands": [
@@ -173,13 +169,7 @@
         "to": "target-admin",
         "label": "lambda:InvokeFunction + iam:AttachUserPolicy",
         "description": "Invoke the Lambda function with a payload specifying the target username. The function executes under its privileged execution role and attaches AdministratorAccess to the starting user.\n",
-        "hints": [
-          "After deploying your payload, give Lambda a few seconds to finish the update -- check LastUpdateStatus via lambda:GetFunction until it shows Successful.",
-          "Invoke the function using lambda:InvokeFunction; capture the output to a local file so you can inspect the response and confirm the payload ran.",
-          "If the invocation returns a 200 status but nothing happened, check whether the function returned an error body -- Lambda returns HTTP 200 even when the handler throws an exception.",
-          "After invocation, wait ~15 seconds for IAM policy propagation before verifying -- IAM changes are eventually consistent.",
-          "Confirm success by calling iam:ListAttachedUserPolicies on your starting user, then verify end-to-end admin access with a privileged API call like iam:ListUsers."
-        ],
+        "hints": [],
         "commands": [
           {
             "description": "Invoke the malicious Lambda function",
@@ -197,8 +187,6 @@
         "label": "Read CTF flag",
         "description": "With administrator-equivalent permissions now attached to the starting user, retrieve the scenario flag from SSM Parameter Store. AdministratorAccess grants ssm:GetParameter on all parameters in the account, so no additional permissions are needed beyond the admin access you just gained.\n",
         "hints": [
-          "You now hold admin-equivalent credentials. The scenario flag is stored in an AWS service commonly used to hold configuration values and small secrets.",
-          "Scenario flags live under a shared prefix in SSM Parameter Store \u2014 consider what a reasonable naming convention for this lab might look like.",
           "Use ssm:GetParameter with the full parameter name to retrieve the flag value."
         ],
         "commands": [

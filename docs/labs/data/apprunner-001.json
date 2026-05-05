@@ -62,10 +62,6 @@
           {
             "permission": "apprunner:DescribeService",
             "purpose": "check service status and configuration"
-          },
-          {
-            "permission": "iam:ListUsers",
-            "purpose": "verify admin access after escalation"
           }
         ]
       }
@@ -154,12 +150,8 @@
         "label": "apprunner:CreateService + iam:PassRole",
         "description": "The starting user creates an App Runner service, passing the privileged target role as the instance role and specifying a StartCommand override that will execute an AWS CLI IAM command when the container starts.\n",
         "hints": [
-          "You have two interesting permissions: one to create a compute service, and one to hand a role to that service. Think about what happens when code runs under a privileged role.",
-          "Use apprunner:ListServices to see if any App Runner services already exist in the account to understand the environment.",
-          "App Runner accepts an InstanceRoleArn when you create a service -- that role's credentials are available to the running container.",
-          "Look at what image you could use as the container. The public AWS CLI image (public.ecr.aws/aws-cli/aws-cli:latest) has the AWS CLI as its entrypoint -- any StartCommand becomes AWS CLI arguments.",
-          "The StartCommand is passed as arguments directly to the container's entrypoint. If the entrypoint is /usr/local/bin/aws, your StartCommand is an AWS CLI subcommand.",
-          "Consider what IAM actions the target role can perform. Can it modify policies on your starting user?",
+          "Use the public AWS CLI image (public.ecr.aws/aws-cli/aws-cli:latest) \u2014 its entrypoint is /usr/local/bin/aws, so any StartCommand becomes AWS CLI arguments. Set InstanceRoleArn to the target role ARN and set StartCommand to 'iam attach-user-policy --user-name <starting-user> --policy-arn arn:aws:iam::aws:policy/AdministratorAccess'.",
+          "Poll apprunner:DescribeService until Status is RUNNING, then wait a few seconds for IAM propagation before verifying with iam:ListAttachedUserPolicies on your starting user.",
           "Browse to https://pathfinding.cloud/paths/apprunner-001 for technique details."
         ],
         "commands": [
@@ -174,13 +166,7 @@
         "to": "target-role",
         "label": "iam:AttachUserPolicy (via StartCommand)",
         "description": "When App Runner starts the container, it executes the StartCommand as arguments to the AWS CLI entrypoint. The container runs with the instance role's credentials, so the iam attach-user-policy command executes with the target role's permissions, attaching AdministratorAccess to the starting user.\n",
-        "hints": [
-          "The service is now running with the privileged role's credentials. The StartCommand you provided has already executed -- the IAM change may have happened as soon as the container started.",
-          "Use apprunner:DescribeService to poll the service status. Watch for it to transition from OPERATION_IN_PROGRESS to RUNNING.",
-          "Once the service reaches RUNNING state, wait a few seconds for IAM policy propagation before verifying.",
-          "Check whether AdministratorAccess was attached to your starting user with iam:ListAttachedUserPolicies.",
-          "Verify the escalation worked by attempting an action your starting user could not do before, such as listing IAM users."
-        ],
+        "hints": [],
         "commands": [
           {
             "description": "Wait for the App Runner service to reach RUNNING state and execute the privilege escalation command",
@@ -202,9 +188,7 @@
         "label": "ssm:GetParameter",
         "description": "With administrator-equivalent permissions now attached to the starting user, retrieve the scenario flag from SSM Parameter Store. AdministratorAccess grants ssm:GetParameter on all parameters in the account, so no additional permissions are needed beyond the admin access you just gained.\n",
         "hints": [
-          "You now hold admin-equivalent credentials. The scenario flag is stored in an AWS service commonly used to hold configuration values and small secrets.",
-          "Scenario flags live under a shared prefix in SSM Parameter Store \u2014 consider what a reasonable naming convention for this lab might look like.",
-          "Use ssm:GetParameter with the full parameter name to retrieve the flag value."
+          "Use your now-escalated starting user credentials to call ssm:GetParameter with the full parameter name to retrieve the flag."
         ],
         "commands": [
           {

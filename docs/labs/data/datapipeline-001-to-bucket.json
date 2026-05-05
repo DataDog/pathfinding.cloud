@@ -162,11 +162,7 @@
         "label": "iam:PassRole + datapipeline:*",
         "description": "The starting user creates a Data Pipeline, defines a ShellCommandActivity, passes the pipeline role to it, and activates the pipeline. An EC2 instance is launched running as the pipeline role.\n",
         "hints": [
-          "You have iam:PassRole on a specific role and permissions to create and activate Data Pipelines. What can you do with those together?",
-          "AWS Data Pipeline can run arbitrary shell commands on EC2 instances via ShellCommandActivity -- and the instance inherits the IAM role you pass to the pipeline.",
-          "Use datapipeline:DescribePipelines and datapipeline:GetPipelineDefinition to inspect what pipelines already exist in the account.",
-          "The pipeline definition JSON needs three parts: a Default object (with role and resourceRole set to your passed role ARN), a ShellCommandActivity, and an Ec2Resource.",
-          "After creating the pipeline with create-pipeline, upload the definition with put-pipeline-definition, then trigger execution with activate-pipeline.",
+          "Build the pipeline definition JSON with three objects: a Default object (role and resourceRole set to the passed role ARN), a ShellCommandActivity with the exfil command, and an Ec2Resource. Then call create-pipeline, put-pipeline-definition, and activate-pipeline in sequence.",
           "Browse to https://pathfinding.cloud/paths/datapipeline-001 for technique details."
         ],
         "commands": [
@@ -190,10 +186,7 @@
         "label": "s3:GetObject",
         "description": "The EC2 instance launched by Data Pipeline, operating as the pipeline role, reads data from the sensitive S3 bucket. This is permitted by the pipeline role's IAM policy, which grants s3:GetObject and s3:ListBucket on the sensitive bucket. The shell command in the ShellCommandActivity uses the AWS CLI to copy the sensitive file out of the bucket.\n",
         "hints": [
-          "The pipeline role's IAM policy grants s3:GetObject on the sensitive bucket -- the EC2 instance the pipeline launches inherits this role and can read from it.",
-          "Use s3:ListBucket on the sensitive bucket (if available) to discover what objects are stored there before designing your ShellCommandActivity command.",
-          "The shell command in your ShellCommandActivity runs on the EC2 instance as the pipeline role, so any AWS CLI command the role is permitted to run will succeed.",
-          "Structure your shell command to copy the sensitive file to a destination you control -- you'll need to have that destination ready before the pipeline runs."
+          "The ShellCommandActivity runs on the EC2 instance as the pipeline role -- any AWS CLI s3 command the role is permitted to run will succeed. Use aws s3 cp to copy objects out of the sensitive bucket."
         ],
         "commands": [
           {
@@ -212,9 +205,7 @@
         "label": "s3:PutObject (cross-account)",
         "description": "The pipeline EC2 instance writes the sensitive data to the attacker-controlled exfil bucket in the attacker's own AWS account. The attacker staged this bucket before launching the attack and configured its resource policy to grant s3:PutObject to the victim account root, allowing any principal from the victim account to write to it. This is not a victim misconfiguration -- it is the attacker's own infrastructure receiving stolen data.\n",
         "hints": [
-          "You need a destination for the data the pipeline reads. Stage an S3 bucket in your own account with a resource policy that allows writes from the victim account.",
-          "An S3 bucket resource policy with Principal set to the victim account root (arn:aws:iam::VICTIM_ACCOUNT:root) will allow any principal from that account to write, regardless of their IAM restrictions.",
-          "The pipeline EC2 instance runs in the victim account and inherits the pipeline role -- as long as your attacker bucket grants write access to the victim account, the copy command will succeed."
+          "Stage your exfil bucket with a resource policy granting s3:PutObject to the victim account root (arn:aws:iam::VICTIM_ACCOUNT:root) before activating the pipeline. The pipeline EC2 instance inherits the pipeline role and will write cross-account as long as the bucket policy permits it."
         ],
         "commands": []
       },
@@ -224,9 +215,7 @@
         "label": "s3:GetObject (attacker owns bucket)",
         "description": "After the pipeline runs, the starting user retrieves the exfiltrated data from the attacker-controlled exfil bucket. Because the attacker owns this bucket, they can use their own attacker-account credentials to read the data \u2014 no IAM permission on the victim account is needed for this final step.\n",
         "hints": [
-          "You own the exfil bucket -- use your attacker-account credentials to read the exfiltrated file after the pipeline has finished running.",
-          "Wait 60-90 seconds after activating the pipeline for the EC2 instance to launch and execute the shell command before checking for the output file.",
-          "Use s3:ListBucket on the exfil bucket to confirm the exfiltrated file landed before attempting to read it."
+          "Wait 60-90 seconds after activating the pipeline for the EC2 instance to launch and execute the shell command, then use your attacker-account credentials to read the exfiltrated file from the exfil bucket."
         ],
         "commands": [
           {

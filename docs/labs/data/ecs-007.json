@@ -159,11 +159,8 @@
         "label": "ecs:RegisterContainerInstance",
         "description": "The attacker retrieves the instance identity document and its cryptographic signature from IMDS (169.254.169.254), then calls ecs:RegisterContainerInstance directly via the AWS API to register this EC2 instance into the target ECS cluster. The cluster was previously empty with no container instances. After registration, the ECS agent is reconfigured and restarted to connect to the cluster with full capability attributes required for task placement.\n",
         "hints": [
-          "The ECS cluster exists but is empty -- there are no container instances registered. You cannot start tasks without a container instance to place them on.",
-          "Use ecs:ListContainerInstances to confirm the cluster state, and ecs:ListTaskDefinitions to discover what task definitions already exist that you might be able to exploit.",
-          "EC2 instances store a signed identity document at the IMDS endpoint (http://169.254.169.254/latest/dynamic/instance-identity/). This document can be used to authenticate the instance to ECS without going through the ECS agent.",
-          "The ecs:RegisterContainerInstance API accepts an instance identity document and signature as parameters -- this lets you register an EC2 instance to any cluster you choose, bypassing the ECS agent's cluster configuration.",
-          "After calling RegisterContainerInstance via the API, reconfigure the ECS agent (/etc/ecs/ecs.config) to point to the target cluster and restart it, so the agent connects with the full Docker and networking capability attributes needed for StartTask.",
+          "Call ecs:RegisterContainerInstance with the signed instance identity document and signature from IMDS (169.254.169.254/latest/dynamic/instance-identity/) to register the EC2 instance directly to the target cluster via the API, bypassing the ECS agent's cluster config. Then reconfigure /etc/ecs/ecs.config to point to the target cluster and restart the ECS agent so it connects with full capability attributes required for task placement.",
+          "Use ecs:StartTask with --overrides to set taskRoleArn to the admin role ARN (iam:PassRole) and override the container command to attach AdministratorAccess to the instance role. The container runs with admin credentials via the task role and makes the IAM API call on your behalf.",
           "Browse to https://pathfinding.cloud/paths/ecs-007 for technique details and the original research at https://labs.reversec.com/posts/2025/08/another-ecs-privilege-escalation-path"
         ],
         "commands": [
@@ -194,14 +191,7 @@
         "to": "target-role",
         "label": "ecs:StartTask + iam:PassRole",
         "description": "With a container instance now registered in the cluster, call ecs:StartTask targeting the pre-existing task definition. Use the --overrides parameter to substitute two things at runtime: the taskRoleArn (set to the admin target role via iam:PassRole) and the container command (set to attach AdministratorAccess to the instance role). The ECS task runs with full admin credentials and completes the privilege escalation.\n",
-        "hints": [
-          "Now that a container instance is registered, you can start tasks. Check which task definitions already exist -- you do not need to create a new one.",
-          "ecs:StartTask (unlike ecs:RunTask) requires you to specify a container instance ARN. Use ecs:ListContainerInstances to get the ARN of the instance you just registered.",
-          "The --overrides parameter in ecs:StartTask lets you change the task role and override container commands at launch time, without modifying the task definition itself.",
-          "Set taskRoleArn in the overrides to the admin role ARN -- this is the iam:PassRole action. The container will run with those admin credentials.",
-          "Override the container command to run an IAM API call that grants your instance role administrative access. The container has admin credentials via the task role; use them to modify the instance role's attached policies.",
-          "Browse to https://pathfinding.cloud/paths/ecs-007 for the full technique walkthrough."
-        ],
+        "hints": [],
         "commands": [
           {
             "description": "Find the container instance ARN registered to the cluster",
@@ -231,9 +221,7 @@
         "label": "ssm:GetParameter",
         "description": "With AdministratorAccess now attached to the instance role, retrieve the scenario flag from SSM Parameter Store. AdministratorAccess grants ssm:GetParameter on all parameters in the account, so no additional permissions are needed beyond the admin access gained from the previous step.\n",
         "hints": [
-          "The instance role now has AdministratorAccess attached. The scenario flag is stored in an AWS service commonly used to hold configuration values and small secrets.",
-          "Scenario flags live under a shared prefix in SSM Parameter Store -- consider what a reasonable naming convention for this lab might look like.",
-          "Use ssm:GetParameter with the full parameter name to retrieve the flag value."
+          "Use ssm:GetParameter with the full parameter path to retrieve the flag value."
         ],
         "commands": [
           {

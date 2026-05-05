@@ -169,10 +169,7 @@
         "label": "ec2:CreateLaunchTemplateVersion + ec2:ModifyLaunchTemplate",
         "description": "Create a new launch template version referencing the existing admin role and containing malicious user data. Then set this version as the default.\n",
         "hints": [
-          "You can create new versions of EC2 launch templates.",
-          "Look for launch templates that already reference administrative IAM roles \u2014 no PassRole needed.",
-          "Inspect existing launch template versions to find ones with privileged instance profiles.",
-          "Create a new version referencing the same admin role but adding malicious user data, then set it as the default with ec2:ModifyLaunchTemplate.",
+          "Create a new launch template version that keeps the existing admin instance profile and adds malicious user data (a base64-encoded script calling iam:AttachUserPolicy), then set it as the default with ec2:ModifyLaunchTemplate. No PassRole is needed because the admin role is already referenced in the template.",
           "Browse to https://pathfinding.cloud/paths/ec2-005 for technique details."
         ],
         "commands": [
@@ -200,11 +197,7 @@
         "label": "ec2:RunInstances",
         "description": "Launch an EC2 instance using the modified launch template. The instance receives the admin instance profile and executes the malicious user data.\n",
         "hints": [
-          "With the default version updated, the next instance launched from this template will carry your payload.",
-          "Check whether an Auto Scaling Group is already associated with this launch template -- if so, you may be able to trigger a launch by adjusting the ASG's desired capacity.",
-          "Use autoscaling:DescribeAutoScalingGroups to identify which ASG references this template, then increase desired capacity to trigger the launch.",
-          "If no ASG is present, you can launch an instance directly using ec2:RunInstances with the launch template reference.",
-          "Monitor the new instance with ec2:DescribeInstances to confirm it reaches the running state before waiting for the user data to execute."
+          "With the default version updated, launch an instance using ec2:RunInstances with a launch template reference pointing to $Default. If an Auto Scaling Group references this template, you can alternatively trigger a launch by increasing its desired capacity."
         ],
         "commands": [
           {
@@ -219,10 +212,7 @@
         "label": "iam:AttachUserPolicy (via user data)",
         "description": "The instance launches with the admin instance profile (pl-prod-ec2-005-to-admin-target-role) and executes the malicious user data script. The script uses the instance's admin credentials to attach AdministratorAccess to the starting user, completing the privilege escalation.\n",
         "hints": [
-          "The instance boots with the admin instance profile -- the user data script runs as that role automatically.",
-          "The script you injected into user data calls iam:AttachUserPolicy on the starting user using the instance's own credentials from IMDS.",
-          "Wait 2-3 minutes after the instance reaches the running state, then check whether AdministratorAccess has been attached to the starting user.",
-          "Use iam:ListAttachedUserPolicies on the starting user to confirm the policy attachment completed successfully."
+          "The instance boots with the admin instance profile and runs your user data script as that role. Wait 2-3 minutes after the instance reaches 'running', then confirm AdministratorAccess was attached via iam:ListAttachedUserPolicies on the starting user."
         ],
         "commands": [
           {
@@ -237,8 +227,6 @@
         "label": "ssm:GetParameter",
         "description": "With administrator-equivalent permissions now attached to the starting user, retrieve the scenario flag from SSM Parameter Store. AdministratorAccess grants ssm:GetParameter on all parameters in the account, so no additional permissions are needed beyond the admin access just gained.\n",
         "hints": [
-          "You now hold admin-equivalent credentials. The scenario flag is stored in an AWS service commonly used to hold configuration values and small secrets.",
-          "Scenario flags live under a shared prefix in SSM Parameter Store \u2014 consider what a reasonable naming convention for this lab might look like.",
           "Use ssm:GetParameter with the full parameter name to retrieve the flag value."
         ],
         "commands": [

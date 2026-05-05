@@ -171,12 +171,7 @@
         "label": "s3:PutObject",
         "description": "Upload a malicious Python training script to the S3 bucket. The script will use the training job's execution role credentials to grant admin access to the starting user.\n",
         "hints": [
-          "Start by understanding what resources exist in this scenario. Use iam:ListRoles to discover roles whose names suggest they belong to this scenario.",
-          "Use iam:GetRole on any interesting roles to inspect their trust policy \u2014 look for roles that trust a specific AWS service principal.",
-          "Use s3:ListBucket to discover the S3 bucket available in this scenario and understand what you have write access to.",
-          "SageMaker training jobs download and execute whatever script is placed in the S3 source directory. Think about what you could make that script do.",
-          "The training script runs with the credentials of the execution role passed to the job. Write a Python script that uses boto3 to call IAM actions on your behalf.",
-          "SageMaker expects training code packaged as a tar.gz archive with the entry point specified via hyperparameters. Package your script before uploading."
+          "Write a Python script that uses boto3 to attach AdministratorAccess to your user, then package it as a tar.gz archive and upload it to the staging bucket. SageMaker training jobs download and execute the archive at runtime with the execution role's credentials."
         ],
         "commands": [
           {
@@ -199,11 +194,8 @@
         "label": "iam:PassRole + sagemaker:CreateTrainingJob",
         "description": "Create a SageMaker training job that passes the admin role and references the malicious script in S3. SageMaker downloads the script and executes it with the admin role's credentials.\n",
         "hints": [
-          "You have iam:PassRole on the passable admin role and sagemaker:CreateTrainingJob. These two permissions together let you designate what code runs and with what identity.",
-          "Use iam:GetRole to confirm the passable role has admin permissions and its trust policy allows sagemaker.amazonaws.com as the principal.",
-          "When creating the training job, specify the packaged script location via the sagemaker_submit_directory hyperparameter and the entry point via sagemaker_program.",
-          "You will need to specify a SageMaker-compatible container image (a PyTorch or TensorFlow deep learning container from the regional ECR account). Use the pytorch-training image from account 763104351884 in your region.",
-          "Use sagemaker:DescribeTrainingJob to poll job status. The training container takes 3-5 minutes to provision before your script executes.",
+          "When creating the training job, specify the packaged script via the sagemaker_submit_directory hyperparameter and the entry point via sagemaker_program. Use a SageMaker-compatible container image such as the pytorch-training image from ECR account 763104351884 in your region.",
+          "The training container takes 3-5 minutes to provision before your script executes -- poll sagemaker:DescribeTrainingJob until status reaches Completed.",
           "Browse to https://pathfinding.cloud/paths/sagemaker-002 for technique details."
         ],
         "commands": [
@@ -219,9 +211,7 @@
         "label": "Executes as admin role",
         "description": "The training job runs the malicious script with the admin role's temporary credentials, attaching AdministratorAccess to the starting user and completing the privilege escalation.\n",
         "hints": [
-          "Poll the training job status with sagemaker:DescribeTrainingJob until it reaches Completed. This typically takes 3-5 minutes.",
-          "Once the job completes, wait 15 seconds for IAM policy propagation before verifying the escalation worked.",
-          "Verify success by listing the policies attached to your starting user with iam:ListAttachedUserPolicies, then confirm admin access by calling iam:ListUsers."
+          "Once the job completes, wait 15 seconds for IAM policy propagation before verifying the escalation worked."
         ],
         "commands": [
           {
@@ -244,8 +234,6 @@
         "label": "ssm:GetParameter",
         "description": "With administrator-equivalent permissions now attached to the starting user, retrieve the scenario flag from SSM Parameter Store. AdministratorAccess grants ssm:GetParameter on all parameters in the account, so no additional permissions are needed beyond the admin access you just gained.\n",
         "hints": [
-          "You now hold admin-equivalent credentials. The scenario flag is stored in an AWS service commonly used to hold configuration values and small secrets.",
-          "Scenario flags live under a shared prefix in SSM Parameter Store \u2014 consider what a reasonable naming convention for this lab might look like.",
           "Use ssm:GetParameter with the full parameter name to retrieve the flag value."
         ],
         "commands": [

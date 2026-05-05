@@ -155,11 +155,8 @@
         "label": "ec2:StopInstances + ec2:ModifyInstanceAttribute",
         "description": "Stop the running EC2 instance, then inject a malicious cloud-init multipart MIME payload via ec2:ModifyInstanceAttribute (userData attribute). The payload uses cloud_final_modules with the 'always' directive to execute on every boot.\n",
         "hints": [
-          "Start with reconnaissance: use ec2:DescribeInstances to find running instances and note which ones have IAM instance profiles attached.",
-          "Use ec2:DescribeInstanceAttribute with --attribute userData to inspect the current boot configuration of interesting instances.",
-          "EC2 userData can only be modified when the instance is stopped -- stopping it is a prerequisite to injecting your payload.",
-          "The payload needs to be a cloud-init multipart MIME document, base64-encoded, and passed via the --attribute userData flag.",
-          "Use the cloud_final_modules directive with 'always' in your cloud-config section to ensure your script runs on every boot, not just the first.",
+          "Stop the instance with ec2:StopInstances (userData can only be modified when stopped), then inject a cloud-init multipart MIME payload via ec2:ModifyInstanceAttribute --attribute userData. Base64-encode the payload. Use the cloud_final_modules directive with 'always' so your script runs on every boot, not just the first.",
+          "The injected script runs on boot with access to IMDS at 169.254.169.254. Retrieve the role's temporary credentials from /latest/meta-data/iam/security-credentials/<role-name>. If IMDSv2 is enforced, first obtain a session token via a PUT request to /latest/api/token before querying credentials. The extracted AccessKeyId, SecretAccessKey, and Token can be used from any machine.",
           "Browse to https://pathfinding.cloud/paths/ec2-002 for technique details."
         ],
         "commands": [
@@ -186,12 +183,7 @@
         "to": "target-role",
         "label": "IMDS credential extraction",
         "description": "When the instance boots, the injected cloud-init script queries the Instance Metadata Service at 169.254.169.254 to retrieve temporary credentials for the attached admin role. These credentials are then exfiltrated or used directly to perform privileged actions.\n",
-        "hints": [
-          "The injected script runs on boot inside the instance's execution context, giving it access to the Instance Metadata Service at 169.254.169.254.",
-          "IMDS exposes the temporary credentials for the attached IAM role at a well-known path under /latest/meta-data/iam/security-credentials/.",
-          "If IMDSv2 is enforced, your script must first obtain a session token via a PUT request before querying the credentials endpoint.",
-          "Once extracted, the AccessKeyId, SecretAccessKey, and Token from IMDS can be used from any machine -- not just the instance."
-        ],
+        "hints": [],
         "commands": [
           {
             "description": "Query IMDS for the attached role name (runs inside the injected script)",
@@ -213,8 +205,6 @@
         "label": "ssm:GetParameter",
         "description": "With the temporary credentials extracted from IMDS, use the admin role's AdministratorAccess to read the CTF flag from SSM Parameter Store. The flag lives at a predictable path under /pathfinding-labs/flags/ and can be retrieved by any principal with ssm:GetParameter, which AdministratorAccess grants.\n",
         "hints": [
-          "You now hold temporary admin credentials extracted from IMDS. The scenario flag is stored in an AWS service commonly used for configuration values and small secrets.",
-          "Scenario flags live under a shared prefix in SSM Parameter Store \u2014 the naming convention follows the scenario ID and target type.",
           "Use ssm:GetParameter with the full parameter name to retrieve the flag value."
         ],
         "commands": [

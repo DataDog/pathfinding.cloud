@@ -582,6 +582,79 @@ function resetPillValues() {
     });
 }
 
+// Maps URL query param names to filter element IDs.
+// Order determines param order in the generated URL.
+const FILTER_PARAM_MAP = [
+    { param: 'q',        id: null,                isSearch: true },
+    { param: 'category', id: 'category-filter' },
+    { param: 'type',     id: 'path-type-filter' },
+    { param: 'target',   id: 'target-filter' },
+    { param: 'cost',     id: 'cost-filter' },
+    { param: 'hops',     id: 'hops-filter' },
+    { param: 'start',    id: 'start-filter' },
+    { param: 'service',  id: 'service-filter' },
+    { param: 'online',   id: 'online-filter' },
+];
+
+// Sync a pill's visual state to match its hidden <select> element's current value.
+function syncPillToSelect(filterId) {
+    const wrapper = document.getElementById(`pill-wrapper-${filterId}`);
+    if (!wrapper) return;
+    const pill = wrapper.querySelector('.filter-pill');
+    const menu = document.getElementById(`menu-${filterId}`);
+    const select = document.getElementById(filterId);
+    if (!pill || !menu || !select) return;
+    const valueEl = pill.querySelector('.filter-pill-value');
+    const value = select.value;
+    // CSS.escape handles values with special chars (spaces, slashes, etc.)
+    const matchingItem = menu.querySelector(`.filter-pill-item[data-value="${CSS.escape(value)}"]`);
+    menu.querySelectorAll('.filter-pill-item').forEach(i => i.classList.remove('selected'));
+    if (matchingItem) {
+        matchingItem.classList.add('selected');
+        if (valueEl) valueEl.textContent = matchingItem.textContent;
+    }
+    pill.classList.toggle('is-filtered', value !== '');
+}
+
+// Apply URL query parameters to filter state and pill UI.
+// Must be called after dynamic filters (hops, service) are populated so their
+// <option> elements exist before we try to set select.value.
+function applyURLParams() {
+    const params = new URLSearchParams(window.location.search);
+    let anyApplied = false;
+    for (const { param, id, isSearch } of FILTER_PARAM_MAP) {
+        const value = params.get(param);
+        if (!value) continue;
+        if (isSearch) {
+            searchInput.value = value;
+            anyApplied = true;
+        } else {
+            const select = document.getElementById(id);
+            if (!select) continue;
+            select.value = value;
+            // select.value stays '' if the option doesn't exist — only sync when it took
+            if (select.value === value) {
+                syncPillToSelect(id);
+                anyApplied = true;
+            }
+        }
+    }
+    if (anyApplied) applyFilters();
+}
+
+// Write current filter state to the URL as query params via replaceState so the
+// URL is always shareable/bookmarkable without creating extra history entries.
+function syncFiltersToURL() {
+    const params = new URLSearchParams();
+    if (searchInput.value.trim()) params.set('q', searchInput.value.trim());
+    for (const { param, id } of FILTER_PARAM_MAP.filter(f => !f.isSearch)) {
+        const select = document.getElementById(id);
+        if (select && select.value) params.set(param, select.value);
+    }
+    const query = params.toString();
+    history.replaceState(null, '', query ? `/labs/?${query}` : '/labs/');
+}
+
 // Build pill menu items from an options array [{value, label}]
 function buildPillMenu(menuId, options) {
     const menu = document.getElementById(menuId);
@@ -658,6 +731,7 @@ async function loadLabs() {
 
         populateHopsFilter(labs);
         populateServiceFilter(labs);
+        applyURLParams(); // sets filters from URL params before first render (must be after dynamic options are populated)
         updateStats();
         renderLabs();
         initRouter();
@@ -825,6 +899,7 @@ function applyFilters() {
 
     updateStats();
     renderLabs();
+    syncFiltersToURL();
 }
 
 function resetFilters() {
@@ -841,6 +916,7 @@ function resetFilters() {
     resetPillValues();
     updateStats();
     renderLabs();
+    syncFiltersToURL();
 }
 
 function updateStats() {
@@ -2509,21 +2585,36 @@ function renderGuidedV2CTFChallenge(attackMap, slug) {
 
     const nodeById = new Map(attackMap.nodes.map(n => [n.id, n]));
 
-    // Walk edges in order
+    // Walk edges in order; exclude self-loops from incoming count so a self-escalating
+    // root node (from === to) is still detected as the root.
     const incomingCount = {};
     attackMap.nodes.forEach(n => { incomingCount[n.id] = 0; });
-    attackMap.edges.forEach(e => { incomingCount[e.to] = (incomingCount[e.to] || 0) + 1; });
+    attackMap.edges.forEach(e => { if (e.from !== e.to) incomingCount[e.to] = (incomingCount[e.to] || 0) + 1; });
     let rootId = attackMap.nodes.find(n => incomingCount[n.id] === 0)?.id || attackMap.nodes[0]?.id;
 
-    // Build ordered edge list
+    // Build ordered edge list, explicitly handling self-referential (escalation) edges.
+    // Self-loops (from === to) are expanded into two hops: the escalation action itself,
+    // then the forward edge — mirroring the logic in parseAttackMapToGameNodes (map-game.js).
     const orderedEdges = [];
+    const orderedNodeIds = [rootId];
     const visited = new Set();
     let currentId = rootId;
-    while (currentId && !visited.has(currentId)) {
+    while (currentId) {
+        const selfEdge = attackMap.edges.find(e => e.from === currentId && e.to === currentId);
+        const outEdge  = attackMap.edges.find(e => e.from === currentId && e.to !== currentId && !visited.has(e.to));
         visited.add(currentId);
-        const outEdge = attackMap.edges.find(e => e.from === currentId && !visited.has(e.to));
-        if (outEdge) {
+        if (selfEdge) {
+            // Self-escalation: push the self-loop edge, node appears again after escalation
+            orderedEdges.push(selfEdge);
+            orderedNodeIds.push(currentId);
+            if (outEdge) {
+                orderedEdges.push(outEdge);
+                orderedNodeIds.push(outEdge.to);
+            }
+            currentId = outEdge ? outEdge.to : null;
+        } else if (outEdge) {
             orderedEdges.push(outEdge);
+            orderedNodeIds.push(outEdge.to);
             currentId = outEdge.to;
         } else {
             break;
@@ -2531,11 +2622,6 @@ function renderGuidedV2CTFChallenge(attackMap, slug) {
     }
 
     if (orderedEdges.length === 0) return '<p>No attack edges found.</p>';
-
-    // Build the ordered node list that corresponds to orderedEdges
-    // (N+1 nodes for N edges: walk starts at rootId and follows each edge's `to`).
-    const orderedNodeIds = [rootId];
-    orderedEdges.forEach(e => orderedNodeIds.push(e.to));
 
     // Render a single node section. indexLabel is e.g. 'Node 1' or 'Target Node'.
     const renderNodeSection = (node, indexLabel, labelDebugHint) => {

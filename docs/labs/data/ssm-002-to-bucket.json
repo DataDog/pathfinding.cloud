@@ -152,12 +152,8 @@
         "label": "ssm:SendCommand",
         "description": "Execute a shell command on the EC2 instance via AWS Systems Manager SendCommand. The command queries the instance metadata service to extract the temporary AWS credentials associated with the attached IAM role.\n",
         "hints": [
-          "Start by discovering what EC2 instances exist in the account and whether any have IAM roles attached. Use ec2:DescribeInstances to check.",
-          "Look for instances that have an IamInstanceProfile field in the describe-instances output -- that means an IAM role is associated with the instance.",
-          "Once you have a target instance, confirm the SSM agent is reachable using ssm:DescribeInstanceInformation before sending commands.",
-          "You can run arbitrary shell commands on the instance using ssm:SendCommand with the AWS-RunShellScript document -- no SSH key or open port required.",
-          "The AWS-RunShellScript SSM document accepts a commands array. Each entry is a shell command that runs sequentially on the target instance.",
-          "You will need the Command ID returned by send-command to retrieve the output. Use ssm:ListCommandInvocations or ssm:GetCommandInvocation to poll for results.",
+          "Use ssm:SendCommand with the AWS-RunShellScript document to run an IMDSv2 credential-extraction command on the target instance -- no SSH key or open port required. Send a command that PUTs to /latest/api/token then queries /latest/meta-data/iam/security-credentials/<ROLE_NAME>, and capture the Command ID to retrieve output.",
+          "Retrieve the command output with ssm:ListCommandInvocations --details. The JSON response contains AccessKeyId, SecretAccessKey, and Token -- export all three locally and use s3:ListBucket and s3:GetObject to read the sensitive bucket.",
           "Browse to https://pathfinding.cloud/paths/ssm-002 for technique details."
         ],
         "commands": [
@@ -180,13 +176,7 @@
         "to": "ec2-role",
         "label": "IMDS credential extraction",
         "description": "The SSM command output contains the temporary IAM role credentials from the instance metadata service. These credentials correspond to the EC2 bucket role attached via the instance profile.\n",
-        "hints": [
-          "After the command completes, retrieve the output using ssm:ListCommandInvocations with the --details flag to see the stdout of your command.",
-          "The Instance Metadata Service (IMDS) is available inside every EC2 instance at http://169.254.169.254. It exposes the temporary credentials for the attached IAM role.",
-          "Modern instances require IMDSv2: first PUT to /latest/api/token to get a session token, then include that token as a header when querying the credentials endpoint.",
-          "The credentials endpoint path is /latest/meta-data/iam/security-credentials/ROLE_NAME -- query /latest/meta-data/iam/security-credentials/ first to discover the role name.",
-          "The JSON output contains AccessKeyId, SecretAccessKey, and Token -- all three are required to use the extracted credentials."
-        ],
+        "hints": [],
         "commands": [
           {
             "description": "Poll for command completion",
@@ -208,10 +198,7 @@
         "label": "s3:GetObject, s3:ListBucket",
         "description": "Use the EC2 bucket role's temporary credentials to list and download objects from the sensitive S3 bucket. The credentials are fully valid AWS credentials that can be used from any location.\n",
         "hints": [
-          "The extracted credentials work from your local machine -- you are not limited to using them from within the EC2 instance.",
-          "Verify the new identity with sts:GetCallerIdentity to confirm you are now operating as the EC2 instance role before attempting S3 access.",
-          "Try listing the sensitive bucket with aws s3 ls -- the role has s3:ListBucket and s3:GetObject permissions on the target bucket.",
-          "Once you can list the bucket, download the sensitive file with aws s3 cp to complete the escalation."
+          "Export the extracted credentials as environment variables locally and use s3:GetObject to download the flag from the sensitive bucket -- the credentials work from any location, not just the EC2 instance."
         ],
         "commands": [
           {

@@ -187,10 +187,7 @@
         "label": "sts:AssumeRole",
         "description": "Assume the intermediate role to obtain temporary credentials with ECS management permissions and iam:PassRole on the admin role.\n",
         "hints": [
-          "Your starting user has a very narrow permission set. Check which roles it's allowed to assume.",
-          "Use iam:ListRoles or review the starting user's attached policies to identify which role ARN is in the resource condition.",
-          "Once you find the assumable role, examine its permissions before assuming it -- iam:GetRole and iam:ListRolePolicies can reveal what you'll gain.",
-          "Assume the intermediate role using sts:AssumeRole and export the returned temporary credentials as environment variables.",
+          "Call sts:AssumeRole with the intermediate role ARN and export the returned credentials as AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, and AWS_SESSION_TOKEN.",
           "Browse to https://pathfinding.cloud/paths/sts-001 for technique details on this hop."
         ],
         "commands": [
@@ -206,11 +203,8 @@
         "label": "ecs:CreateCluster + ecs:RegisterTaskDefinition + iam:PassRole",
         "description": "Create an ECS cluster, then register a task definition that specifies the admin role as the task role. The iam:PassRole permission allows attaching the admin role to the task definition, which is the key escalation step.\n",
         "hints": [
-          "Now that you hold the intermediate role, enumerate its permissions. What AWS services can it interact with?",
-          "This role can create ECS resources. Think about how you could run arbitrary code in the account using Fargate.",
-          "ECS Fargate tasks need network configuration. Use ec2:DescribeVpcs and ec2:DescribeSubnets to find the default VPC and a subnet.",
-          "The key escalation step is in the task definition's taskRoleArn field. Use iam:ListRoles to find roles that trust ecs-tasks.amazonaws.com.",
-          "When registering the task definition, set both taskRoleArn and executionRoleArn to the admin role ARN. The container command should call iam:AttachUserPolicy to grant AdministratorAccess to the starting user.",
+          "Create an ECS cluster, then register a task definition setting taskRoleArn to the admin role ARN. The container command should call iam:AttachUserPolicy to grant AdministratorAccess to the starting user. You'll need a VPC subnet for Fargate \u2014 use the default VPC.",
+          "Run the task with FARGATE launch type and ENABLED public IP. Monitor with ecs:DescribeTasks until STOPPED, then wait 15 seconds for IAM propagation before verifying your escalated permissions with your starting user credentials.",
           "Browse to https://pathfinding.cloud/paths/ecs-002 for technique details on this hop."
         ],
         "commands": [
@@ -237,12 +231,7 @@
         "to": "admin-role",
         "label": "ecs:RunTask -> task role credentials",
         "description": "Run the Fargate task. When the container starts, AWS injects temporary credentials for the admin role via the ECS metadata endpoint. The container uses those credentials to attach AdministratorAccess to the starting user, granting persistent escalated access.\n",
-        "hints": [
-          "Run the task with ecs:RunTask against your newly created cluster, specifying FARGATE launch type and providing the VPC subnet you identified.",
-          "After launching, monitor the task status with ecs:DescribeTasks until it reaches STOPPED state.",
-          "A zero exit code from the container means the iam:AttachUserPolicy call succeeded. Wait for IAM propagation (about 15 seconds) before testing your new permissions.",
-          "Switch back to your starting user credentials and call iam:ListUsers to confirm AdministratorAccess was successfully attached."
-        ],
+        "hints": [],
         "commands": [
           {
             "description": "Run the Fargate task",
@@ -264,9 +253,7 @@
         "label": "Read CTF flag",
         "description": "With administrator-equivalent permissions now attached to the starting user, retrieve the scenario flag from SSM Parameter Store. AdministratorAccess grants ssm:GetParameter on all parameters in the account, so no additional permissions are needed beyond the admin access you just gained.\n",
         "hints": [
-          "You now hold admin-equivalent credentials. The scenario flag is stored in an AWS service commonly used to hold configuration values and small secrets.",
-          "Scenario flags live under a shared prefix in SSM Parameter Store \u2014 consider what a reasonable naming convention for this lab might look like.",
-          "Use ssm:GetParameter with the full parameter name to retrieve the flag value."
+          "Use your now-escalated starting user credentials to call ssm:GetParameter with the full parameter name to retrieve the flag."
         ],
         "commands": [
           {

@@ -149,10 +149,8 @@
         "label": "iam:PassRole + cloudformation:CreateStack",
         "description": "The starting user passes the privileged CFN service role to CloudFormation and creates a stack with a malicious template. CloudFormation executes the template using the admin service role's permissions.\n",
         "hints": [
-          "You can pass IAM roles to AWS services. Which service here is configured to accept a service role with admin permissions?",
-          "Use iam:ListRoles to find roles whose trust policy allows cloudformation.amazonaws.com as a principal \u2014 that's the service role you can pass.",
-          "CloudFormation can create any resource in a template, including IAM roles. What if the template creates a role that trusts your starting user?",
-          "The --role-arn flag on cloudformation:CreateStack is how you pass a service role. CloudFormation will use it to provision every resource in the template.",
+          "Pass the privileged CFN service role via --role-arn on cloudformation:CreateStack with a template that creates an AdministratorAccess role trusted by your starting user. Include --capabilities CAPABILITY_NAMED_IAM for named IAM resources.",
+          "Poll cloudformation:DescribeStacks until CREATE_COMPLETE before assuming the newly provisioned role \u2014 stack creation takes 30-60 seconds.",
           "Browse to https://pathfinding.cloud/paths/cloudformation-001 for technique details."
         ],
         "commands": [
@@ -175,11 +173,7 @@
         "to": "escalated-role",
         "label": "CloudFormation provisions IAM role",
         "description": "CloudFormation, running with the admin service role's permissions, provisions the IAM role defined in the malicious template. The resulting role has AdministratorAccess and trusts the starting user.\n",
-        "hints": [
-          "The stack executes with the passed admin service role. What can it create on your behalf?",
-          "Craft a template that defines a new IAM role with AdministratorAccess and a trust policy that allows your starting user to assume it directly.",
-          "Use cloudformation:DescribeStacks to monitor the stack status. Wait for CREATE_COMPLETE before trying to assume the new role."
-        ],
+        "hints": [],
         "commands": []
       },
       {
@@ -188,9 +182,7 @@
         "label": "sts:AssumeRole",
         "description": "The starting user assumes the newly created escalated role, obtaining administrative credentials for the AWS account.\n",
         "hints": [
-          "Once the stack reaches CREATE_COMPLETE, the escalated role exists and its trust policy allows your starting user to assume it.",
-          "Use sts:AssumeRole with the role ARN from the stack outputs (or construct it from the role name in your template).",
-          "Export the returned AccessKeyId, SecretAccessKey, and SessionToken as environment variables to operate as the escalated role."
+          "Wait at least 15 seconds after CREATE_COMPLETE for IAM propagation, then assume the role with sts:AssumeRole and export the returned credentials."
         ],
         "commands": [
           {
@@ -209,9 +201,7 @@
         "label": "ssm:GetParameter",
         "description": "With administrator-equivalent permissions obtained by assuming the escalated role, retrieve the scenario flag from SSM Parameter Store. AdministratorAccess grants ssm:GetParameter on all parameters in the account, so no additional permissions are needed beyond the admin access you just gained.\n",
         "hints": [
-          "You now hold admin-equivalent credentials via the escalated role. The scenario flag is stored in an AWS service commonly used to hold configuration values and small secrets.",
-          "Scenario flags live under a shared prefix in SSM Parameter Store \u2014 consider what a reasonable naming convention for this lab might look like.",
-          "Use ssm:GetParameter with the full parameter name to retrieve the flag value."
+          "Use ssm:GetParameter with the parameter name /pathfinding-labs/flags/cloudformation-001-to-admin to retrieve the flag."
         ],
         "commands": [
           {

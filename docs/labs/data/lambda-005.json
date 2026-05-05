@@ -154,12 +154,8 @@
         "label": "lambda:UpdateFunctionCode",
         "description": "Replace the existing Lambda function code with a malicious payload. The payload uses the function's execution role (which has AdministratorAccess) to attach the AdministratorAccess policy to the starting user.\n",
         "hints": [
-          "Start by enumerating Lambda functions in the account to identify targets with privileged execution roles.",
-          "Use lambda:ListFunctions or lambda:GetFunction to find the target function and inspect its execution role ARN.",
-          "Check the execution role's attached policies -- look for AdministratorAccess or equivalent broad policies.",
-          "You can replace a Lambda function's code without modifying its execution role or resource-based policy.",
-          "Your malicious payload must match the existing handler signature -- check the handler name before crafting your code.",
-          "The payload should use boto3 to call an IAM action under the execution role's identity (e.g., attaching a policy to your starting user).",
+          "Fetch the existing function config with lambda:GetFunction to confirm the Handler field, then append your AttachUserPolicy call to the handler. The handler filename must match exactly or the invocation will fail.",
+          "Use lambda:AddPermission to append a statement to the function's resource-based policy granting your user lambda:InvokeFunction -- you do not need to rewrite the whole policy. Then invoke with lambda:InvokeFunction. Lambda returns HTTP 200 even when the handler throws -- always check the response body. Wait a few seconds after code upload before invoking, and allow ~15 seconds of IAM propagation before verifying.",
           "Browse to https://pathfinding.cloud/paths/lambda-005 for technique details."
         ],
         "commands": [
@@ -186,13 +182,7 @@
         "to": "target-lambda",
         "label": "lambda:AddPermission",
         "description": "Add a resource-based policy statement to the Lambda function granting the starting user permission to invoke it. This step is required because the function's resource policy may initially block the starting user from invoking it.\n",
-        "hints": [
-          "Before invoking the function, check whether the existing resource-based policy permits your user to call it.",
-          "Use lambda:GetPolicy to inspect the current resource-based policy on the target function.",
-          "If the resource policy does not grant your principal invocation rights, you need to add a new statement.",
-          "lambda:AddPermission lets you append a statement to a function's resource policy -- you do not need to rewrite the whole policy.",
-          "Grant lambda:InvokeFunction to your starting user's ARN so the subsequent invocation is authorized."
-        ],
+        "hints": [],
         "commands": [
           {
             "description": "Grant self-invocation permission via resource-based policy",
@@ -205,13 +195,7 @@
         "to": "lambda-exec-role",
         "label": "lambda:InvokeFunction",
         "description": "Invoke the malicious Lambda function, which executes under the privileged execution role and attaches AdministratorAccess to the starting user.\n",
-        "hints": [
-          "With the updated code deployed and invocation rights granted, you are ready to trigger the function.",
-          "Wait a short time after uploading the new code before invoking -- Lambda needs to process the deployment.",
-          "Invoke the function and check the response body for confirmation that the IAM action succeeded.",
-          "After invocation, wait for IAM policy propagation before verifying your new permissions.",
-          "Confirm the escalation worked by attempting an IAM action that only an administrator can perform."
-        ],
+        "hints": [],
         "commands": [
           {
             "description": "Invoke the malicious Lambda to attach AdministratorAccess to the starting user",
@@ -229,8 +213,6 @@
         "label": "Read CTF flag",
         "description": "With administrator-equivalent permissions now attached to the starting user, retrieve the scenario flag from SSM Parameter Store. AdministratorAccess grants ssm:GetParameter on all parameters in the account, so no additional permissions are needed beyond the admin access you just gained.\n",
         "hints": [
-          "You now hold admin-equivalent credentials. The scenario flag is stored in an AWS service commonly used to hold configuration values and small secrets.",
-          "Scenario flags live under a shared prefix in SSM Parameter Store \u2014 consider what a reasonable naming convention for this lab might look like.",
           "Use ssm:GetParameter with the full parameter name to retrieve the flag value."
         ],
         "commands": [

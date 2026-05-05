@@ -69,10 +69,6 @@
           {
             "permission": "sts:GetCallerIdentity",
             "purpose": "verify current identity and account ID"
-          },
-          {
-            "permission": "iam:ListUsers",
-            "purpose": "verify admin access after privilege escalation"
           }
         ]
       }
@@ -162,11 +158,8 @@
         "label": "glue:UpdateJob + iam:PassRole",
         "description": "Update the existing Glue job configuration to replace the execution role with the administrative target role and change the script location to the malicious escalation script stored in S3.\n",
         "hints": [
-          "Start by discovering what Glue resources exist in this account \u2014 use glue:GetJob or look for running ETL workloads.",
-          "You can modify existing AWS Glue jobs, including changing both the execution role and the script location.",
-          "Review the policy on your starting principal \u2014 which role is explicitly listed in your iam:PassRole permission?",
-          "You have iam:PassRole on an admin role and glue:UpdateJob. Update the existing job to use the admin role and a malicious script location.",
-          "The malicious script needs to be reachable by the Glue service. The scenario has already staged a script in an S3 bucket \u2014 use glue:GetJob to find where scripts are currently stored.",
+          "Update the existing Glue job to use the admin role and a malicious script using glue:UpdateJob, passing the admin role ARN via iam:PassRole. The malicious script is already staged in the scenario's S3 bucket \u2014 use glue:GetJob to find the current script location and derive the bucket path.",
+          "After updating the job, trigger it with glue:StartJobRun and poll glue:GetJobRun with the returned run ID until SUCCEEDED, then wait ~15 seconds for IAM policy propagation before verifying.",
           "Browse to https://pathfinding.cloud/paths/glue-005 for technique details."
         ],
         "commands": [
@@ -185,13 +178,7 @@
         "to": "target-role",
         "label": "glue:StartJobRun",
         "description": "Trigger execution of the updated Glue job. The job runs under the administrative target role and executes the malicious Python script, which attaches AdministratorAccess to the starting user via iam:AttachUserPolicy.\n",
-        "hints": [
-          "Now that you have updated the job, you need to trigger it to run.",
-          "Use glue:StartJobRun to execute the updated job and capture the JobRunId from the response.",
-          "Poll the job status using glue:GetJobRun with the run ID until you see SUCCEEDED.",
-          "After the job completes, wait about 15 seconds for IAM policy changes to propagate before verifying.",
-          "Verify the escalation worked by checking the policies attached to the starting user, then confirm admin access with iam:ListUsers."
-        ],
+        "hints": [],
         "commands": [
           {
             "description": "Start the job run",
@@ -213,9 +200,7 @@
         "label": "ssm:GetParameter",
         "description": "With administrator-equivalent permissions now attached to the starting user, retrieve the scenario flag from SSM Parameter Store. AdministratorAccess grants ssm:GetParameter on all parameters in the account, so no additional permissions are needed beyond the admin access gained in the previous step.\n",
         "hints": [
-          "You now hold admin-equivalent credentials. The scenario flag is stored in an AWS service commonly used to hold configuration values and small secrets.",
-          "Scenario flags live under a shared prefix in SSM Parameter Store \u2014 consider what a reasonable naming convention for this lab might look like.",
-          "Use ssm:GetParameter with the full parameter name to retrieve the flag value."
+          "Use ssm:GetParameter with the parameter name /pathfinding-labs/flags/glue-005-to-admin to retrieve the flag value."
         ],
         "commands": [
           {

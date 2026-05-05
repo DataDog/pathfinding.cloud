@@ -148,12 +148,8 @@
         "label": "cloudformation:UpdateStack",
         "description": "The starting user updates the CloudFormation stack template to add a new IAM role resource with AdministratorAccess and a trust policy allowing the starting user to assume it. The stack executes the update using its administrative service role.\n",
         "hints": [
-          "Your starting user can update CloudFormation stacks. Start by finding which stacks exist in the account and reviewing their configuration.",
-          "Use cloudformation:DescribeStacks to list stacks and check for a RoleARN field \u2014 this tells you which service role CloudFormation uses when executing updates.",
-          "Use cloudformation:GetTemplate to retrieve the current stack template. Understanding what resources already exist helps you craft a safe modification.",
-          "A stack update runs with the service role's permissions, not yours. If that role has AdministratorAccess, you can add IAM resources to the template that you couldn't create directly.",
-          "Craft a modified template that keeps the existing resources and adds a new AWS::IAM::Role with AdministratorAccess and a trust policy pointing to your starting user's ARN.",
-          "The cloudformation:UpdateStack call requires the --capabilities CAPABILITY_NAMED_IAM flag when the template creates named IAM resources.",
+          "Fetch the current template with cloudformation:GetTemplate, add a new AWS::IAM::Role resource with AdministratorAccess and a trust policy allowing your starting user to assume it, then call cloudformation:UpdateStack with --capabilities CAPABILITY_NAMED_IAM. The stack's admin service role performs the IAM operations.",
+          "Poll cloudformation:DescribeStacks until UPDATE_COMPLETE before attempting to assume the new role \u2014 allow ~15 seconds after completion for IAM propagation.",
           "Browse to https://pathfinding.cloud/paths/cloudformation-002 for technique details."
         ],
         "commands": [
@@ -176,11 +172,7 @@
         "to": "escalated-role",
         "label": "iam:CreateRole + iam:AttachRolePolicy",
         "description": "The CloudFormation stack, executing with its administrative service role, creates the new IAM role and attaches the AdministratorAccess managed policy to it.\n",
-        "hints": [
-          "This transition is handled automatically by CloudFormation once the stack update is submitted \u2014 you don't need to take any action here.",
-          "Wait for the cloudformation:wait stack-update-complete command to return before attempting to use the new role.",
-          "After the stack update completes, you can verify the role exists using iam:GetRole on the role name specified in your template."
-        ],
+        "hints": [],
         "commands": []
       },
       {
@@ -189,10 +181,7 @@
         "label": "sts:AssumeRole",
         "description": "With the escalated role now created by the stack update, the starting user assumes it to gain full administrative access to the AWS account.\n",
         "hints": [
-          "The stack update created a new IAM role with a trust policy that explicitly allows your starting user to assume it.",
-          "Use iam:GetRole to confirm the role exists and review its trust policy before attempting assumption.",
-          "Allow 15 seconds after the stack update completes for IAM to propagate the new role before calling sts:AssumeRole.",
-          "Export the returned AccessKeyId, SecretAccessKey, and SessionToken as environment variables to operate as the escalated role."
+          "Allow 15 seconds after the stack update completes for IAM propagation, then call sts:AssumeRole and export the returned credentials."
         ],
         "commands": [
           {
@@ -211,9 +200,7 @@
         "label": "ssm:GetParameter",
         "description": "With administrator-equivalent permissions obtained by assuming the escalated role, retrieve the scenario flag from SSM Parameter Store. AdministratorAccess grants ssm:GetParameter on all parameters in the account, so no additional permissions are needed beyond the admin access already gained.\n",
         "hints": [
-          "You now hold admin-equivalent credentials via the assumed escalated role. The scenario flag is stored in AWS Systems Manager Parameter Store.",
-          "Scenario flags live under the /pathfinding-labs/flags/ prefix \u2014 the parameter name follows the pattern {scenario-id}-{target}.",
-          "Use ssm:GetParameter with the full parameter name to retrieve the flag value."
+          "Use ssm:GetParameter with the parameter name /pathfinding-labs/flags/cloudformation-002-to-admin to retrieve the flag."
         ],
         "commands": [
           {

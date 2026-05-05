@@ -170,12 +170,8 @@
         "label": "lambda:UpdateFunctionCode",
         "description": "Replace the Lambda function's code with a credential exfiltration payload that reads the execution role's environment variables and returns them in the function response.\n",
         "hints": [
-          "Start by discovering what Lambda functions exist in the account \u2014 use your helpful permissions to list and inspect them.",
-          "Use lambda:GetFunction on the target function to find its execution role ARN. That role is your real target.",
-          "Lambda functions run with an IAM execution role, and those role credentials are injected as environment variables into every invocation.",
-          "You can replace this function's code with anything you want. Think about what a function could return to you that would be useful.",
-          "The replacement code must use the same handler name as the original function. Check the configuration before writing your payload.",
-          "Package your replacement code as a zip file and deploy it with lambda:UpdateFunctionCode, then wait a few seconds for the update to finish.",
+          "Fetch the existing function configuration to confirm the handler filename, then append a credential exfiltration payload: a Python handler that returns os.environ['AWS_ACCESS_KEY_ID'], os.environ['AWS_SECRET_ACCESS_KEY'], and os.environ['AWS_SESSION_TOKEN'] in the response body. Zip it and deploy with lambda:UpdateFunctionCode \u2014 the handler name must match the existing function configuration.",
+          "Wait a few seconds after updating before invoking; Lambda may still be propagating the new code. Then invoke the function and parse the response body as JSON to extract the three credential fields \u2014 these are temporary STS credentials, so AWS_SESSION_TOKEN must accompany every subsequent call.",
           "Browse to https://pathfinding.cloud/paths/lambda-004 for technique details."
         ],
         "commands": [
@@ -194,13 +190,7 @@
         "to": "lambda-role",
         "label": "lambda:InvokeFunction",
         "description": "Invoke the modified Lambda function to execute the credential exfiltration payload. The response body contains the execution role's temporary AWS credentials (access key ID, secret access key, and session token).\n",
-        "hints": [
-          "Now that the function code is replaced, invoke it and inspect the response body carefully.",
-          "Lambda injects three environment variables for the execution role: AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, and AWS_SESSION_TOKEN.",
-          "Parse the response body as JSON to extract the three credential values, then export them as environment variables.",
-          "Confirm you've switched identities by calling sts:GetCallerIdentity \u2014 you should now see the Lambda execution role ARN.",
-          "These are temporary STS credentials, so include AWS_SESSION_TOKEN in every subsequent API call."
-        ],
+        "hints": [],
         "commands": [
           {
             "description": "Invoke the function and capture credentials",
@@ -214,10 +204,7 @@
         "label": "iam:CreateAccessKey",
         "description": "Using the exfiltrated Lambda execution role credentials, create a permanent access key pair for the admin user. This grants full AdministratorAccess to the AWS account.\n",
         "hints": [
-          "You are now operating as the Lambda execution role. Check what IAM permissions it has.",
-          "Look at the policies attached to this role \u2014 what can it do to IAM users?",
-          "The role has permission to create credentials for a specific IAM user. Use iam:CreateAccessKey to generate a permanent key pair.",
-          "Unlike the temporary STS credentials you just exfiltrated, access keys are permanent \u2014 unset AWS_SESSION_TOKEN after switching to them.",
+          "Call iam:CreateAccessKey --user-name pl-prod-lambda-004-to-iam-002-admin-user using the Lambda role credentials to generate a permanent key pair. Unlike the temporary STS credentials, access keys have no session token -- unset AWS_SESSION_TOKEN after switching to them.",
           "Browse to https://pathfinding.cloud/paths/iam-002 for technique details."
         ],
         "commands": [
@@ -237,9 +224,7 @@
         "label": "Read CTF flag",
         "description": "With the admin user's permanent access keys in hand, retrieve the scenario flag from SSM Parameter Store. AdministratorAccess grants ssm:GetParameter on all parameters in the account, so no additional permissions are needed beyond the admin credentials you just created.\n",
         "hints": [
-          "You now hold admin credentials. The scenario flag is stored in an AWS service commonly used to hold configuration values and small secrets.",
-          "Scenario flags live under a shared prefix in SSM Parameter Store \u2014 consider what a reasonable naming convention for this lab might look like.",
-          "Use ssm:GetParameter with the full parameter name to retrieve the flag value."
+          "Use the admin credentials to call ssm:GetParameter with the full parameter name to retrieve the flag."
         ],
         "commands": [
           {
