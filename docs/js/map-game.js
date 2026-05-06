@@ -4805,8 +4805,11 @@ function buildCompleteButtons(w, h, state) {
             w: smallBtnW, h: smallBtnH, label: 'Download Map',
             style: 'secondary', fontSize: 12, radius: 10,
             onClick: () => {
+                // Pass the in-game canvas as the fallback source for labs
+                // without a static hero.png on disk. labShareAction('download')
+                // prefers the hero PNG when available.
                 const offscreen = buildCleanMapCanvas(w, h, state);
-                if (offscreen) labShareAction('download', offscreen, state.lab);
+                labShareAction('download', offscreen, state.lab);
             }
         },
     ];
@@ -8708,11 +8711,26 @@ function renderStaticMapPreview(containerEl, lab) {
 
     awsIconSprites.preload(mapNodes);
     if (mapCompanions) awsIconSprites.preload(mapCompanions);
-    cloudSprites.load().then(() => draw());
-    islandSprites.load().then(() => draw());
-    helicopterSprite.load().then(() => draw());
     awsIconSprites.onLoadCallbacks.push(() => draw());
     draw();
+
+    // Once cloud/island/helicopter sprites finish loading, draw a final frame
+    // and mark the container as rendered. The hero-image generator waits on
+    // this flag (data-rendered="true") before capturing the canvas. The 200ms
+    // grace period lets any in-flight AWS icon image loads settle without
+    // blocking the signal indefinitely.
+    Promise.all([
+        cloudSprites.load(),
+        islandSprites.load(),
+        helicopterSprite.load(),
+    ]).then(() => {
+        draw();
+        setTimeout(() => {
+            draw();
+            containerEl.dataset.rendered = 'true';
+            containerEl.dispatchEvent(new CustomEvent('mappreviewrendered', { bubbles: true }));
+        }, 200);
+    });
 
 }
 
@@ -8770,6 +8788,30 @@ function downloadCanvasAsImage(canvas, filename) {
     }, 'image/png');
 }
 
+// Fetch the per-lab static hero image as a Blob (the same PNG used for OG
+// unfurls). Returns null if the lab has no hero on disk -- caller can fall
+// back to the in-page canvas.
+async function fetchLabHeroBlob(slug) {
+    if (!slug) return null;
+    const url = `/labs/${encodeURIComponent(slug)}/hero.png`;
+    try {
+        const r = await fetch(url);
+        if (!r.ok) return null;
+        return await r.blob();
+    } catch (_) {
+        return null;
+    }
+}
+
+function downloadBlob(blob, filename) {
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    a.click();
+    URL.revokeObjectURL(url);
+}
+
 function labShareAction(action, canvas, lab) {
     const labSlug = lab.slug || lab.id || 'lab';
     const labUrl = `https://pathfinding.cloud/labs/${labSlug}`;
@@ -8778,16 +8820,24 @@ function labShareAction(action, canvas, lab) {
     // Share message: informative, not "I completed" -- just spreading awareness
     const shareText = `${lab.name} -- a free, hands-on AWS attack path lab. Deploy it, exploit it, and learn to detect it.`;
 
-    // For social platforms: download the map image first so the user can attach it,
-    // then open the share dialog with pre-populated text and link.
-    // navigator.share() is used when available since it supports attaching files directly.
+    // Social URL share dialogs (linkedin/twitter/bluesky/mastodon): no longer
+    // auto-download an image. Each /labs/{slug} URL has baked-in OG/Twitter
+    // meta tags and a per-lab hero.png, so the share platform's preview will
+    // unfurl with the right image automatically. Users who want the image
+    // standalone can use the Download Map button (mission-complete screen)
+    // or the dedicated download action below.
     switch (action) {
         case 'download':
-            downloadCanvasAsImage(canvas, filename);
+            // Prefer the static hero.png to match what social platforms show.
+            // Falls back to the live canvas for unlisted/draft labs that
+            // don't have a hero.png on disk.
+            fetchLabHeroBlob(labSlug).then(blob => {
+                if (blob) downloadBlob(blob, filename);
+                else if (canvas) downloadCanvasAsImage(canvas, filename);
+            });
             break;
 
         case 'linkedin':
-            if (canvas) downloadCanvasAsImage(canvas, filename);
             window.open(
                 `https://www.linkedin.com/sharing/share-offsite/?url=${encodeURIComponent(labUrl)}`,
                 '_blank'
@@ -8795,7 +8845,6 @@ function labShareAction(action, canvas, lab) {
             break;
 
         case 'twitter':
-            if (canvas) downloadCanvasAsImage(canvas, filename);
             window.open(
                 `https://twitter.com/intent/tweet?text=${encodeURIComponent(shareText)}&url=${encodeURIComponent(labUrl)}`,
                 '_blank'
@@ -8803,7 +8852,6 @@ function labShareAction(action, canvas, lab) {
             break;
 
         case 'bluesky':
-            if (canvas) downloadCanvasAsImage(canvas, filename);
             window.open(
                 `https://bsky.app/intent/compose?text=${encodeURIComponent(shareText + '\n\n' + labUrl)}`,
                 '_blank'
@@ -8811,7 +8859,6 @@ function labShareAction(action, canvas, lab) {
             break;
 
         case 'mastodon':
-            if (canvas) downloadCanvasAsImage(canvas, filename);
             window.open(
                 `https://mastodonshare.com/?text=${encodeURIComponent(shareText)}&url=${encodeURIComponent(labUrl)}`,
                 '_blank'
@@ -8826,18 +8873,20 @@ function labShareAction(action, canvas, lab) {
         }
 
         case 'native-share':
-            if (canvas) {
-                canvas.toBlob(async (blob) => {
-                    try {
+            // Web Share API can attach a real File to the share. Try to
+            // attach the static hero.png; fall back to URL-only share if the
+            // hero isn't available or the platform rejects file attachment.
+            (async () => {
+                try {
+                    const blob = await fetchLabHeroBlob(labSlug);
+                    if (blob && navigator.canShare && navigator.canShare({ files: [new File([blob], filename, { type: 'image/png' })] })) {
                         const file = new File([blob], filename, { type: 'image/png' });
                         await navigator.share({ title: lab.name, text: shareText, url: labUrl, files: [file] });
-                    } catch (_) {
-                        try { await navigator.share({ title: lab.name, text: shareText, url: labUrl }); } catch (_) {}
+                        return;
                     }
-                }, 'image/png');
-            } else {
-                navigator.share({ title: lab.name, text: shareText, url: labUrl }).catch(() => {});
-            }
+                    await navigator.share({ title: lab.name, text: shareText, url: labUrl });
+                } catch (_) { /* user cancelled or share unsupported */ }
+            })();
             break;
     }
 }

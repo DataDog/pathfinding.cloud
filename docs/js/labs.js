@@ -773,7 +773,9 @@ function routeFromURL() {
 
     // Match /labs/{slug} — decode percent-encoded characters so slugs with spaces
     // (e.g. "sts-001 + ecs-002") survive round-tripping through the URL bar.
-    const labMatch = pathname.match(/^\/labs\/(.+)$/);
+    // Optional trailing slash so per-lab static stubs served at /labs/{slug}/
+    // route the same as /labs/{slug}.
+    const labMatch = pathname.match(/^\/labs\/([^/]+)\/?$/);
 
     if (labMatch) {
         const slug = decodeURIComponent(labMatch[1]);

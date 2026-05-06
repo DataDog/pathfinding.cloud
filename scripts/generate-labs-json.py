@@ -1275,15 +1275,49 @@ def generate_labs_json(source_dir=None, output_file="docs/labs.json"):
     detail_dir.mkdir(parents=True, exist_ok=True)
 
     readme_count = 0
+    current_slugs = set()
     for lab in labs:
         detail_path = detail_dir / f"{lab['slug']}.json"
         with open(detail_path, "w") as f:
             json.dump(lab, f, indent=2)
         if "readme" in lab:
             readme_count += 1
+        current_slugs.add(lab["slug"])
+
+    # Reconcile: delete per-slug data files (and any matching stub
+    # directory under docs/labs/{slug}/) for slugs that no longer exist in
+    # the source READMEs. Without this, slug renames in pathfinding-labs
+    # leave orphaned files here that the website still serves.
+    #
+    # Stub directories are only removed when their index.html carries the
+    # generator marker injected by scripts/generate-lab-stubs.py, so
+    # hand-written pages (e.g. docs/labs/getting-started/) are never
+    # touched even if a same-named data file once existed.
+    import shutil
+    STUB_MARKER = '<meta name="generator" content="pathfinding-cloud-lab-stub">'
+    orphans = []
+    for existing in detail_dir.glob("*.json"):
+        slug = existing.stem
+        if slug in current_slugs:
+            continue
+        existing.unlink()
+        stub_dir = Path("docs/labs") / slug
+        index_html = stub_dir / "index.html"
+        if stub_dir.is_dir() and index_html.exists():
+            try:
+                head_text = index_html.read_text(encoding="utf-8", errors="replace")[:4096]
+                if STUB_MARKER in head_text:
+                    shutil.rmtree(stub_dir)
+            except Exception:
+                pass
+        orphans.append(slug)
 
     print(f"\nWrote {len(labs)} per-scenario detail files to {detail_dir}/")
     print(f"  With README prose content: {readme_count}")
+    if orphans:
+        print(f"  Removed {len(orphans)} orphan slug(s) from previous runs:")
+        for slug in sorted(orphans):
+            print(f"    - {slug}")
 
     # Write lightweight index to labs.json
     index = [make_index_entry(lab) for lab in labs]
