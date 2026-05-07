@@ -1967,10 +1967,6 @@ function buildGuidedV2Sections(lab) {
                 // Strip start/destination lines from overview text since we show them as cards
                 let overviewText = rawOverview.replace(/^-\s*\*\*Start:\*\*.*$/gm, '').replace(/^-\s*\*\*Destination.*?\*\*.*$/gm, '').trim();
 
-                if (overviewText) {
-                    html += `<div class="lab-tab-prose">${renderLabMarkdown(overviewText)}</div>`;
-                }
-
                 // Start/Destination cards from attackMap
                 const sd = getStartDestination(lab);
                 if (sd) {
@@ -2072,6 +2068,7 @@ function buildGuidedV2Sections(lab) {
                     const permsPillsHtml = renderPermissionsPills(lab.permissions, slug);
 
                     html += `<div class="lab-objective-flow${permsPillsHtml ? ' lab-objective-flow-with-perms' : ''}">
+                        ${overviewText ? `<div class="lab-tab-prose lab-objective-prose">${renderLabMarkdown(overviewText)}</div>` : ''}
                         <div class="lab-objective-flow-cards">
                             <div class="lab-objective-card lab-objective-card-${startClassify.type}">
                                 <div class="lab-objective-card-header">
