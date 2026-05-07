@@ -1,4 +1,13 @@
 // Labs application state
+
+// ---------------------------------------------------------------------------
+// OWNER CONFIG: categories hidden from the public catalog.
+// Labs in these categories remain accessible by direct URL but are excluded
+// from the table, card view, search, and all filter dropdowns.
+// To re-enable a category, remove it from this array.
+// ---------------------------------------------------------------------------
+const HIDDEN_CATEGORIES = ["CTF", "Attack Simulation", "Tool Testing"];
+
 let allLabs = [];
 let filteredLabs = [];
 let pathsData = []; // For cross-linking to paths
@@ -54,9 +63,10 @@ const categoryConfig = {
     'CSPM: Misconfig': { label: 'CSPM', cssClass: 'lab-badge-cspm' },
     'Toxic Combination': { label: 'Toxic Combo', cssClass: 'lab-badge-toxic' },
     'CSPM: Toxic Combination': { label: 'Toxic Combo', cssClass: 'lab-badge-toxic' },
-    'Tool Testing': { label: 'Tool Testing', cssClass: 'lab-badge-tooltest' },
-    'CTF': { label: 'CTF', cssClass: 'lab-badge-ctf' },
-    'Attack Simulation': { label: 'Attack Sim', cssClass: 'lab-badge-attacksim' },
+    // Hidden from public catalog (see HIDDEN_CATEGORIES):
+    // 'Tool Testing': { label: 'Tool Testing', cssClass: 'lab-badge-tooltest' },
+    // 'CTF': { label: 'CTF', cssClass: 'lab-badge-ctf' },
+    // 'Attack Simulation': { label: 'Attack Sim', cssClass: 'lab-badge-attacksim' },
 };
 
 // Category banner configuration for card graphics
@@ -725,8 +735,8 @@ async function loadLabs() {
             fetch('/paths.json').then(r => r.ok ? r.json() : []).catch(() => []),
         ]);
 
-        allLabs = labs;
-        filteredLabs = labs;
+        allLabs = labs.filter(lab => !HIDDEN_CATEGORIES.includes(lab.category));
+        filteredLabs = allLabs;
         pathsData = paths;
 
         populateHopsFilter(labs);
