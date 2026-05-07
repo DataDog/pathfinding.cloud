@@ -2639,9 +2639,9 @@ function renderGuidedV2CTFChallenge(attackMap, slug) {
             ? labKvPill('Type', 'lab-kv-pill-node', displaySubType(node.subType),
                 `attackMap.nodes[${node.id}].subType → displaySubType()`)
             : '';
-        const namePill = (node.label || node.id)
-            ? labKvPill('Name', 'lab-kv-pill-node', node.label || node.id,
-                `attackMap.nodes[${node.id}].label`)
+        const namePill = node.arn
+            ? labKvPill('ARN', 'lab-kv-pill-node', node.arn,
+                `attackMap.nodes[${node.id}].arn`)
             : '';
         const descHtml = node.description
             ? `<div class="lab-gv2-ctf-desc">${escapeHtml(node.description)}${debugTag(`attackMap.nodes[${node.id}].description`)}</div>`
