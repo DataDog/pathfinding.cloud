@@ -71,15 +71,29 @@ const categoryConfig = {
 
 // Category banner configuration for card graphics
 const categoryBannerConfig = {
-    'Privilege Escalation': { bannerClass: 'lab-banner-privesc', bannerText: 'PRIVILEGE ESCALATION' },
+    // Privilege Escalation uses pathType-aware lookup (see getPrivescBanner)
     'CSPM Misconfiguration': { bannerClass: 'lab-banner-cspm', bannerText: 'CSPM MISCONFIGURATION' },
     'CSPM: Misconfig': { bannerClass: 'lab-banner-cspm', bannerText: 'CSPM MISCONFIGURATION' },
-    'Toxic Combination': { bannerClass: 'lab-banner-toxic', bannerText: 'TOXIC COMBINATION' },
-    'CSPM: Toxic Combination': { bannerClass: 'lab-banner-toxic', bannerText: 'TOXIC COMBINATION' },
+    'Toxic Combination': { bannerClass: 'lab-banner-toxic', bannerText: 'CSPM: TOXIC COMBINATION' },
+    'CSPM: Toxic Combination': { bannerClass: 'lab-banner-toxic', bannerText: 'CSPM: TOXIC COMBINATION' },
     'Tool Testing': { bannerClass: 'lab-banner-tooltest', bannerText: 'TOOL TESTING' },
     'CTF': { bannerClass: 'lab-banner-ctf', bannerText: 'CTF CHALLENGE' },
     'Attack Simulation': { bannerClass: 'lab-banner-attacksim', bannerText: 'ATTACK SIMULATION' },
 };
+
+// Per-pathType banner config for Privilege Escalation labs.
+// bannerText = short form (narrow screens); bannerTextFull = long form (wide screens).
+const privescBannerConfig = {
+    'self-escalation': { bannerClass: 'lab-banner-privesc-self',     bannerText: 'PRIVESC: SELF ESCALATION',  bannerTextFull: 'PRIVILEGE ESCALATION: SELF ESCALATION' },
+    'one-hop':         { bannerClass: 'lab-banner-privesc-onehop',    bannerText: 'PRIVESC: ONE-HOP',          bannerTextFull: 'PRIVILEGE ESCALATION: ONE-HOP' },
+    'multi-hop':       { bannerClass: 'lab-banner-privesc-multihop',  bannerText: 'PRIVESC: MULTI-HOP',        bannerTextFull: 'PRIVILEGE ESCALATION: MULTI-HOP' },
+    'cross-account':   { bannerClass: 'lab-banner-privesc-crossacct', bannerText: 'PRIVESC: CROSS-ACCOUNT',    bannerTextFull: 'PRIVILEGE ESCALATION: CROSS-ACCOUNT' },
+};
+
+// Returns the banner config for a Privilege Escalation lab, keyed by pathType
+function getPrivescBanner(lab) {
+    return privescBannerConfig[lab.pathType] || { bannerClass: 'lab-banner-privesc', bannerText: 'PRIVILEGE ESCALATION', bannerTextFull: 'PRIVILEGE ESCALATION' };
+}
 
 // Path type display labels and colors
 const pathTypeLabels = {
@@ -1118,20 +1132,34 @@ function renderLabCards() {
     });
 }
 
+// Returns the banner config for a lab, accounting for per-pathType PrivEsc variants
+function getBannerConfig(lab) {
+    if (lab.category === 'Privilege Escalation') return getPrivescBanner(lab);
+    return categoryBannerConfig[lab.category] || { bannerClass: 'lab-banner-privesc', bannerText: lab.category.toUpperCase() };
+}
+
 // Render category banner -- background-only watermark (Style A) or foreground-only label (Style B)
 function renderBannerA(lab) {
-    const banner = categoryBannerConfig[lab.category] || { bannerClass: 'lab-banner-privesc', bannerText: lab.category.toUpperCase() };
+    const banner = getBannerConfig(lab);
+    const textHtml = banner.bannerTextFull
+        ? `<span class="lab-card-banner-watermark banner-text-full">${banner.bannerTextFull}</span>
+           <span class="lab-card-banner-watermark banner-text-short">${banner.bannerText}</span>`
+        : `<span class="lab-card-banner-watermark">${banner.bannerText}</span>`;
     return `
         <div class="lab-card-banner lab-card-banner-bg ${banner.bannerClass}">
-            <span class="lab-card-banner-watermark">${banner.bannerText}</span>
+            ${textHtml}
         </div>`;
 }
 
 function renderBannerB(lab) {
-    const banner = categoryBannerConfig[lab.category] || { bannerClass: 'lab-banner-privesc', bannerText: lab.category.toUpperCase() };
+    const banner = getBannerConfig(lab);
+    const textHtml = banner.bannerTextFull
+        ? `<span class="lab-card-banner-label banner-text-full">${banner.bannerTextFull}</span>
+           <span class="lab-card-banner-label banner-text-short">${banner.bannerText}</span>`
+        : `<span class="lab-card-banner-label">${banner.bannerText}</span>`;
     return `
         <div class="lab-card-banner lab-card-banner-fg ${banner.bannerClass}">
-            <span class="lab-card-banner-label">${banner.bannerText}</span>
+            ${textHtml}
         </div>`;
 }
 
