@@ -6642,7 +6642,7 @@ function initMapGame(mapId, nodes, edges, companions, lab) {
     ctx.scale(dpr, dpr);
 
     // Set canvas background so exposed areas during pan/zoom match the ocean
-    canvas.style.backgroundColor = '#0a1628';
+    canvas.style.backgroundColor = getMapPalette().oceanDeep;
 
     // Preload AWS icons for all nodes so they're ready when we draw
     awsIconSprites.preload(nodes);
@@ -6761,6 +6761,16 @@ function initMapGame(mapId, nodes, edges, companions, lab) {
         ctx.restore();
     }
     state._redraw = redraw;
+
+    // Re-draw whenever the theme class toggles so the ocean background updates immediately.
+    const _gameThemeObs = new MutationObserver(() => {
+        if (!document.body.contains(canvas)) { _gameThemeObs.disconnect(); return; }
+        state.palette = getGameUIPalette();
+        canvas.style.backgroundColor = getMapPalette().oceanDeep;
+        state._redraw();
+    });
+    _gameThemeObs.observe(document.documentElement, { attributes: true, attributeFilter: ['class'] });
+
     state.buttons = buildPlayingButtons(w, h, state);
 
     // Build reveal sequence first so we can compute the starting position
@@ -8419,7 +8429,11 @@ function renderStaticMapPreview(containerEl, lab) {
 
     // Header zone height matches SCRIM_H5 = 150 in game mode V5 HUD.
     const mapYOffset = 150;
-    const bottomPad = 90;
+    // Extra canvas height below the last island slot (mobile only — desktop sets h=500 directly
+    // and ignores this). The target-island sprite extends ~69px below the island center and the
+    // Targetville label plate adds another ~30px. Bumped from 90→160 so the plate has comfortable
+    // visual clearance above the badge-footer overlay (~40px) at the canvas bottom.
+    const bottomPad = 160;
 
     let h, mapH, positions;
     if (isMobile) {
@@ -8713,6 +8727,14 @@ function renderStaticMapPreview(containerEl, lab) {
     if (mapCompanions) awsIconSprites.preload(mapCompanions);
     awsIconSprites.onLoadCallbacks.push(() => draw());
     draw();
+
+    // Re-draw whenever the theme class toggles so the ocean background updates immediately.
+    const _previewThemeObs = new MutationObserver(() => {
+        if (!document.body.contains(canvas)) { _previewThemeObs.disconnect(); return; }
+        state.palette = getGameUIPalette();
+        draw();
+    });
+    _previewThemeObs.observe(document.documentElement, { attributes: true, attributeFilter: ['class'] });
 
     // Once cloud/island/helicopter sprites finish loading, draw a final frame
     // and mark the container as rendered. The hero-image generator waits on
@@ -9037,5 +9059,14 @@ function renderStaticMapThumbnail(containerEl, lab) {
     cloudSprites.load().then(draw);
     islandSprites.load().then(draw);
     helicopterSprite.load().then(draw);
+
+    // Re-draw whenever the theme class toggles so the ocean background updates immediately.
+    const _thumbThemeObs = new MutationObserver(() => {
+        if (!document.body.contains(canvas)) { _thumbThemeObs.disconnect(); return; }
+        state.palette = getGameUIPalette();
+        draw();
+    });
+    _thumbThemeObs.observe(document.documentElement, { attributes: true, attributeFilter: ['class'] });
+
     return canvas;
 }
