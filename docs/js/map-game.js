@@ -2913,8 +2913,11 @@ function renderGamePanelDeploy(panelEl, state) {
             <h2 class="mg-panel-title">Setup Instructions</h2>
             <div class="mg-deploy-step">
                 <p class="mg-deploy-step-title">1. Install plabs</p>
-                <pre class="mg-cmd-block"><code>brew install pathfinding-labs/tap/plabs</code></pre>
-                <p class="mg-panel-body mg-muted">Or install from <a href="https://github.com/DataDog/pathfinding-labs" target="_blank" rel="noopener noreferrer">GitHub</a></p>
+                <p class="mg-panel-body mg-muted">Using go install:</p>
+                <pre class="mg-cmd-block"><code>go install -v github.com/DataDog/pathfinding-labs/cmd/plabs@latest</code></pre>
+                <p class="mg-panel-body mg-muted">Or using brew:</p>
+                <pre class="mg-cmd-block"><code>brew tap DataDog/pathfinding-labs https://github.com/DataDog/pathfinding-labs
+brew install DataDog/pathfinding-labs/plabs</code></pre>
             </div>
             <div class="mg-deploy-step">
                 <p class="mg-deploy-step-title">2. Configure plabs</p>

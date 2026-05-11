@@ -2139,17 +2139,18 @@ function buildGuidedV2Sections(lab) {
     // --- Self-hosted Lab Setup ---
     const setup = getSetup(lab);
     const resourcesCreated = getResourcesCreated(lab);
-    if (setup.prerequisites || setup.deployNonInteractive || setup.deployTui || resourcesCreated) {
+    if (setup.deployNonInteractive || setup.deployTui || resourcesCreated) {
         const setupTabGroupId = `gv2-setup-tabs-${slug}`;
         const setupTabs = [];
-        if (setup.prerequisites) {
-            setupTabs.push({
-                id: 'prereqs',
-                label: 'Prerequisites',
-                show: true,
-                rawHtml: `<div class="lab-tab-prose">${renderLabMarkdown(setup.prerequisites)}</div>`,
-            });
-        }
+        setupTabs.push({
+            id: 'prereqs',
+            label: 'Prerequisites',
+            show: true,
+            rawHtml: `<div class="lab-tab-prose">
+                <p>Before deploying this lab, you'll need one or more AWS accounts and the <code>plabs</code> binary installed and configured.</p>
+                <p><a href="/labs/getting-started/#prerequisites">Getting Started: Prerequisites →</a></p>
+            </div>`,
+        });
         if (setup.deployNonInteractive || setup.deployTui) {
             setupTabs.push({
                 id: 'deploy',
