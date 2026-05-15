@@ -3926,23 +3926,24 @@ function buildPlayingButtons(w, h, state) {
 // zoneTopY is the top of the 80px header zone (usually 0).
 //
 // opts (optional, all have sensible defaults so existing callers are unchanged):
-//   brandText: override the small top line (default 'PATHFINDING.CLOUD — LABS')
+//   brandText: override the small top line (default 'PATHFINDING LABS')
 //   zoneH:     header zone height in px (default 80)
 //   scale:     multiplies font sizes, gaps, and rule width (default 1).
 //              Used by the hero generator to render the exact same style at
 //              larger sizes.
 function drawCapcomHeader(ctx, w, zoneTopY, title, opts) {
     const o = opts || {};
-    const BRAND_TEXT = (o.brandText != null ? o.brandText : 'PATHFINDING.CLOUD — LABS');
+    const BRAND_TEXT = (o.brandText != null ? o.brandText : 'PATHFINDING LABS');
     const labName = (title || '').toUpperCase();
     const scale = o.scale || 1;
+    const fontScale = o.fontScale || 1;
 
     // CSS layout: flex column, centered in zone, gap=0
     // brand (13px) + 5px margin + rule (2px) + 6px margin + lab name (26px) = 52px total
     const ZONE_H = o.zoneH || 80;
-    const BRAND_SIZE = Math.round(13 * scale);
+    const BRAND_SIZE = Math.round(13 * scale * fontScale);
     const RULE_H = Math.max(2, Math.round(2 * scale));
-    const LAB_SIZE = Math.round(26 * scale);
+    const LAB_SIZE = Math.round(26 * scale * fontScale);
     const BRAND_GAP = Math.round(5 * scale);   // margin-bottom on brand
     const RULE_GAP = Math.round(6 * scale);    // margin-bottom on rule
     const ruleW = Math.round(320 * scale);
@@ -4142,7 +4143,7 @@ function drawPlayingHUD(ctx, w, h, state) {
         ctx.letterSpacing = '0.22em'; ctx.textAlign = 'left'; ctx.textBaseline = 'bottom';
         ctx.fillStyle = 'rgba(255, 220, 100, 0.9)';
         ctx.shadowOffsetX = 0; ctx.shadowOffsetY = 0; ctx.shadowBlur = 10; ctx.shadowColor = 'rgba(240,180,40,0.5)';
-        ctx.fillText('PATHFINDING.CLOUD — LABS', leftPad4, brandBaseline4);
+        ctx.fillText('PATHFINDING LABS', leftPad4, brandBaseline4);
         ctx.letterSpacing = 'normal'; ctx.restore();
         const rg4 = ctx.createLinearGradient(leftPad4, 0, leftPad4 + 300, 0);
         rg4.addColorStop(0, 'rgba(240,180,40,0.85)'); rg4.addColorStop(0.5, '#fff8c0'); rg4.addColorStop(1, 'transparent');
@@ -4199,7 +4200,7 @@ function drawPlayingHUD(ctx, w, h, state) {
         ctx.letterSpacing = '0.22em'; ctx.textAlign = 'left'; ctx.textBaseline = 'top';
         ctx.fillStyle = 'rgba(255, 220, 100, 0.9)';
         ctx.shadowOffsetX = 0; ctx.shadowOffsetY = 0; ctx.shadowBlur = 10; ctx.shadowColor = 'rgba(240,180,40,0.5)';
-        ctx.fillText('PATHFINDING.CLOUD — LABS', leftPad5, brandTop5);
+        ctx.fillText('PATHFINDING LABS', leftPad5, brandTop5);
         ctx.letterSpacing = 'normal'; ctx.restore();
         const rg5 = ctx.createLinearGradient(leftPad5, 0, leftPad5 + 300, 0);
         rg5.addColorStop(0, 'rgba(240,180,40,0.85)'); rg5.addColorStop(0.5, '#fff8c0'); rg5.addColorStop(1, 'transparent');
@@ -6320,39 +6321,9 @@ function drawGameMap(ctx, w, h, state) {
     cloudSprites.draw(ctx, w, h, 99, state._cloudHudTop, state._cloudBottom, state._cloudCount, state._cloudScaleRange);
     ctx.restore();
 
-    // Paths (edges) between islands -- always draw all paths visibly
-    if (edges) {
-        for (let ei = 0; ei < edges.length; ei++) {
-            const edge = edges[ei];
-            if (edge.implicit) continue;
-            const from = positions[edge.fromIdx];
-            const to = positions[edge.toIdx];
-            if (!from || !to) continue;
-
-            const edgeRevealed = isHeliRevealed(state, `edge:${ei}`);
-            const edgeDim = edgeRevealed ? 1 : 0.25;
-
-            // Path glow
-            ctx.save();
-            ctx.strokeStyle = p.pathGlow;
-            ctx.lineWidth = 6;
-            ctx.globalAlpha = 0.5 * edgeDim;
-            ctx.beginPath(); ctx.moveTo(from.x, from.y); ctx.lineTo(to.x, to.y); ctx.stroke();
-            ctx.restore();
-
-            // Dashed path line
-            ctx.save();
-            ctx.strokeStyle = p.pathStroke;
-            ctx.lineWidth = 2;
-            ctx.globalAlpha = edgeDim;
-            ctx.setLineDash([8, 6]);
-            ctx.beginPath(); ctx.moveTo(from.x, from.y); ctx.lineTo(to.x, to.y); ctx.stroke();
-            ctx.setLineDash([]);
-            ctx.restore();
-        }
-    }
-
-    // Islands -- always draw all islands fully (no fog/locked state)
+    // Compute islandRadius before drawing edges so edge endpoints can be
+    // offset to the terrain center (below the badge/grass surface).
+    //
     // Shrink islands by 20% for each main island beyond 3 to avoid crowding.
     // Callers can pass state._baseIslandRadius to use a smaller cap (e.g., mobile preview).
     // Base radius shrunk 30% from the original 104 -> 73 so islands and their
@@ -6396,6 +6367,45 @@ function drawGameMap(ctx, w, h, state) {
 
     if (state._thumbnailMode) islandRadius *= 0.5;
     state.islandRadius = islandRadius; // store for label positioning
+
+    // Paths (edges) between islands -- always draw all paths visibly.
+    // Offset y by 0.25 * islandRadius so lines terminate at the terrain body
+    // center rather than the badge/grass surface at pos.y.
+    const edgeEndpointYOffset = islandRadius * 0.25;
+    if (edges) {
+        for (let ei = 0; ei < edges.length; ei++) {
+            const edge = edges[ei];
+            if (edge.implicit) continue;
+            const from = positions[edge.fromIdx];
+            const to = positions[edge.toIdx];
+            if (!from || !to) continue;
+
+            const edgeRevealed = isHeliRevealed(state, `edge:${ei}`);
+            const edgeDim = edgeRevealed ? 1 : 0.25;
+            const fromY = from.y + edgeEndpointYOffset;
+            const toY   = to.y   + edgeEndpointYOffset;
+
+            // Path glow
+            ctx.save();
+            ctx.strokeStyle = p.pathGlow;
+            ctx.lineWidth = 6;
+            ctx.globalAlpha = 0.5 * edgeDim;
+            ctx.beginPath(); ctx.moveTo(from.x, fromY); ctx.lineTo(to.x, toY); ctx.stroke();
+            ctx.restore();
+
+            // Dashed path line
+            ctx.save();
+            ctx.strokeStyle = p.pathStroke;
+            ctx.lineWidth = 2;
+            ctx.globalAlpha = edgeDim;
+            ctx.setLineDash([8, 6]);
+            ctx.beginPath(); ctx.moveTo(from.x, fromY); ctx.lineTo(to.x, toY); ctx.stroke();
+            ctx.setLineDash([]);
+            ctx.restore();
+        }
+    }
+
+    // Islands -- always draw all islands fully (no fog/locked state)
 
     // Auto-compact: when islands are small enough that below-label icons (32px) would
     // dominate the label plate, automatically promote them onto the island instead.

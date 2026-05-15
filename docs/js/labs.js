@@ -1031,7 +1031,7 @@ function renderLabTable() {
                 <th class="sortable" data-sort="start">Start${sortIndicator('start')}</th>
                 <th class="sortable" data-sort="target">Target${sortIndicator('target')}</th>
                 <th class="sortable" data-sort="hops">Hops${sortIndicator('hops')}</th>
-                <th class="sortable" data-sort="cost">Cost${sortIndicator('cost')}</th>
+                <th class="sortable" data-sort="cost">AWS Cost${sortIndicator('cost')}</th>
                 <th>Services</th>
             </tr>
         </thead>

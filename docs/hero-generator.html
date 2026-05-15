@@ -349,6 +349,17 @@
                 <input type="text" id="title-input" value="PATHFINDING.CLOUD" autocomplete="off" placeholder="Title (small top line)">
                 <div style="height: 6px;"></div>
                 <input type="text" id="subtitle-input" value="INTRODUCING PATHFINDING LABS" autocomplete="off" placeholder="Subtitle (large gold line)">
+                <div style="height: 8px;"></div>
+                <div class="theme-row" id="title-style-row">
+                    <button class="preset-btn active" data-title-style="two-line" id="title-style-two">Two lines</button>
+                    <button class="preset-btn" data-title-style="single-line" id="title-style-single">Single line</button>
+                </div>
+                <div style="height: 8px;"></div>
+                <label style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:0.08em;color:var(--muted);display:block;margin-bottom:6px;">Font size</label>
+                <div class="range-row">
+                    <input type="range" id="title-font-scale" min="0.50" max="2.50" step="0.05" value="1.00">
+                    <span class="range-val" id="title-font-scale-val">1.00×</span>
+                </div>
             </div>
 
             <div class="field">
@@ -372,6 +383,14 @@
                 <div class="range-row">
                     <input type="range" id="island-size" min="0.70" max="2.00" step="0.05" value="1.35">
                     <span class="range-val" id="island-size-val">1.35×</span>
+                </div>
+            </div>
+
+            <div class="field">
+                <label>Cloud size</label>
+                <div class="range-row">
+                    <input type="range" id="cloud-size" min="0.25" max="4.00" step="0.05" value="1.35">
+                    <span class="range-val" id="cloud-size-val">1.35×</span>
                 </div>
             </div>
 
@@ -418,6 +437,8 @@
                 <div class="preset-row" id="size-presets">
                     <button class="preset-btn active" data-w="3800" data-h="1930">Datadog SL 3800×1930</button>
                     <button class="preset-btn" data-w="1900" data-h="965">Half 1900×965</button>
+                    <button class="preset-btn" data-w="2560" data-h="1440">Slides 2x 2560×1440</button>
+                    <button class="preset-btn" data-w="1280" data-h="720">Slides 1x 1280×720</button>
                     <button class="preset-btn" data-w="1600" data-h="840">Blog 1600×840</button>
                     <button class="preset-btn" data-w="1200" data-h="630">OG 1200×630</button>
                     <button class="preset-btn" data-w="1200" data-h="675">Twitter 1200×675</button>
@@ -433,10 +454,16 @@
             <div class="labels-section">
                 <div class="labels-header">
                     <span class="section-title">Labels &amp; icons</span>
-                    <label class="inline-check">
-                        <input type="checkbox" id="show-labels" checked>
-                        Show on map
-                    </label>
+                    <div style="display:flex;gap:12px;">
+                        <label class="inline-check">
+                            <input type="checkbox" id="show-labels" checked>
+                            Islands
+                        </label>
+                        <label class="inline-check">
+                            <input type="checkbox" id="show-path-labels" checked>
+                            Paths
+                        </label>
+                    </div>
                 </div>
                 <div id="labels-rows"></div>
             </div>
@@ -481,6 +508,8 @@
         const smallCountVal = $('small-count-val');
         const islandSizeInput = $('island-size');
         const islandSizeVal = $('island-size-val');
+        const cloudSizeInput = $('cloud-size');
+        const cloudSizeVal = $('cloud-size-val');
         const seedInput = $('seed-input');
         const seedVal = $('seed-val');
         const islandStyle = $('island-style');
@@ -496,7 +525,13 @@
         const canvas = $('hero-canvas');
         const labelsRows = $('labels-rows');
         const showLabels = $('show-labels');
+        const showPathLabels = $('show-path-labels');
         const showTitle = $('show-title');
+        const titleStyleTwo = $('title-style-two');
+        const titleStyleSingle = $('title-style-single');
+        const titleFontScaleInput = $('title-font-scale');
+        const titleFontScaleVal = $('title-font-scale-val');
+        let titleStyle = 'two-line'; // 'two-line' | 'single-line'
 
         // ---- AWS icon catalog (subset of map-game.js iconPaths, with friendly names) ----
         const ICON_OPTIONS = [
@@ -694,7 +729,7 @@
         // Create a minimal "lab" state structure matching what drawGameMap /
         // drawCompanions expect. Labels and AWS icons are pulled from the
         // user-edited labelState so the hero can mirror a real attack path.
-        function buildState(bigCount, smallCount, seed, islandStyleVal, companionStyleVal, w, h, headerZone, showLabelsVal, showTitleVal) {
+        function buildState(bigCount, smallCount, seed, islandStyleVal, companionStyleVal, w, h, headerZone, showLabelsVal, showEdgeLabelsVal, showTitleVal, cloudSize, islandSize) {
             // Nodes: first = start, last = end, middle are intermediate principals.
             // `displayLabel` is the hero-only override recognised by our patched
             // drawGameIslandLabels (falls back to Startington/Targetville when blank).
@@ -738,7 +773,7 @@
                     fromIdx: i,
                     toIdx: i + 1,
                     label: '',
-                    displayLabel: showLabelsVal ? (labelState.edgeLabels[i] || '') : '',
+                    displayLabel: showEdgeLabelsVal ? (labelState.edgeLabels[i] || '') : '',
                     description: '',
                     commands: [],
                     hints: [],
@@ -877,6 +912,15 @@
                 _cloudHudTop: cloudHudTopTranslated,
                 _cloudBottom: cloudBottomTranslated,
                 _cloudCount:  cloudCount,
+                // Compensate for the canvas ctx.scale() factor (which is driven
+                // by islandSize) so the cloud slider is the sole control of
+                // apparent cloud size. Without compensation, moving the island
+                // slider would also rescale clouds because drawGameMap draws
+                // clouds in design-space coordinates before ctx.scale is applied.
+                _cloudScaleRange: {
+                    min: 2.0 * (cloudSize || 1.35) / (islandSize || 1.35),
+                    max: 4.0 * (cloudSize || 1.35) / (islandSize || 1.35),
+                },
             };
             return state;
         }
@@ -891,13 +935,16 @@
             const targetH = Math.max(200, parseInt(heightInput.value, 10) || 840);
 
             // The map layout / sprites are tuned for ~1600px wide. At other
-            // target sizes we scale uniformly so islands, clouds, and fonts all
+            // target sizes we scale uniformly so islands, labels, and badges all
             // scale together rather than looking tiny on large heroes.
             // Island size multiplier inversely scales the design width: a
             // larger multiplier means a smaller design width, so when we scale
             // up to target pixels the 104px-radius islands end up occupying a
             // larger fraction of the final image.
+            // Cloud size is tracked separately and compensated in buildState so
+            // the cloud slider is the only control of apparent cloud size.
             const islandSize = parseFloat(islandSizeInput.value) || 1.0;
+            const cloudSize  = parseFloat(cloudSizeInput.value)  || 1.35;
             const designW = 1600 / islandSize;
             const scale = targetW / designW;
             const designH = targetH / scale;  // preserve target aspect ratio
@@ -913,6 +960,7 @@
             const styleVal = islandStyle.value;
             const compVal = companionStyle.value;
             const showLabelsVal = showLabels.checked;
+            const showPathLabelsVal = showPathLabels.checked;
             const showTitleVal = showTitle.checked;
 
             // Keep the labelState arrays sized to the current counts, and
@@ -936,7 +984,7 @@
             const headerZone = showTitleVal ? Math.round(designH * 0.28) : 0;
             const mapH = designH - headerZone;
 
-            const state = buildState(bigCount, smallCount, seed, styleVal, compVal, designW, mapH, headerZone, showLabelsVal, showTitleVal);
+            const state = buildState(bigCount, smallCount, seed, styleVal, compVal, designW, mapH, headerZone, showLabelsVal, showPathLabelsVal, showTitleVal, cloudSize, islandSize);
 
             const ctx = canvas.getContext('2d');
             ctx.clearRect(0, 0, targetW, targetH);
@@ -944,16 +992,20 @@
             ctx.save();
             ctx.scale(scale, scale);
 
-            // 1) Ocean/sky gradient fills the full canvas so the area behind
-            //    the header scrim has the same sky color the map zone uses
-            //    below it (matches buildLabPreview on the live site).
+            // 1) Ocean/sky gradient fills the header zone. drawGameMap draws its
+            //    own gradient from 50px above the map zone top to 50px below the
+            //    bottom (fillY = -50, fillB = mapH+50 in map-zone coords). We
+            //    use the exact same canvas-coordinate span here so both fills
+            //    evaluate to identical colors at the seam (y = headerZone).
             const p = state.palette;
-            const skyGrad = ctx.createLinearGradient(0, 0, 0, designH);
+            const mapGradTop = headerZone - 50;          // canvas coords
+            const mapGradBot = headerZone + mapH + 50;   // canvas coords = designH + 50
+            const skyGrad = ctx.createLinearGradient(0, mapGradTop, 0, mapGradBot);
             skyGrad.addColorStop(0,   p.oceanA);
             skyGrad.addColorStop(0.6, p.oceanB);
             skyGrad.addColorStop(1,   p.oceanDeep);
             ctx.fillStyle = skyGrad;
-            ctx.fillRect(0, 0, designW, designH);
+            ctx.fillRect(0, 0, designW, headerZone);
 
             // 2) Map (islands, paths, waves, clouds, shore effects) drawn into
             //    the MAP ZONE only (below the header band). We translate down
@@ -965,7 +1017,7 @@
             ctx.save();
             ctx.translate(0, headerZone);
             drawMapWithGameLabels(ctx, designW, mapH, state);
-            if (showLabelsVal) {
+            if (showPathLabelsVal) {
                 drawEdgeHopLabels(ctx, designW, mapH, state);
             }
             ctx.restore();
@@ -988,17 +1040,68 @@
                 // scale so all the header elements retain their original
                 // vertical balance inside our (taller) hero header zone.
                 const headerScale = headerZone / 80;
-                drawCapcomHeader(
-                    ctx,
-                    designW,
-                    0,
-                    subtitleInput.value || '',
-                    {
-                        brandText: (titleInput.value || '').toUpperCase(),
-                        zoneH: headerZone,
-                        scale: headerScale,
-                    }
-                );
+                const fontScale = parseFloat(titleFontScaleInput.value) || 1.0;
+                if (titleStyle === 'single-line') {
+                    // Large gold title + shimmer rule below it, both centered
+                    // as a unit within the zone.
+                    const LAB_SIZE  = Math.round(26 * headerScale * fontScale);
+                    const RULE_H    = Math.max(2, Math.round(2 * headerScale));
+                    const RULE_GAP  = Math.round(6 * headerScale);
+                    const ruleW     = Math.round(320 * headerScale);
+                    const totalH    = LAB_SIZE + RULE_GAP + RULE_H;
+                    const labText   = (subtitleInput.value || '').toUpperCase();
+                    const labNameY  = Math.round((headerZone - totalH) / 2);
+                    const ruleY     = labNameY + LAB_SIZE + RULE_GAP;
+
+                    // Title
+                    const nameGrad = ctx.createLinearGradient(0, labNameY, 0, labNameY + LAB_SIZE);
+                    nameGrad.addColorStop(0,    '#fff8c0');
+                    nameGrad.addColorStop(0.45, '#f0b030');
+                    nameGrad.addColorStop(1,    '#c06010');
+                    ctx.save();
+                    ctx.font = `900 ${LAB_SIZE}px -apple-system, BlinkMacSystemFont, sans-serif`;
+                    ctx.letterSpacing = '0.04em';
+                    ctx.textAlign = 'center';
+                    ctx.textBaseline = 'top';
+                    ctx.fillStyle = nameGrad;
+                    ctx.shadowOffsetX = 2 * headerScale;
+                    ctx.shadowOffsetY = 3 * headerScale;
+                    ctx.shadowBlur = 0;
+                    ctx.shadowColor = 'rgba(0, 0, 0, 0.8)';
+                    ctx.fillText(labText, designW / 2, labNameY);
+                    ctx.letterSpacing = 'normal';
+                    ctx.restore();
+
+                    // Shimmer rule
+                    const ruleX = (designW - ruleW) / 2;
+                    const ruleGrad = ctx.createLinearGradient(ruleX, 0, ruleX + ruleW, 0);
+                    ruleGrad.addColorStop(0,    'transparent');
+                    ruleGrad.addColorStop(0.25, 'rgba(240,180,40,0.8)');
+                    ruleGrad.addColorStop(0.5,  '#fff8c0');
+                    ruleGrad.addColorStop(0.75, 'rgba(240,180,40,0.8)');
+                    ruleGrad.addColorStop(1,    'transparent');
+                    ctx.save();
+                    ctx.fillStyle = ruleGrad;
+                    ctx.shadowOffsetX = 0;
+                    ctx.shadowOffsetY = 0;
+                    ctx.shadowBlur = 8 * headerScale;
+                    ctx.shadowColor = 'rgba(240, 180, 40, 0.4)';
+                    ctx.fillRect(ruleX, ruleY, ruleW, RULE_H);
+                    ctx.restore();
+                } else {
+                    drawCapcomHeader(
+                        ctx,
+                        designW,
+                        0,
+                        subtitleInput.value || '',
+                        {
+                            brandText: (titleInput.value || '').toUpperCase(),
+                            zoneH: headerZone,
+                            scale: headerScale,
+                            fontScale: fontScale,
+                        }
+                    );
+                }
             }
 
             ctx.restore();
@@ -1031,13 +1134,36 @@
         titleInput.addEventListener('input', rerender);
         subtitleInput.addEventListener('input', rerender);
         showTitle.addEventListener('change', () => {
-            // Dim the title/subtitle inputs when the header is hidden so it's
-            // obvious they're not participating in the rendered output.
+            // When the header is hidden everything dims; when re-enabled,
+            // restore the single-line state (which may have also dimmed titleInput).
             const disabled = !showTitle.checked;
-            titleInput.disabled = disabled;
             subtitleInput.disabled = disabled;
-            titleInput.style.opacity = disabled ? '0.5' : '';
             subtitleInput.style.opacity = disabled ? '0.5' : '';
+            // titleInput opacity/disabled depends on both showTitle and titleStyle.
+            const hideBrand = disabled || titleStyle === 'single-line';
+            titleInput.disabled = hideBrand;
+            titleInput.style.opacity = hideBrand ? '0.5' : '';
+            // Dim the style buttons when the header is hidden entirely.
+            $('title-style-row').style.opacity = disabled ? '0.5' : '';
+            $('title-style-row').style.pointerEvents = disabled ? 'none' : '';
+            render();
+        });
+
+        function setTitleStyle(style) {
+            titleStyle = style;
+            titleStyleTwo.classList.toggle('active', style === 'two-line');
+            titleStyleSingle.classList.toggle('active', style === 'single-line');
+            // Dim the small top-line input when it won't appear in the output.
+            const hideBrand = style === 'single-line';
+            titleInput.disabled = hideBrand;
+            titleInput.style.opacity = hideBrand ? '0.5' : '';
+            render();
+        }
+        titleStyleTwo.addEventListener('click', () => setTitleStyle('two-line'));
+        titleStyleSingle.addEventListener('click', () => setTitleStyle('single-line'));
+
+        titleFontScaleInput.addEventListener('input', () => {
+            titleFontScaleVal.textContent = parseFloat(titleFontScaleInput.value).toFixed(2) + '×';
             render();
         });
 
@@ -1053,6 +1179,10 @@
             islandSizeVal.textContent = parseFloat(islandSizeInput.value).toFixed(2) + '×';
             render();
         });
+        cloudSizeInput.addEventListener('input', () => {
+            cloudSizeVal.textContent = parseFloat(cloudSizeInput.value).toFixed(2) + '×';
+            render();
+        });
         seedInput.addEventListener('input', () => {
             syncRangeLabel(seedInput, seedVal);
             render();
@@ -1061,6 +1191,7 @@
         islandStyle.addEventListener('change', rerender);
         companionStyle.addEventListener('change', rerender);
         showLabels.addEventListener('change', rerender);
+        showPathLabels.addEventListener('change', rerender);
 
         widthInput.addEventListener('input', () => {
             updateSizePresetActive(Number(widthInput.value), Number(heightInput.value));
@@ -1098,6 +1229,8 @@
         syncRangeLabel(smallCountInput, smallCountVal);
         syncRangeLabel(seedInput, seedVal);
         islandSizeVal.textContent = parseFloat(islandSizeInput.value).toFixed(2) + '×';
+        cloudSizeVal.textContent = parseFloat(cloudSizeInput.value).toFixed(2) + '×';
+        titleFontScaleVal.textContent = parseFloat(titleFontScaleInput.value).toFixed(2) + '×';
 
         // Preload the default set of AWS icons so they appear on the first
         // non-cached render. map-game.js's awsIconSprites.preload takes an
