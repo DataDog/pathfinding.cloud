@@ -1688,6 +1688,11 @@ function switchDetailMode(mode, lab) {
     const container = document.querySelector('.detail-scrollable-content');
     if (!container) return;
 
+    // Clean up any existing game so the old document-level keydown listener
+    // doesn't persist when switching away from (or back to) game mode.
+    const existingCanvas = container.querySelector('canvas.mg-canvas');
+    if (existingCanvas?._mapGameCleanup) existingCanvas._mapGameCleanup();
+
     if (mode === 'mapgame') {
         renderLabDetailContentMapGame(lab, container);
     } else {

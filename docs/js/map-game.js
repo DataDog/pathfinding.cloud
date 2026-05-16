@@ -6574,6 +6574,11 @@ function renderLabDetailContentMapGame(lab, container) {
         return;
     }
 
+    // Clean up any existing game instance before replacing the DOM so the old
+    // document-level keydown listener doesn't outlive its canvas.
+    const _existingCanvas = container.querySelector('canvas.mg-canvas');
+    if (_existingCanvas?._mapGameCleanup) _existingCanvas._mapGameCleanup();
+
     // Two-column layout: HTML detail panel (left) + canvas map (right).
     // .mg-canvas-wrap is a flex column so the terminal panel can slot below the canvas.
     // .mg-canvas-area is the inner relative container for canvas + menu overlay.
@@ -6634,6 +6639,11 @@ function initMapGame(mapId, nodes, edges, companions, lab) {
     const panelEl = document.getElementById(`${mapId}-panel`);
     const menuEl = document.getElementById(`${mapId}-menu`);
     if (!canvas || !panelEl) return;
+
+    // Guard against double-init: if a previous initMapGame already ran on this
+    // canvas (e.g. two renderLabDetailContentMapGame calls within 60 ms), tear
+    // down the first instance before proceeding.
+    if (canvas._mapGameCleanup) canvas._mapGameCleanup();
 
     // canvas.parentElement is .mg-canvas-area (the inner relative container).
     // The outer .mg-canvas-wrap holds the terminal panel as a flex sibling.
