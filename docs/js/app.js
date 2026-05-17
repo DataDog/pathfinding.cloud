@@ -2,14 +2,12 @@
 let allPaths = [];
 let filteredPaths = [];
 let toolMetadata = {}; // Detection tool metadata from metadata.json
+let labsData = []; // Labs data for cross-linking
 // Default to cards on mobile (<=768px), table on desktop
 let currentView = window.innerWidth <= 768 ? 'cards' : 'table';
 let sortColumn = null;
 let sortDirection = 'asc'; // 'asc' or 'desc'
 let currentRoute = { view: 'list', pathId: null }; // Track current route
-
-// Store tooltip positions per visualization container
-const tooltipPositions = new WeakMap();
 
 // Category tooltips
 const categoryTooltips = {
@@ -119,12 +117,89 @@ function setupEventListeners() {
     viewCardsBtn.addEventListener('click', () => switchView('cards'));
     viewTableBtn.addEventListener('click', () => switchView('table'));
     themeToggle.addEventListener('click', toggleTheme);
+    initPillFilters();
 
     // Handle browser back/forward navigation
     window.addEventListener('popstate', handlePopState);
 
     // Handle backward compatibility: redirect old hash URLs to new format
     window.addEventListener('hashchange', handleLegacyHashRedirect);
+}
+
+function initPillFilters() {
+    document.querySelectorAll('.filter-pill').forEach(pill => {
+        pill.addEventListener('click', e => {
+            e.stopPropagation();
+            const filterId = pill.dataset.filter;
+            const menu = document.getElementById(`menu-${filterId}`);
+            const wrapper = pill.closest('.filter-pill-wrapper');
+            const isOpen = wrapper.classList.contains('open');
+            closeAllPillMenus();
+            if (!isOpen) {
+                wrapper.classList.add('open');
+                menu.classList.add('open');
+            }
+        });
+    });
+
+    const filtersEl = document.querySelector('.filters');
+    if (filtersEl) {
+        filtersEl.addEventListener('click', e => {
+            const item = e.target.closest('.filter-pill-item');
+            if (!item) return;
+            e.stopPropagation();
+            const menu = item.closest('.filter-pill-menu');
+            const wrapper = item.closest('.filter-pill-wrapper');
+            const pill = wrapper.querySelector('.filter-pill');
+            const filterId = pill.dataset.filter;
+            const select = document.getElementById(filterId);
+            const valueEl = pill.querySelector('.filter-pill-value');
+
+            menu.querySelectorAll('.filter-pill-item').forEach(i => i.classList.remove('selected'));
+            item.classList.add('selected');
+            valueEl.textContent = item.textContent;
+            pill.classList.toggle('is-filtered', item.dataset.value !== '');
+
+            select.value = item.dataset.value;
+            select.dispatchEvent(new Event('change'));
+            closeAllPillMenus();
+        });
+    }
+
+    document.addEventListener('click', closeAllPillMenus);
+}
+
+function closeAllPillMenus() {
+    document.querySelectorAll('.filter-pill-wrapper.open').forEach(w => w.classList.remove('open'));
+    document.querySelectorAll('.filter-pill-menu.open').forEach(m => m.classList.remove('open'));
+}
+
+function resetPillValues() {
+    document.querySelectorAll('.filter-pill-wrapper').forEach(wrapper => {
+        const pill = wrapper.querySelector('.filter-pill');
+        const menu = wrapper.querySelector('.filter-pill-menu');
+        if (!pill || !menu) return;
+        const valueEl = pill.querySelector('.filter-pill-value');
+        const firstItem = menu.querySelector('.filter-pill-item');
+        if (!firstItem || !valueEl) return;
+        menu.querySelectorAll('.filter-pill-item').forEach(i => i.classList.remove('selected'));
+        firstItem.classList.add('selected');
+        valueEl.textContent = firstItem.textContent;
+        pill.classList.remove('is-filtered');
+    });
+}
+
+function buildPillMenu(menuId, options) {
+    const menu = document.getElementById(menuId);
+    if (!menu) return;
+    menu.innerHTML = '';
+    options.forEach((opt, i) => {
+        const item = document.createElement('div');
+        item.className = 'filter-pill-item' + (i === 0 ? ' selected' : '');
+        item.dataset.value = opt.value;
+        item.textContent = opt.label;
+        menu.appendChild(item);
+    });
 }
 
 // Switch between card and table view
@@ -148,14 +223,16 @@ function switchView(view) {
 // Load paths from data files
 async function loadPaths() {
     try {
-        // Load both paths and tool metadata
-        const [paths, metadata] = await Promise.all([
+        // Load paths, tool metadata, and labs (non-blocking)
+        const [paths, metadata, labs] = await Promise.all([
             fetchAllPaths(),
-            fetchMetadata()
+            fetchMetadata(),
+            fetch('/labs.json').then(r => r.ok ? r.json() : []).catch(() => []),
         ]);
         allPaths = paths;
         filteredPaths = paths;
         toolMetadata = metadata.detectionTools || {};
+        labsData = labs;
 
         populateServiceFilter();
         updateStats();
@@ -512,12 +589,17 @@ function populateServiceFilter() {
     });
 
     serviceFilter.innerHTML = '<option value="">All Services</option>';
-    Array.from(services).sort().forEach(service => {
+    const sorted = Array.from(services).sort();
+    sorted.forEach(service => {
         const option = document.createElement('option');
         option.value = service;
         option.textContent = service.toUpperCase();
         serviceFilter.appendChild(option);
     });
+
+    const pillOpts = [{ value: '', label: 'Any' }];
+    sorted.forEach(service => pillOpts.push({ value: service, label: service.toUpperCase() }));
+    buildPillMenu('menu-service-filter', pillOpts);
 }
 
 // Apply filters
@@ -583,6 +665,7 @@ function resetFilters() {
     serviceFilter.value = '';
     detectionFilter.value = '';
     lineageFilter.value = '';
+    resetPillValues();
     applyFilters();
 }
 
@@ -944,7 +1027,7 @@ function showPathDetails(path) {
         ${path.learningEnvironments ? `
             <div class="detail-section">
                 ${createHeadingWithAnchor('Learning Environment Options')}
-                ${renderLearningEnvironments(path.learningEnvironments)}
+                ${renderLearningEnvironments(path.learningEnvironments, path.id)}
             </div>
         ` : ''}
 
@@ -1016,7 +1099,7 @@ function showPathDetails(path) {
     // Render attack visualization if present
     if (path.attackVisualization && window.vis) {
         setTimeout(() => {
-            renderAttackVisualization(path.id, path.attackVisualization);
+            renderAttackVisualizationForPath(path.id, path.attackVisualization);
         }, 10);
     }
 
@@ -1034,637 +1117,13 @@ function showPathDetails(path) {
     }, 50);
 }
 
-// Calculate hierarchical levels for nodes based on edges
-function calculateHierarchicalLevels(nodes, edges) {
-    const levels = {};
-    const nodeToLevel = {};
-
-    // Find nodes with no incoming edges (root nodes)
-    const incomingEdges = {};
-    nodes.forEach(n => incomingEdges[n.id] = []);
-    edges.forEach(e => {
-        if (!incomingEdges[e.to]) incomingEdges[e.to] = [];
-        incomingEdges[e.to].push(e.from);
-    });
-
-    // BFS to assign levels
-    const queue = [];
-    nodes.forEach(n => {
-        if (incomingEdges[n.id].length === 0) {
-            nodeToLevel[n.id] = 0;
-            queue.push({ id: n.id, level: 0 });
-        }
-    });
-
-    while (queue.length > 0) {
-        const current = queue.shift();
-        if (!levels[current.level]) levels[current.level] = [];
-        levels[current.level].push(current.id);
-
-        // Find all nodes that this node points to
-        edges.forEach(e => {
-            if (e.from === current.id && nodeToLevel[e.to] === undefined) {
-                nodeToLevel[e.to] = current.level + 1;
-                queue.push({ id: e.to, level: current.level + 1 });
-            }
-        });
-    }
-
-    return levels;
-}
-
-// Render attack visualization (supports both structured and legacy Mermaid format)
-function renderAttackVisualization(pathId, visualization) {
-    const container = document.getElementById(`attack-viz-${pathId}`);
-    if (!container) {
-        return;
-    }
-
-    try {
-        let nodes, edges;
-
-        // Check if it's the new structured format or legacy Mermaid string
-        if (typeof visualization === 'string') {
-            // Legacy Mermaid format
-            const parsed = parseMermaidGraph(visualization);
-            nodes = parsed.nodes;
-            edges = parsed.edges;
-        } else if (typeof visualization === 'object' && visualization.nodes && visualization.edges) {
-            // New structured format
-            const converted = convertStructuredToVisData(visualization);
-            nodes = converted.nodes;
-            edges = converted.edges;
-        } else {
-            throw new Error('Invalid visualization format');
-        }
-
-        // Get theme-aware colors
-        const isLightTheme = document.documentElement.classList.contains('light-theme');
-        const nodeFontColor = '#232f3e'; // Always dark for contrast with bright node colors
-        const edgeFontColor = isLightTheme ? '#666' : '#FFFFFF';
-        const edgeLabelBg = isLightTheme ? 'rgba(255,255,255,0.9)' : 'rgba(26,26,36,0.9)';
-
-        // Calculate hierarchical levels and center nodes at each level
-        const nodeSpacing = 250;
-        const levelSeparation = 120;
-        const levels = calculateHierarchicalLevels(nodes, edges);
-        const levelNumbers = Object.keys(levels).map(Number).sort((a, b) => a - b);
-
-        // Set both X and Y positions for all nodes manually
-        levelNumbers.forEach((levelNum, levelIndex) => {
-            const nodesAtLevel = levels[levelNum];
-
-            // Calculate Y position for this level
-            const y = levelIndex * levelSeparation;
-
-            // Calculate the center point based on the previous level (or 0 for first level)
-            let centerX = 0;
-            if (levelIndex > 0) {
-                const prevLevelNum = levelNumbers[levelIndex - 1];
-                const prevLevelNodes = levels[prevLevelNum];
-                const prevLevelXPositions = prevLevelNodes.map(nodeId => {
-                    const node = nodes.find(n => n.id === nodeId);
-                    return node ? node.x : 0;
-                });
-                const prevLevelMinX = Math.min(...prevLevelXPositions);
-                const prevLevelMaxX = Math.max(...prevLevelXPositions);
-                centerX = (prevLevelMinX + prevLevelMaxX) / 2;
-            }
-
-            // Calculate positions for current level centered relative to previous level
-            const currentLevelWidth = (nodesAtLevel.length - 1) * nodeSpacing;
-            const startX = centerX - (currentLevelWidth / 2);
-
-            // Set x and y coordinates for each node at this level
-            nodesAtLevel.forEach((nodeId, index) => {
-                const node = nodes.find(n => n.id === nodeId);
-                if (node) {
-                    node.x = startX + (index * nodeSpacing);
-                    node.y = y;
-                    node.fixed = true; // Fix both x and y positions
-                }
-            });
-        });
-
-        // Create vis.js network
-        const data = { nodes, edges };
-        const options = {
-            layout: {
-                hierarchical: false  // Disable hierarchical layout since we're setting positions manually
-            },
-            nodes: {
-                shape: 'box',
-                margin: 10,
-                widthConstraint: {
-                    minimum: 120,
-                    maximum: 200
-                },
-                font: {
-                    size: 14,
-                    face: 'Arial',
-                    color: nodeFontColor
-                },
-                borderWidth: 2,
-                shadow: true
-            },
-            edges: {
-                arrows: {
-                    to: {
-                        enabled: true,
-                        scaleFactor: 1.2,
-                        type: 'arrow'
-                    }
-                },
-                font: {
-                    size: 12,
-                    align: 'horizontal',
-                    color: edgeFontColor,
-                    strokeWidth: 0,
-                    background: edgeLabelBg,
-                    multi: true
-                },
-                color: {
-                    color: '#848484',
-                    highlight: '#ff9900'
-                },
-                width: 2,
-                length: 180,
-                smooth: {
-                    type: 'cubicBezier',
-                    forceDirection: 'vertical',
-                    roundness: 0.5
-                }
-            },
-            physics: {
-                enabled: false
-            },
-            interaction: {
-                dragNodes: true,
-                dragView: true,
-                zoomView: false,  // Disable mouse wheel zoom
-                hover: true
-            }
-        };
-
-        const network = new vis.Network(container, data, options);
-
-        // Add zoom controls
-        const zoomControls = document.createElement('div');
-        zoomControls.className = 'viz-zoom-controls';
-        zoomControls.innerHTML = `
-            <button class="viz-zoom-btn viz-zoom-in" title="Zoom In">+</button>
-            <button class="viz-zoom-btn viz-zoom-out" title="Zoom Out">−</button>
-            <button class="viz-zoom-btn viz-zoom-reset" title="Reset Zoom">⊙</button>
-        `;
-        container.appendChild(zoomControls);
-
-        // Add zoom button handlers
-        zoomControls.querySelector('.viz-zoom-in').addEventListener('click', () => {
-            const scale = network.getScale();
-            network.moveTo({ scale: scale * 1.2 });
-        });
-        zoomControls.querySelector('.viz-zoom-out').addEventListener('click', () => {
-            const scale = network.getScale();
-            network.moveTo({ scale: scale * 0.8 });
-        });
-        zoomControls.querySelector('.viz-zoom-reset').addEventListener('click', () => {
-            network.fit();
-        });
-
-        // Add click event handlers for nodes and edges
-        network.on('click', function(params) {
-            if (params.nodes.length > 0) {
-                // Node clicked
-                const nodeId = params.nodes[0];
-                const node = nodes.find(n => n.id === nodeId);
-                if (node && node.description) {
-                    showVisualizationTooltip(node.label, node.description, container);
-                }
-            } else if (params.edges.length > 0) {
-                // Edge clicked
-                const edgeId = params.edges[0];
-                const edge = edges.find(e => e.id === edgeId);
-                if (edge && edge.description) {
-                    // Use originalLabel (which has the label from YAML) for tooltip title
-                    const title = edge.originalLabel || edge.label || 'Edge Details';
-                    showVisualizationTooltip(title, edge.description, container);
-                }
-            }
-        });
-
-        // Add legend after network is created (so it appears above the canvas)
-        const legend = document.createElement('div');
-        legend.className = 'viz-legend';
-        legend.innerHTML = `
-            <div class="viz-legend-title">Legend</div>
-            <div class="viz-legend-section">
-                <div class="viz-legend-subtitle">Node Types</div>
-                <div class="viz-legend-item">
-                    <div class="viz-legend-box" style="background-color: #ff9999;"></div>
-                    <span>Principal (Users/Roles)</span>
-                </div>
-                <div class="viz-legend-item">
-                    <div class="viz-legend-box" style="background-color: #ffcc99;"></div>
-                    <span>Resource</span>
-                </div>
-                <div class="viz-legend-item">
-                    <div class="viz-legend-box" style="background-color: #99ccff;"></div>
-                    <span>Payload (Attacker Actions)</span>
-                </div>
-                <div class="viz-legend-item">
-                    <div class="viz-legend-box" style="background-color: #99ff99;"></div>
-                    <div class="viz-legend-box" style="background-color: #ffeb99;"></div>
-                    <div class="viz-legend-box" style="background-color: #cccccc;"></div>
-                    <span>Outcomes</span>
-                </div>
-            </div>
-            <div class="viz-legend-section">
-                <div class="viz-legend-subtitle">Edge Types</div>
-                <div class="viz-legend-item">
-                    <svg width="40" height="2" style="margin-right: 8px;">
-                        <line x1="0" y1="1" x2="40" y2="1" stroke="#848484" stroke-width="2"/>
-                    </svg>
-                    <span>Transitive Actions</span>
-                </div>
-                <div class="viz-legend-item">
-                    <svg width="40" height="2" style="margin-right: 8px;">
-                        <line x1="0" y1="1" x2="40" y2="1" stroke="#999" stroke-width="2" stroke-dasharray="5,5"/>
-                    </svg>
-                    <span>Potential Outcomes</span>
-                </div>
-            </div>
-        `;
-        container.appendChild(legend);
-
-        // Make legend collapsible on mobile
-        if (window.innerWidth <= 768) {
-            legend.classList.add('collapsed');
-        }
-
-        legend.addEventListener('click', () => {
-            if (window.innerWidth <= 768) {
-                legend.classList.toggle('collapsed');
-            }
-        });
-
-        // Store network instance for potential cleanup
-        container._visNetwork = network;
-
-    } catch (error) {
-        container.innerHTML = '<p style="color: #d13212;">Error rendering visualization</p>';
-    }
-}
-
-// Convert structured format to vis.js data
-function convertStructuredToVisData(structured) {
-    // Use dark font color for all nodes (bright backgrounds)
-    const nodeFontColor = '#232f3e';
-
-    const nodes = structured.nodes.map(node => {
-        // Default colors by type
-        const colorDefaults = {
-            'principal': '#ff9999',
-            'resource': '#ffcc99',
-            'payload': '#99ccff',
-            'action': '#99ccff',  // Deprecated - use 'payload' instead
-            'outcome': '#99ff99'
-        };
-
-        // Override with special outcome colors
-        if (node.type === 'outcome' && !node.color) {
-            if (node.label.includes('No ') || node.label.includes('Dead')) {
-                node.color = '#cccccc'; // gray for dead ends
-            } else if (node.label.includes('Check') || node.label.includes('Some')) {
-                node.color = '#ffeb99'; // yellow for partial
-            }
-        }
-
-        const color = node.color || colorDefaults[node.type] || '#e8f4f8';
-
-        return {
-            id: node.id,
-            label: node.label,
-            color: {
-                background: color,
-                border: getDarkerColor(color),
-                highlight: {
-                    background: color,
-                    border: '#ff9900'
-                }
-            },
-            description: node.description || '',
-            font: {
-                size: 14,
-                face: 'Arial',
-                color: nodeFontColor
-            }
-        };
-    });
-
-    const edges = structured.edges.map((edge, index) => {
-        const edgeStyle = {
-            id: `edge-${index}`,
-            from: edge.from,
-            to: edge.to,
-            description: edge.description || '',
-            originalLabel: edge.label // Store original label for tooltips
-        };
-
-        // Style conditional branches differently
-        if (edge.branch || edge.condition) {
-            edgeStyle.dashes = [5, 5]; // Dashed line for conditions
-            edgeStyle.color = {
-                color: '#999',
-                highlight: '#ff9900'
-            };
-            // No label displayed on conditional edges
-        } else {
-            // Add label for non-conditional edges
-            edgeStyle.label = edge.label;
-        }
-
-        return edgeStyle;
-    });
-
-    return { nodes, edges };
-}
-
-// Show tooltip for node/edge descriptions
-function showVisualizationTooltip(title, description, vizContainer) {
-    // Remove existing tooltip
-    const existingTooltip = document.querySelector('.viz-tooltip');
-    if (existingTooltip) {
-        existingTooltip.remove();
-    }
-
-    // Create tooltip
-    const tooltip = document.createElement('div');
-    tooltip.className = 'viz-tooltip';
-    tooltip.innerHTML = `
-        <div class="viz-tooltip-header">${escapeHtml(title)}</div>
-        <div class="viz-tooltip-body">${renderMarkdown(description)}</div>
-        <div class="viz-tooltip-close">&times;</div>
-    `;
-
-    // Append to the visualization container instead of body
-    vizContainer.appendChild(tooltip);
-
-    // Position tooltip - use saved position if available, otherwise default to bottom left
-    tooltip.style.position = 'absolute';
-    const savedPosition = tooltipPositions.get(vizContainer);
-    if (savedPosition) {
-        tooltip.style.left = savedPosition.left;
-        tooltip.style.top = savedPosition.top;
-        tooltip.style.bottom = 'auto';
-    } else {
-        tooltip.style.left = '10px';
-        tooltip.style.bottom = '10px';
-        tooltip.style.top = 'auto';
-    }
-
-    // Add drag functionality
-    const header = tooltip.querySelector('.viz-tooltip-header');
-    let isDragging = false;
-    let dragJustEnded = false;
-    let offsetX = 0;
-    let offsetY = 0;
-
-    const onMouseMove = (e) => {
-        if (!isDragging) return;
-
-        e.preventDefault();
-        e.stopPropagation();
-
-        const containerRect = vizContainer.getBoundingClientRect();
-        let newX = e.clientX - containerRect.left - offsetX;
-        let newY = e.clientY - containerRect.top - offsetY;
-
-        // Keep tooltip within container bounds
-        const tooltipRect = tooltip.getBoundingClientRect();
-        const maxX = containerRect.width - tooltipRect.width;
-        const maxY = containerRect.height - tooltipRect.height;
-
-        newX = Math.max(0, Math.min(newX, maxX));
-        newY = Math.max(0, Math.min(newY, maxY));
-
-        tooltip.style.left = newX + 'px';
-        tooltip.style.top = newY + 'px';
-        tooltip.style.bottom = 'auto';
-    };
-
-    const onMouseUp = () => {
-        if (isDragging) {
-            isDragging = false;
-            dragJustEnded = true;
-            header.style.cursor = 'grab';
-
-            // Save the tooltip position for this container
-            tooltipPositions.set(vizContainer, {
-                left: tooltip.style.left,
-                top: tooltip.style.top
-            });
-
-            // Clean up event listeners
-            document.removeEventListener('mousemove', onMouseMove);
-            document.removeEventListener('mouseup', onMouseUp);
-
-            // Reset drag flag after a short delay
-            setTimeout(() => {
-                dragJustEnded = false;
-            }, 150);
-        }
-    };
-
-    header.addEventListener('mousedown', (e) => {
-        // Don't start drag if clicking the close button
-        if (e.target.closest('.viz-tooltip-close')) return;
-
-        isDragging = true;
-
-        // Calculate offset: where within the tooltip did the user click?
-        const rect = tooltip.getBoundingClientRect();
-
-        offsetX = e.clientX - rect.left;
-        offsetY = e.clientY - rect.top;
-
-        header.style.cursor = 'grabbing';
-        e.preventDefault();
-        e.stopPropagation();
-
-        // Add event listeners
-        document.addEventListener('mousemove', onMouseMove);
-        document.addEventListener('mouseup', onMouseUp);
-    });
-
-    // Add close handler
-    tooltip.querySelector('.viz-tooltip-close').addEventListener('click', (e) => {
-        e.stopPropagation();
-        tooltip.remove();
-    });
-
-    // Close on outside click (but not right after dragging)
-    setTimeout(() => {
-        const closeHandler = (e) => {
-            // Don't close if we just finished dragging or if clicking inside tooltip
-            if (dragJustEnded || tooltip.contains(e.target)) return;
-
-            tooltip.remove();
-            document.removeEventListener('click', closeHandler);
-        };
-        document.addEventListener('click', closeHandler);
-    }, 100);
-}
-
-// Parse Mermaid "graph LR" format into vis.js nodes/edges
-function parseMermaidGraph(mermaidCode) {
-    const nodes = [];
-    const edges = [];
-    const nodeMap = new Map();
-
-    // Use dark font color for all nodes (bright backgrounds)
-    const nodeFontColor = '#232f3e';
-
-    // Split into lines and filter out empty/comment lines
-    const lines = mermaidCode.split('\n').map(l => l.trim()).filter(l => l && !l.startsWith('%%'));
-
-    // Track node colors from style declarations
-    const nodeStyles = new Map();
-
-    lines.forEach(line => {
-        // Skip graph declaration
-        if (line.startsWith('graph ')) return;
-
-        // Parse style declarations: style A fill:#ff9999,stroke:#333,stroke-width:2px
-        if (line.startsWith('style ')) {
-            const styleMatch = line.match(/style\s+(\w+)\s+fill:(#[0-9a-fA-F]+)/);
-            if (styleMatch) {
-                nodeStyles.set(styleMatch[1], styleMatch[2]);
-            }
-            return;
-        }
-
-        // Parse edge with label: A[label] -->|edge label| B[label]
-        let edgeMatch = line.match(/(\w+)\[([^\]]+)\]\s*-->(?:\|([^|]+)\|)?\s*(\w+)\[([^\]]+)\]/);
-
-        // Also try to parse edge without explicit nodes (references existing nodes): B --> C[label]
-        if (!edgeMatch) {
-            edgeMatch = line.match(/(\w+)\s*-->(?:\|([^|]+)\|)?\s*(\w+)\[([^\]]+)\]/);
-            if (edgeMatch) {
-                const [, fromId, edgeLabel, toId, toLabel] = edgeMatch;
-                // From node already exists (no label on this line)
-                const fromLabel = null;
-
-                // Add to node if not exists
-                if (!nodeMap.has(toId)) {
-                    const color = nodeStyles.get(toId) || '#e8f4f8';
-                    nodes.push({
-                        id: toId,
-                        label: toLabel,
-                        color: {
-                            background: color,
-                            border: getDarkerColor(color),
-                            highlight: {
-                                background: color,
-                                border: '#ff9900'
-                            }
-                        },
-                        font: {
-                            size: 14,
-                            face: 'Arial',
-                            color: nodeFontColor
-                        }
-                    });
-                    nodeMap.set(toId, true);
-                }
-
-                // Add edge
-                edges.push({
-                    from: fromId,
-                    to: toId,
-                    label: edgeLabel || ''
-                });
-                return;
-            }
-        }
-
-        if (edgeMatch) {
-            const [, fromId, fromLabel, edgeLabel, toId, toLabel] = edgeMatch;
-
-            // Add from node if not exists
-            if (!nodeMap.has(fromId)) {
-                const color = nodeStyles.get(fromId) || '#e8f4f8';
-                nodes.push({
-                    id: fromId,
-                    label: fromLabel,
-                    color: {
-                        background: color,
-                        border: getDarkerColor(color),
-                        highlight: {
-                            background: color,
-                            border: '#ff9900'
-                        }
-                    },
-                    font: {
-                        size: 14,
-                        face: 'Arial',
-                        color: nodeFontColor
-                    }
-                });
-                nodeMap.set(fromId, true);
-            }
-
-            // Add to node if not exists
-            if (!nodeMap.has(toId)) {
-                const color = nodeStyles.get(toId) || '#e8f4f8';
-                nodes.push({
-                    id: toId,
-                    label: toLabel,
-                    color: {
-                        background: color,
-                        border: getDarkerColor(color),
-                        highlight: {
-                            background: color,
-                            border: '#ff9900'
-                        }
-                    },
-                    font: {
-                        size: 14,
-                        face: 'Arial',
-                        color: nodeFontColor
-                    }
-                });
-                nodeMap.set(toId, true);
-            }
-
-            // Add edge
-            edges.push({
-                from: fromId,
-                to: toId,
-                label: edgeLabel || ''
-            });
-        }
-    });
-
-    return { nodes, edges };
-}
-
-// Helper function to get a darker version of a color for borders
-function getDarkerColor(hex) {
-    // Remove # if present
-    hex = hex.replace('#', '');
-
-    // Parse RGB
-    const r = parseInt(hex.substring(0, 2), 16);
-    const g = parseInt(hex.substring(2, 4), 16);
-    const b = parseInt(hex.substring(4, 6), 16);
-
-    // Darken by 30%
-    const darkerR = Math.floor(r * 0.7);
-    const darkerG = Math.floor(g * 0.7);
-    const darkerB = Math.floor(b * 0.7);
-
-    // Convert back to hex
-    return `#${darkerR.toString(16).padStart(2, '0')}${darkerG.toString(16).padStart(2, '0')}${darkerB.toString(16).padStart(2, '0')}`;
+// Visualization functions (calculateHierarchicalLevels, renderAttackVisualization,
+// convertStructuredToVisData, showVisualizationTooltip, parseMermaidGraph, getDarkerColor)
+// are now in viz-shared.js
+
+// Render attack visualization for paths page (wrapper for backward compatibility)
+function renderAttackVisualizationForPath(pathId, visualization) {
+    renderAttackVisualization(`attack-viz-${pathId}`, visualization);
 }
 
 // Utility functions
@@ -1778,7 +1237,7 @@ function openFullscreenVisualization(pathId) {
 
     // Render visualization in fullscreen container
     setTimeout(() => {
-        renderAttackVisualization('fullscreen-' + pathId, path.attackVisualization);
+        renderAttackVisualization('attack-viz-fullscreen-' + pathId, path.attackVisualization);
     }, 10);
 
     // Close on background click
@@ -2029,7 +1488,7 @@ function renderExploitationSteps(steps) {
 }
 
 // Render learning environments with tabs for different platforms
-function renderLearningEnvironments(environments) {
+function renderLearningEnvironments(environments, pathId) {
     const envNames = Object.keys(environments);
     if (envNames.length === 0) return '<p>No learning environments available</p>';
 
@@ -2057,26 +1516,29 @@ function renderLearningEnvironments(environments) {
 
         if (envData.type === 'open-source') {
             const isPathfinderLabs = envData.githubLink && envData.githubLink.includes('pathfinding-labs');
+            // For pathfinding-labs, find the matching lab to link to the detail page
+            const matchingLab = isPathfinderLabs && pathId && labsData.length > 0
+                ? labsData.find(lab => lab.pathfindingCloudId === pathId)
+                : null;
+            const repoUrl = isPathfinderLabs ? 'https://github.com/DataDog/pathfinding-labs' : envData.githubLink;
             return `
                 <div id="${uniqueId}-${envName}" class="tab-content ${index === 0 ? 'active' : ''}" data-tab-group="${uniqueId}">
                     <div class="learning-env-content">
                         <div class="env-meta">
-                            ${isPathfinderLabs ? `
-                                <span class="unified-action-button disabled" title="Repository coming soon">
-                                    <svg height="14" width="14" viewBox="0 0 16 16" fill="currentColor">
-                                        <path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"></path>
+                            <a href="${escapeHtml(repoUrl)}" target="_blank" class="unified-action-button">
+                                <svg height="14" width="14" viewBox="0 0 16 16" fill="currentColor">
+                                    <path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"></path>
+                                </svg>
+                                View Repository
+                            </a>
+                            ${matchingLab ? `
+                                <a href="/labs/${escapeHtml(matchingLab.slug)}" class="unified-action-button">
+                                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                        <path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/>
                                     </svg>
-                                    View Repository
-                                    <span class="coming-soon-badge">Coming Soon</span>
-                                </span>
-                            ` : `
-                                <a href="${escapeHtml(envData.githubLink)}" target="_blank" class="unified-action-button">
-                                    <svg height="14" width="14" viewBox="0 0 16 16" fill="currentColor">
-                                        <path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"></path>
-                                    </svg>
-                                    View Repository
+                                    View Lab Details
                                 </a>
-                            `}
+                            ` : ''}
                             ${envData.scenario ? `<span class="env-scenario-name"><strong>Scenario:</strong> <code>${escapeHtml(envData.scenario)}</code></span>` : ''}
                         </div>
                         <p class="env-description">${escapeHtml(envData.description)}</p>

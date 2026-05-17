@@ -4,9 +4,16 @@ This document defines the YAML schema used for documenting AWS IAM privilege esc
 
 ## Schema Version
 
-Current version: `1.6.0`
+Current version: `1.7.0`
 
 ### Version History
+
+#### Version 1.7.0 (2026-04-18)
+- Added `supportsOnlineMode` optional boolean field to **lab data** (sourced from pathfinding-labs, consumed via `labs.json`): indicates the lab has a deployed online environment that can be played directly from the game map terminal
+- Added `onlineEndpoint` optional string field to **lab data**: the API Gateway URL that the in-browser terminal POSTs commands to (fronts the Lambda backend)
+- These are lab-level fields, not path YAML fields — they live in the pathfinding-labs scenario configuration and flow through `generate-json.py` into `labs.json`
+- The game map "Play Online" button reads both fields; labs missing `supportsOnlineMode: true` fall back to the "Coming Soon" UI automatically
+- See also: `PLAY_ONLINE_GLOBALLY_ENABLED` constant in `docs/js/map-game.js` (global kill-switch, currently `false`)
 
 #### Version 1.6.0 (2025-01-15)
 - **Breaking change**: `parent` field changed from string to nested object
