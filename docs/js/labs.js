@@ -1692,6 +1692,8 @@ function switchDetailMode(mode, lab) {
     if (existingCanvas?._mapGameCleanup) existingCanvas._mapGameCleanup();
 
     if (mode === 'mapgame') {
+        // Blur the clicked button so Space/Enter don't re-fire it and re-init the game.
+        document.activeElement?.blur();
         renderLabDetailContentMapGame(lab, container);
     } else {
         renderLabDetailContentGuidedV2(lab, container);

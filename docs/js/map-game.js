@@ -4567,10 +4567,6 @@ function renderGameMenu(state) {
                 {
                     label: 'Visuals',
                     rows: [
-                        { keys: ['V'], desc: 'Cycle companion style' },
-                        { keys: ['I'], desc: 'Cycle icon style' },
-                        { keys: ['T'], desc: 'Cycle island style' },
-                        { keys: ['G'], desc: 'Cycle target island style' },
                         { keys: ['P'], desc: 'Cycle plane style' },
                         { keys: ['W'], desc: 'Cycle sky (sky / sunset / dusk)' },
                         { keys: ['R'], desc: 'Reset view' },
@@ -7548,41 +7544,6 @@ function initMapGame(mapId, nodes, edges, companions, lab) {
                 if (focused) activateMenuItem(focused.id, state);
             }
             return; // consume all keys while menu is open
-        }
-        // V key toggles companion visual style (ship -> islet -> note -> ship)
-        if ((e.key === 'v' || e.key === 'V') && (state.screen === 'playing' || state.screen === 'complete')) {
-            const styles = ['islet', 'ship', 'note'];
-            const currentIdx = styles.indexOf(state.companionStyle);
-            state.companionStyle = styles[(currentIdx + 1) % styles.length];
-            redraw();
-        }
-        // I key cycles AWS icon display style:
-        //   on-island  -> flat logo on the island surface (original treatment)
-        //   below-label -> 32px logo inside the label plate beneath the island
-        //   off         -> no logo
-        //   building    -> wooden outpost with logo as front signage
-        //   banner      -> banner on two posts with logo as the charge
-        //   crest       -> heraldic shield on a small stand, logo as the charge
-        if ((e.key === 'i' || e.key === 'I') && (state.screen === 'playing' || state.screen === 'complete')) {
-            const iconStyles = ['on-island', 'below-label', 'off', 'building', 'banner', 'crest'];
-            const currentIdx = iconStyles.indexOf(state.iconStyle);
-            state.iconStyle = iconStyles[(currentIdx + 1) % iconStyles.length];
-            redraw();
-        }
-        // T key toggles island visual style (classic -> wooded -> tropical -> ruins)
-        if ((e.key === 't' || e.key === 'T') && (state.screen === 'playing' || state.screen === 'complete')) {
-            const islandStyles = ['classic', 'wooded', 'tropical', 'ruins'];
-            const currentIdx = islandStyles.indexOf(state.islandStyle);
-            state.islandStyle = islandStyles[(currentIdx + 1) % islandStyles.length];
-            redraw();
-        }
-        // G key cycles target-island visual style (classic-plus -> flag-shape -> fortress)
-        // Applies only to nodes flagged isTarget: true in the attack map YAML.
-        if ((e.key === 'g' || e.key === 'G') && (state.screen === 'playing' || state.screen === 'complete')) {
-            const targetStyles = ['classic-plus', 'flag-shape', 'fortress'];
-            const currentIdx = targetStyles.indexOf(state.targetStyle);
-            state.targetStyle = targetStyles[(currentIdx + 1) % targetStyles.length];
-            redraw();
         }
         // P key toggles plane visual style (jet -> biplane -> seaplane -> helicopter)
         if ((e.key === 'p' || e.key === 'P') && (state.screen === 'playing' || state.screen === 'complete')) {
