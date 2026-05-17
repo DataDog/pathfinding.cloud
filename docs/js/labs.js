@@ -1291,8 +1291,7 @@ function renderLabDetailContent(lab, container) {
 
     // Two modes: Guided v2 (default) and Game (desktop-only)
     const isMobile = window.innerWidth <= 768;
-    const savedMode = localStorage.getItem('labs-detail-mode') || 'guidedv2';
-    const currentMode = hasRichContent && !(isMobile && savedMode === 'mapgame') ? savedMode : 'guidedv2';
+    const currentMode = 'guidedv2';
 
     // Mode toggle
     const modeToggle = hasRichContent ? `
@@ -1675,7 +1674,6 @@ function getNodeTypeFromColor(colorObj) {
 function switchDetailMode(mode, lab) {
     // Game mode is desktop-only; ignore requests on mobile
     if (mode === 'mapgame' && window.innerWidth <= 768) return;
-    localStorage.setItem('labs-detail-mode', mode);
 
     // Toggle body class so CSS can expand/restore max-width constraints for game mode
     document.body.classList.toggle('lab-game-mode', mode === 'mapgame');
