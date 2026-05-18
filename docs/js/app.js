@@ -1503,7 +1503,17 @@ function renderLearningEnvironments(environments, pathId) {
 
     const uniqueId = `env-tabs-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
 
-    const tabsHtml = envNames.map((envName, index) => `
+    // Pre-compute matching labs and filter out pathfinding-labs entries with no match
+    const resolvedEnvNames = envNames.filter(envName => {
+        const envData = environments[envName];
+        const isPathfinderLabs = envData.type === 'open-source' && envData.githubLink && envData.githubLink.includes('pathfinding-labs');
+        if (!isPathfinderLabs) return true;
+        return !!(pathId && labsData.length > 0 && labsData.find(lab => lab.pathfindingCloudId === pathId));
+    });
+
+    if (resolvedEnvNames.length === 0) return '<p>No learning environments available</p>';
+
+    const tabsHtml = resolvedEnvNames.map((envName, index) => `
         <button class="tab-button ${index === 0 ? 'active' : ''}"
                 data-tab-target="${uniqueId}-${envName}"
                 data-tab-group="${uniqueId}">
@@ -1511,12 +1521,11 @@ function renderLearningEnvironments(environments, pathId) {
         </button>
     `).join('');
 
-    const contentHtml = envNames.map((envName, index) => {
+    const contentHtml = resolvedEnvNames.map((envName, index) => {
         const envData = environments[envName];
 
         if (envData.type === 'open-source') {
             const isPathfinderLabs = envData.githubLink && envData.githubLink.includes('pathfinding-labs');
-            // For pathfinding-labs, find the matching lab to link to the detail page
             const matchingLab = isPathfinderLabs && pathId && labsData.length > 0
                 ? labsData.find(lab => lab.pathfindingCloudId === pathId)
                 : null;
@@ -1538,8 +1547,8 @@ function renderLearningEnvironments(environments, pathId) {
                                     </svg>
                                     View Lab Details
                                 </a>
-                            ` : ''}
-                            ${envData.scenario ? `<span class="env-scenario-name"><strong>Scenario:</strong> <code>${escapeHtml(envData.scenario)}</code></span>` : ''}
+                                <span class="env-scenario-name"><strong>Lab:</strong> ${escapeHtml(matchingLab.displayName)}</span>
+                            ` : (envData.scenario ? `<span class="env-scenario-name"><strong>Scenario:</strong> <code>${escapeHtml(envData.scenario)}</code></span>` : '')}
                         </div>
                         <p class="env-description">${escapeHtml(envData.description)}</p>
                     </div>
