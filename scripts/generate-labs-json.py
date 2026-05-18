@@ -1233,6 +1233,23 @@ def generate_labs_json(source_dir=None, output_file="docs/labs.json"):
                                         elif "nodes" in parsed or "edges" in parsed:
                                             lab["attackMap"] = parsed
                                         lab["hasAttackMap"] = True
+                                        # Recompute principalHopCount now that the attack map is loaded.
+                                        # transform_readme ran before this fetch, so its hop count
+                                        # was based on the (absent) embedded attack map and is wrong.
+                                        attack_map = lab.get("attackMap", {})
+                                        principal_node_count = sum(
+                                            1 for node in attack_map.get("nodes", [])
+                                            if node.get("type") == "principal"
+                                        )
+                                        lab["principalHopCount"] = max(0, principal_node_count - 1)
+                                        # Also recompute startAccessType from the loaded attack map.
+                                        start_node = next(
+                                            (n for n in attack_map.get("nodes", []) if "access" in n),
+                                            None,
+                                        )
+                                        lab["startAccessType"] = (
+                                            start_node["access"].get("type") if start_node else None
+                                        )
                                 except yaml.YAMLError as e:
                                     print(f"  WARNING: Failed to parse remote attack_map.yaml: {e}")
 
