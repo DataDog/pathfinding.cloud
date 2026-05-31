@@ -2943,6 +2943,14 @@ function updateGamePanel(state) {
     const panelEl = state._panelEl;
     if (!panelEl) return;
 
+    // Navigation changed the panel content — exit panel focus so the user is
+    // back to helicopter mode automatically. The user can re-enter with B.
+    if (state.panelFocused) {
+        state.panelFocused = false;
+        panelEl.classList.remove('mg-panel-focused');
+        panelEl.querySelector('.mg-panel-focus-banner')?.remove();
+    }
+
     // Node, edge, and companion selection are mutually exclusive
     const hasNode = state.selectedNode !== null && state.selectedNode !== undefined;
     const hasEdge = state.selectedEdge !== null && state.selectedEdge !== undefined;
@@ -3288,6 +3296,8 @@ function drawArcadeStartOverlay(ctx, w, h, state) {
     const controls = [
         ['ARROW KEYS', 'FLY HELICOPTER'],
         ['HOVER',  'REVEAL PATH NODES'],
+        ['A',      'REVEAL HINT'],
+        ['B',      'SCROLL PANEL'],
         ['M',      'OPEN MENU'],
     ];
     const valX = leftX + Math.round(boxW * 0.34);
@@ -4561,6 +4571,7 @@ function renderGameMenu(state) {
                     rows: [
                         { keys: ['&#8592; &#8594;'], desc: 'Back / Next step' },
                         { keys: ['A'],               desc: 'Reveal next hint' },
+                        { keys: ['B'],               desc: 'Toggle panel scroll (&#8593;&#8595; scroll, B exit)' },
                         { keys: ['D'],               desc: 'View simulated demo (&#8592;&#8594; side-scroll)' },
                     ],
                 },
@@ -6717,6 +6728,7 @@ function initMapGame(mapId, nodes, edges, companions, lab) {
         decorations,
         hintsUsed: 0,
         revealedHints: {},
+        panelFocused: false,  // true = arrows scroll left panel instead of flying helicopter (B toggles)
         hoveredButton: null,
         activeButton: null,
         hoveredHop: null,        // hop label hover state
@@ -7646,11 +7658,21 @@ function initMapGame(mapId, nodes, edges, companions, lab) {
         if ((e.key === '=' || e.key === '+') && (state.screen === 'playing' || state.screen === 'complete')) {
             resizeIslands(1.08);
         }
-        // Arrow keys fly the helicopter when playing
+        // Arrow keys: scroll left panel when focused (B mode), otherwise fly helicopter
         if (['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'].includes(e.key)
                 && state.screen === 'playing') {
             e.preventDefault();
-            state._heliKeys[e.key] = true;
+            if (state.panelFocused) {
+                const panelEl = state._panelEl;
+                if (panelEl) {
+                    const scrollAmount = 80;
+                    if (e.key === 'ArrowUp')   panelEl.scrollTop -= scrollAmount;
+                    if (e.key === 'ArrowDown') panelEl.scrollTop += scrollAmount;
+                    // Left/Right are not bound in panel mode — no horizontal scroll on the panel
+                }
+            } else {
+                state._heliKeys[e.key] = true;
+            }
         }
         // Space = Next, Backspace = Back (mirror the on-screen buttons + reveal mechanic)
         if (e.key === ' ' && state.screen === 'playing') {
@@ -7664,6 +7686,30 @@ function initMapGame(mapId, nodes, edges, companions, lab) {
             retreatGameState(w, h, state);
             syncRevealToNavigation(state);
             redraw();
+        }
+        // B key: toggle focus between the left detail panel and helicopter controls.
+        // When the panel is focused, arrow keys scroll the panel instead of flying.
+        if ((e.key === 'b' || e.key === 'B') && state.screen === 'playing') {
+            const panelEl = state._panelEl;
+            if (panelEl) {
+                state.panelFocused = !state.panelFocused;
+                panelEl.classList.toggle('mg-panel-focused', state.panelFocused);
+
+                // Inject or remove the focus-mode banner at the top of the panel
+                const existingBanner = panelEl.querySelector('.mg-panel-focus-banner');
+                if (state.panelFocused) {
+                    if (!existingBanner) {
+                        const banner = document.createElement('div');
+                        banner.className = 'mg-panel-focus-banner';
+                        banner.innerHTML = '<span>PANEL SCROLL MODE</span><span>&#8593;&#8595; SCROLL &nbsp; B EXIT</span>';
+                        panelEl.insertBefore(banner, panelEl.firstChild);
+                    }
+                    // Scroll to the bottom so the latest revealed content is visible
+                    panelEl.scrollTop = panelEl.scrollHeight;
+                } else {
+                    existingBanner?.remove();
+                }
+            }
         }
         // A key: progressively reveal the next hidden hint on the current edge panel
         if ((e.key === 'a' || e.key === 'A') && state.screen === 'playing') {
