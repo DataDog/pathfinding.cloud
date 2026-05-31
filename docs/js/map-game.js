@@ -2711,7 +2711,7 @@ function renderGamePanelEdge(panelEl, state) {
     // Progressive hints
     const hints = edge.hints || [];
     if (hints.length > 0) {
-        html += `<div class="mg-panel-section"><span class="mg-section-label">HINTS${_dbgE('attackMap.edges[n].hints[]')}</span>`;
+        html += `<div class="mg-panel-section"><span class="mg-section-label">HINTS${_dbgE('attackMap.edges[n].hints[]')}</span><p class="mg-panel-hint-tip">Press <kbd>A</kbd> to sequentially reveal hints and exploit commands.</p>`;
         if (!state.revealedHints) state.revealedHints = {};
         if (!state.revealedHints[`edge-${edgeIdx}`]) state.revealedHints[`edge-${edgeIdx}`] = new Set();
         const revealedSet = state.revealedHints[`edge-${edgeIdx}`];
