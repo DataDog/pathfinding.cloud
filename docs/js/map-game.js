@@ -4402,8 +4402,9 @@ function loadLabsBrowser(state) {
     if (state.labsBrowserLabs !== null) return; // already loaded
     fetchLabsIndex()
         .then(allLabs => {
-            // Only show labs that have an attack map (i.e. can be played)
-            state.labsBrowserLabs = allLabs.filter(l => l.hasAttackMap);
+            // Only show labs that have an attack map and are in the main table categories
+            const ALLOWED_CATEGORIES = new Set(['Privilege Escalation', 'CSPM: Misconfig']);
+            state.labsBrowserLabs = allLabs.filter(l => l.hasAttackMap && ALLOWED_CATEGORIES.has(l.category));
             if (state.menuView === 'labs-browser') {
                 state.menuFocusIdx = 0;
                 renderGameMenu(state);
