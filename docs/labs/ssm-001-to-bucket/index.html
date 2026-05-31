@@ -1,0 +1,703 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SSM Session Start to Bucket - pathfinding.cloud Labs</title>
+    <meta name="description" content="Start interactive shell sessions on EC2 instances with S3 access roles to extract credentials via IMDS and access sensitive buckets">
+    <meta name="generator" content="pathfinding-cloud-lab-stub">
+    <!-- Open Graph / Social Sharing -->
+    <meta property="og:type" content="article">
+    <meta property="og:url" content="https://pathfinding.cloud/labs/ssm-001-to-bucket/">
+    <meta property="og:title" content="SSM Session Start to Bucket - pathfinding.cloud Labs">
+    <meta property="og:description" content="Start interactive shell sessions on EC2 instances with S3 access roles to extract credentials via IMDS and access sensitive buckets">
+    <meta property="og:image" content="https://pathfinding.cloud/labs/ssm-001-to-bucket/hero.png">
+    <!-- Twitter Card -->
+    <meta name="twitter:card" content="summary_large_image">
+    <meta name="twitter:title" content="SSM Session Start to Bucket - pathfinding.cloud Labs">
+    <meta name="twitter:description" content="Start interactive shell sessions on EC2 instances with S3 access roles to extract credentials via IMDS and access sensitive buckets">
+    <meta name="twitter:image" content="https://pathfinding.cloud/labs/ssm-001-to-bucket/hero.png">
+    <!-- Favicon -->
+    <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png">
+    <link rel="icon" type="image/png" sizes="32x32" href="/favicon-32x32.png">
+    <link rel="icon" type="image/png" sizes="16x16" href="/favicon-16x16.png">
+    <script
+        src="https://www.datadoghq-browser-agent.com/us1/v6/datadog-rum.js"
+        type="text/javascript">
+    </script>
+    <script>
+        window.DD_RUM && window.DD_RUM.init({
+        clientToken: 'pub480324ed2fcb73b641a2eccdd88c1d13',
+        applicationId: '61e8d384-68d8-45b7-a969-3187e0e167ff',
+        site: 'datadoghq.com',
+        service: 'pathfinding.cloud',
+        env: 'prod',
+        sessionSampleRate: 100,
+        sessionReplaySampleRate: 100,
+        trackBfcacheViews: true,
+        defaultPrivacyLevel: 'allow',
+        });
+    </script>
+    <!-- Prevent theme flicker by applying theme before render -->
+    <script>
+        (function() {
+            const savedTheme = localStorage.getItem('theme') || 'light';
+            if (savedTheme === 'light') {
+                document.documentElement.classList.add('light-theme');
+            }
+            // Sidebar anti-flicker: apply collapsed class before paint.
+            // Also force-collapse on narrow viewports regardless of saved preference.
+            if (localStorage.getItem('sidebarCollapsed') === 'true' || window.innerWidth < 1600) {
+                document.documentElement.classList.add('sidebar-collapsed');
+            }
+        })();
+    </script>
+    <link rel="stylesheet" href="/css/style.css?v=48">
+    <!-- Google Tag Manager -->
+    <script>(function(w,d,s,l,i){w[l]=w[l]||[];w[l].push({'gtm.start':
+    new Date().getTime(),event:'gtm.js'});var f=d.getElementsByTagName(s)[0],
+    j=d.createElement(s),dl=l!='dataLayer'?'&l='+l:'';j.async=true;j.src=
+    'https://www.googletagmanager.com/gtm.js?id='+i+dl;f.parentNode.insertBefore(j,f);
+    })(window,document,'script','dataLayer','GTM-WDC8G6');</script>
+    <!-- End Google Tag Manager -->
+</head>
+<body>
+    <!-- Google Tag Manager (noscript) -->
+    <noscript><iframe src="https://www.googletagmanager.com/ns.html?id=GTM-WDC8G6"
+    height="0" width="0" style="display:none;visibility:hidden"></iframe></noscript>
+    <!-- End Google Tag Manager (noscript) -->
+    <header>
+        <div class="header-content">
+            <div class="header-left">
+                <button id="mobile-menu-toggle" class="mobile-menu-toggle" aria-label="Toggle menu">
+                    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <line x1="3" y1="12" x2="21" y2="12"/>
+                        <line x1="3" y1="6" x2="21" y2="6"/>
+                        <line x1="3" y1="18" x2="21" y2="18"/>
+                    </svg>
+                </button>
+                <div class="site-branding">
+                    <a href="/" class="site-name">PATHFINDING.CLOUD</a>
+                    <div class="site-tagline">Understand, Detect &amp; Demonstrate AWS IAM Privilege Escalation</div>
+                </div>
+            </div>
+            <nav class="header-center">
+                <a href="/" class="nav-link">Home</a>
+                <div class="nav-dropdown">
+                    <a href="/paths/" class="nav-link">Paths</a>
+                    <div class="dropdown-content">
+                        <a href="/paths/">Attack Paths</a>
+                        <a href="/paths/stats/">Statistics</a>
+                    </div>
+                </div>
+                <a href="/labs/" class="nav-link active">Labs</a>
+            </nav>
+            <div class="header-right">
+                <a href="https://securitylabs.datadoghq.com" target="_blank" class="datadog-logo-link" aria-label="Visit Datadog Security Labs">
+                    <img src="/images/datadog-logo-white.png" alt="Datadog Logo" class="header-logo datadog-logo-white" style="filter: brightness(0) invert(1);">
+                    <img src="/images/datadog-logo-purple.png" alt="Datadog Logo" class="header-logo datadog-logo-purple" style="filter: brightness(0) saturate(100%); display: none;">
+                    <span class="icon-label">Datadog Security Labs</span>
+                </a>
+                <button id="theme-toggle" class="theme-toggle" aria-label="Toggle theme">
+                    <svg class="sun-icon" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <circle cx="12" cy="12" r="5"/>
+                        <line x1="12" y1="1" x2="12" y2="3"/>
+                        <line x1="12" y1="21" x2="12" y2="23"/>
+                        <line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/>
+                        <line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/>
+                        <line x1="1" y1="12" x2="3" y2="12"/>
+                        <line x1="21" y1="12" x2="23" y2="12"/>
+                        <line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/>
+                        <line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/>
+                    </svg>
+                    <svg class="moon-icon" width="24" height="24" viewBox="0 0 24 24" fill="currentColor">
+                        <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/>
+                    </svg>
+                    <span class="icon-label">Toggle Theme</span>
+                </button>
+                <a href="https://github.com/DataDog/pathfinding.cloud" target="_blank" class="github-link" aria-label="View on GitHub">
+                    <svg width="24" height="24" viewBox="0 0 16 16" fill="currentColor">
+                        <path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/>
+                    </svg>
+                    <span class="icon-label">View on GitHub</span>
+                </a>
+            </div>
+        </div>
+    </header>
+
+    <!-- Mobile Menu Overlay -->
+    <div id="mobile-menu-overlay" class="mobile-menu-overlay">
+        <div class="mobile-menu">
+            <div class="mobile-menu-header">
+                <span>Menu</span>
+                <button id="mobile-menu-close" class="mobile-menu-close" aria-label="Close mobile menu">
+                    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <line x1="18" y1="6" x2="6" y2="18"/>
+                        <line x1="6" y1="6" x2="18" y2="18"/>
+                    </svg>
+                </button>
+            </div>
+            <nav class="mobile-menu-nav">
+                <a href="/" class="mobile-nav-link">Home</a>
+                <div class="mobile-nav-group">
+                    <span class="mobile-nav-parent">Paths</span>
+                    <a href="/paths/" class="mobile-nav-link mobile-nav-child">Attack Paths</a>
+                    <a href="/paths/stats/" class="mobile-nav-link mobile-nav-child">Statistics</a>
+                </div>
+                <div class="mobile-nav-group">
+                    <span class="mobile-nav-parent">Labs</span>
+                    <a href="/labs/" class="mobile-nav-link mobile-nav-child">Labs Catalog</a>
+                    <a href="/labs/getting-started/" class="mobile-nav-link mobile-nav-child">Getting Started</a>
+                </div>
+            </nav>
+        </div>
+    </div>
+
+    <aside class="site-sidebar" id="site-sidebar">
+        <nav class="sidebar-nav">
+            <a href="/" class="sidebar-item" data-tooltip="Home">
+                <svg class="sidebar-icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg>
+                <span class="sidebar-label">Home</span>
+            </a>
+
+            <hr class="sidebar-divider">
+            <div class="sidebar-group" id="sidebar-group-paths">
+                <button class="sidebar-group-toggle" data-tooltip="Paths">
+                    <svg class="sidebar-icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+                    <span class="sidebar-label">Paths</span>
+                    <svg class="sidebar-chevron" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"/></svg>
+                </button>
+                <div class="sidebar-group-items">
+                    <a href="/paths/" class="sidebar-item sidebar-child" data-tooltip="Attack Paths">
+                        <svg class="sidebar-icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="3"/><line x1="12" y1="2" x2="12" y2="5"/><line x1="12" y1="19" x2="12" y2="22"/><line x1="2" y1="12" x2="5" y2="12"/><line x1="19" y1="12" x2="22" y2="12"/></svg>
+                        <span class="sidebar-label">Attack Paths</span>
+                    </a>
+                    <a href="/paths/stats/" class="sidebar-item sidebar-child" data-tooltip="Statistics">
+                        <svg class="sidebar-icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/><line x1="2" y1="20" x2="22" y2="20"/></svg>
+                        <span class="sidebar-label">Statistics</span>
+                    </a>
+                </div>
+            </div>
+
+            <hr class="sidebar-divider">
+            <div class="sidebar-group" id="sidebar-group-labs">
+                <button class="sidebar-group-toggle" data-tooltip="Labs">
+                    <svg class="sidebar-icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 2v7.31l-4.76 9.54A2 2 0 0 0 7 22h10a2 2 0 0 0 1.76-2.95L14 9.31V2"/><line x1="8.5" y1="2" x2="15.5" y2="2"/></svg>
+                    <span class="sidebar-label">Labs</span>
+                    <svg class="sidebar-chevron" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"/></svg>
+                </button>
+                <div class="sidebar-group-items">
+                    <a href="/labs/" class="sidebar-item sidebar-child" data-tooltip="Labs Catalog">
+                        <svg class="sidebar-icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/></svg>
+                        <span class="sidebar-label">Labs Catalog</span>
+                    </a>
+                    <a href="/labs/getting-started/" class="sidebar-item sidebar-child" data-tooltip="Getting Started">
+                        <svg class="sidebar-icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polygon points="16.24 7.76 14.12 14.12 7.76 16.24 9.88 9.88 16.24 7.76"/></svg>
+                        <span class="sidebar-label">Getting Started</span>
+                    </a>
+                </div>
+            </div>
+        </nav>
+
+        <button id="sidebar-collapse-toggle" class="sidebar-collapse-btn" data-tooltip="Collapse">
+            <svg class="sidebar-icon collapse-icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"/></svg>
+            <span class="sidebar-label">Collapse</span>
+        </button>
+    </aside>
+
+    <div class="page-body">
+    <style>
+        /* Fix header overflow to allow dropdown to show */
+        header {
+            overflow: visible !important;
+        }
+
+        /* Dropdown menu styles */
+        .nav-dropdown {
+            position: relative;
+            display: flex;
+            align-items: center;
+        }
+
+        .nav-dropdown .dropdown-content {
+            display: none;
+            position: absolute;
+            top: 100%;
+            left: 0;
+            background: var(--card-background);
+            min-width: 180px;
+            box-shadow: 0 8px 16px rgba(0, 0, 0, 0.3);
+            border-radius: 8px;
+            z-index: 9999;
+            border: 2px solid var(--border-color);
+            padding-top: 12px;
+            margin-top: 0;
+        }
+
+        .nav-dropdown .dropdown-content::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            height: 12px;
+            background: transparent;
+        }
+
+        .nav-dropdown .dropdown-content a {
+            color: var(--text-primary);
+            padding: 8px 16px;
+            text-decoration: none;
+            display: block;
+            transition: all 0.2s;
+            border-radius: 6px;
+            margin: 2px 4px;
+            position: relative;
+        }
+
+        .nav-dropdown .dropdown-content a:first-child {
+            margin-top: 0;
+        }
+
+        .nav-dropdown .dropdown-content a:hover {
+            background: var(--accent-purple);
+            color: white;
+            transform: translateX(4px);
+        }
+
+        .nav-dropdown .dropdown-content a.active {
+            color: var(--accent-color);
+            font-weight: 500;
+        }
+
+        .nav-dropdown .dropdown-content a.active::before {
+            content: '';
+            position: absolute;
+            left: 4px;
+            top: 50%;
+            transform: translateY(-50%);
+            width: 4px;
+            height: 4px;
+            background: var(--accent-color);
+            border-radius: 50%;
+        }
+
+        .nav-dropdown:hover .dropdown-content {
+            display: block;
+        }
+
+        .nav-dropdown:hover > .nav-link {
+            color: var(--accent-color);
+        }
+
+        /* Show white logo in dark mode, purple logo in light mode */
+        .datadog-logo-white {
+            display: block;
+        }
+
+        .datadog-logo-purple {
+            display: none;
+        }
+
+        html.light-theme .datadog-logo-white {
+            display: none;
+        }
+
+        html.light-theme .datadog-logo-purple {
+            display: block !important;
+        }
+    </style>
+
+    <nav class="container">
+        <div class="search-bar-container">
+            <div class="search-bar">
+                <input type="text" id="search" placeholder="Search labs by name, permission, or description...">
+            </div>
+            <div class="paths-count-display">
+                Showing <span id="filtered-labs-count">0</span> of <span id="total-labs-count">0</span> labs
+            </div>
+            <div class="filter-group view-toggle">
+                <label>View:</label>
+                <button id="view-cards" class="view-button active">Cards</button>
+                <button id="view-table" class="view-button">Table</button>
+            </div>
+        </div>
+        <div class="filters">
+            <!-- Category -->
+            <div class="filter-pill-wrapper" id="pill-wrapper-category-filter">
+                <button class="filter-pill" data-filter="category-filter" type="button"><span class="filter-pill-key">Category</span><span class="filter-pill-body"><span class="filter-pill-value">Any</span><svg class="filter-pill-caret" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg></span></button>
+                <div class="filter-pill-menu" id="menu-category-filter">
+                    <div class="filter-pill-item selected" data-value="">Any</div>
+                    <div class="filter-pill-item" data-value="Privilege Escalation">Privilege Escalation</div>
+                    <div class="filter-pill-item" data-value="CSPM: Misconfig">CSPM: Misconfig</div>
+                    <div class="filter-pill-item" data-value="CSPM: Toxic Combination">Toxic Combination</div>
+                    <div class="filter-pill-item" data-value="Tool Testing">Tool Testing</div>
+                    <div class="filter-pill-item" data-value="CTF">CTF</div>
+                    <div class="filter-pill-item" data-value="Attack Simulation">Attack Simulation</div>
+                </div>
+                <select id="category-filter" hidden>
+                    <option value="">All Categories</option>
+                    <option value="Privilege Escalation">Privilege Escalation</option>
+                    <option value="CSPM: Misconfig">CSPM Misconfiguration</option>
+                    <option value="CSPM: Toxic Combination">Toxic Combination</option>
+                    <option value="Tool Testing">Tool Testing</option>
+                    <option value="CTF">CTF</option>
+                    <option value="Attack Simulation">Attack Simulation</option>
+                </select>
+            </div>
+
+            <!-- Path Type -->
+            <div class="filter-pill-wrapper" id="pill-wrapper-path-type-filter">
+                <button class="filter-pill" data-filter="path-type-filter" type="button"><span class="filter-pill-key">Type</span><span class="filter-pill-body"><span class="filter-pill-value">Any</span><svg class="filter-pill-caret" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg></span></button>
+                <div class="filter-pill-menu" id="menu-path-type-filter">
+                    <div class="filter-pill-item selected" data-value="">Any</div>
+                    <div class="filter-pill-item" data-value="self-escalation">Self-Escalation</div>
+                    <div class="filter-pill-item" data-value="one-hop">One-Hop</div>
+                    <div class="filter-pill-item" data-value="multi-hop">Multi-Hop</div>
+                    <div class="filter-pill-item" data-value="cross-account">Cross-Account</div>
+                    <div class="filter-pill-item" data-value="attack-simulation">Attack Simulation</div>
+                </div>
+                <select id="path-type-filter" hidden>
+                    <option value="">All Types</option>
+                    <option value="self-escalation">Self-Escalation</option>
+                    <option value="one-hop">One-Hop</option>
+                    <option value="multi-hop">Multi-Hop</option>
+                    <option value="cross-account">Cross-Account</option>
+                    <option value="attack-simulation">Attack Simulation</option>
+                </select>
+            </div>
+
+            <!-- Cost -->
+            <div class="filter-pill-wrapper" id="pill-wrapper-cost-filter">
+                <button class="filter-pill" data-filter="cost-filter" type="button"><span class="filter-pill-key">Cost</span><span class="filter-pill-body"><span class="filter-pill-value">Any</span><svg class="filter-pill-caret" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg></span></button>
+                <div class="filter-pill-menu" id="menu-cost-filter">
+                    <div class="filter-pill-item selected" data-value="">Any</div>
+                    <div class="filter-pill-item" data-value="free">Free</div>
+                    <div class="filter-pill-item" data-value="paid">Paid</div>
+                </div>
+                <select id="cost-filter" hidden>
+                    <option value="">All</option>
+                    <option value="free">Free</option>
+                    <option value="paid">Paid</option>
+                </select>
+            </div>
+
+            <!-- Hops (populated dynamically) -->
+            <div class="filter-pill-wrapper" id="pill-wrapper-hops-filter">
+                <button class="filter-pill" data-filter="hops-filter" type="button"><span class="filter-pill-key">Hops</span><span class="filter-pill-body"><span class="filter-pill-value">Any</span><svg class="filter-pill-caret" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg></span></button>
+                <div class="filter-pill-menu" id="menu-hops-filter">
+                    <div class="filter-pill-item selected" data-value="">Any</div>
+                </div>
+                <select id="hops-filter" hidden>
+                    <option value="">Any</option>
+                </select>
+            </div>
+
+            <!-- Service (populated dynamically) -->
+            <div class="filter-pill-wrapper" id="pill-wrapper-service-filter">
+                <button class="filter-pill" data-filter="service-filter" type="button"><span class="filter-pill-key">Service</span><span class="filter-pill-body"><span class="filter-pill-value">Any</span><svg class="filter-pill-caret" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg></span></button>
+                <div class="filter-pill-menu" id="menu-service-filter">
+                    <div class="filter-pill-item selected" data-value="">Any</div>
+                </div>
+                <select id="service-filter" hidden>
+                    <option value="">Any</option>
+                </select>
+            </div>
+
+            <!-- Online Play -->
+            <div class="filter-pill-wrapper" id="pill-wrapper-online-filter">
+                <button class="filter-pill" data-filter="online-filter" type="button"><span class="filter-pill-key">Online Play</span><span class="filter-pill-body"><span class="filter-pill-value">Any</span><svg class="filter-pill-caret" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg></span></button>
+                <div class="filter-pill-menu" id="menu-online-filter">
+                    <div class="filter-pill-item selected" data-value="">Any</div>
+                    <div class="filter-pill-item" data-value="yes">Yes</div>
+                    <div class="filter-pill-item" data-value="no">No</div>
+                </div>
+                <select id="online-filter" hidden>
+                    <option value="">Any</option>
+                    <option value="yes">Yes</option>
+                    <option value="no">No</option>
+                </select>
+            </div>
+
+            <!-- Start -->
+            <div class="filter-pill-wrapper" id="pill-wrapper-start-filter">
+                <button class="filter-pill" data-filter="start-filter" type="button"><span class="filter-pill-key">Start</span><span class="filter-pill-body"><span class="filter-pill-value">Any</span><svg class="filter-pill-caret" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg></span></button>
+                <div class="filter-pill-menu" id="menu-start-filter">
+                    <div class="filter-pill-item selected" data-value="">Any</div>
+                    <div class="filter-pill-item" data-value="assumed-breach-credentials">Credentials</div>
+                    <div class="filter-pill-item" data-value="assumed-breach-network">Network (assumed)</div>
+                    <div class="filter-pill-item" data-value="public-network">Network (public)</div>
+                </div>
+                <select id="start-filter" hidden>
+                    <option value="">Any</option>
+                    <option value="assumed-breach-credentials">Credentials</option>
+                    <option value="assumed-breach-network">Network (assumed)</option>
+                    <option value="public-network">Network (public)</option>
+                </select>
+            </div>
+
+            <!-- Target -->
+            <div class="filter-pill-wrapper" id="pill-wrapper-target-filter">
+                <button class="filter-pill" data-filter="target-filter" type="button"><span class="filter-pill-key">Target</span><span class="filter-pill-body"><span class="filter-pill-value">Any</span><svg class="filter-pill-caret" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg></span></button>
+                <div class="filter-pill-menu" id="menu-target-filter">
+                    <div class="filter-pill-item selected" data-value="">Any</div>
+                    <div class="filter-pill-item" data-value="to-admin">Admin</div>
+                    <div class="filter-pill-item" data-value="to-bucket">Bucket</div>
+                </div>
+                <select id="target-filter" hidden>
+                    <option value="">All Targets</option>
+                    <option value="to-admin">Admin</option>
+                    <option value="to-bucket">Bucket</option>
+                </select>
+            </div>
+
+            <button id="reset-filters" class="filter-reset-btn" type="button">Reset</button>
+        </div>
+    </nav>
+
+    <style>
+        /* ── Getting Started CTA banner ── */
+        .gs-cta-banner {
+            display: none; /* shown by JS only if not dismissed */
+            position: relative;
+            border-radius: 12px;
+            border: 1px solid var(--border-color);
+            overflow: hidden;
+            margin-bottom: 20px;
+            background: var(--card-background);
+            transition: border-color 0.15s;
+        }
+        .gs-cta-banner:hover {
+            border-color: var(--accent-color);
+        }
+        .gs-cta-content-link {
+            display: grid;
+            grid-template-columns: 500px 1fr;
+            text-decoration: none;
+            color: inherit;
+        }
+        .gs-cta-text {
+            padding: 22px 52px 22px 24px; /* right pad leaves room for dismiss btn */
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            gap: 5px;
+        }
+        .gs-cta-eyebrow {
+            font-size: 0.88rem;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 0.1em;
+            color: var(--accent-color);
+        }
+        .gs-cta-title {
+            font-size: 1.05rem;
+            font-weight: 700;
+            color: var(--text-primary);
+            line-height: 1.2;
+        }
+        .gs-cta-desc {
+            font-size: 0.85rem;
+            color: var(--text-secondary);
+            line-height: 1.55;
+            max-width: 480px;
+        }
+        .gs-cta-action {
+            margin-top: 4px;
+            font-size: 0.82rem;
+            font-weight: 600;
+            color: var(--accent-color);
+            display: flex;
+            align-items: center;
+            gap: 5px;
+        }
+        .gs-cta-visual {
+            position: relative;
+            overflow: hidden;
+            height: 200px;
+            align-self: start;
+            border-left: 1px solid var(--border-color);
+            transition: border-left-color 0.15s;
+        }
+        .gs-cta-banner:hover .gs-cta-visual {
+            border-left-color: var(--accent-color);
+        }
+        .gs-cta-visual canvas {
+            display: block;
+            width: 100%;
+            height: 100%;
+        }
+        .gs-cta-dismiss {
+            position: absolute;
+            top: 10px;
+            right: 10px;
+            width: 26px;
+            height: 26px;
+            border-radius: 50%;
+            border: 1px solid var(--border-color);
+            background: var(--card-background);
+            color: var(--text-muted);
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 1rem;
+            line-height: 1;
+            transition: background 0.15s, color 0.15s, border-color 0.15s;
+            z-index: 10;
+        }
+        .gs-cta-dismiss:hover {
+            background: var(--background-elevated);
+            color: var(--text-primary);
+            border-color: var(--text-muted);
+        }
+        @media (max-width: 640px) {
+            .gs-cta-content-link {
+                grid-template-columns: 1fr;
+            }
+            .gs-cta-visual { display: none; }
+        }
+    </style>
+
+    <main class="container">
+        <!-- List View -->
+        <div id="list-view">
+
+            <!-- Getting Started CTA (dismissed via localStorage) -->
+            <div id="gs-cta-banner" class="gs-cta-banner">
+                <a href="/labs/getting-started/" class="gs-cta-content-link">
+                    <div class="gs-cta-text">
+                        <div class="gs-cta-eyebrow">New here?</div>
+                        <div class="gs-cta-desc">The getting started guide covers AWS account prerequisites and setup, plabs binary installation and configuration, and suggests the first six labs — chosen to help you build a working mental model of AWS IAM privilege escalation before you explore the full catalog.</div>
+                        <div class="gs-cta-action">
+                            View the guide
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/></svg>
+                        </div>
+                    </div>
+                    <div class="gs-cta-visual">
+                        <canvas id="gs-cta-canvas" aria-label="Interactive attack path map preview"></canvas>
+                    </div>
+                </a>
+                <button class="gs-cta-dismiss" id="gs-cta-dismiss" aria-label="Dismiss getting started banner">
+                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+                </button>
+            </div>
+
+            <div id="labs-container" class="paths-table-container">
+                <div class="loading">Loading lab scenarios...</div>
+            </div>
+        </div>
+
+        <!-- Detail View -->
+        <div id="detail-view" style="display: none;">
+            <div id="detail-content"></div>
+        </div>
+    </main>
+
+    <footer>
+        <div class="container">
+            <div class="footer-content">
+                <div class="footer-section">
+                    <p class="footer-curator">
+                        Created and curated by <a href="https://www.linkedin.com/in/sethart/" target="_blank" rel="noopener noreferrer">Seth Art</a> at <a href="https://securitylabs.datadoghq.com" target="_blank" rel="noopener noreferrer">Datadog</a>
+                    </p>
+                </div>
+                <div class="footer-section footer-links">
+                    <a href="https://github.com/DataDog/pathfinding-labs" target="_blank" rel="noopener noreferrer">pathfinding-labs on GitHub</a>
+                    <span class="footer-separator">&bull;</span>
+                    <a href="https://github.com/DataDog/pathfinding.cloud/issues" target="_blank" rel="noopener noreferrer">Report an Issue</a>
+                </div>
+            </div>
+        </div>
+    </footer>
+
+    <script type="text/javascript" src="https://unpkg.com/vis-network/standalone/umd/vis-network.min.js"></script>
+    <script src="/js/viz-shared.js?v=1"></script>
+    <script src="/js/labs.js?v=5"></script>
+    <script src="/js/map-game.js?v=2"></script>
+    </div><!-- /.page-body -->
+    <script src="/js/sidebar.js?v=1"></script>
+    <script>
+        (function () {
+            const banner = document.getElementById('gs-cta-banner');
+            const dismissBtn = document.getElementById('gs-cta-dismiss');
+            if (!banner || !dismissBtn) return;
+            if (localStorage.getItem('gsCtaDismissed') !== '1') {
+                banner.style.display = 'block';
+            }
+            dismissBtn.addEventListener('click', function (e) {
+                e.preventDefault();
+                e.stopPropagation();
+                localStorage.setItem('gsCtaDismissed', '1');
+                banner.style.display = 'none';
+            });
+        }());
+
+        // Live canvas banner -- "Getting Started" in the game's gold capcom font
+        // on the ocean-gradient background. No islands, no clouds.
+        (function () {
+            const canvas = document.getElementById('gs-cta-canvas');
+            if (!canvas) return;
+            const visual = canvas.closest('.gs-cta-visual');
+            if (!visual) return;
+
+            function renderBanner() {
+                const rect = visual.getBoundingClientRect();
+                const w = Math.round(rect.width);
+                const h = Math.round(rect.height);
+                if (w < 10 || h < 10) return;
+
+                const dpr = window.devicePixelRatio || 1;
+                canvas.width = w * dpr;
+                canvas.height = h * dpr;
+                canvas.style.width = w + 'px';
+                canvas.style.height = h + 'px';
+
+                const ctx = canvas.getContext('2d');
+                ctx.scale(dpr, dpr);
+
+                // Ocean gradient background (same as the game map)
+                const p = getMapPalette();
+                const bg = ctx.createLinearGradient(0, 0, 0, h);
+                bg.addColorStop(0,   p.oceanA);
+                bg.addColorStop(0.6, p.oceanB);
+                bg.addColorStop(1,   p.oceanDeep);
+                ctx.fillStyle = bg;
+                ctx.fillRect(0, 0, w, h);
+
+                // Dark gradient scrim from the top (matches variant-5 game map)
+                const isLight = document.documentElement.classList.contains('light-theme');
+                const scrim = ctx.createLinearGradient(0, 0, 0, h);
+                scrim.addColorStop(0,   isLight ? 'rgba(0,0,0,0.82)' : 'rgba(0,0,0,0.92)');
+                scrim.addColorStop(0.6, isLight ? 'rgba(0,0,0,0.40)' : 'rgba(0,0,0,0.50)');
+                scrim.addColorStop(1,   'rgba(0,0,0,0)');
+                ctx.fillStyle = scrim;
+                ctx.fillRect(0, 0, w, h);
+
+                // Scale the heading so "GETTING STARTED" fills 80% of canvas width.
+                // Measure at the reference LAB_SIZE (26px at scale=1) to get the ratio.
+                const REF_SIZE = 26;
+                ctx.font = `900 ${REF_SIZE}px -apple-system, BlinkMacSystemFont, sans-serif`;
+                ctx.letterSpacing = '0.04em';
+                const refW = ctx.measureText('GETTING STARTED').width;
+                ctx.letterSpacing = 'normal';
+                const scale = Math.max(0.3, (w * 0.60) / refW);
+                drawCapcomHeader(ctx, w, 0, 'Getting Started', {
+                    brandText: 'PATHFINDING LABS',
+                    zoneH: h,
+                    scale: scale,
+                });
+            }
+
+            // Defer first render so the element has a computed layout size.
+            requestAnimationFrame(function () { renderBanner(); });
+
+            new ResizeObserver(function () { renderBanner(); }).observe(visual);
+
+            new MutationObserver(function () { renderBanner(); }).observe(
+                document.documentElement, { attributes: true, attributeFilter: ['class'] }
+            );
+        }());
+    </script>
+</body>
+</html>

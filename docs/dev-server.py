@@ -21,7 +21,7 @@ class SPAHTTPRequestHandler(http.server.SimpleHTTPRequestHandler):
 
         # List of file extensions that should be served directly
         file_extensions = ['.html', '.css', '.js', '.json', '.png', '.jpg', '.jpeg',
-                          '.gif', '.svg', '.ico', '.woff', '.woff2', '.ttf', '.eot']
+                          '.gif', '.svg', '.ico', '.woff', '.woff2', '.ttf', '.eot', '.txt']
 
         # Check if the request is for a static file
         is_file = any(url_path.endswith(ext) for ext in file_extensions)
@@ -49,9 +49,18 @@ class SPAHTTPRequestHandler(http.server.SimpleHTTPRequestHandler):
 
         # For all other requests, serve the appropriate index.html for SPA routing
         if not is_file:
+            # Check if path/index.html exists on disk (e.g. /labs/getting-started)
+            dir_index_path = url_path.rstrip('/') + '/index.html'
+            dir_index_file = self.translate_path(dir_index_path)
+            if os.path.isfile(dir_index_file):
+                self.path = dir_index_path
+                return super().do_GET()
+
             # If URL starts with /paths/, serve /paths/index.html
             if url_path.startswith('/paths/'):
                 self.path = '/paths/index.html'
+            elif url_path.startswith('/labs/'):
+                self.path = '/labs/index.html'
             else:
                 # Otherwise serve root index.html
                 self.path = '/index.html'

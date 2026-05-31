@@ -67,6 +67,33 @@ cd docs && python3 dev-server.py
 # Then visit http://localhost:8888
 ```
 
+### Per-Lab Social Sharing (OG/Twitter unfurls)
+
+Each lab gets a static stub at `docs/labs/{slug}/index.html` with lab-specific
+OG/Twitter meta tags, plus a hero image at `docs/labs/{slug}/hero.png`
+rendered from the lab's attack map. Required because social crawlers don't
+execute JavaScript, so the SPA's client-side meta tag updates are invisible
+to them.
+
+```bash
+# One-time setup (Playwright + Chromium for headless rendering)
+npm install
+npx playwright install chromium
+
+# Regenerate per-lab hero images (incremental: skips labs whose PNG is
+# newer than the lab JSON and the renderer JS/CSS files)
+node scripts/generate-lab-hero-images.js
+node scripts/generate-lab-hero-images.js --force          # force-regen all
+node scripts/generate-lab-hero-images.js --slug iam-002   # single lab
+
+# Regenerate per-lab HTML stubs (cheap, always runs all labs)
+python scripts/generate-lab-stubs.py
+```
+
+Run hero-image generation BEFORE stub generation so stubs that find a per-lab
+PNG can reference it. If a PNG is missing, the stub falls back to the generic
+`/images/pathfinding-cloud-labs.png`.
+
 ### GitHub Token for Better Contributor Info
 
 ```bash

