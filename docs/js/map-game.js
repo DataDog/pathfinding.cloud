@@ -3378,6 +3378,18 @@ function renderMapGame(ctx, w, h, state) {
                 const planePos = getPlanePosition(state);
                 drawPlaneIndicator(ctx, planePos.x, planePos.y, state.palette, state.planeStyle);
             });
+            // Path violation flash: brief red vignette when helicopter strays off the path
+            if (state._pathViolationTime) {
+                const flashAge = (Date.now() - state._pathViolationTime) / 1000;
+                const flashAlpha = Math.max(0, 0.45 * (1 - flashAge / 0.5));
+                if (flashAlpha > 0) {
+                    ctx.save();
+                    ctx.globalAlpha = flashAlpha;
+                    ctx.fillStyle = '#cc0000';
+                    ctx.fillRect(0, 0, w, h);
+                    ctx.restore();
+                }
+            }
             // Arcade start overlay sits on top of everything until dismissed
             if (state.arcadeStartShown) {
                 drawArcadeStartOverlay(ctx, w, h, state);
@@ -6783,6 +6795,13 @@ function initMapGame(mapId, nodes, edges, companions, lab) {
         _heliRevealNextIdx: 0,   // index of next hitKey to reveal in sequence
         _heliHoveredButton: null, // button id the helicopter is hovering in the HUD
         _heliLastRevealTime: Date.now(), // timestamp of last reveal (or game start) for idle arrow
+        // Path-following mechanic: helicopter must stay on the segment line between
+        // consecutive reveal-sequence elements (node → edge midpoint → companion → node …).
+        // Retreating backward past the segment start disarms freely.
+        _pathFollowInTransit: false,  // true while flying between two sequence elements
+        _pathFollowFromPos: null,     // {x,y} world pos of the frontier (segment start)
+        _pathFollowToPos: null,       // {x,y} world pos of the next target (segment end)
+        _pathViolationTime: 0,        // timestamp of last path violation (drives red flash)
     };
 
     function redraw() {
@@ -6972,6 +6991,103 @@ function initMapGame(mapId, nodes, edges, companions, lab) {
                 }
             }
 
+            // --- Path-following mechanic ---
+            // Enforces the constraint one segment at a time, following the reveal sequence:
+            //   node → edge-midpoint → companion → node → …
+            // Companions sit perpendicular to the main edge, so each sub-segment gets its
+            // own corridor. Retreating backward past the segment start disarms freely,
+            // so the player can always backtrack to any already-visited element.
+            {
+                const ir3 = state._baseIslandRadius || 73;
+                const PATH_TOLERANCE = ir3 * 0.2; // world-space lateral tolerance — tight, near-line only
+                // No RETREAT_T: transit stays armed until the player lands on a map element.
+                // This prevents premature disarm when leaving a perpendicular companion island.
+                const ENGAGE_T = 0.05; // small forward grace zone before enforcement bites
+
+                // World position of any sequence element by hitKey.
+                // Nodes and edge midpoints use the same edgeEndpointYOffset applied in
+                // rendering so the constraint segment lines up with the visible dotted path.
+                const edgeYOff = ir3 * 0.25;
+                const getElementPos = (key) => {
+                    if (!key) return null;
+                    const [type, idxStr] = key.split(':');
+                    const idx = parseInt(idxStr, 10);
+                    if (type === 'node') {
+                        const pos = state.positions?.[idx];
+                        return pos ? { x: pos.x, y: pos.y + edgeYOff } : null;
+                    }
+                    if (type === 'companion') {
+                        const p = state.companionPositions?.[idx];
+                        return (p && (p.x !== 0 || p.y !== 0)) ? p : null;
+                    }
+                    if (type === 'edge') {
+                        const e = state.edges?.[idx];
+                        const f = e && state.positions?.[e.fromIdx];
+                        const t2 = e && state.positions?.[e.toIdx];
+                        return (f && t2) ? { x: (f.x + t2.x) / 2, y: (f.y + t2.y) / 2 + edgeYOff } : null;
+                    }
+                    return null;
+                };
+
+                const revealSeq  = state._heliRevealSeq;
+                const nextRevIdx = state._heliRevealNextIdx;
+
+                // Frontier = furthest reveal-sequence element the player has reached
+                let frontierKey = null;
+                if (revealSeq) {
+                    for (let si = nextRevIdx - 1; si >= 0; si--) {
+                        const item = revealSeq[si];
+                        if (item && !item.startsWith('hud:')) { frontierKey = item; break; }
+                    }
+                }
+
+                // Arm: helicopter just left the frontier element
+                if (!hitKey && !state._pathFollowInTransit &&
+                        state._heliLastHit === frontierKey && frontierKey) {
+                    const nextSeqItem = revealSeq?.[nextRevIdx];
+                    if (nextSeqItem && !nextSeqItem.startsWith('hud:')) {
+                        const fromPos = getElementPos(frontierKey);
+                        const toPos   = getElementPos(nextSeqItem);
+                        if (fromPos && toPos) {
+                            state._pathFollowInTransit = true;
+                            state._pathFollowFromPos   = { x: fromPos.x, y: fromPos.y };
+                            state._pathFollowToPos     = { x: toPos.x,   y: toPos.y };
+                        }
+                    }
+                }
+
+                // Disarm: landed on any map element
+                if (hitKey && state._pathFollowInTransit) {
+                    state._pathFollowInTransit = false;
+                    state._pathFollowFromPos   = null;
+                    state._pathFollowToPos     = null;
+                }
+
+                // Enforce while in transit
+                if (state._pathFollowInTransit && state._pathFollowFromPos && state._pathFollowToPos) {
+                    const fp = state._pathFollowFromPos;
+                    const tp = state._pathFollowToPos;
+                    const sdx = tp.x - fp.x, sdy = tp.y - fp.y;
+                    const lenSq = sdx * sdx + sdy * sdy;
+                    const t = lenSq > 0 ? ((vx - fp.x) * sdx + (vy - fp.y) * sdy) / lenSq : 0;
+
+                    if (t > ENGAGE_T) {
+                        const dist = pointToSegmentDist(vx, vy, fp.x, fp.y, tp.x, tp.y);
+                        if (dist > PATH_TOLERANCE) {
+                            // Snap visual center back to frontier; heliPos adjusted for the offset
+                            state.heliPos.x        = fp.x - 21;
+                            state.heliPos.y        = fp.y + 60;
+                            state._pathFollowInTransit = false;
+                            state._pathFollowFromPos   = null;
+                            state._pathFollowToPos     = null;
+                            state._pathViolationTime   = Date.now();
+                            hitKey  = frontierKey;
+                            changed = true;
+                        }
+                    }
+                }
+            }
+
             if (hitKey !== state._heliLastHit) {
                 state._heliLastHit = hitKey;
                 changed = true;
@@ -7018,6 +7134,9 @@ function initMapGame(mapId, nodes, edges, companions, lab) {
                 const _isIntro = _nextKey === 'hud:lab-overview';
                 if (_isIntro || Date.now() - (state._heliLastRevealTime ?? 0) >= 30000) changed = true;
             }
+
+            // Keep redrawing while the path-violation flash is fading
+            if (state._pathViolationTime && Date.now() - state._pathViolationTime < 500) changed = true;
 
             if (changed) redraw();
         }
@@ -7882,6 +8001,12 @@ function initMapGame(mapId, nodes, edges, companions, lab) {
             state.decorations = rdDef.filter(d => d.type !== 'mountain');
         }
         state.companionPositions = computeCompanionPositions(state.companions, state.edges, state.positions);
+
+        // Cached path-following positions reference old world coords — invalidate them so
+        // the constraint re-arms with fresh positions after the resize.
+        state._pathFollowInTransit = false;
+        state._pathFollowFromPos   = null;
+        state._pathFollowToPos     = null;
 
         // Reset view transform since positions are recalculated for the new size
         state.viewPanX = 0;
