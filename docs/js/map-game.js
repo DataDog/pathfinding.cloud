@@ -3216,7 +3216,7 @@ function drawArcadeStartOverlay(ctx, w, h, state) {
         subtitleH +
         divH +
         secHeadH +
-        3 * ctrlRowH +         // 3 control rows
+        5 * ctrlRowH +         // 5 control rows: arrow keys, hover, A, B, M
         divH +
         secHeadH +
         ctrlRowH +             // objective desc line
@@ -3296,7 +3296,7 @@ function drawArcadeStartOverlay(ctx, w, h, state) {
     const controls = [
         ['ARROW KEYS', 'FLY HELICOPTER'],
         ['HOVER',  'REVEAL PATH NODES'],
-        ['A',      'REVEAL HINT'],
+        ['A',      'HINT / COMMANDS'],
         ['B',      'SCROLL PANEL'],
         ['M',      'OPEN MENU'],
     ];
@@ -4570,7 +4570,7 @@ function renderGameMenu(state) {
                     label: 'Gameplay',
                     rows: [
                         { keys: ['&#8592; &#8594;'], desc: 'Back / Next step' },
-                        { keys: ['A'],               desc: 'Reveal next hint' },
+                        { keys: ['A'],               desc: 'Reveal next hint / expand commands' },
                         { keys: ['B'],               desc: 'Toggle panel scroll (&#8593;&#8595; scroll, B exit)' },
                         { keys: ['D'],               desc: 'View simulated demo (&#8592;&#8594; side-scroll)' },
                     ],
@@ -7711,7 +7711,9 @@ function initMapGame(mapId, nodes, edges, companions, lab) {
                 }
             }
         }
-        // A key: progressively reveal the next hidden hint on the current edge panel
+        // A key: progressively reveal the next hidden hint on the current edge panel.
+        // Once all hints are revealed (or there are none), A opens the exploitation
+        // commands if they exist and aren't already open.
         if ((e.key === 'a' || e.key === 'A') && state.screen === 'playing') {
             const panelEl = state._panelEl;
             const edgeIdx = state.selectedEdge;
@@ -7721,17 +7723,32 @@ function initMapGame(mapId, nodes, edges, companions, lab) {
             if (isShowingEdge && panelEl) {
                 const edge = state.edges[edgeIdx];
                 const hints = edge ? (edge.hints || []) : [];
-                if (hints.length > 0) {
-                    const key = `edge-${edgeIdx}`;
-                    if (!state.revealedHints[key]) state.revealedHints[key] = new Set();
-                    const revealedSet = state.revealedHints[key];
-                    // Find the lowest-indexed hint not yet revealed
-                    const nextHintIdx = hints.findIndex((_, i) => !revealedSet.has(i));
-                    if (nextHintIdx !== -1) {
-                        revealedSet.add(nextHintIdx);
-                        state.hintsUsed++;
+                const key = `edge-${edgeIdx}`;
+                if (!state.revealedHints[key]) state.revealedHints[key] = new Set();
+                const revealedSet = state.revealedHints[key];
+                const nextHintIdx = hints.findIndex((_, i) => !revealedSet.has(i));
+
+                if (nextHintIdx !== -1) {
+                    // Still hints to reveal — reveal the next one
+                    revealedSet.add(nextHintIdx);
+                    state.hintsUsed++;
+                    renderGamePanelEdge(panelEl, state);
+                    scrollHintIntoView(panelEl, nextHintIdx);
+                } else {
+                    // All hints revealed (or no hints) — open exploitation commands if present and closed
+                    const commands = edge ? (edge.commands || []) : [];
+                    if (commands.length > 0 && !state.revealedCommands.has(edgeIdx)) {
+                        state.revealedCommands.add(edgeIdx);
                         renderGamePanelEdge(panelEl, state);
-                        scrollHintIntoView(panelEl, nextHintIdx);
+                        // Scroll the commands section into view
+                        const commandsEl = panelEl.querySelector('.mg-commands-content');
+                        if (commandsEl) {
+                            const buffer = 48;
+                            const panelRect = panelEl.getBoundingClientRect();
+                            const cmdRect = commandsEl.getBoundingClientRect();
+                            const overflow = cmdRect.bottom + buffer - panelRect.bottom;
+                            if (overflow > 0) panelEl.scrollTop += overflow;
+                        }
                     }
                 }
             }
