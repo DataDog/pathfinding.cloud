@@ -3288,7 +3288,7 @@ function drawArcadeStartOverlay(ctx, w, h, state) {
     const controls = [
         ['ARROW KEYS', 'FLY HELICOPTER'],
         ['HOVER',  'REVEAL PATH NODES'],
-        ['ESC',    'OPEN MENU'],
+        ['M',      'OPEN MENU'],
     ];
     const valX = leftX + Math.round(boxW * 0.34);
     controls.forEach(([key, val]) => {
@@ -4578,10 +4578,10 @@ function renderGameMenu(state) {
                 {
                     label: 'Menu',
                     rows: [
-                        { keys: ['Esc'],             desc: 'Open / close menu' },
+                        { keys: ['M'],               desc: 'Open / close menu' },
                         { keys: ['&#8593; &#8595;'], desc: 'Navigate items' },
                         { keys: ['A', 'Enter'],      desc: 'Select item' },
-                        { keys: ['&#8592;', 'Esc'],  desc: 'Back / close' },
+                        { keys: ['&#8592;', 'M'],    desc: 'Back / close' },
                     ],
                 },
             ];
@@ -7436,7 +7436,7 @@ function initMapGame(mapId, nodes, edges, companions, lab) {
                 return;
             }
         }
-        if (e.key === 'Escape') {
+        if (e.key === 'm' || e.key === 'M') {
             if (state.screen === 'playing') {
                 openGameMenu(state);
             } else if (state.screen === 'paused') {
@@ -7453,10 +7453,10 @@ function initMapGame(mapId, nodes, edges, companions, lab) {
         if (state.screen === 'paused') {
             const focusableItems = getFocusableMenuItems(state);
 
-            // Demo transcript: arrow keys scroll, Esc closes
+            // Demo transcript: arrow keys scroll, M closes
             if (state.menuView === 'demo-transcript') {
-                if (e.key === 'Escape') {
-                    // Escape already handled above (goes back to main menu)
+                if (e.key === 'm' || e.key === 'M') {
+                    // M already handled above (goes back to main menu)
                 } else if (e.key === 'ArrowUp') {
                     e.preventDefault();
                     const pre = menuEl?.querySelector('.mg-transcript-pre');
@@ -7478,8 +7478,8 @@ function initMapGame(mapId, nodes, edges, companions, lab) {
             }
 
             if (state.menuView === 'labs-browser') {
-                // Esc/Left: clear search first, then go back to main menu
-                if (e.key === 'Escape' || e.key === 'ArrowLeft') {
+                // M/Left: clear search first, then go back to main menu
+                if (e.key === 'm' || e.key === 'M' || e.key === 'ArrowLeft') {
                     if (state.labsBrowserFilter) {
                         state.labsBrowserFilter = '';
                         state.menuFocusIdx = 0;
@@ -7560,9 +7560,12 @@ function initMapGame(mapId, nodes, edges, companions, lab) {
             state.skyStyle = SKY_STYLE_LIST[(currentIdx + 1) % SKY_STYLE_LIST.length];
             redraw();
         }
-        // F key toggles fullscreen on the game layout container
+        // F key toggles fullscreen on the game layout container.
+        // Use _container (the persistent parent element) rather than _layoutEl so
+        // that switching labs — which replaces _layoutEl via container.innerHTML —
+        // does not force the browser to exit fullscreen.
         if ((e.key === 'f' || e.key === 'F') && (state.screen === 'playing' || state.screen === 'complete')) {
-            const fsEl = state._layoutEl || document.documentElement;
+            const fsEl = state._container || state._layoutEl || document.documentElement;
             if (!document.fullscreenElement) {
                 fsEl.requestFullscreen?.();
             } else {
