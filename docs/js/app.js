@@ -737,7 +737,8 @@ function sortTable(column) {
         sortDirection = sortDirection === 'asc' ? 'desc' : 'asc';
     } else {
         sortColumn = column;
-        sortDirection = 'asc';
+        // Date added defaults to newest-first on first click
+        sortDirection = column === 'dateAdded' ? 'desc' : 'asc';
     }
 
     // Sort the filtered paths
@@ -756,6 +757,14 @@ function sortTable(column) {
             case 'category':
                 aVal = a.category.toLowerCase();
                 bVal = b.category.toLowerCase();
+                break;
+            case 'dateAdded':
+                // Null dates sort to the end regardless of direction
+                aVal = a.gitMetadata?.created || null;
+                bVal = b.gitMetadata?.created || null;
+                if (!aVal && !bVal) return 0;
+                if (!aVal) return 1;
+                if (!bVal) return -1;
                 break;
             default:
                 return 0;
@@ -809,6 +818,9 @@ function createPathTable(paths) {
                     <th class="sortable ${getSortClass('category')}" data-sort="category">
                         Category <span class="sort-icon">${getSortIcon('category')}</span>
                     </th>
+                    <th class="sortable ${getSortClass('dateAdded')}" data-sort="dateAdded">
+                        Date Added <span class="sort-icon">${getSortIcon('dateAdded')}</span>
+                    </th>
                     <th>OSS Detection</th>
                 </tr>
             </thead>
@@ -830,6 +842,7 @@ function createPathTable(paths) {
                             <td class="table-category">
                                 <span class="path-category ${categoryClass}" data-category-tooltip="${categoryTooltips[path.category] || ''}">${formatCategory(path.category)}</span>
                             </td>
+                            <td class="table-date">${formatDateAdded(path.gitMetadata?.created)}</td>
                             <td class="table-detection">
                                 ${detectionTools.length > 0 ?
                                     detectionTools.map(tool => {
@@ -1127,6 +1140,12 @@ function renderAttackVisualizationForPath(pathId, visualization) {
 }
 
 // Utility functions
+function formatDateAdded(isoDate) {
+    if (!isoDate) return '<span class="no-detection">—</span>';
+    const d = new Date(isoDate);
+    return d.toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' });
+}
+
 function formatCategory(category) {
     return category.split('-').map(word =>
         word.charAt(0).toUpperCase() + word.slice(1)

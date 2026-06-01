@@ -1,0 +1,803 @@
+<!DOCTYPE html>
+<html lang="en" class="light-theme">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Text Overlay Generator — pathfinding.cloud</title>
+    <meta name="robots" content="noindex, nofollow">
+    <style>
+        :root {
+            --bg: #0e1320;
+            --panel-bg: #161d2e;
+            --panel-border: #243049;
+            --text: #e6ecf5;
+            --muted: #8390a8;
+            --accent: #f0b040;
+            --accent-strong: #ffcd5a;
+            --danger: #ef4444;
+            --input-bg: #0b1021;
+            --input-border: #2a3452;
+            --shadow: 0 10px 30px rgba(0,0,0,0.35);
+        }
+        html.light-theme {
+            --bg: #eef1f6;
+            --panel-bg: #ffffff;
+            --panel-border: #d6dae4;
+            --text: #1a1f2c;
+            --muted: #5a6478;
+            --accent: #92600a;
+            --accent-strong: #b07010;
+            --input-bg: #f5f7fb;
+            --input-border: #cbd1de;
+            --shadow: 0 6px 24px rgba(20, 24, 40, 0.10);
+        }
+
+        * { box-sizing: border-box; }
+        html, body { margin: 0; padding: 0; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+            background: var(--bg);
+            color: var(--text);
+            min-height: 100vh;
+        }
+
+        .page {
+            display: grid;
+            grid-template-columns: 340px 1fr;
+            gap: 24px;
+            padding: 24px;
+            min-height: 100vh;
+        }
+
+        .controls {
+            background: var(--panel-bg);
+            border: 1px solid var(--panel-border);
+            border-radius: 12px;
+            padding: 20px;
+            box-shadow: var(--shadow);
+            height: fit-content;
+            position: sticky;
+            top: 24px;
+            max-height: calc(100vh - 48px);
+            overflow-y: auto;
+        }
+        .controls h1 {
+            margin: 0 0 4px;
+            font-size: 18px;
+            letter-spacing: 0.02em;
+        }
+        .controls p.sub {
+            margin: 0 0 18px;
+            font-size: 12px;
+            color: var(--muted);
+            line-height: 1.45;
+        }
+        .section-title {
+            font-size: 11px;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 0.08em;
+            color: var(--muted);
+            margin-bottom: 8px;
+            display: block;
+        }
+        .field {
+            display: flex;
+            flex-direction: column;
+            margin-bottom: 12px;
+        }
+        .field label {
+            font-size: 11px;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 0.08em;
+            color: var(--muted);
+            margin-bottom: 5px;
+        }
+        .field input[type="text"],
+        .field input[type="number"],
+        .field input[type="color"],
+        .field select {
+            font: inherit;
+            font-size: 13px;
+            background: var(--input-bg);
+            border: 1px solid var(--input-border);
+            border-radius: 6px;
+            padding: 7px 9px;
+            color: var(--text);
+            outline: none;
+            transition: border-color 0.15s, box-shadow 0.15s;
+        }
+        .field input:focus, .field select:focus {
+            border-color: var(--accent);
+            box-shadow: 0 0 0 3px rgba(240, 176, 64, 0.18);
+        }
+        .field input[type="color"] {
+            padding: 3px 5px;
+            height: 32px;
+            cursor: pointer;
+        }
+        .range-row {
+            display: grid;
+            grid-template-columns: 1fr 50px;
+            gap: 10px;
+            align-items: center;
+        }
+        .range-row input[type="range"] {
+            width: 100%;
+            accent-color: var(--accent);
+        }
+        .range-val {
+            font-variant-numeric: tabular-nums;
+            text-align: right;
+            font-size: 12px;
+            color: var(--text);
+        }
+        .two-col {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 8px;
+        }
+        .preset-row {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 5px;
+            margin-bottom: 8px;
+        }
+        .preset-btn {
+            font: inherit;
+            font-size: 11px;
+            background: var(--input-bg);
+            border: 1px solid var(--input-border);
+            border-radius: 5px;
+            padding: 5px 8px;
+            color: var(--muted);
+            cursor: pointer;
+            transition: all 0.15s;
+        }
+        .preset-btn:hover { border-color: var(--accent); color: var(--text); }
+        .preset-btn.active { background: var(--accent); color: #1a1a1a; border-color: var(--accent); }
+        .divider {
+            height: 1px;
+            background: var(--panel-border);
+            margin: 14px 0;
+        }
+        button.primary {
+            width: 100%;
+            font: inherit;
+            font-size: 14px;
+            font-weight: 700;
+            background: linear-gradient(180deg, #fff8c0 0%, #f0b030 45%, #c06010 100%);
+            border: none;
+            border-radius: 8px;
+            padding: 11px 16px;
+            color: #1a0a00;
+            cursor: pointer;
+            letter-spacing: 0.04em;
+            text-transform: uppercase;
+            box-shadow: 0 4px 12px rgba(240, 176, 64, 0.3);
+            transition: transform 0.1s, box-shadow 0.15s;
+        }
+        button.primary:hover { transform: translateY(-1px); box-shadow: 0 6px 18px rgba(240, 176, 64, 0.45); }
+        button.primary:active { transform: translateY(0); }
+
+        /* Line section card */
+        .line-card {
+            background: var(--input-bg);
+            border: 1px solid var(--input-border);
+            border-radius: 8px;
+            padding: 12px;
+            margin-bottom: 12px;
+        }
+        .line-card-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            margin-bottom: 10px;
+        }
+        .line-card-title {
+            font-size: 11px;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 0.08em;
+            color: var(--accent);
+        }
+        .line-field {
+            margin-bottom: 8px;
+        }
+        .line-field label {
+            display: block;
+            font-size: 10px;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 0.07em;
+            color: var(--muted);
+            margin-bottom: 4px;
+        }
+        .line-field input[type="text"] {
+            font: inherit;
+            font-size: 13px;
+            background: var(--panel-bg);
+            border: 1px solid var(--input-border);
+            border-radius: 5px;
+            padding: 6px 9px;
+            color: var(--text);
+            outline: none;
+            width: 100%;
+            transition: border-color 0.15s;
+        }
+        .line-field input[type="text"]:focus { border-color: var(--accent); }
+        .line-field .range-row input[type="range"] { accent-color: var(--accent); }
+
+        /* Color swatches */
+        .color-row { display: flex; gap: 5px; flex-wrap: wrap; align-items: center; }
+        .swatch {
+            width: 22px; height: 22px; border-radius: 4px; cursor: pointer;
+            border: 2px solid transparent; transition: border-color 0.12s;
+            flex-shrink: 0;
+        }
+        .swatch.active { border-color: var(--accent); }
+
+        /* Pill button rows */
+        .pill-row { display: flex; gap: 5px; }
+        .pill-row .preset-btn { flex: 1; text-align: center; padding: 4px 6px; }
+
+        /* Theme row */
+        .theme-row { display: flex; gap: 8px; margin-bottom: 8px; }
+        .theme-row .preset-btn { flex: 1; text-align: center; }
+
+        /* Preview area */
+        .preview {
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+            min-width: 0;
+        }
+        .preview-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 0 4px;
+        }
+        .preview-header .dims {
+            font-size: 12px;
+            color: var(--muted);
+            font-variant-numeric: tabular-nums;
+        }
+        .preview-header a.back {
+            font-size: 12px;
+            color: var(--muted);
+            text-decoration: none;
+        }
+        .preview-header a.back:hover { color: var(--accent); }
+        .canvas-wrap {
+            background: var(--panel-bg);
+            border: 1px solid var(--panel-border);
+            border-radius: 12px;
+            padding: 16px;
+            box-shadow: var(--shadow);
+            overflow: hidden;
+        }
+        .canvas-stage {
+            position: relative;
+            width: 100%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            /* checkerboard to show transparency */
+            background: repeating-conic-gradient(#888 0 25%, #ccc 0 50%) 0 0 / 20px 20px;
+            border-radius: 8px;
+            min-height: 200px;
+        }
+        html.light-theme .canvas-stage {
+            background: repeating-conic-gradient(#bbb 0 25%, #e8e8e8 0 50%) 0 0 / 20px 20px;
+        }
+        #text-canvas {
+            display: block;
+            max-width: 100%;
+            max-height: 60vh;
+            height: auto;
+            width: auto;
+            border-radius: 2px;
+        }
+        .canvas-hint {
+            font-size: 11px;
+            color: var(--muted);
+            text-align: center;
+            margin-top: 6px;
+        }
+
+        @media (max-width: 900px) {
+            .page { grid-template-columns: 1fr; }
+            .controls { position: static; max-height: none; }
+        }
+    </style>
+</head>
+<body>
+    <div class="page">
+        <aside class="controls">
+            <h1>Text Overlay Generator</h1>
+            <p class="sub">Generate transparent PNG text overlays for slides and presentations.</p>
+
+            <!-- Line 1 -->
+            <div class="line-card" id="line1-card">
+                <div class="line-card-header">
+                    <span class="line-card-title">Line 1</span>
+                </div>
+
+                <div class="line-field">
+                    <label>Text</label>
+                    <input type="text" id="line1-text" value="YOUR TITLE HERE" autocomplete="off">
+                </div>
+
+                <div class="line-field">
+                    <label>Font Size — <span id="line1-size-val">100</span>px</label>
+                    <div class="range-row">
+                        <input type="range" id="line1-size" min="12" max="500" step="2" value="100">
+                    </div>
+                </div>
+
+                <div class="line-field">
+                    <label>Weight</label>
+                    <div class="pill-row" id="line1-weight-row">
+                        <button class="preset-btn" data-w="400">Regular</button>
+                        <button class="preset-btn" data-w="600">SemiBold</button>
+                        <button class="preset-btn active" data-w="900">Bold</button>
+                    </div>
+                </div>
+
+                <div class="line-field">
+                    <label>Color</label>
+                    <div class="color-row" id="line1-color-row">
+                        <div class="swatch active" data-color="gold" style="background:linear-gradient(180deg,#fff8c0,#f0b030,#c06010)" title="Gold"></div>
+                        <div class="swatch" data-color="white" style="background:#ffffff" title="White"></div>
+                        <div class="swatch" data-color="muted" style="background:#8390a8" title="Muted"></div>
+                        <div class="swatch" data-color="#ef4444" style="background:#ef4444" title="Red"></div>
+                        <div class="swatch" data-color="#22d3ee" style="background:#22d3ee" title="Cyan"></div>
+                        <input type="color" id="line1-color-custom" value="#ffffff" title="Custom color"
+                            style="width:24px;height:22px;padding:1px 2px;border-radius:4px;border:1px solid var(--input-border);cursor:pointer;background:none;">
+                    </div>
+                </div>
+
+                <div class="line-field">
+                    <label>Letter Spacing</label>
+                    <div class="range-row">
+                        <input type="range" id="line1-ls" min="-0.05" max="0.30" step="0.01" value="0.02">
+                        <span class="range-val" id="line1-ls-val">0.02em</span>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Line 2 -->
+            <div class="line-card" id="line2-card">
+                <div class="line-card-header">
+                    <span class="line-card-title">Line 2 <span style="font-weight:400;opacity:0.6">(optional)</span></span>
+                    <label style="display:flex;align-items:center;gap:5px;font-size:11px;color:var(--muted);cursor:pointer">
+                        <input type="checkbox" id="line2-enabled" style="accent-color:var(--accent);cursor:pointer"> Show
+                    </label>
+                </div>
+
+                <div id="line2-fields" style="display:none;">
+                    <div class="line-field">
+                        <label>Text</label>
+                        <input type="text" id="line2-text" value="Subtitle text goes here" autocomplete="off">
+                    </div>
+
+                    <div class="line-field">
+                        <label>Font Size — <span id="line2-size-val">50</span>px</label>
+                        <div class="range-row">
+                            <input type="range" id="line2-size" min="12" max="500" step="2" value="50">
+                        </div>
+                    </div>
+
+                    <div class="line-field">
+                        <label>Weight</label>
+                        <div class="pill-row" id="line2-weight-row">
+                            <button class="preset-btn" data-w="400">Regular</button>
+                            <button class="preset-btn active" data-w="600">SemiBold</button>
+                            <button class="preset-btn" data-w="900">Bold</button>
+                        </div>
+                    </div>
+
+                    <div class="line-field">
+                        <label>Color</label>
+                        <div class="color-row" id="line2-color-row">
+                            <div class="swatch" data-color="gold" style="background:linear-gradient(180deg,#fff8c0,#f0b030,#c06010)" title="Gold"></div>
+                            <div class="swatch active" data-color="white" style="background:#ffffff" title="White"></div>
+                            <div class="swatch" data-color="muted" style="background:#8390a8" title="Muted"></div>
+                            <div class="swatch" data-color="#ef4444" style="background:#ef4444" title="Red"></div>
+                            <div class="swatch" data-color="#22d3ee" style="background:#22d3ee" title="Cyan"></div>
+                            <input type="color" id="line2-color-custom" value="#ffffff" title="Custom color"
+                                style="width:24px;height:22px;padding:1px 2px;border-radius:4px;border:1px solid var(--input-border);cursor:pointer;background:none;">
+                        </div>
+                    </div>
+
+                    <div class="line-field">
+                        <label>Letter Spacing</label>
+                        <div class="range-row">
+                            <input type="range" id="line2-ls" min="-0.05" max="0.30" step="0.01" value="0.02">
+                            <span class="range-val" id="line2-ls-val">0.02em</span>
+                        </div>
+                    </div>
+
+                    <div class="line-field">
+                        <label>Gap from Line 1 — <span id="line-gap-val">20</span>px</label>
+                        <div class="range-row">
+                            <input type="range" id="line-gap" min="0" max="200" step="4" value="20">
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="divider"></div>
+
+            <!-- Alignment -->
+            <span class="section-title">Alignment</span>
+            <div class="preset-row" id="align-row">
+                <button class="preset-btn" data-align="left">Left</button>
+                <button class="preset-btn active" data-align="center">Center</button>
+                <button class="preset-btn" data-align="right">Right</button>
+            </div>
+
+            <div class="divider"></div>
+
+            <!-- Output size -->
+            <span class="section-title">Canvas Size</span>
+            <div class="preset-row" id="size-presets">
+                <button class="preset-btn active" data-w="2560" data-h="1440">2560×1440</button>
+                <button class="preset-btn" data-w="1280" data-h="720">1280×720</button>
+                <button class="preset-btn" data-w="1920" data-h="1080">1920×1080</button>
+                <button class="preset-btn" data-w="1200" data-h="630">1200×630</button>
+            </div>
+            <div class="two-col" style="margin-bottom:10px;">
+                <input type="number" id="width-input" value="2560" min="100" max="7680" step="10" aria-label="Width"
+                    style="font:inherit;font-size:13px;background:var(--input-bg);border:1px solid var(--input-border);border-radius:6px;padding:7px 9px;color:var(--text);outline:none;">
+                <input type="number" id="height-input" value="1440" min="100" max="4320" step="10" aria-label="Height"
+                    style="font:inherit;font-size:13px;background:var(--input-bg);border:1px solid var(--input-border);border-radius:6px;padding:7px 9px;color:var(--text);outline:none;">
+            </div>
+
+            <div class="divider"></div>
+
+            <!-- UI theme -->
+            <div class="field" style="margin-bottom:12px;">
+                <label>UI Theme</label>
+                <div class="theme-row">
+                    <button class="preset-btn" data-theme="dark" id="theme-dark">Dark</button>
+                    <button class="preset-btn active" data-theme="light" id="theme-light">Light</button>
+                </div>
+            </div>
+
+            <button class="primary" id="download-btn">Download Transparent PNG</button>
+        </aside>
+
+        <section class="preview">
+            <div class="preview-header">
+                <a class="back" href="/labs/">← Back to Labs</a>
+                <span class="dims" id="dims-display">2560 × 1440</span>
+            </div>
+            <div class="canvas-wrap">
+                <div class="canvas-stage">
+                    <canvas id="text-canvas"></canvas>
+                </div>
+            </div>
+            <p class="canvas-hint">Checkerboard = transparent. Downloaded PNG is cropped tightly to the text — no full-canvas padding.</p>
+        </section>
+    </div>
+
+    <script>
+    (function () {
+        'use strict';
+
+        // ---- State ----
+        let canvasW = 2560;
+        let canvasH = 1440;
+        let align = 'center';
+
+        const line1 = { text: 'YOUR TITLE HERE', fontSize: 100, fontWeight: '900', color: 'gold', letterSpacing: 0.02 };
+        const line2 = { enabled: false, text: 'Subtitle text goes here', fontSize: 50, fontWeight: '600', color: 'white', letterSpacing: 0.02 };
+        let lineGap = 20;
+
+        const canvas = document.getElementById('text-canvas');
+        const ctx = canvas.getContext('2d');
+        const dimsDisplay = document.getElementById('dims-display');
+
+        // ---- Rendering ----
+        function applyTextColor(drawCtx, c, y, fontSize) {
+            if (c === 'gold') {
+                const grad = drawCtx.createLinearGradient(0, y - fontSize / 2, 0, y + fontSize / 2);
+                grad.addColorStop(0,    '#fff8c0');
+                grad.addColorStop(0.45, '#f0b030');
+                grad.addColorStop(1,    '#c06010');
+                drawCtx.fillStyle = grad;
+                drawCtx.shadowOffsetX = 2; drawCtx.shadowOffsetY = 3;
+                drawCtx.shadowBlur    = 0; drawCtx.shadowColor   = 'rgba(0,0,0,0.8)';
+            } else if (c === 'white') {
+                drawCtx.fillStyle = '#ffffff';
+                drawCtx.shadowOffsetX = 1; drawCtx.shadowOffsetY = 2;
+                drawCtx.shadowBlur    = 6; drawCtx.shadowColor   = 'rgba(0,0,0,0.75)';
+            } else if (c === 'muted') {
+                drawCtx.fillStyle = '#8390a8';
+            } else {
+                drawCtx.fillStyle = c;
+                drawCtx.shadowOffsetX = 1; drawCtx.shadowOffsetY = 2;
+                drawCtx.shadowBlur    = 4; drawCtx.shadowColor   = 'rgba(0,0,0,0.6)';
+            }
+        }
+
+        function measureLine(l) {
+            ctx.font = `${l.fontWeight} ${l.fontSize}px -apple-system, BlinkMacSystemFont, sans-serif`;
+            ctx.letterSpacing = `${l.letterSpacing}em`;
+            return ctx.measureText(l.text);
+        }
+
+        function render() {
+            canvas.width  = canvasW;
+            canvas.height = canvasH;
+
+            // Fully transparent background — don't fill anything
+            ctx.clearRect(0, 0, canvasW, canvasH);
+
+            ctx.textBaseline = 'middle';
+
+            const anchorX = align === 'left' ? canvasW * 0.05 : align === 'right' ? canvasW * 0.95 : canvasW / 2;
+            ctx.textAlign = align;
+
+            // Calculate total block height for vertical centering
+            const l1Height = line1.fontSize;
+            const l2Height = line2.enabled ? line2.fontSize : 0;
+            const totalHeight = line2.enabled ? l1Height + lineGap + l2Height : l1Height;
+            const blockTop = (canvasH - totalHeight) / 2;
+
+            // Draw Line 1
+            ctx.save();
+            ctx.font = `${line1.fontWeight} ${line1.fontSize}px -apple-system, BlinkMacSystemFont, sans-serif`;
+            ctx.letterSpacing = `${line1.letterSpacing}em`;
+            const y1 = blockTop + l1Height / 2;
+            applyTextColor(ctx, line1.color, y1, line1.fontSize);
+            ctx.fillText(line1.text, anchorX, y1);
+            ctx.restore();
+
+            // Draw Line 2
+            if (line2.enabled && line2.text) {
+                ctx.save();
+                ctx.font = `${line2.fontWeight} ${line2.fontSize}px -apple-system, BlinkMacSystemFont, sans-serif`;
+                ctx.letterSpacing = `${line2.letterSpacing}em`;
+                const y2 = blockTop + l1Height + lineGap + l2Height / 2;
+                applyTextColor(ctx, line2.color, y2, line2.fontSize);
+                ctx.fillText(line2.text, anchorX, y2);
+                ctx.restore();
+            }
+        }
+
+        // ---- Color swatch wiring ----
+        function wireColorRow(rowId, customInputId, lineState) {
+            const row = document.getElementById(rowId);
+            const customInput = document.getElementById(customInputId);
+
+            function setActiveColor(colorVal) {
+                lineState.color = colorVal;
+                row.querySelectorAll('.swatch').forEach(s => s.classList.toggle('active', s.dataset.color === colorVal));
+                render();
+            }
+
+            row.querySelectorAll('.swatch').forEach(sw => {
+                sw.addEventListener('click', () => {
+                    setActiveColor(sw.dataset.color);
+                });
+            });
+
+            customInput.addEventListener('input', () => {
+                row.querySelectorAll('.swatch').forEach(s => s.classList.remove('active'));
+                lineState.color = customInput.value;
+                render();
+            });
+        }
+
+        // ---- Weight pill row wiring ----
+        function wireWeightRow(rowId, lineState) {
+            const row = document.getElementById(rowId);
+            row.querySelectorAll('.preset-btn').forEach(btn => {
+                btn.addEventListener('click', () => {
+                    row.querySelectorAll('.preset-btn').forEach(b => b.classList.remove('active'));
+                    btn.classList.add('active');
+                    lineState.fontWeight = btn.dataset.w;
+                    render();
+                });
+            });
+        }
+
+        // ---- Line 1 controls ----
+        const l1Text = document.getElementById('line1-text');
+        const l1Size = document.getElementById('line1-size');
+        const l1SizeVal = document.getElementById('line1-size-val');
+        const l1Ls = document.getElementById('line1-ls');
+        const l1LsVal = document.getElementById('line1-ls-val');
+
+        l1Text.addEventListener('input', () => { line1.text = l1Text.value; render(); });
+        l1Size.addEventListener('input', () => {
+            line1.fontSize = Number(l1Size.value);
+            l1SizeVal.textContent = l1Size.value;
+            render();
+        });
+        l1Ls.addEventListener('input', () => {
+            line1.letterSpacing = parseFloat(l1Ls.value);
+            l1LsVal.textContent = parseFloat(l1Ls.value).toFixed(2) + 'em';
+            render();
+        });
+
+        wireColorRow('line1-color-row', 'line1-color-custom', line1);
+        wireWeightRow('line1-weight-row', line1);
+
+        // ---- Line 2 controls ----
+        const l2Enabled = document.getElementById('line2-enabled');
+        const l2Fields  = document.getElementById('line2-fields');
+        const l2Text    = document.getElementById('line2-text');
+        const l2Size    = document.getElementById('line2-size');
+        const l2SizeVal = document.getElementById('line2-size-val');
+        const l2Ls      = document.getElementById('line2-ls');
+        const l2LsVal   = document.getElementById('line2-ls-val');
+        const lineGapInput = document.getElementById('line-gap');
+        const lineGapVal   = document.getElementById('line-gap-val');
+
+        l2Enabled.addEventListener('change', () => {
+            line2.enabled = l2Enabled.checked;
+            l2Fields.style.display = line2.enabled ? '' : 'none';
+            render();
+        });
+        l2Text.addEventListener('input', () => { line2.text = l2Text.value; render(); });
+        l2Size.addEventListener('input', () => {
+            line2.fontSize = Number(l2Size.value);
+            l2SizeVal.textContent = l2Size.value;
+            render();
+        });
+        l2Ls.addEventListener('input', () => {
+            line2.letterSpacing = parseFloat(l2Ls.value);
+            l2LsVal.textContent = parseFloat(l2Ls.value).toFixed(2) + 'em';
+            render();
+        });
+        lineGapInput.addEventListener('input', () => {
+            lineGap = Number(lineGapInput.value);
+            lineGapVal.textContent = lineGapInput.value;
+            render();
+        });
+
+        wireColorRow('line2-color-row', 'line2-color-custom', line2);
+        wireWeightRow('line2-weight-row', line2);
+
+        // ---- Alignment ----
+        document.getElementById('align-row').addEventListener('click', (e) => {
+            const btn = e.target.closest('.preset-btn');
+            if (!btn) return;
+            align = btn.dataset.align;
+            document.querySelectorAll('#align-row .preset-btn').forEach(b => b.classList.toggle('active', b === btn));
+            render();
+        });
+
+        // ---- Canvas size ----
+        function updateSizePresetActive(w, h) {
+            document.querySelectorAll('#size-presets .preset-btn').forEach(btn => {
+                btn.classList.toggle('active', Number(btn.dataset.w) === w && Number(btn.dataset.h) === h);
+            });
+        }
+
+        document.getElementById('size-presets').addEventListener('click', (e) => {
+            const btn = e.target.closest('.preset-btn');
+            if (!btn) return;
+            canvasW = Number(btn.dataset.w);
+            canvasH = Number(btn.dataset.h);
+            document.getElementById('width-input').value  = canvasW;
+            document.getElementById('height-input').value = canvasH;
+            dimsDisplay.textContent = `${canvasW} × ${canvasH}`;
+            updateSizePresetActive(canvasW, canvasH);
+            render();
+        });
+
+        document.getElementById('width-input').addEventListener('input', (e) => {
+            canvasW = Math.max(100, Number(e.target.value) || 1280);
+            dimsDisplay.textContent = `${canvasW} × ${canvasH}`;
+            updateSizePresetActive(canvasW, canvasH);
+            render();
+        });
+        document.getElementById('height-input').addEventListener('input', (e) => {
+            canvasH = Math.max(100, Number(e.target.value) || 720);
+            dimsDisplay.textContent = `${canvasW} × ${canvasH}`;
+            updateSizePresetActive(canvasW, canvasH);
+            render();
+        });
+
+        // ---- UI theme ----
+        document.getElementById('theme-dark').addEventListener('click', () => {
+            document.documentElement.classList.remove('light-theme');
+            document.getElementById('theme-dark').classList.add('active');
+            document.getElementById('theme-light').classList.remove('active');
+        });
+        document.getElementById('theme-light').addEventListener('click', () => {
+            document.documentElement.classList.add('light-theme');
+            document.getElementById('theme-light').classList.add('active');
+            document.getElementById('theme-dark').classList.remove('active');
+        });
+
+        // ---- Build tight-crop canvas for download ----
+        function buildTightCanvas() {
+            // Extra padding around text to accommodate shadows and glyph overhang
+            const PAD = 30;
+
+            // Measure text widths using a scratch canvas
+            const tmp = document.createElement('canvas');
+            tmp.width = 100; tmp.height = 100;
+            const tCtx = tmp.getContext('2d');
+
+            tCtx.font = `${line1.fontWeight} ${line1.fontSize}px -apple-system, BlinkMacSystemFont, sans-serif`;
+            tCtx.letterSpacing = `${line1.letterSpacing}em`;
+            const l1W = tCtx.measureText(line1.text).width;
+            const l1H = line1.fontSize;
+
+            let maxW = l1W;
+            let totalH = l1H;
+            let l2H = 0;
+
+            if (line2.enabled && line2.text) {
+                tCtx.font = `${line2.fontWeight} ${line2.fontSize}px -apple-system, BlinkMacSystemFont, sans-serif`;
+                tCtx.letterSpacing = `${line2.letterSpacing}em`;
+                const l2W = tCtx.measureText(line2.text).width;
+                l2H = line2.fontSize;
+                maxW = Math.max(l1W, l2W);
+                totalH = l1H + lineGap + l2H;
+            }
+
+            const outW = Math.ceil(maxW) + PAD * 2;
+            const outH = Math.ceil(totalH) + PAD * 2;
+
+            const out = document.createElement('canvas');
+            out.width = outW;
+            out.height = outH;
+            const oCtx = out.getContext('2d');
+            oCtx.clearRect(0, 0, outW, outH);
+            oCtx.textBaseline = 'middle';
+            oCtx.textAlign = align;
+
+            const anchorX = align === 'left' ? PAD : align === 'right' ? outW - PAD : outW / 2;
+
+            oCtx.save();
+            oCtx.font = `${line1.fontWeight} ${line1.fontSize}px -apple-system, BlinkMacSystemFont, sans-serif`;
+            oCtx.letterSpacing = `${line1.letterSpacing}em`;
+            const y1 = PAD + l1H / 2;
+            applyTextColor(oCtx, line1.color, y1, line1.fontSize);
+            oCtx.fillText(line1.text, anchorX, y1);
+            oCtx.restore();
+
+            if (line2.enabled && line2.text) {
+                oCtx.save();
+                oCtx.font = `${line2.fontWeight} ${line2.fontSize}px -apple-system, BlinkMacSystemFont, sans-serif`;
+                oCtx.letterSpacing = `${line2.letterSpacing}em`;
+                const y2 = PAD + l1H + lineGap + l2H / 2;
+                applyTextColor(oCtx, line2.color, y2, line2.fontSize);
+                oCtx.fillText(line2.text, anchorX, y2);
+                oCtx.restore();
+            }
+
+            return out;
+        }
+
+        // ---- Download ----
+        document.getElementById('download-btn').addEventListener('click', () => {
+            const tight = buildTightCanvas();
+            tight.toBlob((blob) => {
+                if (!blob) return;
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = `text-overlay-${tight.width}x${tight.height}.png`;
+                document.body.appendChild(a);
+                a.click();
+                a.remove();
+                URL.revokeObjectURL(url);
+            }, 'image/png');
+        });
+
+        // ---- Init ----
+        render();
+    })();
+    </script>
+</body>
+</html>

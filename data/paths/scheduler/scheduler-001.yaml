@@ -1,0 +1,194 @@
+id: scheduler-001
+name: iam:PassRole + scheduler:CreateSchedule
+category: new-passrole
+services:
+  - iam
+  - scheduler
+
+permissions:
+  required:
+    - permission: iam:PassRole
+      resourceConstraints: Must be able to pass the target admin IAM role to the EventBridge Scheduler service
+    - permission: scheduler:CreateSchedule
+      resourceConstraints: No resource constraints required
+  additional:
+    - permission: iam:ListRoles
+      resourceConstraints: Helpful for discovering available admin roles to pass
+    - permission: iam:GetRole
+      resourceConstraints: Useful for viewing role trust policies and confirming roles trust scheduler.amazonaws.com
+    - permission: scheduler:ListSchedules
+      resourceConstraints: Helpful for confirming the schedule was created
+    - permission: scheduler:GetSchedule
+      resourceConstraints: Useful for verifying the schedule configuration
+
+description: A principal with `iam:PassRole` and `scheduler:CreateSchedule` can escalate privileges by creating a one-time EventBridge Scheduler schedule that targets the universal target (`arn:aws:scheduler:::aws-sdk:iam:attachUserPolicy`). The universal target allows EventBridge Scheduler to directly call any AWS SDK API using the passed role's credentials — no Lambda function, EC2 instance, or container is required. The scheduler fires once, calls `iam:AttachUserPolicy` as the admin role, attaches AdministratorAccess to the starting user, and then the schedule can auto-delete.
+
+prerequisites:
+  admin:
+    - A role must exist that trusts scheduler.amazonaws.com to assume it
+    - The role must have administrative permissions (e.g., AdministratorAccess or an equivalent custom policy)
+    - "The role must have the correct trust policy condition: sts:SourceAccount or the caller account must match"
+  lateral:
+    - A role must exist that trusts scheduler.amazonaws.com and has elevated permissions
+
+exploitationSteps:
+  awscli:
+    - step: 1
+      command: |
+        SCHEDULE_TIME=$(date -u -d "+90 seconds" +"%Y-%m-%dT%H:%M:%S" 2>/dev/null || \
+          date -u -v+90S +"%Y-%m-%dT%H:%M:%S")
+
+        aws scheduler create-schedule \
+          --name privesc-schedule \
+          --schedule-expression "at($SCHEDULE_TIME)" \
+          --flexible-time-window '{"Mode": "OFF"}' \
+          --target '{
+            "Arn": "arn:aws:scheduler:::aws-sdk:iam:attachUserPolicy",
+            "RoleArn": "arn:aws:iam::ACCOUNT_ID:role/ADMIN_ROLE",
+            "Input": "{\"UserName\": \"STARTING_USER\", \"PolicyArn\": \"arn:aws:iam::aws:policy/AdministratorAccess\"}"
+          }' \
+          --action-after-completion DELETE
+      description: Create a one-shot EventBridge Scheduler schedule using the universal AWS SDK target. The target directly calls iam:AttachUserPolicy as the passed admin role — no intermediate compute resource is needed. The schedule auto-deletes after firing.
+    - step: 2
+      command: |
+        aws iam list-attached-user-policies \
+          --user-name STARTING_USER
+      description: Wait ~90 seconds, then verify AdministratorAccess is attached to the starting user. The schedule fires at the specified time and calls iam:AttachUserPolicy using the admin role's credentials.
+
+recommendation: |
+  High powered service roles + overly permissive `iam:PassRole` is what makes this privilege escalation path exploitable and impactful.
+
+  - **Avoid administrative EventBridge Scheduler roles** - Scheduler roles should be scoped to only the specific AWS API calls the schedule legitimately needs to make.
+  - **Avoid granting `iam:PassRole` on all resources** - Whenever possible, restrict `iam:PassRole` to specific roles or specific services. Use IAM policy conditions to restrict which roles can be passed and to which services:
+
+  ```json
+  {
+    "Effect": "Allow",
+    "Action": "iam:PassRole",
+    "Resource": "arn:aws:iam::ACCOUNT_ID:role/SpecificSchedulerRole",
+    "Condition": {
+      "StringEquals": {
+        "iam:PassedToService": "scheduler.amazonaws.com"
+      }
+    }
+  }
+  ```
+
+  - **Restrict the universal target** - Consider using an SCP or IAM policy to deny `scheduler:CreateSchedule` when the target ARN starts with `arn:aws:scheduler:::aws-sdk:iam:` to prevent direct IAM API calls via Scheduler.
+  - **This is one of the simplest PassRole escalation paths** - Unlike most PassRole paths, this requires no container image, no Lambda function, no EC2 instance, and no intermediate infrastructure. Any principal with these two permissions in an account with an admin role that trusts scheduler.amazonaws.com can escalate in under 2 minutes.
+  - Monitor CloudTrail for `scheduler:CreateSchedule` calls with universal SDK targets, especially targeting IAM APIs
+  - Monitor CloudTrail for schedule creation by principals who do not usually create schedules
+  - Alert on IAM policy attachment events where the user agent indicates EventBridge Scheduler
+  - Regularly audit all IAM roles that trust scheduler.amazonaws.com and down-scope any with administrative access
+
+limitations: |
+  This path provides administrative access only if the passed role has administrative permissions (e.g., AdministratorAccess or an equivalent custom policy). The schedule fires after a short delay (minimum ~90 seconds from creation time), making this one of the fastest serverless escalation paths — no container provisioning or EC2 boot time is required.
+
+discoveryAttribution:
+  firstDocumented:
+    author: Zander Mackie
+    organization: Datadog
+    date: "2025"
+
+references:
+  - title: "Actions defined by Amazon EventBridge Scheduler - Service Authorization Reference"
+    url: "https://docs.aws.amazon.com/service-authorization/latest/reference/list_amazoneventbridgescheduler.html"
+  - title: "Using identity-based policies in EventBridge Scheduler - EventBridge Scheduler"
+    url: "https://docs.aws.amazon.com/scheduler/latest/UserGuide/security_iam_id-based-policy-examples.html"
+
+learningEnvironments:
+  pathfinding-labs:
+    type: open-source
+    githubLink: https://github.com/DataDog/pathfinding-labs
+    scenario: "privesc-one-hop/to-admin/scheduler-001"
+    description: "Deploy Terraform scenarios individually or in groups, each with attack and cleanup scripts"
+
+attackVisualization:
+  nodes:
+    - id: start
+      label: Starting Principal
+      type: principal
+      description: The principal with `iam:PassRole` and `scheduler:CreateSchedule` permissions. Can be an IAM user or role.
+
+    - id: schedule
+      label: EventBridge Scheduler (one-shot)
+      type: resource
+      description: |
+        A one-time EventBridge Scheduler schedule created by the attacker. The schedule uses the universal SDK target (`arn:aws:scheduler:::aws-sdk:iam:attachUserPolicy`) which allows EventBridge Scheduler to directly call any AWS SDK API using the passed role's credentials — no Lambda function, EC2 instance, or container is required.
+
+        The schedule fires after a short delay (~90 seconds minimum), calls `iam:AttachUserPolicy` as the admin role, and can be configured to auto-delete after firing with `--action-after-completion DELETE`.
+
+    - id: admin_role
+      label: Admin Role
+      type: principal
+      description: |
+        The IAM role passed to the EventBridge Scheduler via `iam:PassRole`. The role must have a trust policy allowing `scheduler.amazonaws.com` to assume it.
+
+        At fire time, EventBridge Scheduler assumes this role and executes the configured AWS SDK call directly — in this case `iam:AttachUserPolicy` — using the role's credentials. No intermediate compute resource handles the execution.
+
+    - id: admin_outcome
+      label: Effective Administrator
+      type: outcome
+      description: The passed role has AdministratorAccess or equivalent permissions. The schedule fires, calls `iam:AttachUserPolicy` as the admin role, and AdministratorAccess is attached to the starting principal. Full administrative access is gained in under 2 minutes with no intermediate infrastructure.
+
+    - id: some
+      label: Some additional access
+      type: outcome
+      color: '#ffeb99'
+      description: The passed role has elevated but non-admin permissions. The schedule can invoke AWS SDK actions within those permissions. The attacker may be able to access data, modify resources, or find further escalation paths depending on what the role can do.
+
+    - id: no
+      label: No additional access
+      type: outcome
+      color: '#cccccc'
+      description: The passed role has only minimal permissions. The schedule fires but the resulting SDK call provides little practical value for privilege escalation.
+
+  edges:
+    - from: start
+      to: schedule
+      label: iam:PassRole + scheduler:CreateSchedule
+      description: |
+        Create a one-shot EventBridge Scheduler schedule targeting the universal AWS SDK target. The `iam:PassRole` permission authorizes passing the admin role to the Scheduler service. The universal target (`arn:aws:scheduler:::aws-sdk:iam:attachUserPolicy`) allows Scheduler to directly invoke the `iam:AttachUserPolicy` API — no Lambda, EC2, or container required.
+
+        Command:
+        ```bash
+        SCHEDULE_TIME=$(date -u -d "+90 seconds" +"%Y-%m-%dT%H:%M:%S" 2>/dev/null || \
+          date -u -v+90S +"%Y-%m-%dT%H:%M:%S")
+
+        aws scheduler create-schedule \
+          --name privesc-schedule \
+          --schedule-expression "at($SCHEDULE_TIME)" \
+          --flexible-time-window '{"Mode": "OFF"}' \
+          --target '{
+            "Arn": "arn:aws:scheduler:::aws-sdk:iam:attachUserPolicy",
+            "RoleArn": "arn:aws:iam::ACCOUNT_ID:role/ADMIN_ROLE",
+            "Input": "{\"UserName\": \"STARTING_USER\", \"PolicyArn\": \"arn:aws:iam::aws:policy/AdministratorAccess\"}"
+          }' \
+          --action-after-completion DELETE
+        ```
+
+    - from: schedule
+      to: admin_role
+      label: Scheduler assumes role at fire time
+      description: At the scheduled time, EventBridge Scheduler assumes the passed admin role via `sts:AssumeRole` and executes the configured AWS SDK call (`iam:AttachUserPolicy`) directly using the role's credentials. No intermediate compute resource is provisioned — this is what makes this path uniquely fast and infrastructure-free.
+
+    - from: admin_role
+      to: admin_outcome
+      label: If role has admin permissions
+      branch: A
+      condition: admin
+      description: If the passed role has AdministratorAccess or permissions including `iam:AttachUserPolicy`, the schedule successfully attaches AdministratorAccess to the starting principal. Verify with `aws iam list-attached-user-policies --user-name STARTING_USER` after the schedule fires.
+
+    - from: admin_role
+      to: some
+      label: If role has some elevated permissions
+      branch: B
+      condition: some_permissions
+      description: If the passed role has elevated but non-admin permissions, the schedule can invoke AWS SDK actions within those permissions. The attacker can target different SDK APIs via the universal target to leverage whatever the role can do.
+
+    - from: admin_role
+      to: no
+      label: If role has minimal permissions
+      branch: C
+      condition: no_permissions
+      description: If the passed role has only minimal permissions, the scheduled SDK call provides limited value for privilege escalation.

