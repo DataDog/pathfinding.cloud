@@ -6802,6 +6802,10 @@ function initMapGame(mapId, nodes, edges, companions, lab) {
         _pathFollowFromPos: null,     // {x,y} world pos of the frontier (segment start)
         _pathFollowToPos: null,       // {x,y} world pos of the next target (segment end)
         _pathViolationTime: 0,        // timestamp of last path violation (drives red flash)
+        // Gamepad state
+        _gpButtonPrev: {},
+        _gpAxis: { x: 0, y: 0 },
+        _gpDpad: { up: false, down: false, left: false, right: false },
     };
 
     function redraw() {
@@ -6848,6 +6852,111 @@ function initMapGame(mapId, nodes, edges, companions, lab) {
 
         function tick(timestamp) {
             state._heliAnimFrame = requestAnimationFrame(tick);
+
+            // Poll gamepad every frame for all game states (movement values stored for
+            // the movement block below; button actions handled here via edge detection).
+            {
+                const gpAll = navigator.getGamepads?.() || [];
+                const gp = Array.from(gpAll).find(g => g && g.connected);
+                if (gp) {
+                    const DEAD = 0.15;
+                    state._gpAxis = {
+                        x: Math.abs(gp.axes[0]) > DEAD ? gp.axes[0] : 0,
+                        y: Math.abs(gp.axes[1]) > DEAD ? gp.axes[1] : 0,
+                    };
+                    const dpadUp    = !!gp.buttons[12]?.pressed;
+                    const dpadDown  = !!gp.buttons[13]?.pressed;
+                    const dpadLeft  = !!gp.buttons[14]?.pressed;
+                    const dpadRight = !!gp.buttons[15]?.pressed;
+                    state._gpDpad = { up: dpadUp, down: dpadDown, left: dpadLeft, right: dpadRight };
+
+                    const prev = state._gpButtonPrev;
+                    const btnA     = !!gp.buttons[0]?.pressed;  // A/Cross     → advance / confirm
+                    const btnB     = !!gp.buttons[1]?.pressed;  // B/Circle    → retreat / back
+                    const btnX     = !!gp.buttons[2]?.pressed;  // X/Square    → reveal hint
+                    const btnL1    = !!gp.buttons[4]?.pressed;  // L1          → retreat (alt)
+                    const btnR1    = !!gp.buttons[5]?.pressed;  // R1          → advance (alt)
+                    const btnStart = !!gp.buttons[9]?.pressed;  // Start/Options → menu
+
+                    if (state.screen === 'paused') {
+                        const items = getFocusableMenuItems(state);
+                        if ((dpadUp) && !prev[12]) {
+                            state.menuFocusIdx = (state.menuFocusIdx - 1 + items.length) % items.length;
+                            renderGameMenu(state);
+                        }
+                        if ((dpadDown) && !prev[13]) {
+                            state.menuFocusIdx = (state.menuFocusIdx + 1) % items.length;
+                            renderGameMenu(state);
+                        }
+                        if (btnA && !prev[0]) {
+                            const focused = items[state.menuFocusIdx];
+                            if (focused) activateMenuItem(focused.id, state);
+                        }
+                        if ((btnB || btnStart) && !(prev[1] || prev[9])) {
+                            if (state.menuView === 'keybindings') {
+                                state.menuView = 'main';
+                                state.menuFocusIdx = 0;
+                                renderGameMenu(state);
+                            } else {
+                                closeGameMenu(state);
+                            }
+                        }
+                    } else if (state.screen === 'playing') {
+                        // Dismiss arcade start overlay on any button press
+                        if (state.arcadeStartShown && (btnA || btnB || btnX || btnStart || btnL1 || btnR1)) {
+                            state.arcadeStartShown = false;
+                            state._heliLastRevealTime = Date.now();
+                        }
+                        if (!state.arcadeStartShown) {
+                            if ((btnA || btnR1) && !(prev[0] || prev[5])) {
+                                advanceGameState(w, h, state);
+                                syncRevealToNavigation(state);
+                            }
+                            if ((btnB || btnL1) && !(prev[1] || prev[4])) {
+                                retreatGameState(w, h, state);
+                                syncRevealToNavigation(state);
+                            }
+                            if (btnStart && !prev[9]) {
+                                openGameMenu(state);
+                            }
+                            // X button: reveal next hint (mirrors keyboard A key behavior)
+                            if (btnX && !prev[2]) {
+                                const panelEl = state._panelEl;
+                                const edgeIdx = state.selectedEdge;
+                                const isShowingEdge = edgeIdx !== null && edgeIdx !== undefined
+                                    && state.selectedNode === null && state.selectedCompanion === null;
+                                if (isShowingEdge && panelEl) {
+                                    const edge = state.edges[edgeIdx];
+                                    const hints = edge ? (edge.hints || []) : [];
+                                    const hintKey = `edge-${edgeIdx}`;
+                                    if (!state.revealedHints[hintKey]) state.revealedHints[hintKey] = new Set();
+                                    const revSet = state.revealedHints[hintKey];
+                                    const nextIdx = hints.findIndex((_, i) => !revSet.has(i));
+                                    if (nextIdx !== -1) {
+                                        revSet.add(nextIdx);
+                                        state.hintsUsed++;
+                                        renderGamePanelEdge(panelEl, state);
+                                        scrollHintIntoView(panelEl, nextIdx);
+                                    } else {
+                                        const cmds = edge ? (edge.commands || []) : [];
+                                        if (cmds.length > 0 && !state.revealedCommands.has(edgeIdx)) {
+                                            state.revealedCommands.add(edgeIdx);
+                                            renderGamePanelEdge(panelEl, state);
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    state._gpButtonPrev = { 0: btnA, 1: btnB, 2: btnX, 4: btnL1, 5: btnR1, 9: btnStart,
+                        12: dpadUp, 13: dpadDown, 14: dpadLeft, 15: dpadRight };
+                } else {
+                    state._gpAxis = { x: 0, y: 0 };
+                    state._gpDpad = { up: false, down: false, left: false, right: false };
+                }
+            }
+
             if (state.screen !== 'playing' && state.screen !== 'complete') {
                 lastTime = null;
                 return;
@@ -6862,6 +6971,19 @@ function initMapGame(mapId, nodes, edges, companions, lab) {
             if (keys.ArrowRight) dx += 1;
             if (keys.ArrowUp)    dy -= 1;
             if (keys.ArrowDown)  dy += 1;
+
+            // Add gamepad analog stick and d-pad to helicopter movement
+            const _gpAxis = state._gpAxis;
+            const _gpDpad = state._gpDpad;
+            if (_gpAxis) { dx += _gpAxis.x; dy += _gpAxis.y; }
+            if (_gpDpad) {
+                if (_gpDpad.left)  dx -= 1;
+                if (_gpDpad.right) dx += 1;
+                if (_gpDpad.up)    dy -= 1;
+                if (_gpDpad.down)  dy += 1;
+            }
+            dx = Math.max(-1, Math.min(1, dx));
+            dy = Math.max(-1, Math.min(1, dy));
 
             let changed = false;
 
