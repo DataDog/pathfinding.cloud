@@ -1,0 +1,172 @@
+id: sts-003
+name: sts:AssumeRole
+category: principal-access
+services:
+- sts
+- iam
+description: >-
+  A role's trust policy uses "Principal": {"AWS": "*"} — allowing ANY AWS principal
+  in ANY account to assume it, as long as that principal has sts:AssumeRole permission.
+  This is an extremely dangerous misconfiguration because it exposes the role to every
+  AWS account worldwide. Any attacker who discovers the role ARN can assume it without
+  any relationship to the target account.
+prerequisites:
+  admin:
+  - 'Target role must have a trust policy with "Principal": {"AWS": "*"} without restrictive conditions'
+  - Target role must have administrative permissions (e.g., AdministratorAccess)
+  - Attacker must have sts:AssumeRole permission (can be in any AWS account)
+  lateral:
+  - 'Target role must have a trust policy with "Principal": {"AWS": "*"} without restrictive conditions'
+  - Attacker must have sts:AssumeRole permission (can be in any AWS account)
+  - Attacker must know or discover the target role ARN
+permissions:
+  required:
+  - permission: sts:AssumeRole
+    resourceConstraints: Must be able to assume the target role ARN (any account can attempt this due to wildcard trust)
+  additional:
+  - permission: iam:ListRoles
+    resourceConstraints: Helpful for discovering roles if attacker has access to the target account via other means
+exploitationSteps:
+  awscli:
+  - step: 1
+    command: aws sts get-caller-identity
+    description: Verify current identity (can be any AWS account)
+  - step: 2
+    command: |
+      aws sts assume-role \
+        --role-arn arn:aws:iam::TARGET_ACCOUNT:role/WildcardTrustRole \
+        --role-session-name wildcard-exploit
+    description: Assume the role with wildcard trust principal from any AWS account
+  - step: 3
+    command: |
+      export AWS_ACCESS_KEY_ID=<AccessKeyId from step 2>
+      export AWS_SECRET_ACCESS_KEY=<SecretAccessKey from step 2>
+      export AWS_SESSION_TOKEN=<SessionToken from step 2>
+    description: Configure the AWS CLI to use the assumed role credentials
+  - step: 4
+    command: aws sts get-caller-identity
+    description: Verify the assumed role identity in the target account
+  - step: 5
+    command: aws iam list-users --max-items 3
+    description: Verify access level in the target account
+recommendation: |
+  Never use wildcard principals in trust policies. Always use specific account IDs or principal ARNs, and add restrictive conditions.
+
+  Example secure trust policy:
+  ```json
+  {
+    "Version": "2012-10-17",
+    "Statement": [
+      {
+        "Effect": "Allow",
+        "Principal": {
+          "AWS": "arn:aws:iam::TRUSTED_ACCOUNT:role/SpecificRole"
+        },
+        "Action": "sts:AssumeRole",
+        "Condition": {
+          "StringEquals": {
+            "aws:PrincipalOrgID": "o-your-org-id"
+          }
+        }
+      }
+    ]
+  }
+  ```
+
+  Additional controls:
+  - **Never use `"Principal": "*"` or `"Principal": {"AWS": "*"}`** in trust policies — this allows any AWS principal worldwide to assume the role
+  - **Use specific principal ARNs** — Restrict to exact IAM users or roles that need access
+  - **Add aws:PrincipalOrgID condition** — Limit trust to principals within your AWS Organization
+  - **Add aws:SourceAccount condition** — Restrict to specific known accounts
+  - **Use IAM Access Analyzer** — Detect roles with public or overly permissive trust policies
+  - **Monitor CloudTrail** — Alert on `AssumeRole` events from unknown or unexpected accounts
+  - **SCPs** — Use Service Control Policies to prevent creation of roles with wildcard trust policies
+  - **Regular audits** — Scan all role trust policies for wildcard principals
+limitations: |
+  This path provides access only to the permissions of the target role. The actual level of access depends on what policies are attached to the wildcard-trusted role. The main risk is that ANY account can exploit this, making it a public-facing vulnerability.
+discoveryAttribution:
+  firstDocumented:
+    author: Paramanand Mallik
+    date: "2026"
+    link: https://github.com/DataDog/pathfinding.cloud/pull/XX
+references:
+- title: AWS Documentation - IAM Role Trust Policies
+  url: https://docs.aws.amazon.com/IAM/latest/UserGuide/id_roles_terms-and-concepts.html
+- title: AWS IAM Access Analyzer - External Access Findings
+  url: https://docs.aws.amazon.com/IAM/latest/UserGuide/access-analyzer-findings.html
+relatedPaths:
+- sts-001
+- sts-002
+attackVisualization:
+  nodes:
+  - id: attacker
+    label: Attacker (Any AWS Account)
+    type: principal
+    description: |
+      Any AWS principal in any AWS account worldwide. Because the target role uses a wildcard trust principal, no specific account relationship is needed.
+  - id: assume_action
+    label: sts:AssumeRole
+    type: payload
+    description: |
+      The attacker calls `sts:AssumeRole` targeting the wildcard-trusted role. Since the trust policy allows `"Principal": {"AWS": "*"}`, any authenticated AWS principal can assume it.
+
+      Command:
+      ```bash
+      aws sts assume-role \
+        --role-arn arn:aws:iam::TARGET_ACCOUNT:role/WildcardTrustRole \
+        --role-session-name wildcard-exploit
+      ```
+  - id: target_role
+    label: WildcardTrustRole (Target Account)
+    type: principal
+    description: |
+      An IAM role with `"Principal": {"AWS": "*"}` in its trust policy. This misconfiguration makes the role assumable by any AWS principal in any account worldwide.
+  - id: admin_outcome
+    label: Effective Administrator
+    type: outcome
+    description: |
+      If the wildcard-trusted role has AdministratorAccess or equivalent, the attacker gains full admin access to the target account.
+  - id: partial_outcome
+    label: Some additional access
+    type: outcome
+    color: '#ffeb99'
+    description: |
+      If the role has elevated but non-administrative permissions, the attacker gains partial access to the target account.
+  - id: no_outcome
+    label: No additional access
+    type: outcome
+    color: '#cccccc'
+    description: |
+      If the role has minimal permissions, the wildcard trust provides little value despite the misconfiguration.
+  edges:
+  - from: attacker
+    to: assume_action
+    label: Has sts:AssumeRole (any account)
+    description: |
+      The attacker has `sts:AssumeRole` permission in their own account. Due to the wildcard trust, no cross-account relationship is required.
+  - from: assume_action
+    to: target_role
+    label: "Trust policy: Principal = *"
+    description: |
+      The target role's trust policy uses `"Principal": {"AWS": "*"}` without restrictive conditions, allowing any AWS principal to assume it.
+  - from: target_role
+    to: admin_outcome
+    label: If role has admin permissions
+    branch: A
+    condition: admin
+    description: |
+      The wildcard-trusted role has AdministratorAccess, granting the attacker full admin in the target account.
+  - from: target_role
+    to: partial_outcome
+    label: If role has some permissions
+    branch: B
+    condition: some_permissions
+    description: |
+      The role has some elevated permissions useful for data access or further escalation.
+  - from: target_role
+    to: no_outcome
+    label: If role has minimal permissions
+    branch: C
+    condition: no_permissions
+    description: |
+      The role has minimal permissions, limiting the impact despite the wildcard trust misconfiguration.

@@ -1,0 +1,167 @@
+id: sts-002
+name: sts:AssumeRole
+category: principal-access
+services:
+- sts
+- iam
+description: |
+  A principal in Account A can assume a privileged role in Account B when the target role's trust policy allows cross-account access without requiring an `sts:ExternalId` condition. This is the classic confused deputy attack — if the trust policy specifies `arn:aws:iam::ATTACKER_ACCOUNT:root` (or a specific principal in the attacker's account) without an ExternalId condition, any principal in the attacker's account with `sts:AssumeRole` permission can assume the target role and gain its permissions in the target account.
+prerequisites:
+  admin:
+  - Target role in Account B must trust Account A (e.g., arn:aws:iam::ATTACKER_ACCOUNT:root) without an sts:ExternalId condition
+  - Target role must have administrative permissions (e.g., AdministratorAccess)
+  - Attacker must have sts:AssumeRole permission in Account A
+  - Attacker must know or discover the target role ARN in Account B
+  lateral:
+  - Target role in Account B must trust Account A without an sts:ExternalId condition
+  - Attacker must have sts:AssumeRole permission in Account A
+  - Attacker must know or discover the target role ARN in Account B
+permissions:
+  required:
+  - permission: sts:AssumeRole
+    resourceConstraints: Must be able to assume the cross-account target role ARN in Account B
+  additional:
+  - permission: iam:ListRoles
+    resourceConstraints: Helpful for discovering roles in the attacker's own account that may have cross-account trust
+exploitationSteps:
+  awscli:
+  - step: 1
+    command: aws sts get-caller-identity
+    description: Verify current identity in Account A before cross-account escalation
+  - step: 2
+    command: |
+      aws sts assume-role \
+        --role-arn arn:aws:iam::TARGET_ACCOUNT:role/VulnerableRole \
+        --role-session-name cross-account-attack
+    description: Assume the cross-account role in Account B that trusts Account A without ExternalId
+  - step: 3
+    command: |
+      export AWS_ACCESS_KEY_ID=<AccessKeyId from step 2>
+      export AWS_SECRET_ACCESS_KEY=<SecretAccessKey from step 2>
+      export AWS_SESSION_TOKEN=<SessionToken from step 2>
+    description: Configure the AWS CLI to use the assumed role credentials from Account B
+  - step: 4
+    command: aws sts get-caller-identity
+    description: Verify the assumed identity is now in Account B
+  - step: 5
+    command: aws iam list-users --max-items 3
+    description: Verify administrative access in Account B
+recommendation: |
+  Always require `sts:ExternalId` for cross-account roles to prevent confused deputy attacks. Additionally, restrict trust to specific principal ARNs rather than the account root.
+
+  Example trust policy with ExternalId:
+  ```json
+  {
+    "Version": "2012-10-17",
+    "Statement": [
+      {
+        "Effect": "Allow",
+        "Principal": {
+          "AWS": "arn:aws:iam::TRUSTED_ACCOUNT:role/SpecificRole"
+        },
+        "Action": "sts:AssumeRole",
+        "Condition": {
+          "StringEquals": {
+            "sts:ExternalId": "unique-external-id-here"
+          }
+        }
+      }
+    ]
+  }
+  ```
+
+  Additional controls:
+  - **Use specific principal ARNs** — Never trust the account root (`arn:aws:iam::ACCOUNT:root`) for cross-account roles; specify exact role or user ARNs
+  - **Require ExternalId** — Always add `sts:ExternalId` condition for third-party cross-account access
+  - **Use aws:PrincipalOrgID** — For intra-organization trust, restrict to your AWS Organization ID
+  - **Monitor CloudTrail** — Alert on `AssumeRole` events from unexpected external accounts
+  - **Use SCPs** — Implement Service Control Policies to limit which accounts can be trusted in role policies
+  - **Regular audits** — Periodically review all role trust policies for overly permissive cross-account access
+limitations: |
+  This path provides access only to the permissions of the target role in Account B. The level of access depends entirely on what policies are attached to the target role. If the role has administrative permissions, the attacker gains full admin in Account B. If the role has limited permissions, the attacker gains only those limited permissions.
+discoveryAttribution:
+  firstDocumented:
+    author: Paramanand Mallik
+    date: "2026"
+    link: https://github.com/DataDog/pathfinding.cloud/pull/XX
+references:
+- title: AWS Documentation - How to use an external ID when granting access
+  url: https://docs.aws.amazon.com/IAM/latest/UserGuide/id_roles_create_for-user_externalid.html
+- title: The Confused Deputy Problem
+  url: https://docs.aws.amazon.com/IAM/latest/UserGuide/confused-deputy.html
+relatedPaths:
+- sts-001
+- sts-003
+attackVisualization:
+  nodes:
+  - id: attacker
+    label: Attacker (Account A)
+    type: principal
+    description: |
+      A principal in Account A with `sts:AssumeRole` permission. The attacker controls this principal and uses it to assume a cross-account role in Account B.
+  - id: assume_action
+    label: sts:AssumeRole (Cross-Account)
+    type: payload
+    description: |
+      The attacker calls `sts:AssumeRole` targeting a role in Account B. No ExternalId is required because the target role's trust policy does not enforce one.
+
+      Command:
+      ```bash
+      aws sts assume-role \
+        --role-arn arn:aws:iam::TARGET_ACCOUNT:role/VulnerableRole \
+        --role-session-name cross-account-attack
+      ```
+  - id: target_role
+    label: VulnerableRole (Account B)
+    type: principal
+    description: |
+      An IAM role in Account B whose trust policy allows Account A to assume it without requiring an ExternalId condition. This is the confused deputy vulnerability.
+  - id: admin_outcome
+    label: Effective Administrator (Account B)
+    type: outcome
+    description: |
+      If the target role has AdministratorAccess or equivalent permissions, the attacker gains full administrative access to Account B.
+  - id: partial_outcome
+    label: Some additional access (Account B)
+    type: outcome
+    color: '#ffeb99'
+    description: |
+      If the target role has elevated but non-administrative permissions, the attacker gains partial access in Account B.
+  - id: no_outcome
+    label: No additional access
+    type: outcome
+    color: '#cccccc'
+    description: |
+      If the target role has minimal permissions, the cross-account assumption provides little value.
+  edges:
+  - from: attacker
+    to: assume_action
+    label: Has sts:AssumeRole permission
+    description: |
+      The attacker's principal in Account A has `sts:AssumeRole` permission targeting the role ARN in Account B.
+  - from: assume_action
+    to: target_role
+    label: Trust policy allows Account A (no ExternalId)
+    description: |
+      The target role's trust policy allows Account A principals to assume it without requiring an ExternalId. This is the vulnerable configuration being exploited.
+  - from: target_role
+    to: admin_outcome
+    label: If role has admin permissions
+    branch: A
+    condition: admin
+    description: |
+      The target role has AdministratorAccess or equivalent, granting the attacker full admin in Account B.
+  - from: target_role
+    to: partial_outcome
+    label: If role has some permissions
+    branch: B
+    condition: some_permissions
+    description: |
+      The target role has elevated permissions that may allow data access or further escalation in Account B.
+  - from: target_role
+    to: no_outcome
+    label: If role has minimal permissions
+    branch: C
+    condition: no_permissions
+    description: |
+      The target role has minimal permissions, providing little additional access.

