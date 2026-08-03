@@ -4,12 +4,13 @@ Simple development server for SPA routing.
 All requests are served from index.html to support client-side routing.
 """
 
+import argparse
 import http.server
 import socketserver
 import os
 from urllib.parse import urlparse
 
-PORT = 8888
+DEFAULT_PORT = 8888
 
 class SPAHTTPRequestHandler(http.server.SimpleHTTPRequestHandler):
     """HTTP request handler with SPA support."""
@@ -78,14 +79,22 @@ class SPAHTTPRequestHandler(http.server.SimpleHTTPRequestHandler):
 
 def main():
     """Start the development server."""
+    parser = argparse.ArgumentParser(description="SPA development server")
+    parser.add_argument("port", nargs="?", type=int, default=DEFAULT_PORT,
+                        help=f"Port to listen on (default: {DEFAULT_PORT})")
+    parser.add_argument("--port", dest="port_flag", type=int, default=None,
+                        help=f"Port to listen on (default: {DEFAULT_PORT})")
+    args = parser.parse_args()
+    port = args.port_flag if args.port_flag is not None else args.port
+
     # Change to the website directory (where index.html is)
     os.chdir(os.path.dirname(os.path.abspath(__file__)))
 
     # Allow address reuse to prevent "Address already in use" errors
     socketserver.TCPServer.allow_reuse_address = True
 
-    with socketserver.TCPServer(("", PORT), SPAHTTPRequestHandler) as httpd:
-        print(f"🚀 Development server running at http://localhost:{PORT}")
+    with socketserver.TCPServer(("", port), SPAHTTPRequestHandler) as httpd:
+        print(f"🚀 Development server running at http://localhost:{port}")
         print(f"📂 Serving files from: {os.getcwd()}")
         print(f"⚡ SPA routing enabled - all paths will serve index.html")
         print(f"\nPress Ctrl+C to stop the server\n")
