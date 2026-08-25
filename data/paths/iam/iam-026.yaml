@@ -1,0 +1,139 @@
+id: iam-026
+name: iam:DeleteUserPolicy
+category: self-escalation
+services:
+- iam
+description: |
+  An attacker with `iam:DeleteUserPolicy` can delete an inline deny policy from a user. This has the same effect as detaching a managed deny policy — it re-enables actions that were previously blocked by the inline deny. Inline policies are sometimes used for per-user guardrails or deny overrides, and deleting them removes those constraints.
+prerequisites:
+  admin:
+  - Target user must have an inline deny policy that blocks specific dangerous actions
+  - The user must have Allow statements (from other policies) for the actions the inline deny was blocking
+  - Attacker must have `iam:DeleteUserPolicy` on the target user
+  lateral:
+  - Must have iam:DeleteUserPolicy permission on the target user
+  - Must know the inline policy name to delete
+permissions:
+  required:
+  - permission: iam:DeleteUserPolicy
+    resourceConstraints: Must have permission to delete inline policies from the target user ARN
+  additional:
+  - permission: iam:ListUserPolicies
+    resourceConstraints: Helpful for discovering inline policy names on the target user
+  - permission: iam:GetUserPolicy
+    resourceConstraints: Useful for viewing the inline deny policy content to understand what will be unblocked
+exploitationSteps:
+  awscli:
+  - step: 1
+    command: aws iam list-user-policies --user-name TARGET_USER
+    description: List inline policies on the user to identify the deny policy name
+  - step: 2
+    command: |
+      aws iam get-user-policy \
+        --user-name TARGET_USER \
+        --policy-name DenyEscalationInline
+    description: View the inline deny policy content to confirm which actions it blocks
+  - step: 3
+    command: |
+      aws iam delete-user-policy \
+        --user-name TARGET_USER \
+        --policy-name DenyEscalationInline
+    description: Delete the inline deny policy from the user, re-enabling previously blocked actions
+  - step: 4
+    command: aws sts get-caller-identity
+    description: Verify current identity
+  - step: 5
+    command: aws iam create-policy-version --policy-arn arn:aws:iam::ACCOUNT_ID:policy/AttachedPolicy --policy-document file://admin.json --set-as-default
+    description: Execute a previously-blocked action to escalate privileges
+recommendation: |
+  Prefer SCPs for guardrails. If inline denies are used, deny `iam:DeleteUserPolicy` via SCP to prevent removal.
+
+  SCP to protect inline deny policies:
+  ```json
+  {
+    "Version": "2012-10-17",
+    "Statement": [
+      {
+        "Effect": "Deny",
+        "Action": [
+          "iam:DeleteUserPolicy",
+          "iam:PutUserPolicy"
+        ],
+        "Resource": "*",
+        "Condition": {
+          "StringNotLike": {
+            "aws:PrincipalARN": "arn:aws:iam::*:role/PolicyAdmin"
+          }
+        }
+      }
+    ]
+  }
+  ```
+
+  Additional controls:
+  - **Prefer SCPs over inline denies** — SCPs are more robust because they cannot be removed by constrained principals
+  - **Prefer managed policies over inline** — Managed deny policies are easier to audit and monitor than inline policies
+  - **Monitor CloudTrail** — Alert on all `DeleteUserPolicy` events, especially for known guardrail policy names
+  - **Self-protecting patterns** — If using inline denies, consider also denying `iam:DeleteUserPolicy` in the same inline policy (though this creates a circular dependency that SCPs handle better)
+  - **Detect drift** — Implement automated checks verifying inline deny policies remain present on intended users
+  - **Regular audits** — Review inline policies on all users, alerting on missing expected deny policies
+limitations: |
+  Same as iam-025 — only enables escalation if the inline deny was blocking actions the principal otherwise has Allow for. If those unblocked actions don't lead to privilege escalation, removing the inline deny has no effect.
+discoveryAttribution:
+  firstDocumented:
+    author: Paramanand Mallik
+    date: "2026"
+    link: https://github.com/DataDog/pathfinding.cloud/pull/XX
+references:
+- title: AWS Documentation - IAM Policy Evaluation Logic
+  url: https://docs.aws.amazon.com/IAM/latest/UserGuide/reference_policies_evaluation-logic.html
+- title: AWS Documentation - Inline Policies
+  url: https://docs.aws.amazon.com/IAM/latest/UserGuide/access_policies_managed-vs-inline.html
+relatedPaths:
+- iam-025
+- iam-001
+attackVisualization:
+  nodes:
+  - id: attacker
+    label: Constrained Principal
+    type: principal
+    description: |
+      A principal whose dangerous permissions are blocked by an inline deny policy. The principal has Allow statements for escalation actions from attached managed policies, but the inline deny prevents their use.
+  - id: inline_deny
+    label: Inline Deny Policy
+    type: resource
+    description: |
+      An inline IAM policy with explicit deny statements blocking specific actions. Unlike managed policies, inline policies are embedded directly in the user and cannot be reused across principals.
+  - id: escalation
+    label: Previously-Blocked Escalation Path
+    type: payload
+    description: |
+      After the inline deny is deleted, the principal's Allow statements for dangerous actions take effect. The attacker can now exploit other privilege escalation paths that were previously blocked.
+  - id: admin_outcome
+    label: Effective Administrator
+    type: outcome
+    description: |
+      The attacker uses the unblocked escalation path to gain administrative access.
+  edges:
+  - from: attacker
+    to: inline_deny
+    label: iam:DeleteUserPolicy
+    description: |
+      Delete the inline deny policy from the user, removing the guardrail.
+
+      Command:
+      ```bash
+      aws iam delete-user-policy \
+        --user-name TARGET_USER \
+        --policy-name DenyEscalationInline
+      ```
+  - from: inline_deny
+    to: escalation
+    label: Deny removed, Allow statements take effect
+    description: |
+      With the inline deny deleted, the principal's Allow statements from managed policies for previously-blocked actions become effective.
+  - from: escalation
+    to: admin_outcome
+    label: Execute unblocked escalation
+    description: |
+      The attacker uses the now-unblocked permissions to escalate privileges via another technique (e.g., iam:CreatePolicyVersion, iam:PassRole).

