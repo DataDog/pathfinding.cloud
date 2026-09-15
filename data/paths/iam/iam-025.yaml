@@ -1,0 +1,138 @@
+id: iam-025
+name: iam:DetachUserPolicy
+category: self-escalation
+services:
+- iam
+description: |
+  An attacker with `iam:DetachUserPolicy` can detach an explicit deny policy from themselves or another principal. If the deny policy was blocking specific dangerous actions (e.g., denying `iam:CreatePolicyVersion` or `iam:PassRole`), removing it re-enables those actions. This attack works because IAM evaluates explicit denies from attached policies — once the deny policy is detached, the previously-blocked Allow statements take effect again.
+prerequisites:
+  admin:
+  - Target principal must have an attached managed deny policy that blocks specific dangerous actions
+  - The principal must have Allow statements (from other policies) for the actions the deny was blocking
+  - Attacker must have `iam:DetachUserPolicy` on the target user for the deny policy ARN
+  lateral:
+  - Must have iam:DetachUserPolicy permission on the target user
+  - Must identify the deny policy ARN to detach
+permissions:
+  required:
+  - permission: iam:DetachUserPolicy
+    resourceConstraints: Must have permission to detach policies from the target user ARN
+  additional:
+  - permission: iam:ListAttachedUserPolicies
+    resourceConstraints: Helpful for discovering which policies are attached, including deny policies
+  - permission: iam:GetPolicy
+    resourceConstraints: Useful for viewing the deny policy content to understand what will be unblocked
+  - permission: iam:GetPolicyVersion
+    resourceConstraints: Useful for viewing the specific policy document of the deny policy
+exploitationSteps:
+  awscli:
+  - step: 1
+    command: aws iam list-attached-user-policies --user-name TARGET_USER
+    description: List all attached policies to identify the deny policy
+  - step: 2
+    command: |
+      aws iam get-policy-version \
+        --policy-arn arn:aws:iam::ACCOUNT_ID:policy/DenyEscalation \
+        --version-id v1
+    description: View the deny policy content to confirm which actions it blocks
+  - step: 3
+    command: |
+      aws iam detach-user-policy \
+        --user-name TARGET_USER \
+        --policy-arn arn:aws:iam::ACCOUNT_ID:policy/DenyEscalation
+    description: Detach the deny policy from the user, re-enabling previously blocked actions
+  - step: 4
+    command: aws sts get-caller-identity
+    description: Verify current identity
+  - step: 5
+    command: aws iam create-policy-version --policy-arn arn:aws:iam::ACCOUNT_ID:policy/AttachedPolicy --policy-document file://admin.json --set-as-default
+    description: Execute a previously-blocked action (e.g., CreatePolicyVersion) to escalate privileges
+recommendation: |
+  Use SCPs instead of identity-based deny policies for critical guardrails. SCPs cannot be removed by the principal they constrain, making them more robust than attached deny policies.
+
+  If using identity-based deny policies, deny `iam:DetachUserPolicy` for the deny policy ARN:
+  ```json
+  {
+    "Version": "2012-10-17",
+    "Statement": [
+      {
+        "Effect": "Deny",
+        "Action": "iam:DetachUserPolicy",
+        "Resource": "arn:aws:iam::ACCOUNT_ID:user/*",
+        "Condition": {
+          "ArnEquals": {
+            "aws:PolicyArn": "arn:aws:iam::ACCOUNT_ID:policy/DenyEscalation"
+          }
+        }
+      }
+    ]
+  }
+  ```
+
+  Additional controls:
+  - **Prefer SCPs** — Service Control Policies are the most robust way to enforce deny guardrails since they operate at the organization level
+  - **Self-protecting deny policies** — If using identity-based denies, include `iam:DetachUserPolicy` in the deny policy itself to prevent self-removal
+  - **Monitor CloudTrail** — Alert on `DetachUserPolicy` events, especially when deny or guardrail policies are being detached
+  - **Use permissions boundaries** — As an additional layer, permissions boundaries can also constrain effective permissions
+  - **Regular audits** — Verify that guardrail deny policies remain attached to all intended principals
+  - **Detect policy drift** — Implement automated checks comparing current policy attachments against expected baselines
+limitations: |
+  This path only enables escalation if: (1) the deny policy was blocking actions the principal otherwise has Allow for, and (2) those unblocked actions lead to privilege escalation. If the principal doesn't have Allow statements for dangerous actions, removing the deny has no effect.
+discoveryAttribution:
+  firstDocumented:
+    author: Paramanand Mallik
+    date: "2026"
+    link: https://github.com/DataDog/pathfinding.cloud/pull/XX
+references:
+- title: AWS Documentation - IAM Policy Evaluation Logic
+  url: https://docs.aws.amazon.com/IAM/latest/UserGuide/reference_policies_evaluation-logic.html
+- title: AWS Documentation - Deny Policies
+  url: https://docs.aws.amazon.com/IAM/latest/UserGuide/access_policies.html
+relatedPaths:
+- iam-026
+- iam-001
+attackVisualization:
+  nodes:
+  - id: attacker
+    label: Constrained Principal
+    type: principal
+    description: |
+      A principal whose dangerous permissions are blocked by an attached explicit deny policy. The principal has Allow statements for escalation actions, but the deny policy prevents their use.
+  - id: deny_policy
+    label: Deny Policy (Guardrail)
+    type: resource
+    description: |
+      A managed IAM policy with explicit deny statements blocking specific dangerous actions (e.g., denying iam:CreatePolicyVersion, iam:PassRole, etc.). This is the guardrail being removed.
+  - id: escalation
+    label: Previously-Blocked Escalation Path
+    type: payload
+    description: |
+      After the deny policy is removed, the principal's Allow statements for dangerous actions take effect. The attacker can now exploit other privilege escalation paths that were previously blocked (e.g., iam:CreatePolicyVersion, iam:PassRole).
+  - id: admin_outcome
+    label: Effective Administrator
+    type: outcome
+    description: |
+      The attacker uses the unblocked escalation path to gain administrative access (e.g., creates an admin policy version, passes a privileged role).
+  edges:
+  - from: attacker
+    to: deny_policy
+    label: iam:DetachUserPolicy
+    description: |
+      Detach the deny policy from the user, removing the guardrail that blocked dangerous actions.
+
+      Command:
+      ```bash
+      aws iam detach-user-policy \
+        --user-name TARGET_USER \
+        --policy-arn arn:aws:iam::ACCOUNT_ID:policy/DenyEscalation
+      ```
+  - from: deny_policy
+    to: escalation
+    label: Deny removed, Allow statements take effect
+    description: |
+      With the explicit deny removed, the principal's Allow statements for previously-blocked actions become effective.
+  - from: escalation
+    to: admin_outcome
+    label: Execute unblocked escalation
+    description: |
+      The attacker uses the now-unblocked permissions to escalate privileges (e.g., iam:CreatePolicyVersion to create an admin policy).
