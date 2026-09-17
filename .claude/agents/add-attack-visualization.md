@@ -23,9 +23,9 @@ Before creating any visualization:
 1. Read the target YAML file completely to understand the attack path
 2. Read the `attackVisualization` section in SCHEMA.md for complete format and rules
 3. Review existing visualizations as reference examples based on the attack pattern:
-   - **Pattern A (self-escalation)**: `data/paths/iam/iam-001.yaml`
-   - **Pattern B (lateral movement)**: `data/paths/sts/sts-001.yaml`
-   - **Pattern C (PassRole workload with multiple methods)**: `data/paths/apprunner/apprunner-001.yaml` and `data/paths/ec2/ec2-001.yaml`
+   - **Pattern A (self-escalation)**: `data/paths/aws/iam/iam-001.yaml`
+   - **Pattern B (lateral movement)**: `data/paths/aws/sts/sts-001.yaml`
+   - **Pattern C (PassRole workload with multiple methods)**: `data/paths/aws/apprunner/apprunner-001.yaml` and `data/paths/aws/ec2/ec2-001.yaml`
 4. Check if a matching scenario exists in `~/Documents/projects/pathfinding-labs/modules/scenarios/single-account/privesc-one-hop/` and use its scenario.yaml file to:
    - Validate your understanding of the attack flow
    - Extract any additional technical details (resource names, command syntax)
@@ -698,7 +698,7 @@ After creating the visualization:
 3. Verify all conditional edges have both `branch` and `condition` fields
 4. Verify all transitive edges have NO `branch` or `condition` fields
 5. Verify all nodes and edges have `description` fields
-6. Run: `python3 scripts/validate-schema.py data/paths/{service}/{file}.yaml`
+6. Run: `python3 scripts/validate-schema.py data/paths/aws/{service}/{file}.yaml`
 
 ## Process
 
@@ -725,17 +725,17 @@ After creating the visualization:
     - **Field placement order:** Add after `learningEnvironments` (or after `detectionTools` if no learningEnvironments exists, or after `relatedPaths` if neither exists)
     - The standard field order is: `relatedPaths` → `detectionTools` → `learningEnvironments` → `attackVisualization`
     - Ensure proper YAML indentation (no leading spaces before `attackVisualization:`)
-11. Validate the modified file: `python3 scripts/validate-schema.py data/paths/{service}/{file}.yaml`
+11. Validate the modified file: `python3 scripts/validate-schema.py data/paths/aws/{service}/{file}.yaml`
 
 
 ## Example Reference
 
 Study these examples before creating visualizations:
-- **Pattern A (Simple self-escalation)**: data/paths/iam/iam-001.yaml (iam:CreatePolicyVersion)
-- **Pattern B (Simple lateral movement)**: data/paths/sts/sts-001.yaml (sts:AssumeRole)
+- **Pattern A (Simple self-escalation)**: data/paths/aws/iam/iam-001.yaml (iam:CreatePolicyVersion)
+- **Pattern B (Simple lateral movement)**: data/paths/aws/sts/sts-001.yaml (sts:AssumeRole)
 - **Pattern C (PassRole workload control with multiple methods)**:
-  - data/paths/ec2/ec2-001.yaml (iam:PassRole + ec2:RunInstances)
-  - data/paths/apprunner/apprunner-001.yaml (iam:PassRole + apprunner:CreateService)
+  - data/paths/aws/ec2/ec2-001.yaml (iam:PassRole + ec2:RunInstances)
+  - data/paths/aws/apprunner/apprunner-001.yaml (iam:PassRole + apprunner:CreateService)
 
 ## Important Notes
 

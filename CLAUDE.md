@@ -54,7 +54,7 @@ See [SCHEMA.md](SCHEMA.md#parent-object-optional) for detailed parent/child rela
 pip install -r requirements.txt
 
 # Validate a single file
-python scripts/validate-schema.py data/paths/{service}/{service}-###.yaml
+python scripts/validate-schema.py data/paths/aws/{service}/{service}-###.yaml
 
 # Validate all files
 python scripts/validate-schema.py data/paths/
@@ -111,7 +111,8 @@ python scripts/generate-json.py
 
 ### Data Structure
 
-All privilege escalation paths are stored as individual YAML files in `data/paths/{service}/`:
+All privilege escalation paths are stored as individual YAML files in `data/paths/{cloud}/{service}/`:
+- Currently only `aws` is supported as the cloud provider directory (e.g., `data/paths/aws/iam/`)
 - Files follow naming convention: `{service}-{number}.yaml` (e.g., `iam-001.yaml`)
 - Each file adheres to the schema defined in [SCHEMA.md](SCHEMA.md)
 - Files are organized by primary service (iam, ec2, lambda, ssm, cloudformation, etc.)
@@ -138,7 +139,7 @@ The website is a Single Page Application (SPA) with client-side routing:
 
 **Directory Structure:**
 - All website files are in the `docs/` directory (GitHub Pages compatible)
-- Source data (YAML files) remain at `data/paths/` in repository root
+- Source data (YAML files) remain at `data/paths/aws/` in repository root
 - Generated files (`paths.json`, `metadata.json`) are created in `docs/`
 
 **Development:**
@@ -149,7 +150,7 @@ The website is a Single Page Application (SPA) with client-side routing:
 **Production (GitHub Pages):**
 - GitHub Pages deploys only the `docs/` directory
 - `404.html` implements the SPA routing pattern for GitHub Pages
-- When users access direct URLs (e.g., `/paths/iam-001`), GitHub Pages serves `404.html`
+- When users access direct URLs (e.g., `/paths/aws/iam-001`), GitHub Pages serves `404.html`
 - The 404 page captures the requested path in sessionStorage and redirects to `index.html`
 - The client-side router in `docs/js/app.js` reads sessionStorage and restores the original URL
 - This allows direct linking and page refreshes to work correctly on GitHub Pages
@@ -161,16 +162,16 @@ The website is a Single Page Application (SPA) with client-side routing:
 
 1. **Determine the next ID:**
    ```bash
-   ls data/paths/{service}/ | sort | tail -n 1
+   ls data/paths/aws/{service}/ | sort | tail -n 1
    ```
 
-2. **Create YAML file:** `data/paths/{service}/{service}-{number}.yaml`
+2. **Create YAML file:** `data/paths/aws/{service}/{service}-{number}.yaml`
 
 3. **Follow the schema:** See [SCHEMA.md](SCHEMA.md) for complete field definitions
 
 4. **Validate:**
    ```bash
-   python scripts/validate-schema.py data/paths/{service}/{service}-{number}.yaml
+   python scripts/validate-schema.py data/paths/aws/{service}/{service}-{number}.yaml
    ```
 
 5. **Enhance with specialized agents** (optional but recommended):
@@ -195,8 +196,8 @@ The website is a Single Page Application (SPA) with client-side routing:
 
 ### Adding a New Service
 
-1. Create directory: `mkdir data/paths/{service}`
-2. Add first path: `data/paths/{service}/{service}-001.yaml`
+1. Create directory: `mkdir data/paths/aws/{service}`
+2. Add first path: `data/paths/aws/{service}/{service}-001.yaml`
 3. The service will automatically appear in website filters once deployed
 
 ## Field Quick Reference

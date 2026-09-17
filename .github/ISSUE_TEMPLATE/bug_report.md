@@ -22,7 +22,7 @@ assignees: ''
 - [ ] Other:
 
 **Specific file or page affected:**
-<!-- e.g., data/paths/iam/iam-001.yaml or https://pathfinding.cloud/paths/iam-001 -->
+<!-- e.g., data/paths/aws/iam/iam-001.yaml or https://pathfinding.cloud/paths/aws/iam-001 -->
 
 
 ## Details

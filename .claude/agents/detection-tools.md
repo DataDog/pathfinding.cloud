@@ -81,7 +81,7 @@ Check these tools in order of priority (most comprehensive detection engines fir
 
 6. **Validate your changes**:
    ```bash
-   python3 scripts/validate-schema.py data/paths/{service}/{file}.yaml
+   python3 scripts/validate-schema.py data/paths/aws/{service}/{file}.yaml
    ```
 
 ## Important Guidelines

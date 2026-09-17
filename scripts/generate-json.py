@@ -300,6 +300,11 @@ def convert_yaml_to_json(input_dir='data/paths', output_file='docs/paths.json'):
             relative_path = str(yaml_file).replace('\\', '/')
             data['filePath'] = relative_path
 
+            # Derive cloud provider from directory structure: data/paths/{cloud}/{service}/{file}.yaml
+            path_parts = relative_path.split('/')
+            if len(path_parts) >= 5 and path_parts[0] == 'data' and path_parts[1] == 'paths':
+                data['cloud'] = path_parts[2]
+
             paths.append(data)
         except Exception as e:
             error_msg = f"Error processing {yaml_file}: {e}"
@@ -327,6 +332,11 @@ def convert_yaml_to_json(input_dir='data/paths', output_file='docs/paths.json'):
     # Generate metadata
     metadata = {
         'totalPaths': len(paths),
+        'clouds': list(set([
+            path.get('cloud')
+            for path in paths
+            if path.get('cloud')
+        ])),
         'services': list(set([
             service
             for path in paths

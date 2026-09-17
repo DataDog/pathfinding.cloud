@@ -55,7 +55,7 @@ Draft submissions let you contribute the core information while we handle the re
 
 1. **Copy the draft template:**
    ```bash
-   cp data/example-path-draft.yaml data/paths/{service}/{service}-{number}.yaml
+   cp data/example-path-draft.yaml data/paths/aws/{service}/{service}-{number}.yaml
    ```
 
 2. **Fill in the required fields** (see template for guidance)
@@ -64,7 +64,7 @@ Draft submissions let you contribute the core information while we handle the re
 
 4. **Validate your file:**
    ```bash
-   python scripts/validate-schema.py data/paths/{service}/{service}-{number}.yaml
+   python scripts/validate-schema.py data/paths/aws/{service}/{service}-{number}.yaml
    ```
 
 5. **Submit your PR** - our CI will validate, and we'll enhance it from there
@@ -228,14 +228,14 @@ All draft fields plus:
 
 1. **Copy the complete template:**
    ```bash
-   cp data/example-path-complete.yaml data/paths/{service}/{service}-{number}.yaml
+   cp data/example-path-complete.yaml data/paths/aws/{service}/{service}-{number}.yaml
    ```
 
 2. **Fill in all required fields** (see [SCHEMA.md](SCHEMA.md) for details)
 
 3. **Validate your file:**
    ```bash
-   python scripts/validate-schema.py data/paths/{service}/{service}-{number}.yaml
+   python scripts/validate-schema.py data/paths/aws/{service}/{service}-{number}.yaml
    ```
 
 4. **Submit your PR**
@@ -265,7 +265,7 @@ Don't worry if you don't have these - we can add them!
 ### Finding the Next ID
 
 ```bash
-ls data/paths/{service}/ | sort | tail -n 1
+ls data/paths/aws/{service}/ | sort | tail -n 1
 ```
 
 ### Categories
@@ -298,7 +298,7 @@ See [SCHEMA.md](SCHEMA.md) for complete field definitions, validation rules, and
 pip install -r requirements.txt
 
 # Validate a single file
-python scripts/validate-schema.py data/paths/{service}/{service}-{number}.yaml
+python scripts/validate-schema.py data/paths/aws/{service}/{service}-{number}.yaml
 
 # Validate all files
 python scripts/validate-schema.py data/paths/
