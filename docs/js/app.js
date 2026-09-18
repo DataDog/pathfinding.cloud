@@ -21,6 +21,7 @@ const categoryTooltips = {
 // DOM elements
 const pathsContainer = document.getElementById('paths-container');
 const searchInput = document.getElementById('search');
+const cloudFilter = document.getElementById('cloud-filter');
 const categoryFilter = document.getElementById('category-filter');
 const serviceFilter = document.getElementById('service-filter');
 const detectionFilter = document.getElementById('detection-filter');
@@ -109,6 +110,7 @@ document.addEventListener('DOMContentLoaded', () => {
 // Setup event listeners
 function setupEventListeners() {
     searchInput.addEventListener('input', debounce(applyFilters, 300));
+    cloudFilter.addEventListener('change', applyFilters);
     categoryFilter.addEventListener('change', applyFilters);
     serviceFilter.addEventListener('change', applyFilters);
     detectionFilter.addEventListener('change', applyFilters);
@@ -234,6 +236,7 @@ async function loadPaths() {
         toolMetadata = metadata.detectionTools || {};
         labsData = labs;
 
+        populateCloudFilter();
         populateServiceFilter();
         updateStats();
 
@@ -432,10 +435,14 @@ function showListView() {
 
     // Check for URL parameters and apply filters
     const urlParams = new URLSearchParams(window.location.search);
+    const cloudParam = urlParams.get('cloud');
     const serviceParam = urlParams.get('service');
     const categoryParam = urlParams.get('category');
     const detectionParam = urlParams.get('detection');
 
+    if (cloudParam) {
+        cloudFilter.value = cloudParam;
+    }
     if (serviceParam) {
         serviceFilter.value = serviceParam;
     }
@@ -447,7 +454,7 @@ function showListView() {
     }
 
     // Apply filters if parameters were set
-    if (serviceParam || categoryParam || detectionParam) {
+    if (cloudParam || serviceParam || categoryParam || detectionParam) {
         applyFilters();
     }
 
@@ -598,6 +605,27 @@ function getDemoData() {
     ];
 }
 
+// Populate cloud provider filter dropdown
+function populateCloudFilter() {
+    const clouds = new Set();
+    allPaths.forEach(path => {
+        if (path.cloud) clouds.add(path.cloud);
+    });
+
+    cloudFilter.innerHTML = '<option value="">All Clouds</option>';
+    const sorted = Array.from(clouds).sort();
+    sorted.forEach(cloud => {
+        const option = document.createElement('option');
+        option.value = cloud;
+        option.textContent = cloud.toUpperCase();
+        cloudFilter.appendChild(option);
+    });
+
+    const pillOpts = [{ value: '', label: 'Any' }];
+    sorted.forEach(cloud => pillOpts.push({ value: cloud, label: cloud.toUpperCase() }));
+    buildPillMenu('menu-cloud-filter', pillOpts);
+}
+
 // Populate service filter dropdown
 function populateServiceFilter() {
     const services = new Set();
@@ -622,6 +650,7 @@ function populateServiceFilter() {
 // Apply filters
 function applyFilters() {
     const searchTerm = searchInput.value.toLowerCase();
+    const selectedCloud = cloudFilter.value;
     const selectedCategory = categoryFilter.value;
     const selectedService = serviceFilter.value;
     const selectedDetection = detectionFilter.value;
@@ -634,6 +663,9 @@ function applyFilters() {
             path.description.toLowerCase().includes(searchTerm) ||
             path.id.toLowerCase().includes(searchTerm) ||
             path.services.some(s => s.toLowerCase().includes(searchTerm));
+
+        // Cloud provider filter
+        const matchesCloud = !selectedCloud || path.cloud === selectedCloud;
 
         // Category filter
         const matchesCategory = !selectedCategory || path.category === selectedCategory;
@@ -668,7 +700,7 @@ function applyFilters() {
             }
         }
 
-        return matchesSearch && matchesCategory && matchesService && matchesDetection && matchesLineage;
+        return matchesSearch && matchesCloud && matchesCategory && matchesService && matchesDetection && matchesLineage;
     });
 
     updateStats();
@@ -678,6 +710,7 @@ function applyFilters() {
 // Reset all filters
 function resetFilters() {
     searchInput.value = '';
+    cloudFilter.value = '';
     categoryFilter.value = '';
     serviceFilter.value = '';
     detectionFilter.value = '';
@@ -763,6 +796,10 @@ function sortTable(column) {
         let aVal, bVal;
 
         switch (column) {
+            case 'cloud':
+                aVal = (a.cloud || 'aws').toLowerCase();
+                bVal = (b.cloud || 'aws').toLowerCase();
+                break;
             case 'id':
                 aVal = a.id.toLowerCase();
                 bVal = b.id.toLowerCase();
@@ -798,11 +835,15 @@ function sortTable(column) {
 // Create a path card HTML
 function createPathCard(path) {
     const categoryClass = `category-${path.category}`;
+    const cloudClass = `cloud-${path.cloud || 'aws'}`;
 
     return `
         <div class="path-card">
             <div class="path-card-header">
-                <span class="path-id">${escapeHtml(sanitizePathId(path.id).toUpperCase())}</span>
+                <span class="path-card-id-group">
+                    <span class="cloud-badge ${cloudClass}">${escapeHtml((path.cloud || 'aws').toUpperCase())}</span>
+                    <span class="path-id">${escapeHtml(sanitizePathId(path.id).toUpperCase())}</span>
+                </span>
                 <span class="path-category ${categoryClass}" data-category-tooltip="${categoryTooltips[path.category] || ''}">${formatCategory(path.category)}</span>
             </div>
             <div class="path-name">${escapeHtml(path.name)}</div>
@@ -826,6 +867,9 @@ function createPathTable(paths) {
         <table class="paths-table">
             <thead>
                 <tr>
+                    <th class="sortable ${getSortClass('cloud')}" data-sort="cloud">
+                        Cloud <span class="sort-icon">${getSortIcon('cloud')}</span>
+                    </th>
                     <th class="sortable ${getSortClass('id')}" data-sort="id">
                         Path ID <span class="sort-icon">${getSortIcon('id')}</span>
                     </th>
@@ -847,8 +891,13 @@ function createPathTable(paths) {
                     // Get detection tools for this path
                     const detectionTools = path.detectionTools ? Object.keys(path.detectionTools) : [];
 
+                    const cloudClass = `cloud-${path.cloud || 'aws'}`;
+
                     return `
                         <tr>
+                            <td class="table-cloud">
+                                <span class="cloud-badge ${cloudClass}">${escapeHtml((path.cloud || 'aws').toUpperCase())}</span>
+                            </td>
                             <td class="table-id-cell">
                                 <div class="table-id">${escapeHtml(sanitizePathId(path.id).toUpperCase())}</div>
                                 <div class="table-services">
