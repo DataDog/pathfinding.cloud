@@ -332,6 +332,8 @@ When creating or enhancing attack paths, use these specialized agents:
 Can you task the detection-tools, learning-environments, add-vis, and attribution agents concurrently?
 ```
 
+**Multi-cloud support**: These agents support AWS, GCP, and Azure paths. `detection-tools` and `learning-environments` determine the target path's cloud from its file path (`data/paths/{cloud}/{service}/{id}.yaml`) and `Read` a matching per-cloud reference file (`.claude/references/detection-tools-{cloud}.md`, `.claude/references/learning-environments-{cloud}.md`) rather than loading knowledge for all three clouds — this keeps each agent's context usage scoped to the cloud it's actually working on. `attribution` and `add-vis` keep a single cloud-agnostic workflow and branch internally on the cloud where terminology or sources differ.
+
 ## Code Style
 
 ### Python Scripts

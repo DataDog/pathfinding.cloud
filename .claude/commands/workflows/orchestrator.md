@@ -41,8 +41,9 @@ Read these files to understand the attack:
 ### If user describes attack path:
 
 Ask clarifying questions to gather:
+- Cloud provider (AWS, GCP, or Azure)
 - Attack description and mechanism
-- AWS service(s) involved
+- Service(s) involved
 - Required IAM permissions
 - Prerequisites (what must exist in environment)
 - Exploitation approach
@@ -55,9 +56,11 @@ Ask clarifying questions to gather:
 ### Determine next available ID:
 
 ```bash
-ls data/paths/aws/{service}/ | sort | tail -n 1
+ls data/paths/{cloud}/{service}/ | sort | tail -n 1
 # If lambda-003 exists, create lambda-004
 ```
+
+**ID prefix convention**: AWS path IDs stay bare (`iam-001`, `lambda-004`). GCP and Azure path IDs are prefixed with the cloud name (`gcp-iam-001`, `azure-iam-001`) to disambiguate them from AWS IDs of the same service/number.
 
 ### Create YAML file with structure:
 
@@ -97,7 +100,7 @@ Per @.claude/CLAUDE.md:
 
 **All recommendations MUST use multi-line format with the `|` pipe operator** (never use quoted strings with `\n`).
 
-**For iam:PassRole privilege escalation paths**, use this standardized template adapted for the specific service:
+**For PassRole-style privilege escalation paths** (AWS `iam:PassRole`, GCP `iam.serviceAccounts.actAs`, Azure managed identity/service principal assignment), use this standardized template adapted for the specific service. The template below shows the AWS JSON policy condition syntax — for GCP, restrict via IAM Conditions (CEL) on the `roles/iam.serviceAccountUser` binding; for Azure, restrict via RBAC scope on the role assignment granting use of the service principal or managed identity. Adapt the monitoring/audit bullets to the target cloud's audit log service (CloudTrail / Cloud Audit Logs / Azure Activity Log):
 
 ```yaml
 recommendation: |
@@ -149,10 +152,10 @@ recommendation: |
 
 ```bash
 # Save to:
-data/paths/aws/{service}/{service}-{number}.yaml
+data/paths/{cloud}/{service}/{id}.yaml
 
 # Validate:
-python3 scripts/validate-schema.py data/paths/aws/{service}/{service}-{number}.yaml
+python3 scripts/validate-schema.py data/paths/{cloud}/{service}/{id}.yaml
 ```
 
 If validation fails, fix errors before proceeding.
@@ -164,7 +167,7 @@ If validation fails, fix errors before proceeding.
 Task these agents **in parallel** using a single message with multiple Task tool calls:
 
 ```
-Can you task the add-vis, attribution, learning-environments, and detection-tools agents concurrently to enhance data/paths/aws/{service}/{service}-{number}.yaml?
+Can you task the add-vis, attribution, learning-environments, and detection-tools agents concurrently to enhance data/paths/{cloud}/{service}/{id}.yaml?
 ```
 
 **Agents and their roles:**
@@ -181,11 +184,11 @@ Can you task the add-vis, attribution, learning-environments, and detection-tool
    - Uses Edit tool to replace empty `references` array
 
 3. **learning-environments agent**:
-   - Researches available practice labs (iam-vulnerable, pathfinding-labs, cybr, pwndlabs)
+   - Researches available practice labs for the path's cloud (e.g., pathfinding-labs, iam-vulnerable/GCPGoat/AzureGoat, cybr, pwnedlabs)
    - Uses Edit tool to add `learningEnvironments` section if labs found
 
 4. **detection-tools agent**:
-   - Researches which tools detect this path (pmapper, cloudsplaining, pacu, prowler)
+   - Researches which tools detect this path for the path's cloud (e.g., pmapper/cloudsplaining/pacu/prowler for AWS, prowler/scoutsuite/gcp_scanner for GCP, azurehound/bloodhound/prowler/scoutsuite for Azure)
    - Uses Edit tool to add `detectionTools` section if tools found
 
 **Each agent will:**
@@ -202,7 +205,7 @@ After all enrichment agents complete:
 
 ```bash
 # Final validation
-python3 scripts/validate-schema.py data/paths/aws/{service}/{service}-{number}.yaml
+python3 scripts/validate-schema.py data/paths/{cloud}/{service}/{id}.yaml
 
 
 ### Report to user:

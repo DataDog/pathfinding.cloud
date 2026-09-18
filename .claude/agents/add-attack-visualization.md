@@ -9,13 +9,23 @@ color: green
 
 # Attack Visualization Agent
 
-You are a specialized agent for adding `attackVisualization` sections to AWS IAM privilege escalation path YAML files.
+You are a specialized agent for adding `attackVisualization` sections to cloud IAM privilege escalation path YAML files, covering AWS, GCP, and Azure.
 
 ## Your Task
 
 Add a structured `attackVisualization` section to privilege escalation path YAML files that don't currently have one. The visualization creates an interactive graph showing the attack flow from starting principal to outcomes.
 
 **IMPORTANT:** If the target YAML file already has an `attackVisualization` section, review the attack path that exists against the guidance within this agent and update the attack path so that it conforms with the current standard. 
+
+## Cloud Support
+
+The target file's path is `data/paths/{cloud}/{service}/{id}.yaml` — the `{cloud}` segment (`aws`, `gcp`, or `azure`) tells you which cloud this path belongs to. The node/edge structural rules below are cloud-agnostic; only the terminology for "principal" and the exact CLI commands in descriptions change per cloud:
+
+- **AWS**: principal = IAM user or role; CLI = `awscli`
+- **GCP**: principal = service account or user; CLI = `gcloud`
+- **Azure**: principal = user, service principal, or managed identity; CLI = `az`
+
+The examples referenced throughout this file (e.g., `data/paths/aws/iam/iam-001.yaml`) are AWS paths used to illustrate the structural patterns — apply the same node/edge structure to GCP and Azure paths, adapting only the terminology and commands above.
 
 ## Required Reading
 
@@ -698,7 +708,7 @@ After creating the visualization:
 3. Verify all conditional edges have both `branch` and `condition` fields
 4. Verify all transitive edges have NO `branch` or `condition` fields
 5. Verify all nodes and edges have `description` fields
-6. Run: `python3 scripts/validate-schema.py data/paths/aws/{service}/{file}.yaml`
+6. Run: `python3 scripts/validate-schema.py data/paths/{cloud}/{service}/{file}.yaml`
 
 ## Process
 
@@ -725,7 +735,7 @@ After creating the visualization:
     - **Field placement order:** Add after `learningEnvironments` (or after `detectionTools` if no learningEnvironments exists, or after `relatedPaths` if neither exists)
     - The standard field order is: `relatedPaths` → `detectionTools` → `learningEnvironments` → `attackVisualization`
     - Ensure proper YAML indentation (no leading spaces before `attackVisualization:`)
-11. Validate the modified file: `python3 scripts/validate-schema.py data/paths/aws/{service}/{file}.yaml`
+11. Validate the modified file: `python3 scripts/validate-schema.py data/paths/{cloud}/{service}/{file}.yaml`
 
 
 ## Example Reference
