@@ -141,7 +141,7 @@ cd docs && python3 dev-server.py
 
 ```bash
 # Validate a single file
-python scripts/validate-schema.py data/paths/iam/iam-001.yaml
+python scripts/validate-schema.py data/paths/aws/iam/iam-001.yaml
 
 # Validate all files
 python scripts/validate-schema.py data/paths/
@@ -154,7 +154,7 @@ python scripts/validate-schema.py data/paths/ --verbose
 
 The website is built as a Single Page Application (SPA) with:
 
-- **Client-Side Routing**: Uses History API for proper URLs (e.g., `/paths/iam-001`)
+- **Client-Side Routing**: Uses History API for proper URLs (e.g., `/paths/aws/iam-001`)
 - **No Page Reloads**: Instant navigation with dynamic content loading
 - **Interactive Visualizations**: Built with vis.js for network diagrams
 - **Responsive Design**: Mobile-first CSS with breakpoints for all screen sizes

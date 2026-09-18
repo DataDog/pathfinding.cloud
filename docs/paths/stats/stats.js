@@ -1133,6 +1133,7 @@ function createRelationshipDisplay() {
             parentChildMap[parentId].push({
                 id: path.id,
                 name: path.name,
+                cloud: path.cloud || 'aws',
                 modification: path.parent.modification || 'No description'
             });
         }
@@ -1156,14 +1157,14 @@ function createRelationshipDisplay() {
             <div class="relationship-item">
                 <div class="parent">
                     <span class="relationship-label">Primary:</span>
-                    <a href="/paths/${escapeHtml(parentId)}" class="badge badge-primary">${escapeHtml(parentId)}</a>
+                    <a href="/paths/${escapeHtml(parentPath ? (parentPath.cloud || 'aws') : 'aws')}/${escapeHtml(parentId)}" class="badge badge-primary">${escapeHtml(parentId)}</a>
                     <span class="path-name">${escapeHtml(parentName)}</span>
                 </div>
                 <div class="children">
                     ${children.map(child => `
                         <div class="variant-row">
                             <span class="relationship-label">Variant:</span>
-                            <a href="/paths/${escapeHtml(child.id)}" class="badge badge-derivative">${escapeHtml(child.id)}</a>
+                            <a href="/paths/${escapeHtml(child.cloud || 'aws')}/${escapeHtml(child.id)}" class="badge badge-derivative">${escapeHtml(child.id)}</a>
                             <span class="path-name">${escapeHtml(child.name)}</span>
                         </div>
                     `).join('')}

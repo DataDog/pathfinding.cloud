@@ -55,7 +55,7 @@ Ask clarifying questions to gather:
 ### Determine next available ID:
 
 ```bash
-ls data/paths/{service}/ | sort | tail -n 1
+ls data/paths/aws/{service}/ | sort | tail -n 1
 # If lambda-003 exists, create lambda-004
 ```
 
@@ -149,10 +149,10 @@ recommendation: |
 
 ```bash
 # Save to:
-data/paths/{service}/{service}-{number}.yaml
+data/paths/aws/{service}/{service}-{number}.yaml
 
 # Validate:
-python3 scripts/validate-schema.py data/paths/{service}/{service}-{number}.yaml
+python3 scripts/validate-schema.py data/paths/aws/{service}/{service}-{number}.yaml
 ```
 
 If validation fails, fix errors before proceeding.
@@ -164,7 +164,7 @@ If validation fails, fix errors before proceeding.
 Task these agents **in parallel** using a single message with multiple Task tool calls:
 
 ```
-Can you task the add-vis, attribution, learning-environments, and detection-tools agents concurrently to enhance data/paths/{service}/{service}-{number}.yaml?
+Can you task the add-vis, attribution, learning-environments, and detection-tools agents concurrently to enhance data/paths/aws/{service}/{service}-{number}.yaml?
 ```
 
 **Agents and their roles:**
@@ -202,7 +202,7 @@ After all enrichment agents complete:
 
 ```bash
 # Final validation
-python3 scripts/validate-schema.py data/paths/{service}/{service}-{number}.yaml
+python3 scripts/validate-schema.py data/paths/aws/{service}/{service}-{number}.yaml
 
 
 ### Report to user:

@@ -118,6 +118,6 @@ Your main jobs are:
    - Add `discoveryAttribution` with proper structure (firstDocumented, derivativeOf, ultimateOrigin)
    - Add after the `recommendation` or `limitations` section
    - Keep `references` focused on attack path documentation (not tools or practice environments)
-6. Validate your changes: `python3 scripts/validate-schema.py data/paths/{service}/{file}.yaml`
+6. Validate your changes: `python3 scripts/validate-schema.py data/paths/aws/{service}/{file}.yaml`
 
 **Time limit:** Complete your research and file modifications within 3 minutes. If you haven't finished by then, add what you have and mark unknown fields as "Unknown". 

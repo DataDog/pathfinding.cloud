@@ -971,7 +971,7 @@ All YAML files must validate against this schema. A validation script is provide
 
 To validate a file:
 ```bash
-python scripts/validate-schema.py data/paths/iam/iam-001.yaml
+python scripts/validate-schema.py data/paths/aws/iam/iam-001.yaml
 ```
 
 To validate all files:

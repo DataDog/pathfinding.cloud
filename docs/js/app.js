@@ -265,7 +265,7 @@ async function loadPaths() {
 // Router functions
 function initRouter() {
     // Check if we were redirected from 404.html (GitHub Pages SPA routing pattern)
-    // When a user accesses a direct URL like /paths/iam-001, GitHub Pages serves 404.html
+    // When a user accesses a direct URL like /paths/aws/iam-001, GitHub Pages serves 404.html
     // The 404.html captures the path and redirects to index.html with the path in sessionStorage
     const redirectPath = sessionStorage.getItem('redirectPath');
     if (redirectPath) {
@@ -278,7 +278,7 @@ function initRouter() {
         const pathId = window.location.hash.substring(1);
         if (pathId) {
             // Redirect to new URL format
-            history.replaceState(null, '', `/paths/${pathId}`);
+            history.replaceState(null, '', `/paths/aws/${pathId}`);
         }
     }
 
@@ -289,19 +289,34 @@ function initRouter() {
 function routeFromURL() {
     const pathname = window.location.pathname;
 
-    // Check if it's a path detail URL: /paths/{id}
-    // Match format: /paths/{service}-{number} where service can have letters/numbers/hyphens
-    const pathMatch = pathname.match(/^\/paths\/([a-z0-9-]+)$/);
+    // Redirect legacy single-segment detail URLs (/paths/{id}, from before
+    // cloud-provider-scoped URLs existed) to /paths/aws/{id}. All pre-migration
+    // paths were AWS-only, so this is the one place "aws" is hardcoded.
+    const legacyPathMatch = pathname.match(/^\/paths\/([a-z0-9-]+)$/);
+    if (legacyPathMatch) {
+        history.replaceState(null, '', `/paths/aws/${legacyPathMatch[1]}`);
+        return routeFromURL();
+    }
+
+    // Check if it's a path detail URL: /paths/{cloud}/{id}
+    // Match format: /paths/{cloud}/{service}-{number} where cloud/service can have letters/numbers/hyphens
+    const pathMatch = pathname.match(/^\/paths\/([a-z0-9-]+)\/([a-z0-9-]+)$/);
 
     if (pathMatch) {
-        const pathId = pathMatch[1];
+        const cloud = pathMatch[1];
+        const pathId = pathMatch[2];
         const path = allPaths.find(p => p.id === pathId);
 
         if (path) {
+            // Canonicalize the URL if the cloud segment doesn't match the path's actual cloud
+            if (path.cloud && path.cloud !== cloud) {
+                history.replaceState(null, '', `/paths/${path.cloud}/${pathId}`);
+            }
+
             // Track view change in Datadog RUM
             if (window.DD_RUM) {
                 window.DD_RUM.startView({
-                    name: `/paths/${pathId}`,
+                    name: `/paths/${path.cloud || cloud}/${pathId}`,
                     service: 'pathfinding.cloud'
                 });
             }
@@ -342,14 +357,14 @@ function handlePopState(event) {
 }
 
 function handleLegacyHashRedirect() {
-    // Redirect old hash-based URLs (#iam-001) to new format (/paths/iam-001)
+    // Redirect old hash-based URLs (#iam-001) to new format (/paths/aws/iam-001)
     // But ignore section anchors (like #permissions, #description)
     const hash = window.location.hash.substring(1);
     if (hash) {
         // Only redirect if it matches path ID format: service-### (e.g., iam-001)
         const pathIdPattern = /^[a-z0-9]+-\d{3}$/i;
         if (pathIdPattern.test(hash)) {
-            history.replaceState(null, '', `/paths/${hash}`);
+            history.replaceState(null, '', `/paths/aws/${hash}`);
             routeFromURL();
         }
         // Otherwise, it's a section anchor, let the browser handle it normally
@@ -360,13 +375,15 @@ function navigateToPath(pathId) {
     const path = allPaths.find(p => p.id === pathId);
     if (!path) return;
 
+    const cloud = path.cloud || 'aws';
+
     // Update URL
-    history.pushState(null, '', `/paths/${pathId}`);
+    history.pushState(null, '', `/paths/${cloud}/${pathId}`);
 
     // Track view change in Datadog RUM
     if (window.DD_RUM) {
         window.DD_RUM.startView({
-            name: `/paths/${pathId}`,
+            name: `/paths/${cloud}/${pathId}`,
             service: 'pathfinding.cloud'
         });
     }
@@ -378,7 +395,7 @@ function navigateToPath(pathId) {
     showPathDetails(path);
 
     // Track pageview for analytics
-    trackPageView(`/paths/${pathId}`, `${path.name} - pathfinding.cloud`);
+    trackPageView(`/paths/${cloud}/${pathId}`, `${path.name} - pathfinding.cloud`);
 }
 
 function navigateToList() {
@@ -466,7 +483,7 @@ function updateOpenGraphTags(path) {
     const tags = {
         'og:title': `${path.name} - pathfinding.cloud`,
         'og:description': path.description.substring(0, 200) + '...',
-        'og:url': `${window.location.origin}/paths/${path.id}`,
+        'og:url': `${window.location.origin}/paths/${path.cloud || 'aws'}/${path.id}`,
         'twitter:card': 'summary_large_image',
         'twitter:title': `${path.name} - pathfinding.cloud`,
         'twitter:description': path.description.substring(0, 200) + '...'
@@ -931,7 +948,7 @@ function handlePathClick(event, path) {
 
 // Open path in a new tab
 function openPathInNewTab(path) {
-    const url = `${window.location.origin}/paths/${path.id}`;
+    const url = `${window.location.origin}/paths/${path.cloud || 'aws'}/${path.id}`;
     window.open(url, '_blank');
 }
 
@@ -1705,7 +1722,7 @@ function renderRelatedPaths(path, allPaths) {
 
     // Add parent row if exists
     if (parent) {
-        const pathLink = `<a href="/paths/${escapeHtml(parent.id)}" onclick="event.preventDefault(); navigateToPath('${escapeHtml(parent.id)}');" class="path-link-full">${escapeHtml(parent.id.toUpperCase())} — ${escapeHtml(parent.name)}</a>`;
+        const pathLink = `<a href="/paths/${escapeHtml(parent.cloud || 'aws')}/${escapeHtml(parent.id)}" onclick="event.preventDefault(); navigateToPath('${escapeHtml(parent.id)}');" class="path-link-full">${escapeHtml(parent.id.toUpperCase())} — ${escapeHtml(parent.name)}</a>`;
         const notes = parentModification ? escapeHtml(parentModification) : 'This path is a variant of the primary technique';
 
         rows.push(`
@@ -1720,7 +1737,7 @@ function renderRelatedPaths(path, allPaths) {
     // Add children rows
     children.forEach(child => {
         const childModification = child.parent && typeof child.parent === 'object' ? child.parent.modification : null;
-        const pathLink = `<a href="/paths/${escapeHtml(child.id)}" onclick="event.preventDefault(); navigateToPath('${escapeHtml(child.id)}');" class="path-link-full">${escapeHtml(child.id.toUpperCase())} — ${escapeHtml(child.name)}</a>`;
+        const pathLink = `<a href="/paths/${escapeHtml(child.cloud || 'aws')}/${escapeHtml(child.id)}" onclick="event.preventDefault(); navigateToPath('${escapeHtml(child.id)}');" class="path-link-full">${escapeHtml(child.id.toUpperCase())} — ${escapeHtml(child.name)}</a>`;
         const notes = childModification ? escapeHtml(childModification) : 'Variant of this technique';
 
         rows.push(`
@@ -1836,6 +1853,8 @@ function renderDiscoveryAttribution(attribution) {
         // Derivative of card
         if (attribution.derivativeOf) {
             const deriv = attribution.derivativeOf;
+            const derivPath = allPaths.find(p => p.id === deriv.pathId);
+            const derivCloud = (derivPath && derivPath.cloud) || 'aws';
             cards.push(`
                 <div class="attribution-card attribution-card-derivative">
                     <div class="card-header">
@@ -1843,7 +1862,7 @@ function renderDiscoveryAttribution(attribution) {
                     </div>
                     <div class="card-body">
                         <div class="card-path-link">
-                            <a href="/paths/${escapeHtml(deriv.pathId)}" onclick="event.preventDefault(); navigateToPath('${escapeHtml(deriv.pathId)}');">
+                            <a href="/paths/${derivCloud}/${escapeHtml(deriv.pathId)}" onclick="event.preventDefault(); navigateToPath('${escapeHtml(deriv.pathId)}');">
                                 ${escapeHtml(deriv.pathId.toUpperCase())}
                             </a>
                         </div>
