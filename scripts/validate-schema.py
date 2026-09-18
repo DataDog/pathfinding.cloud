@@ -98,6 +98,8 @@ ALLOWED_EXPLOITATION_TOOLS = [
     'leonidas',
     'nebula',
     'pathrunner',
+    'gcloud',
+    'azurecli',
 ]
 
 ALLOWED_PREREQUISITE_TABS = [

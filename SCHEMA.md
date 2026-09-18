@@ -75,6 +75,7 @@ Examples:
   - `iam:PassRole+cloudformation:CreateStack` → `cloudformation-001`
 - **Other service paths**: Use the primary service (e.g., `ssm-001`, `ec2-002`)
 - **Sequential numbering**: IDs are assigned sequentially as paths are added
+- **Cloud prefix**: The conventions above describe AWS path IDs, which stay bare. GCP and Azure path IDs are prefixed with the cloud name (`gcp-iam-001`, `azure-iam-001`) to disambiguate them from AWS IDs of the same service/number, and live under the matching `data/paths/{cloud}/{service}/` directory
 
 ## Field Definitions
 
@@ -157,6 +158,8 @@ Supported tools:
 - `leonidas` - Leonidas (AWS attack simulation)
 - `nebula` - Nebula
 - `pathrunner` - Pathrunner
+- `gcloud` - Google Cloud CLI
+- `azurecli` - Azure CLI
 
 Each step object contains:
 - `step` (integer, required): Step number (1, 2, 3, etc.)

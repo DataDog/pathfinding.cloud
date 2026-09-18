@@ -125,6 +125,7 @@ All privilege escalation paths are stored as individual YAML files in `data/path
   - `iam:PassRole+lambda:CreateFunction` → `lambda-001`
 - **Other services**: `ssm-001`, `ec2-002`, etc.
 - **Sequential numbering**: IDs are assigned sequentially within each service
+- **Cloud prefix**: The above conventions describe AWS path IDs, which stay bare. GCP and Azure path IDs are prefixed with the cloud name to disambiguate them from AWS IDs of the same service/number — `gcp-iam-001`, `azure-iam-001`. Data files live under the matching `data/paths/{cloud}/{service}/` directory (`data/paths/gcp/iam/gcp-iam-001.yaml`, `data/paths/azure/iam/azure-iam-001.yaml`).
 
 ### Website Architecture (SPA with Client-Side Routing)
 
