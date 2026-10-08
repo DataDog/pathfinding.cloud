@@ -1,0 +1,169 @@
+{
+  "id": "cloudformation-002",
+  "name": "cloudformation:UpdateStack",
+  "description": "A principal with cloudformation:UpdateStack can modify an existing CloudFormation stack that has an administrative service role attached. CloudFormation stacks execute with the permissions of their service role, which often requires elevated privileges to manage infrastructure. By updating the stack template to include new IAM resources (such as an admin role with a trust policy allowing the attacker to assume it), the attacker can leverage the stack's elevated permissions to create resources they couldn't create directly. This is particularly insidious because it appears as legitimate infrastructure management activity.",
+  "category": "existing-passrole",
+  "services": [
+    "cloudformation",
+    "iam"
+  ],
+  "primaryService": "cloudformation",
+  "aliases": [
+    "cloudformation-updatestack",
+    "cfn-002",
+    "exploit/cloudformation_updatestack"
+  ],
+  "author": "Seth Art",
+  "pathfindingCloudUrl": "https://pathfinding.cloud/paths/cloudformation-002",
+  "permissions": {
+    "required": [
+      {
+        "permission": "cloudformation:UpdateStack",
+        "description": "Must have permission to update the target CloudFormation stack"
+      }
+    ],
+    "additional": [
+      {
+        "permission": "cloudformation:DescribeStacks",
+        "description": "Discover existing stacks and poll for update completion"
+      },
+      {
+        "permission": "cloudformation:GetTemplate",
+        "description": "Retrieve current stack template for safe injection"
+      },
+      {
+        "permission": "iam:GetRole",
+        "description": "Verify the escalated role was created by the stack update"
+      },
+      {
+        "permission": "sts:AssumeRole",
+        "description": "Assume the newly created admin role"
+      }
+    ]
+  },
+  "prerequisites": {
+    "admin": [
+      "A CloudFormation stack must exist with an administrative service role (e.g., AdministratorAccess or an equivalent custom policy)",
+      "The principal must have permission to update that specific stack"
+    ],
+    "lateral": [
+      "A CloudFormation stack must exist with a service role that has elevated permissions",
+      "The principal must have permission to update that specific stack"
+    ]
+  },
+  "references": [
+    {
+      "title": "Pathfinding Cloud - cloudformation-002",
+      "url": "https://pathfinding.cloud/paths/cloudformation-002"
+    },
+    {
+      "title": "PMapper CloudFormation Edge Detection (Original Implementation)",
+      "url": "https://github.com/nccgroup/PMapper/blob/master/principalmapper/graphing/cloudformation_edges.py"
+    },
+    {
+      "title": "AWS IAM Privilege Escalation - Methods and Mitigation (Rhino Security Labs)",
+      "url": "https://rhinosecuritylabs.com/aws/aws-privilege-escalation-methods-mitigation/"
+    },
+    {
+      "title": "CloudFormation Change Set Privilege Escalation",
+      "url": "https://dev.to/aws-builders/cloudformation-change-set-privilege-escalation-18i6"
+    },
+    {
+      "title": "AWS CloudFormation Service Role Documentation",
+      "url": "https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/using-iam-servicerole.html"
+    }
+  ],
+  "relatedPaths": [
+    "cloudformation-001",
+    "cloudformation-005"
+  ],
+  "mitre": {
+    "tactics": [
+      "TA0004 - Privilege Escalation",
+      "TA0003 - Persistence"
+    ],
+    "techniques": [
+      "T1098 - Account Manipulation",
+      "T1098.001 - Account Manipulation: Additional Cloud Credentials"
+    ]
+  },
+  "options": [
+    {
+      "name": "STACK_NAME",
+      "description": "Name of the existing CloudFormation stack with an admin service role",
+      "required": true,
+      "mockValue": "target-cloudformation-stack"
+    },
+    {
+      "name": "PAYLOAD",
+      "description": "Payload type for the injected CloudFormation resources (backdoor/attach-policy)",
+      "required": false,
+      "default": "backdoor/attach-policy"
+    },
+    {
+      "name": "REGION",
+      "description": "AWS region for CloudFormation and IAM operations",
+      "required": false,
+      "default": "us-east-1"
+    },
+    {
+      "name": "ASSUME_ROLE",
+      "description": "Attempt to assume the escalated role after the stack update completes",
+      "required": false,
+      "default": "true"
+    },
+    {
+      "name": "ROLE_ARN",
+      "description": "ARN of the CloudFormation stack's service role. When provided, used to derive the stack name during discovery if cloudformation:ListStacks is unavailable",
+      "required": false,
+      "mockValue": "arn:aws:iam::123456789012:role/TargetRoleName"
+    },
+    {
+      "name": "ESCALATED_ROLE_NAME",
+      "description": "Name for the escalated IAM role to create (auto-generated if empty)",
+      "required": false,
+      "mockValue": "target-resource-name"
+    },
+    {
+      "name": "TRUST_PRINCIPAL",
+      "description": "ARN to trust in the escalated role's trust policy (defaults to caller ARN)",
+      "required": false,
+      "mockValue": "arn:aws:iam::123456789012:root"
+    },
+    {
+      "name": "CLEANUP",
+      "description": "Revert the stack update after execution by restoring the original template. Requires cloudformation:UpdateStack",
+      "required": false,
+      "default": "false"
+    }
+  ],
+  "payloads": [
+    {
+      "name": "backdoor/attach-policy",
+      "description": "Create an IAM role with AdministratorAccess trusted by the attacker's principal via CloudFormation template",
+      "slug": "cloudformation-backdoor-attach-policy",
+      "qualifiedName": "cloudformation:backdoor/attach-policy",
+      "service": "cloudformation",
+      "tags": [
+        "cloudformation",
+        "json",
+        "backdoor"
+      ]
+    }
+  ],
+  "cliSteps": [
+    "pathrunner use cloudformation-002",
+    "pathrunner show payloads",
+    "pathrunner set PAYLOAD backdoor/attach-policy",
+    "pathrunner set STACK_NAME target-cloudformation-stack",
+    "pathrunner set TARGET_ARN arn:aws:iam::123456789012:role/TargetRoleName",
+    "pathrunner exploit"
+  ],
+  "labSlug": "cloudformation-002",
+  "gifs": [
+    {
+      "name": "cloudformation-002",
+      "ext": "webm"
+    }
+  ]
+}

@@ -1536,7 +1536,10 @@ function renderExploitationSteps(steps) {
         'stratus': 'Stratus',
         'leonidas': 'Leonidas',
         'nebula': 'Nebula',
-        'pathrunner': 'Pathrunner'
+        'pathrunner': 'Pathrunner',
+        'gcloud': 'gcloud CLI',
+        'azurecli': 'Azure CLI',
+        'gcpwn': 'GCPwn'
     };
 
     const uniqueId = `tabs-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;

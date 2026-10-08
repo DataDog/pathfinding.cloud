@@ -1,0 +1,185 @@
+{
+  "id": "bedrock-005",
+  "name": "iam:PassRole + bedrock-agentcore:CreateHarness + bedrock-agentcore:CreateAgentRuntime + bedrock-agentcore:CreateAgentRuntimeEndpoint + bedrock-agentcore:CreateWorkloadIdentity + bedrock-agentcore:GetAgentRuntime + bedrock-agentcore:InvokeAgentRuntimeCommand",
+  "description": "A principal with iam:PassRole, bedrock-agentcore:CreateHarness, and the supporting create and invoke permissions can deploy a new AgentCore Harness with a privileged IAM execution role and then run shell commands as root inside its Firecracker microVM. CreateHarness provisions a Runtime under the hood (hence the longer permission chain), and InvokeAgentRuntimeCommand runs as root parallel to the managed agent loop, bypassing the agent, model and guardrails. The command reads the execution role temporary credentials from the MicroVM Metadata Service (MMDS) at 169.254.169.254 \u2014 AgentCore's equivalent of EC2's IMDS.",
+  "category": "new-passrole",
+  "services": [
+    "iam",
+    "bedrock-agentcore"
+  ],
+  "primaryService": "bedrock",
+  "aliases": [
+    "bedrock-passrole-createharness",
+    "exploit/bedrock_passrole_createharness"
+  ],
+  "author": "Seth Art",
+  "pathfindingCloudUrl": "https://pathfinding.cloud/paths/bedrock-005",
+  "permissions": {
+    "required": [
+      {
+        "permission": "iam:PassRole",
+        "description": "Target role ARN must be in Resource; role must trust bedrock-agentcore.amazonaws.com"
+      },
+      {
+        "permission": "bedrock-agentcore:CreateHarness",
+        "description": "Must have permission to create Bedrock AgentCore harnesses"
+      },
+      {
+        "permission": "bedrock-agentcore:CreateAgentRuntime",
+        "description": "CreateHarness provisions a Runtime under the hood, which requires this permission"
+      },
+      {
+        "permission": "bedrock-agentcore:CreateAgentRuntimeEndpoint",
+        "description": "Required to create the runtime endpoint the harness uses"
+      },
+      {
+        "permission": "bedrock-agentcore:CreateWorkloadIdentity",
+        "description": "Required to create the workload identity the underlying runtime needs"
+      },
+      {
+        "permission": "bedrock-agentcore:GetAgentRuntime",
+        "description": "Required to resolve the runtime that CreateHarness provisions before invoking it"
+      },
+      {
+        "permission": "bedrock-agentcore:InvokeAgentRuntimeCommand",
+        "description": "Must have permission to invoke commands on the created harness"
+      }
+    ],
+    "additional": [
+      {
+        "permission": "iam:ListRoles",
+        "description": "Helpful for discovering AgentCore execution roles available to pass"
+      },
+      {
+        "permission": "iam:GetRole",
+        "description": "Useful for viewing role trust policies and attached permissions"
+      }
+    ]
+  },
+  "prerequisites": {
+    "admin": [
+      "A role must exist that trusts bedrock-agentcore.amazonaws.com to assume it",
+      "The role must have administrative permissions (e.g., AdministratorAccess or equivalent)",
+      "At least one Bedrock foundation model must be enabled in the account (required by CreateHarness; the model is never invoked by the attack)"
+    ],
+    "lateral": [
+      "A role must exist that trusts bedrock-agentcore.amazonaws.com to assume it",
+      "At least one Bedrock foundation model must be enabled in the account"
+    ]
+  },
+  "references": [
+    {
+      "title": "Pathfinding Cloud - bedrock-005",
+      "url": "https://pathfinding.cloud/paths/bedrock-005"
+    },
+    {
+      "title": "Mapping Every Privilege Escalation Path in AWS AgentCore",
+      "url": "https://www.beyondtrust.com/blog/entry/aws-agentcore-privilege-escalation"
+    },
+    {
+      "title": "Understanding Credentials Management in Amazon Bedrock AgentCore",
+      "url": "https://docs.aws.amazon.com/bedrock-agentcore/latest/devguide/security-credentials-management.html"
+    },
+    {
+      "title": "Amazon Bedrock AgentCore Harness",
+      "url": "https://docs.aws.amazon.com/bedrock-agentcore/latest/devguide/harness.html"
+    }
+  ],
+  "relatedPaths": [
+    "bedrock-003",
+    "bedrock-004",
+    "ec2-001",
+    "sagemaker-001"
+  ],
+  "mitre": {
+    "tactics": [
+      "TA0004 - Privilege Escalation",
+      "TA0006 - Credential Access"
+    ],
+    "techniques": [
+      "T1098.001 - Account Manipulation: Additional Cloud Credentials",
+      "T1552.005 - Unsecured Credentials: Cloud Instance Metadata API"
+    ]
+  },
+  "options": [
+    {
+      "name": "ROLE_ARN",
+      "description": "ARN of the IAM role to pass to the new harness as its execution role; must trust bedrock-agentcore.amazonaws.com",
+      "required": true,
+      "mockValue": "arn:aws:iam::123456789012:role/TargetRoleName"
+    },
+    {
+      "name": "REGION",
+      "description": "AWS region to create the harness in",
+      "required": false,
+      "default": "us-east-1"
+    },
+    {
+      "name": "MODEL_ID",
+      "description": "Bedrock foundation model ID to associate with the harness (required by CreateHarness; never invoked by the attack)",
+      "required": false,
+      "default": "amazon.nova-micro-v1:0",
+      "mockValue": "target-resource-id"
+    },
+    {
+      "name": "HARNESS_NAME",
+      "description": "Name for the new AgentCore Harness (auto-generated if not set; must start with a letter and use only alphanumeric characters and underscores)",
+      "required": false,
+      "mockValue": "target-resource-name"
+    },
+    {
+      "name": "PAYLOAD",
+      "description": "Payload to run inside the harness microVM via InvokeAgentRuntimeCommand (exfil/response or backdoor/attach-policy)",
+      "required": false,
+      "default": "exfil/response"
+    },
+    {
+      "name": "CLEANUP",
+      "description": "Whether to delete the harness after credential extraction. Defaults to false because the starting identity typically lacks bedrock-agentcore:DeleteHarness; use 'workspace cleanup' with the extracted admin identity instead.",
+      "required": false,
+      "default": "false"
+    }
+  ],
+  "payloads": [
+    {
+      "name": "backdoor/attach-policy",
+      "description": "Attach AdministratorAccess (or custom policy) to an IAM user/role using the execution role's boto3 credentials",
+      "slug": "bedrock-backdoor-attach-policy",
+      "qualifiedName": "bedrock:backdoor/attach-policy",
+      "service": "bedrock",
+      "tags": [
+        "bedrock",
+        "python",
+        "backdoor"
+      ]
+    },
+    {
+      "name": "exfil/mmds",
+      "description": "Extract execution-role credentials from the MicroVM Metadata Service (MMDS) at 169.254.169.254",
+      "slug": "bedrock-exfil-mmds",
+      "qualifiedName": "bedrock:exfil/mmds",
+      "service": "bedrock",
+      "tags": [
+        "bedrock",
+        "python",
+        "exfil",
+        "response"
+      ]
+    }
+  ],
+  "cliSteps": [
+    "pathrunner use bedrock-005",
+    "pathrunner show payloads",
+    "pathrunner set PAYLOAD backdoor/attach-policy",
+    "pathrunner set ROLE_ARN arn:aws:iam::123456789012:role/TargetRoleName",
+    "pathrunner set TARGET_ARN arn:aws:iam::123456789012:role/TargetRoleName",
+    "pathrunner exploit"
+  ],
+  "labSlug": null,
+  "gifs": [
+    {
+      "name": "bedrock-005",
+      "ext": "webm"
+    }
+  ]
+}

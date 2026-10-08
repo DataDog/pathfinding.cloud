@@ -19,9 +19,13 @@ Open source security tools to check for GCP IAM privilege escalation detection c
 - **Repository**: https://github.com/google/gcp_scanner
 - **What to look for**: This is a recon/scanning tool (built by Google) rather than a pure detector — check if it specifically enumerates or flags the permission combination used by this path (e.g. service account impersonation chains via `iam.serviceAccounts.getAccessToken`/`actAs`)
 
+## 4. GCPwn (NetSPI)
+- **Repository**: https://github.com/NetSPI/GCPwn
+- **What to look for**: This is a GCP pentesting/enumeration tool (built by NetSPI) rather than a pure detector — check its modules for privilege escalation enumeration logic matching this path's required permission(s) (e.g. service account impersonation via `iam.serviceAccounts.getAccessToken`/`generateAccessToken`, or the predefined `roles/iam.serviceAccountTokenCreator` role)
+
 ## Output key names
 
-Use lowercase keys in `detectionTools`: `prowler`, `scoutsuite`, `gcp-scanner`. Only add a key you've confirmed with a specific file/line link.
+Use lowercase keys in `detectionTools`: `prowler`, `scoutsuite`, `gcp-scanner`, `gcpwn`. Only add a key you've confirmed with a specific file/line link.
 
 ## Example
 

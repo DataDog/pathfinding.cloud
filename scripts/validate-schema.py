@@ -100,6 +100,7 @@ ALLOWED_EXPLOITATION_TOOLS = [
     'pathrunner',
     'gcloud',
     'azurecli',
+    'gcpwn',
 ]
 
 ALLOWED_PREREQUISITE_TABS = [
@@ -107,21 +108,39 @@ ALLOWED_PREREQUISITE_TABS = [
     'lateral',
 ]
 
+# Non-AWS cloud providers prefix their IDs (gcp-iam-001, azure-iam-001) to
+# disambiguate from AWS IDs of the same service/number. AWS IDs stay bare.
+CLOUD_ID_PREFIXES = [
+    'gcp',
+    'azure',
+]
+
+# IAM permission separators by cloud: AWS uses 'service:Action', GCP uses
+# dotted 'service.resource.action', Azure uses 'Provider/resourceType/action'.
+PERMISSION_SEPARATORS = [':', '.', '/']
+
 class ValidationError(Exception):
     """Custom exception for validation errors."""
     pass
 
 
 def validate_id(id_value: str) -> None:
-    """Validate the ID field format (service-###)."""
+    """Validate the ID field format ('service-###', or '{cloud}-service-###' for non-AWS clouds)."""
     if not id_value:
         raise ValidationError("ID cannot be empty")
 
     parts = id_value.split('-')
-    if len(parts) != 2:
-        raise ValidationError(f"ID '{id_value}' must be in format 'service-###'")
 
-    service, number = parts
+    if len(parts) == 3 and parts[0] in CLOUD_ID_PREFIXES:
+        _, service, number = parts
+    elif len(parts) == 2:
+        service, number = parts
+    else:
+        raise ValidationError(
+            f"ID '{id_value}' must be in format 'service-###' "
+            f"(or '{{cloud}}-service-###' for {', '.join(CLOUD_ID_PREFIXES)})"
+        )
+
     if not service.isalnum():
         raise ValidationError(f"Service part of ID '{id_value}' must be alphanumeric")
 
@@ -198,10 +217,12 @@ def validate_permission_object(perm: Dict, perm_type: str) -> None:
     if not isinstance(perm['permission'], str):
         raise ValidationError(f"Permission value in {perm_type} must be a string")
 
-    # Validate IAM permission format (service:Action)
-    if ':' not in perm['permission']:
+    # Validate IAM permission format: AWS 'service:Action', GCP
+    # 'service.resource.action', or Azure 'Provider/resourceType/action'.
+    if not any(sep in perm['permission'] for sep in PERMISSION_SEPARATORS):
         raise ValidationError(
-            f"Permission '{perm['permission']}' in {perm_type} must be in format 'service:Action'"
+            f"Permission '{perm['permission']}' in {perm_type} must be in format 'service:Action' "
+            f"(AWS), 'service.resource.action' (GCP), or 'Provider/resourceType/action' (Azure)"
         )
 
 
@@ -223,10 +244,12 @@ def validate_required_permissions(permissions: List[Dict]) -> None:
         if not isinstance(perm['permission'], str):
             raise ValidationError("Permission value must be a string")
 
-        # Validate IAM permission format (service:Action)
-        if ':' not in perm['permission']:
+        # Validate IAM permission format: AWS 'service:Action', GCP
+        # 'service.resource.action', or Azure 'Provider/resourceType/action'.
+        if not any(sep in perm['permission'] for sep in PERMISSION_SEPARATORS):
             raise ValidationError(
-                f"Permission '{perm['permission']}' must be in format 'service:Action'"
+                f"Permission '{perm['permission']}' must be in format 'service:Action' (AWS), "
+                f"'service.resource.action' (GCP), or 'Provider/resourceType/action' (Azure)"
             )
 
 

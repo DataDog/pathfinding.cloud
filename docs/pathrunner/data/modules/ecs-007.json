@@ -1,0 +1,174 @@
+{
+  "id": "ecs-007",
+  "name": "iam:PassRole + ecs:StartTask + ecs:RegisterContainerInstance",
+  "description": "Register an EC2 instance to an ECS cluster and start an existing task definition with overrides to pass a privileged role and execute arbitrary container commands \u2014 no ecs:RegisterTaskDefinition required",
+  "category": "new-passrole",
+  "services": [
+    "iam",
+    "ecs"
+  ],
+  "primaryService": "ecs",
+  "aliases": [
+    "ecs-starttask-registercontainerinstance",
+    "exploit/ecs_starttask_registercontainerinstance"
+  ],
+  "author": "Seth Art",
+  "pathfindingCloudUrl": "https://pathfinding.cloud/paths/ecs-007",
+  "permissions": {
+    "required": [
+      {
+        "permission": "iam:PassRole",
+        "description": "Must cover both the task role ARN (override) and the execution role in the existing task definition"
+      },
+      {
+        "permission": "ecs:RegisterContainerInstance",
+        "description": "Register the EC2 instance to the target cluster via direct API call using IMDS identity documents"
+      },
+      {
+        "permission": "ecs:StartTask",
+        "description": "Start tasks on container instances in the target cluster"
+      }
+    ],
+    "additional": [
+      {
+        "permission": "ecs:ListClusters",
+        "description": "Discover available ECS clusters"
+      },
+      {
+        "permission": "ecs:ListContainerInstances",
+        "description": "Discover registered container instances"
+      },
+      {
+        "permission": "ecs:ListTaskDefinitions",
+        "description": "Discover existing task definitions to exploit"
+      },
+      {
+        "permission": "ecs:DescribeTasks",
+        "description": "Monitor task execution status"
+      },
+      {
+        "permission": "ecs:DeregisterContainerInstance",
+        "description": "Clean up orphaned container instance registrations"
+      },
+      {
+        "permission": "iam:ListRoles",
+        "description": "Discover roles that trust ecs-tasks.amazonaws.com"
+      }
+    ]
+  },
+  "prerequisites": {
+    "admin": [
+      "Attacker has RCE on an EC2 instance whose role has the required permissions",
+      "An ECS cluster must exist in the account",
+      "An existing task definition must be available",
+      "A role must exist that trusts ecs-tasks.amazonaws.com with administrative permissions",
+      "The EC2 instance must be registered to the cluster (this module handles the StartTask step; registration is a prerequisite)"
+    ],
+    "lateral": [
+      "Attacker has RCE on an EC2 instance whose role has the required permissions",
+      "An ECS cluster must exist in the account",
+      "An existing task definition must be available",
+      "A role must exist that trusts ecs-tasks.amazonaws.com"
+    ]
+  },
+  "references": [
+    {
+      "title": "Pathfinding Cloud - ecs-007",
+      "url": "https://pathfinding.cloud/paths/ecs-007"
+    },
+    {
+      "title": "Another ECS Privilege Escalation Path",
+      "url": "https://labs.reversec.com/posts/2025/08/another-ecs-privilege-escalation-path"
+    },
+    {
+      "title": "Weaponizing AWS ECS Task Definitions to Steal Credentials From Running Containers",
+      "url": "https://rhinosecuritylabs.com/aws/weaponizing-ecs-task-definitions-steal-credentials-running-containers/"
+    }
+  ],
+  "mitre": {
+    "tactics": [
+      "TA0004 - Privilege Escalation",
+      "TA0002 - Execution"
+    ],
+    "techniques": [
+      "T1078.004 - Valid Accounts: Cloud Accounts",
+      "T1610 - Deploy Container"
+    ]
+  },
+  "options": [
+    {
+      "name": "ROLE_ARN",
+      "description": "Target IAM role ARN to pass as taskRoleArn override (must trust ecs-tasks.amazonaws.com)",
+      "required": true,
+      "mockValue": "arn:aws:iam::123456789012:role/TargetRoleName"
+    },
+    {
+      "name": "CLUSTER_NAME",
+      "description": "ECS cluster name or ARN where the container instance is registered",
+      "required": true,
+      "mockValue": "target-ecs-cluster"
+    },
+    {
+      "name": "TASK_DEFINITION",
+      "description": "Existing ECS task definition family or ARN to exploit via --overrides",
+      "required": true,
+      "mockValue": "target-task-def:1"
+    },
+    {
+      "name": "CONTAINER_INSTANCE_ARN",
+      "description": "ARN of the container instance registered to the cluster (from ecs:RegisterContainerInstance)",
+      "required": true,
+      "mockValue": "arn:aws:ecs::123456789012:container-instance/target-ecs-cluster/abc1234567890"
+    },
+    {
+      "name": "CONTAINER_NAME",
+      "description": "Name of the container in the existing task definition to override",
+      "required": true,
+      "mockValue": "target-container"
+    },
+    {
+      "name": "PAYLOAD",
+      "description": "Payload type (backdoor/attach-policy)",
+      "required": true
+    },
+    {
+      "name": "REGION",
+      "description": "AWS region for ECS operations",
+      "required": false,
+      "default": "us-east-1"
+    }
+  ],
+  "payloads": [
+    {
+      "name": "backdoor/attach-policy",
+      "description": "Attach AdministratorAccess policy to an IAM user or role via ECS task container command",
+      "slug": "ecs-backdoor-attach-policy",
+      "qualifiedName": "ecs:backdoor/attach-policy",
+      "service": "ecs",
+      "tags": [
+        "ecs",
+        "bash",
+        "backdoor"
+      ]
+    }
+  ],
+  "cliSteps": [
+    "pathrunner use ecs-007",
+    "pathrunner show payloads",
+    "pathrunner set PAYLOAD backdoor/attach-policy",
+    "pathrunner set ROLE_ARN arn:aws:iam::123456789012:role/TargetRoleName",
+    "pathrunner set CLUSTER_NAME target-ecs-cluster",
+    "pathrunner set TASK_DEFINITION target-task-def:1",
+    "pathrunner set CONTAINER_INSTANCE_ARN arn:aws:ecs::123456789012:container-instance/target-ecs-cluster/abc1234567890",
+    "pathrunner set CONTAINER_NAME target-container",
+    "pathrunner set TARGET_ARN arn:aws:iam::123456789012:role/TargetRoleName",
+    "pathrunner exploit"
+  ],
+  "labSlug": "ecs-007",
+  "gifs": [
+    {
+      "name": "ecs-007",
+      "ext": "webm"
+    }
+  ]
+}

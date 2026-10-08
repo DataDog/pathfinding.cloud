@@ -1,0 +1,292 @@
+{
+  "id": "batch-003",
+  "name": "iam:PassRole + batch:CreateComputeEnvironment + batch:CreateJobQueue + batch:RegisterJobDefinition + batch:SubmitJob",
+  "description": "A principal with iam:PassRole and broad Batch permissions can escalate privileges by creating the entire AWS Batch pipeline from scratch \u2014 a Fargate compute environment, a job queue, and a job definition that passes an admin IAM role as the jobRoleArn \u2014 then submitting a job whose container runs with the admin role's credentials. Unlike batch-001, no pre-existing Batch infrastructure is required. batch:CreateComputeEnvironment auto-creates an ECS cluster via the Batch service-linked role, so the attacker gets ECS task execution capability without any ECS permissions.",
+  "category": "new-passrole",
+  "services": [
+    "iam",
+    "batch"
+  ],
+  "primaryService": "batch",
+  "aliases": [
+    "batch-full-pipeline",
+    "batch-createcomputeenvironment",
+    "exploit/batch_passrole_createcomputeenvironment_createjobqueue_registerjobdefinition_submitjob"
+  ],
+  "author": "Seth Art",
+  "pathfindingCloudUrl": "https://pathfinding.cloud/paths/batch-003",
+  "permissions": {
+    "required": [
+      {
+        "permission": "iam:PassRole",
+        "description": "Must be able to pass the target admin IAM role and a Batch execution role to the Batch service"
+      },
+      {
+        "permission": "batch:CreateComputeEnvironment",
+        "description": "Creates a managed Fargate compute environment (auto-creates an ECS cluster via the Batch service-linked role)"
+      },
+      {
+        "permission": "batch:CreateJobQueue",
+        "description": "Creates a job queue wired to the attacker-created compute environment"
+      },
+      {
+        "permission": "batch:RegisterJobDefinition",
+        "description": "Registers a job definition with the admin role as jobRoleArn"
+      },
+      {
+        "permission": "batch:SubmitJob",
+        "description": "Submits the job to the attacker-created queue"
+      }
+    ],
+    "additional": [
+      {
+        "permission": "batch:DescribeComputeEnvironments",
+        "description": "Polls compute environment status during creation (CREATING -> VALID)"
+      },
+      {
+        "permission": "batch:DescribeJobQueues",
+        "description": "Verifies job queue creation and state"
+      },
+      {
+        "permission": "batch:DescribeJobs",
+        "description": "Polls job execution status to confirm completion"
+      },
+      {
+        "permission": "batch:DescribeJobDefinitions",
+        "description": "Verifies job definition registration"
+      },
+      {
+        "permission": "iam:ListAttachedUserPolicies",
+        "description": "Verifies privilege escalation success"
+      },
+      {
+        "permission": "iam:ListRoles",
+        "description": "Discovers IAM roles to identify passable admin and execution roles"
+      },
+      {
+        "permission": "ec2:DescribeSubnets",
+        "description": "Discovers available VPC subnets for the Fargate compute environment"
+      },
+      {
+        "permission": "ec2:DescribeSecurityGroups",
+        "description": "Discovers available security groups for the Fargate compute environment"
+      }
+    ]
+  },
+  "prerequisites": {
+    "admin": [
+      "A role must exist that trusts ecs-tasks.amazonaws.com and has administrative permissions (e.g., AdministratorAccess)",
+      "An ECS task execution role must exist that trusts ecs-tasks.amazonaws.com with AmazonECSTaskExecutionRolePolicy",
+      "A VPC subnet with internet access (public subnet or NAT gateway) for Fargate tasks",
+      "A security group allowing outbound traffic for container image pulls and API calls"
+    ],
+    "lateral": [
+      "A role must exist that trusts ecs-tasks.amazonaws.com and has elevated permissions",
+      "An ECS task execution role must exist",
+      "A VPC subnet with internet access and an appropriate security group"
+    ]
+  },
+  "references": [
+    {
+      "title": "Pathfinding Cloud - batch-003",
+      "url": "https://pathfinding.cloud/paths/batch-003"
+    },
+    {
+      "title": "Messing Around With AWS Batch For Privilege Escalations - Doyensec",
+      "url": "https://blog.doyensec.com/2023/06/13/messing-around-with-aws-batch-for-privilege-escalations.html"
+    },
+    {
+      "title": "How AWS Batch works with IAM",
+      "url": "https://docs.aws.amazon.com/batch/latest/userguide/security_iam_service-with-iam.html"
+    },
+    {
+      "title": "Actions defined by AWS Batch - Service Authorization Reference",
+      "url": "https://docs.aws.amazon.com/service-authorization/latest/reference/list_awsbatch.html"
+    }
+  ],
+  "relatedPaths": [
+    "batch-001",
+    "batch-002"
+  ],
+  "mitre": {
+    "tactics": [
+      "TA0004 - Privilege Escalation",
+      "TA0002 - Execution"
+    ],
+    "techniques": [
+      "T1078.004 - Valid Accounts: Cloud Accounts",
+      "T1610 - Deploy Container"
+    ]
+  },
+  "options": [
+    {
+      "name": "ADMIN_ROLE_ARN",
+      "description": "ARN of the IAM role to pass as jobRoleArn \u2014 the container will run with this role's credentials",
+      "required": true,
+      "mockValue": "arn:aws:iam::123456789012:role/TargetRoleName"
+    },
+    {
+      "name": "EXECUTION_ROLE_ARN",
+      "description": "ARN of the Fargate execution role (must trust ecs-tasks.amazonaws.com and have AmazonECSTaskExecutionRolePolicy)",
+      "required": true,
+      "mockValue": "arn:aws:iam::123456789012:role/TargetRoleName"
+    },
+    {
+      "name": "SUBNET_ID",
+      "description": "VPC subnet ID for the Fargate compute environment (must have internet access for image pulls and API calls)",
+      "required": true,
+      "mockValue": "subnet-0123456789abcdef0"
+    },
+    {
+      "name": "SECURITY_GROUP_ID",
+      "description": "Security group ID for the Fargate compute environment (must allow outbound traffic)",
+      "required": true,
+      "mockValue": "sg-0123456789abcdef0"
+    },
+    {
+      "name": "PAYLOAD",
+      "description": "Payload type to execute inside the Batch job container. aws-cli runtime: backdoor/attach-policy, backdoor/create-access-key. generic runtime: backdoor/create-user, backdoor/create-role, backdoor/update-role-trust, exfil/https",
+      "required": true,
+      "default": "backdoor/attach-policy"
+    },
+    {
+      "name": "CONTAINER_RUNTIME",
+      "description": "Container entrypoint type: 'aws-cli' (default, registers amazon/aws-cli:latest) or 'generic' (registers IMAGE with sh + aws CLI \u2014 e.g. Ubuntu, Debian). exfil/https requires 'generic'.",
+      "required": false,
+      "default": "aws-cli"
+    },
+    {
+      "name": "IMAGE",
+      "description": "Container image to use in the registered job definition. Defaults to 'amazon/aws-cli:latest' for aws-cli runtime, or 'ubuntu:latest' for generic runtime. The image must be accessible from the Fargate compute environment.",
+      "required": false
+    },
+    {
+      "name": "TARGET_PRINCIPAL",
+      "description": "IAM username or role name to attach AdministratorAccess to (auto-resolved from caller identity if not set)",
+      "required": false
+    },
+    {
+      "name": "COMPUTE_ENV_NAME",
+      "description": "Name for the new Batch compute environment to create",
+      "required": false,
+      "mockValue": "target-resource-name"
+    },
+    {
+      "name": "JOB_QUEUE_NAME",
+      "description": "Name for the new Batch job queue to create",
+      "required": false,
+      "mockValue": "target-resource-name"
+    },
+    {
+      "name": "JOB_DEF_NAME",
+      "description": "Name for the new Batch job definition to register",
+      "required": false,
+      "mockValue": "target-resource-name"
+    },
+    {
+      "name": "REGION",
+      "description": "AWS region for Batch and IAM operations",
+      "required": false,
+      "default": "us-east-1"
+    },
+    {
+      "name": "CLEANUP",
+      "description": "Deregister the job definition and detach AdministratorAccess from TARGET_PRINCIPAL after execution. Requires batch:DeregisterJobDefinition and iam:DetachUserPolicy/iam:DetachRolePolicy. Defaults to false because the lab's starting principal does not have these permissions; use 'workspace cleanup' with an elevated identity instead.",
+      "required": false,
+      "default": "false"
+    }
+  ],
+  "payloads": [
+    {
+      "name": "backdoor/attach-policy",
+      "description": "Attach AdministratorAccess (or any managed policy) to an IAM user or role via Batch job container command",
+      "slug": "batch-backdoor-attach-policy",
+      "qualifiedName": "batch:backdoor/attach-policy",
+      "service": "batch",
+      "tags": [
+        "batch",
+        "bash",
+        "backdoor"
+      ]
+    },
+    {
+      "name": "backdoor/create-access-key",
+      "description": "Create programmatic access keys for an IAM user via Batch job container command",
+      "slug": "batch-backdoor-create-access-key",
+      "qualifiedName": "batch:backdoor/create-access-key",
+      "service": "batch",
+      "tags": [
+        "batch",
+        "bash",
+        "backdoor"
+      ]
+    },
+    {
+      "name": "backdoor/create-role",
+      "description": "Create an IAM role with AdministratorAccess and a custom trust policy via Batch job (requires CONTAINER_RUNTIME=generic)",
+      "slug": "batch-backdoor-create-role",
+      "qualifiedName": "batch:backdoor/create-role",
+      "service": "batch",
+      "tags": [
+        "batch",
+        "bash",
+        "backdoor"
+      ]
+    },
+    {
+      "name": "backdoor/create-user",
+      "description": "Create an IAM user with AdministratorAccess and optional console/programmatic access via Batch job (requires CONTAINER_RUNTIME=generic)",
+      "slug": "batch-backdoor-create-user",
+      "qualifiedName": "batch:backdoor/create-user",
+      "service": "batch",
+      "tags": [
+        "batch",
+        "bash",
+        "backdoor"
+      ]
+    },
+    {
+      "name": "backdoor/update-role-trust",
+      "description": "Append a trust policy statement to an existing IAM role via Batch job (requires CONTAINER_RUNTIME=generic with jq)",
+      "slug": "batch-backdoor-update-role-trust",
+      "qualifiedName": "batch:backdoor/update-role-trust",
+      "service": "batch",
+      "tags": [
+        "batch",
+        "bash",
+        "backdoor"
+      ]
+    },
+    {
+      "name": "exfil/https",
+      "description": "Exfiltrate Batch task role credentials to an attacker HTTPS endpoint; detects curl/wget/python at runtime (requires CONTAINER_RUNTIME=generic)",
+      "slug": "batch-exfil-https",
+      "qualifiedName": "batch:exfil/https",
+      "service": "batch",
+      "tags": [
+        "batch",
+        "bash",
+        "exfil",
+        "https"
+      ]
+    }
+  ],
+  "cliSteps": [
+    "pathrunner use batch-003",
+    "pathrunner show payloads",
+    "pathrunner set PAYLOAD backdoor/attach-policy",
+    "pathrunner set ADMIN_ROLE_ARN arn:aws:iam::123456789012:role/TargetRoleName",
+    "pathrunner set EXECUTION_ROLE_ARN arn:aws:iam::123456789012:role/TargetRoleName",
+    "pathrunner set SUBNET_ID subnet-0123456789abcdef0",
+    "pathrunner set SECURITY_GROUP_ID sg-0123456789abcdef0",
+    "pathrunner set TARGET_ARN arn:aws:iam::123456789012:role/TargetRoleName",
+    "pathrunner exploit"
+  ],
+  "labSlug": "batch-003",
+  "gifs": [
+    {
+      "name": "batch-003",
+      "ext": "webm"
+    }
+  ]
+}

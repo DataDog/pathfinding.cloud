@@ -1,0 +1,179 @@
+{
+  "id": "cloudformation-004",
+  "name": "iam:PassRole + cloudformation:UpdateStackSet",
+  "description": "A principal with iam:PassRole and cloudformation:UpdateStackSet can escalate privileges by modifying an existing CloudFormation StackSet that has a privileged execution role. Both permissions are required\u2014cloudformation:UpdateStackSet alone is insufficient because the UpdateStackSet API call requires passing the administration role ARN, which necessitates iam:PassRole. The attacker injects a malicious IAM role into the StackSet template and passes the administration role ARN. CloudFormation's execution role provisions the new admin IAM role across all stack instances. The attacker then assumes that role for full admin access.",
+  "category": "new-passrole",
+  "services": [
+    "iam",
+    "cloudformation"
+  ],
+  "primaryService": "cloudformation",
+  "aliases": [
+    "cloudformation-updatestackset",
+    "cfn-004",
+    "exploit/cloudformation_updatestackset"
+  ],
+  "author": "Seth Art",
+  "pathfindingCloudUrl": "https://pathfinding.cloud/paths/cloudformation-004",
+  "permissions": {
+    "required": [
+      {
+        "permission": "iam:PassRole",
+        "description": "Must have permission to pass the administration role to CloudFormation StackSets"
+      },
+      {
+        "permission": "cloudformation:UpdateStackSet",
+        "description": "Must have permission to update the target CloudFormation StackSet"
+      }
+    ],
+    "additional": [
+      {
+        "permission": "cloudformation:DescribeStackSet",
+        "description": "View StackSet details and retrieve current template"
+      },
+      {
+        "permission": "cloudformation:DescribeStackSetOperation",
+        "description": "Monitor StackSet update operation progress"
+      },
+      {
+        "permission": "cloudformation:ListStackInstances",
+        "description": "List stack instances to confirm deployment targets"
+      },
+      {
+        "permission": "iam:GetRole",
+        "description": "Verify the escalated role was created by the StackSet update"
+      }
+    ]
+  },
+  "prerequisites": {
+    "admin": [
+      "A CloudFormation StackSet must exist that the principal can update",
+      "The StackSet must have an execution role with administrative permissions (e.g., AdministratorAccess)",
+      "The StackSet must have at least one stack instance deployed"
+    ],
+    "lateral": [
+      "A CloudFormation StackSet must exist that the principal can update",
+      "The StackSet must have an execution role with elevated permissions to create the desired resources",
+      "The StackSet must have deployed stack instances"
+    ]
+  },
+  "references": [
+    {
+      "title": "Pathfinding Cloud - cloudformation-004",
+      "url": "https://pathfinding.cloud/paths/cloudformation-004"
+    },
+    {
+      "title": "AWS IAM Privilege Escalation - Methods and Mitigation (Rhino Security Labs)",
+      "url": "https://rhinosecuritylabs.com/aws/aws-privilege-escalation-methods-mitigation/"
+    },
+    {
+      "title": "AWS CloudFormation Privilege Escalation (HackTricks)",
+      "url": "https://cloud.hacktricks.wiki/en/pentesting-cloud/aws-security/aws-privilege-escalation/aws-cloudformation-privesc/index.html"
+    },
+    {
+      "title": "AWS CloudFormation Service Role Documentation",
+      "url": "https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/using-iam-servicerole.html"
+    }
+  ],
+  "relatedPaths": [
+    "cloudformation-001",
+    "cloudformation-002",
+    "cloudformation-003",
+    "cloudformation-005"
+  ],
+  "mitre": {
+    "tactics": [
+      "TA0004 - Privilege Escalation",
+      "TA0003 - Persistence"
+    ],
+    "techniques": [
+      "T1098 - Account Manipulation",
+      "T1098.001 - Account Manipulation: Additional Cloud Credentials"
+    ]
+  },
+  "options": [
+    {
+      "name": "STACKSET_NAME",
+      "description": "Name of the existing CloudFormation StackSet with an admin execution role",
+      "required": true,
+      "mockValue": "target-stackset"
+    },
+    {
+      "name": "ADMIN_ROLE_ARN",
+      "description": "ARN of the administration role to pass to CloudFormation StackSets (requires iam:PassRole). Leave blank to auto-construct from account ID using the lab's default role name",
+      "required": false,
+      "mockValue": "arn:aws:iam::123456789012:role/TargetRoleName"
+    },
+    {
+      "name": "EXECUTION_ROLE_NAME",
+      "description": "Name of the execution role used by the StackSet in target accounts",
+      "required": false,
+      "mockValue": "TargetExecutionRoleName"
+    },
+    {
+      "name": "REGION",
+      "description": "AWS region for CloudFormation and IAM operations",
+      "required": false,
+      "default": "us-east-1"
+    },
+    {
+      "name": "ASSUME_ROLE",
+      "description": "Attempt to assume the escalated role after the StackSet update completes",
+      "required": false,
+      "default": "true"
+    },
+    {
+      "name": "PAYLOAD",
+      "description": "Payload type for the CloudFormation StackSet template injection (backdoor/attach-policy)",
+      "required": false,
+      "default": "backdoor/attach-policy"
+    },
+    {
+      "name": "ESCALATED_ROLE_NAME",
+      "description": "Name for the escalated IAM role to create (auto-generated if empty)",
+      "required": false,
+      "mockValue": "target-resource-name"
+    },
+    {
+      "name": "TRUST_PRINCIPAL",
+      "description": "ARN to trust in the escalated role's trust policy (defaults to caller ARN)",
+      "required": false,
+      "mockValue": "arn:aws:iam::123456789012:root"
+    },
+    {
+      "name": "CLEANUP",
+      "description": "Revert the StackSet to its original template after execution. Requires cloudformation:UpdateStackSet with the admin role",
+      "required": false,
+      "default": "false"
+    }
+  ],
+  "payloads": [
+    {
+      "name": "backdoor/attach-policy",
+      "description": "Create an IAM role with AdministratorAccess trusted by the attacker's principal via CloudFormation template",
+      "slug": "cloudformation-backdoor-attach-policy",
+      "qualifiedName": "cloudformation:backdoor/attach-policy",
+      "service": "cloudformation",
+      "tags": [
+        "cloudformation",
+        "json",
+        "backdoor"
+      ]
+    }
+  ],
+  "cliSteps": [
+    "pathrunner use cloudformation-004",
+    "pathrunner show payloads",
+    "pathrunner set PAYLOAD backdoor/attach-policy",
+    "pathrunner set STACKSET_NAME target-stackset",
+    "pathrunner set TARGET_ARN arn:aws:iam::123456789012:role/TargetRoleName",
+    "pathrunner exploit"
+  ],
+  "labSlug": "cloudformation-004",
+  "gifs": [
+    {
+      "name": "cloudformation-004",
+      "ext": "webm"
+    }
+  ]
+}
