@@ -1,0 +1,179 @@
+id: iam-023
+name: iam:DeleteRolePermissionsBoundary + sts:AssumeRole
+category: principal-access
+services:
+- iam
+- sts
+description: |
+  An attacker removes the permissions boundary from a target role using `iam:DeleteRolePermissionsBoundary`, expanding that role's effective permissions beyond what the boundary previously allowed. The attacker then assumes the role to gain the expanded permissions. This attack targets roles where the boundary was the primary control limiting the role's effective access — once removed, the role's full attached policies take effect.
+prerequisites:
+  admin:
+  - Target role must have IAM policies attached that grant more permissions than its boundary allows
+  - Target role must trust the attacker's principal (or the attacker must be able to modify the trust policy)
+  - Target role's underlying policies must include administrative permissions
+  lateral:
+  - Must have iam:DeleteRolePermissionsBoundary on the target role
+  - Must be able to assume the role after boundary removal (via existing trust or iam:UpdateAssumeRolePolicy)
+permissions:
+  required:
+  - permission: iam:DeleteRolePermissionsBoundary
+    resourceConstraints: Must have permission to delete the permissions boundary from the target role ARN
+  - permission: sts:AssumeRole
+    resourceConstraints: Must be able to assume the target role after boundary removal
+  additional:
+  - permission: iam:GetRole
+    resourceConstraints: Helpful for viewing the current boundary and trust policy on the target role
+  - permission: iam:ListAttachedRolePolicies
+    resourceConstraints: Useful for discovering what policies will be unlocked after boundary removal
+exploitationSteps:
+  awscli:
+  - step: 1
+    command: aws iam get-role --role-name TARGET_ROLE
+    description: View the role's configuration including current permissions boundary and trust policy
+  - step: 2
+    command: aws iam list-attached-role-policies --role-name TARGET_ROLE
+    description: List attached policies to understand what permissions will be unlocked
+  - step: 3
+    command: |
+      aws iam delete-role-permissions-boundary \
+        --role-name TARGET_ROLE
+    description: Delete the permissions boundary from the target role
+  - step: 4
+    command: sleep 15
+    description: Wait for IAM changes to propagate
+  - step: 5
+    command: |
+      aws sts assume-role \
+        --role-arn arn:aws:iam::ACCOUNT_ID:role/TARGET_ROLE \
+        --role-session-name boundary-bypass
+    description: Assume the target role which now has expanded permissions
+  - step: 6
+    command: |
+      export AWS_ACCESS_KEY_ID=<AccessKeyId from step 5>
+      export AWS_SECRET_ACCESS_KEY=<SecretAccessKey from step 5>
+      export AWS_SESSION_TOKEN=<SessionToken from step 5>
+    description: Configure the AWS CLI with the assumed role credentials
+  - step: 7
+    command: aws sts get-caller-identity
+    description: Verify the assumed role identity
+  - step: 8
+    command: aws iam list-users --max-items 3
+    description: Verify expanded permissions are now effective
+recommendation: |
+  Protect permissions boundaries with SCPs. Use condition keys to prevent boundary changes except by specific automation roles.
+
+  SCP to prevent boundary removal:
+  ```json
+  {
+    "Version": "2012-10-17",
+    "Statement": [
+      {
+        "Effect": "Deny",
+        "Action": [
+          "iam:DeleteRolePermissionsBoundary",
+          "iam:DeleteUserPermissionsBoundary"
+        ],
+        "Resource": "*",
+        "Condition": {
+          "StringNotLike": {
+            "aws:PrincipalARN": "arn:aws:iam::*:role/BoundaryAdmin"
+          }
+        }
+      }
+    ]
+  }
+  ```
+
+  Additional controls:
+  - **SCPs are essential** — Since permissions boundaries are identity-level controls, only SCPs can prevent their removal by privileged principals
+  - **Dedicated boundary admin role** — Only a single break-glass role should be able to modify boundaries
+  - **Monitor CloudTrail** — Alert on all `DeleteRolePermissionsBoundary` events immediately
+  - **Detect boundary drift** — Implement automated checks comparing current boundaries against expected baselines
+  - **Separate duties** — Principals who can delete boundaries should not also be able to assume the boundary-protected roles
+  - **Regular audits** — Verify boundary-protected roles don't have overly permissive underlying policies
+limitations: |
+  This path only provides escalation if the target role's underlying policies grant more access than the boundary allowed. If policies and boundary have the same scope, removal has no effect. The attacker also needs the ability to assume the role after boundary removal.
+discoveryAttribution:
+  firstDocumented:
+    author: Paramanand Mallik
+    date: "2026"
+    link: https://github.com/DataDog/pathfinding.cloud/pull/XX
+references:
+- title: AWS Documentation - Permissions Boundaries
+  url: https://docs.aws.amazon.com/IAM/latest/UserGuide/access_policies_boundaries.html
+- title: HackTricks - AWS IAM Privesc
+  url: https://cloud.hacktricks.wiki/en/pentesting-cloud/aws-security/aws-privilege-escalation/aws-iam-privesc/index.html
+relatedPaths:
+- iam-022
+- iam-024
+attackVisualization:
+  nodes:
+  - id: attacker
+    label: Starting Principal
+    type: principal
+    description: |
+      The attacker with `iam:DeleteRolePermissionsBoundary` and `sts:AssumeRole` permissions on the target role.
+  - id: target_role
+    label: Boundary-Constrained Role
+    type: principal
+    description: |
+      An IAM role with a permissions boundary limiting its effective permissions. The underlying attached policies grant broader access than the boundary allows.
+  - id: boundary
+    label: Permissions Boundary
+    type: resource
+    description: |
+      The permissions boundary policy that currently constrains the target role. Removing this expands the role's effective permissions.
+  - id: admin_outcome
+    label: Effective Administrator
+    type: outcome
+    description: |
+      After removing the boundary and assuming the role, the attacker gains full admin access if the underlying policies grant AdministratorAccess.
+  - id: partial_outcome
+    label: Expanded access
+    type: outcome
+    color: '#ffeb99'
+    description: |
+      After removing the boundary, the role's expanded permissions provide elevated but non-admin access.
+  - id: no_outcome
+    label: No additional access
+    type: outcome
+    color: '#cccccc'
+    description: |
+      The boundary and underlying policies have the same scope, so removal provides no additional access.
+  edges:
+  - from: attacker
+    to: boundary
+    label: iam:DeleteRolePermissionsBoundary
+    description: |
+      The attacker removes the permissions boundary from the target role, expanding its effective permissions.
+
+      Command:
+      ```bash
+      aws iam delete-role-permissions-boundary --role-name TARGET_ROLE
+      ```
+  - from: boundary
+    to: target_role
+    label: Boundary removed, policies expand
+    description: |
+      With the boundary removed, the role's full attached policies take effect. The effective permissions are no longer limited by the intersection of policies and boundary.
+  - from: target_role
+    to: admin_outcome
+    label: If underlying policies grant admin
+    branch: A
+    condition: admin
+    description: |
+      The role's attached policies include AdministratorAccess or equivalent. The attacker assumes the role and gains full admin.
+  - from: target_role
+    to: partial_outcome
+    label: If underlying policies grant partial access
+    branch: B
+    condition: some_permissions
+    description: |
+      The role's policies grant elevated permissions that were previously blocked by the boundary.
+  - from: target_role
+    to: no_outcome
+    label: If boundary matched policies
+    branch: C
+    condition: no_permissions
+    description: |
+      The boundary was not actually constraining the role — removing it provides no additional access.

@@ -1,0 +1,153 @@
+id: iam-024
+name: iam:PutUserPermissionsBoundary
+category: self-escalation
+services:
+- iam
+description: |
+  Instead of deleting a permissions boundary, an attacker with `iam:PutUserPermissionsBoundary` can replace it with a permissive one (e.g., a boundary that allows `*` on `*`). The new boundary won't constrain anything — effectively the same result as deleting it, but using a different API call that may not be monitored as closely.
+prerequisites:
+  admin:
+  - Target user must have IAM policies attached that grant more permissions than the current boundary allows
+  - A permissive managed policy must exist to use as the new boundary (e.g., AdministratorAccess or a custom `*:*` policy)
+  - Attacker must have `iam:PutUserPermissionsBoundary` on the target user
+  lateral:
+  - Must have iam:PutUserPermissionsBoundary on their own user or the target user
+  - Must identify a permissive managed policy ARN to use as the replacement boundary
+permissions:
+  required:
+  - permission: iam:PutUserPermissionsBoundary
+    resourceConstraints: Must have permission to set the permissions boundary on the target user ARN
+  additional:
+  - permission: iam:ListPolicies
+    resourceConstraints: Helpful for discovering available permissive managed policies to use as replacement
+  - permission: iam:GetUser
+    resourceConstraints: Useful for viewing the current boundary on the target user
+exploitationSteps:
+  awscli:
+  - step: 1
+    command: aws iam get-user --user-name TARGET_USER
+    description: View the user's current permissions boundary
+  - step: 2
+    command: aws iam list-policies --query 'Policies[?PolicyName==`AdministratorAccess`].Arn' --output text
+    description: Find the ARN of a permissive policy to use as the new boundary (AdministratorAccess)
+  - step: 3
+    command: |
+      aws iam put-user-permissions-boundary \
+        --user-name TARGET_USER \
+        --permissions-boundary arn:aws:iam::aws:policy/AdministratorAccess
+    description: Replace the restrictive boundary with AdministratorAccess, effectively removing all constraints
+  - step: 4
+    command: aws sts get-caller-identity
+    description: Verify current identity
+  - step: 5
+    command: aws iam list-users --max-items 3
+    description: Verify that previously-blocked permissions are now accessible
+recommendation: |
+  Use SCPs to deny boundary modification. The same protections that prevent boundary deletion should also prevent boundary replacement.
+
+  SCP to prevent boundary modification:
+  ```json
+  {
+    "Version": "2012-10-17",
+    "Statement": [
+      {
+        "Effect": "Deny",
+        "Action": [
+          "iam:PutUserPermissionsBoundary",
+          "iam:PutRolePermissionsBoundary",
+          "iam:DeleteUserPermissionsBoundary",
+          "iam:DeleteRolePermissionsBoundary"
+        ],
+        "Resource": "*",
+        "Condition": {
+          "StringNotLike": {
+            "aws:PrincipalARN": "arn:aws:iam::*:role/BoundaryAdmin"
+          }
+        }
+      }
+    ]
+  }
+  ```
+
+  Additional controls:
+  - **Monitor both Put and Delete** — Alert on `PutUserPermissionsBoundary` events as well as deletions, since replacement achieves the same result
+  - **Restrict boundary policies** — Use SCPs to enforce that only specific pre-approved boundary policies can be applied
+  - **Use iam:PermissionsBoundary condition** — Enforce that new boundaries must be from an approved list
+  - **Detect boundary drift** — Compare current boundaries against expected values and alert on changes
+  - **Deny self-modification** — Ensure users cannot replace their own boundaries
+  - **Regular audits** — Verify boundary-protected users retain their expected boundary ARNs
+limitations: |
+  Same as boundary deletion — this only works if the underlying policies grant more permissions than the current boundary allows. If the user's policies are already limited in scope, swapping the boundary provides no additional access.
+discoveryAttribution:
+  firstDocumented:
+    author: Paramanand Mallik
+    date: "2026"
+    link: https://github.com/DataDog/pathfinding.cloud/pull/XX
+references:
+- title: AWS Documentation - Permissions Boundaries
+  url: https://docs.aws.amazon.com/IAM/latest/UserGuide/access_policies_boundaries.html
+- title: HackTricks - AWS IAM Privesc
+  url: https://cloud.hacktricks.wiki/en/pentesting-cloud/aws-security/aws-privilege-escalation/aws-iam-privesc/index.html
+relatedPaths:
+- iam-022
+- iam-023
+attackVisualization:
+  nodes:
+  - id: attacker
+    label: Constrained User
+    type: principal
+    description: |
+      An IAM user whose effective permissions are limited by a permissions boundary. The underlying policies grant broader access than the boundary currently allows.
+  - id: boundary
+    label: Restrictive Boundary
+    type: resource
+    description: |
+      The current permissions boundary that constrains the user's effective permissions. The attacker will replace this with a permissive boundary.
+  - id: new_boundary
+    label: Permissive Boundary (AdministratorAccess)
+    type: resource
+    description: |
+      The replacement boundary (e.g., AdministratorAccess managed policy). This boundary allows all actions on all resources, effectively removing all constraints.
+  - id: admin_outcome
+    label: Effective Administrator
+    type: outcome
+    description: |
+      After replacing the boundary with a permissive one, the user's full attached policies take effect. If those include AdministratorAccess, the user gains full admin.
+  - id: partial_outcome
+    label: Expanded permissions
+    type: outcome
+    color: '#ffeb99'
+    description: |
+      After boundary replacement, the user gains additional previously-blocked permissions but not full admin.
+  edges:
+  - from: attacker
+    to: boundary
+    label: iam:PutUserPermissionsBoundary
+    description: |
+      The attacker replaces the restrictive boundary with a permissive one using `iam:PutUserPermissionsBoundary`.
+
+      Command:
+      ```bash
+      aws iam put-user-permissions-boundary \
+        --user-name TARGET_USER \
+        --permissions-boundary arn:aws:iam::aws:policy/AdministratorAccess
+      ```
+  - from: boundary
+    to: new_boundary
+    label: Replaced with AdministratorAccess
+    description: |
+      The restrictive boundary is replaced with AdministratorAccess. The new boundary allows all actions, so it no longer constrains the user's effective permissions.
+  - from: new_boundary
+    to: admin_outcome
+    label: If underlying policies grant admin
+    branch: A
+    condition: admin
+    description: |
+      The user's attached policies include AdministratorAccess or equivalent. With the permissive boundary, these take full effect.
+  - from: new_boundary
+    to: partial_outcome
+    label: If underlying policies grant partial access
+    branch: B
+    condition: some_permissions
+    description: |
+      The user's policies grant elevated but non-admin permissions that were previously blocked by the boundary.
