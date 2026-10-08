@@ -87,6 +87,16 @@ references: []
 - `learningEnvironments` (learning-environments agent)
 - `detectionTools` (detection-tools agent)
 
+### Exploitation tool tabs by cloud
+
+Always include the native CLI tab for the path's cloud (`awscli`, `gcloud`, or `azurecli`). Where an exploitation framework module verifiably covers the path's exact technique, add it as an additional tab (each cloud has its own — do not cross-apply an AWS tool to a GCP/Azure path or vice versa):
+
+- **AWS**: `pacu`, `pmapper`, `stratus`, `leonidas`, `nebula`, `pathrunner`
+- **GCP**: `gcpwn` (NetSPI's GCP pentesting framework) — check its module tree at `gcpwn/modules/gcp/{service}/{enumeration,exploit,utilities}/` on https://github.com/NetSPI/GCPwn for a module matching the required permission(s) (e.g. `exploit_generate_access_token` for `iam.serviceAccounts.getAccessToken`, `exploit_service_account_keys` for `iam.serviceAccountKeys.create`). Modules are invoked as `modules run <module_name> [flags]` — see the README's "Exploit Module TLDR" section for real flag examples before writing commands.
+- **Azure**: none established yet
+
+Never fabricate a tool tab or invocation syntax — verify the module/command actually exists (e.g. by browsing the tool's repo) before adding it. If no framework module covers this specific technique, omit the extra tab and use only the native CLI.
+
 ### Follow formatting guidelines:
 
 Per @.claude/CLAUDE.md:

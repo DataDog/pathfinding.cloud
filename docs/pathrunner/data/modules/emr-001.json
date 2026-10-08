@@ -1,0 +1,158 @@
+{
+  "id": "emr-001",
+  "name": "iam:PassRole + elasticmapreduce:RunJobFlow",
+  "description": "Create an EMR cluster with a privileged IAM instance profile as the JobFlowRole. An EMR step using command-runner.jar executes on the master node, which has access to the instance profile credentials via IMDS, and calls iam:AttachUserPolicy to escalate the starting principal to administrative access. The cluster auto-terminates after the step.",
+  "category": "new-passrole",
+  "services": [
+    "iam",
+    "emr"
+  ],
+  "primaryService": "emr",
+  "aliases": [
+    "emr-passrole",
+    "exploit/emr_passrole"
+  ],
+  "author": "Seth Art",
+  "pathfindingCloudUrl": "https://pathfinding.cloud/paths/emr-001",
+  "permissions": {
+    "required": [
+      {
+        "permission": "iam:PassRole",
+        "description": "Must be able to pass both the EC2 instance profile role and the EMR service role"
+      },
+      {
+        "permission": "elasticmapreduce:RunJobFlow"
+      }
+    ],
+    "additional": [
+      {
+        "permission": "elasticmapreduce:DescribeCluster",
+        "description": "Poll cluster state to confirm execution"
+      },
+      {
+        "permission": "elasticmapreduce:ListSteps",
+        "description": "Verify step execution status"
+      },
+      {
+        "permission": "iam:ListAttachedUserPolicies",
+        "description": "Verify privilege escalation success"
+      }
+    ]
+  },
+  "prerequisites": {
+    "admin": [
+      "IAM role that can be used as an EC2 instance profile (trusts ec2.amazonaws.com) with administrative permissions",
+      "IAM role that can serve as the EMR service role (trusts elasticmapreduce.amazonaws.com)",
+      "The AWSServiceRoleForEMRCleanup service-linked role must exist in the account"
+    ],
+    "lateral": [
+      "A role that can be used as an EC2 instance profile with elevated permissions",
+      "A role that can serve as the EMR service role"
+    ]
+  },
+  "references": [
+    {
+      "title": "Pathfinding Cloud - emr-001",
+      "url": "https://pathfinding.cloud/paths/emr-001"
+    },
+    {
+      "title": "Configure IAM service roles for Amazon EMR",
+      "url": "https://docs.aws.amazon.com/emr/latest/ManagementGuide/emr-iam-roles.html"
+    }
+  ],
+  "mitre": {
+    "tactics": [
+      "TA0004 - Privilege Escalation",
+      "TA0002 - Execution"
+    ],
+    "techniques": [
+      "T1078.004 - Valid Accounts: Cloud Accounts",
+      "T1578 - Modify Cloud Compute Infrastructure"
+    ]
+  },
+  "options": [
+    {
+      "name": "INSTANCE_PROFILE",
+      "description": "Admin IAM instance profile name to pass as the EMR JobFlowRole (the EC2 master node assumes this role)",
+      "required": true,
+      "mockValue": "arn:aws:iam::123456789012:instance-profile/TargetInstanceProfile"
+    },
+    {
+      "name": "SERVICE_ROLE",
+      "description": "EMR service role name to pass as the ServiceRole (trusts elasticmapreduce.amazonaws.com)",
+      "required": true,
+      "mockValue": "arn:aws:iam::123456789012:role/TargetServiceRole"
+    },
+    {
+      "name": "PAYLOAD",
+      "description": "Payload type (backdoor/attach-policy)",
+      "required": true
+    },
+    {
+      "name": "TARGET_ARN",
+      "description": "IAM user or role name/ARN to escalate (auto-detected from current identity if not set)",
+      "required": false,
+      "mockValue": "arn:aws:iam::123456789012:role/TargetRoleName"
+    },
+    {
+      "name": "REGION",
+      "description": "AWS region for the EMR cluster",
+      "required": false,
+      "default": "us-east-1"
+    },
+    {
+      "name": "RELEASE_LABEL",
+      "description": "EMR release label",
+      "required": false,
+      "default": "emr-7.0.0"
+    },
+    {
+      "name": "INSTANCE_TYPE",
+      "description": "EC2 instance type for the master node",
+      "required": false,
+      "default": "m5.xlarge"
+    },
+    {
+      "name": "CLUSTER_NAME",
+      "description": "Name for the EMR cluster",
+      "required": false,
+      "mockValue": "target-ecs-cluster"
+    },
+    {
+      "name": "CLEANUP",
+      "description": "Terminate cluster if it is still running after execution (clusters auto-terminate via --auto-terminate)",
+      "required": false,
+      "default": "false"
+    }
+  ],
+  "payloads": [
+    {
+      "name": "backdoor/attach-policy",
+      "description": "Attach AdministratorAccess policy to an IAM user or role via an EMR step command",
+      "slug": "emr-backdoor-attach-policy",
+      "qualifiedName": "emr:backdoor/attach-policy",
+      "service": "emr",
+      "tags": [
+        "emr",
+        "bash",
+        "backdoor"
+      ]
+    }
+  ],
+  "cliSteps": [
+    "pathrunner use emr-001",
+    "pathrunner show payloads",
+    "pathrunner set PAYLOAD backdoor/attach-policy",
+    "pathrunner set INSTANCE_PROFILE arn:aws:iam::123456789012:instance-profile/TargetInstanceProfile",
+    "pathrunner set SERVICE_ROLE arn:aws:iam::123456789012:role/TargetServiceRole",
+    "pathrunner set TARGET_ARN arn:aws:iam::123456789012:role/TargetRoleName",
+    "pathrunner exploit"
+  ],
+  "labSlug": "emr-001",
+  "gifs": [
+    {
+      "name": "emr-001",
+      "ext": "webm"
+    }
+  ]
+}

@@ -1,0 +1,192 @@
+{
+  "id": "imagebuilder-001",
+  "name": "iam:PassRole + imagebuilder:CreateComponent + imagebuilder:CreateImageRecipe + imagebuilder:CreateInfrastructureConfiguration + imagebuilder:CreateImage",
+  "description": "A principal with iam:PassRole and EC2 Image Builder creation permissions can escalate privileges by building a pipeline: create a component containing malicious shell commands, add it to an image recipe, create an infrastructure configuration that passes an admin IAM instance profile, then trigger an image build. The Image Builder agent runs the component shell commands on an EC2 build instance with admin credentials available via IMDS.",
+  "category": "new-passrole",
+  "services": [
+    "iam",
+    "imagebuilder",
+    "ec2"
+  ],
+  "primaryService": "imagebuilder",
+  "aliases": [
+    "imagebuilder-passrole",
+    "exploit/imagebuilder_passrole"
+  ],
+  "author": "Zander Mackie (Datadog)",
+  "pathfindingCloudUrl": "https://pathfinding.cloud/paths/imagebuilder-001",
+  "permissions": {
+    "required": [
+      {
+        "permission": "iam:PassRole",
+        "description": "Must be able to pass the target admin IAM instance profile role to the EC2 Image Builder service"
+      },
+      {
+        "permission": "imagebuilder:CreateComponent"
+      },
+      {
+        "permission": "imagebuilder:CreateImageRecipe"
+      },
+      {
+        "permission": "imagebuilder:CreateInfrastructureConfiguration"
+      },
+      {
+        "permission": "imagebuilder:CreateImage"
+      }
+    ],
+    "additional": [
+      {
+        "permission": "imagebuilder:GetComponent",
+        "description": "Verify component creation"
+      },
+      {
+        "permission": "imagebuilder:GetImage",
+        "description": "Poll image build status"
+      },
+      {
+        "permission": "imagebuilder:GetImageRecipe",
+        "description": "Verify recipe configuration"
+      },
+      {
+        "permission": "imagebuilder:GetInfrastructureConfiguration",
+        "description": "Verify infrastructure configuration"
+      },
+      {
+        "permission": "imagebuilder:TagResource",
+        "description": "Required in some regions or configurations"
+      },
+      {
+        "permission": "ec2:DescribeImages",
+        "description": "Find the base AMI for the image recipe"
+      },
+      {
+        "permission": "imagebuilder:ListImages",
+        "description": "Discover existing images and build status"
+      },
+      {
+        "permission": "iam:ListAttachedUserPolicies",
+        "description": "Verify privilege escalation success"
+      }
+    ]
+  },
+  "prerequisites": {
+    "admin": [
+      "A role must exist that can be used as an EC2 instance profile (trusts ec2.amazonaws.com)",
+      "The role must have administrative permissions (e.g., AdministratorAccess or equivalent)",
+      "The AWS Image Builder service-linked role (AWSServiceRoleForImageBuilder) must exist in the account"
+    ],
+    "lateral": [
+      "A role must exist that can be used as an EC2 instance profile and has elevated permissions",
+      "The AWSServiceRoleForImageBuilder SLR must exist in the account"
+    ]
+  },
+  "references": [
+    {
+      "title": "Pathfinding Cloud - imagebuilder-001",
+      "url": "https://pathfinding.cloud/paths/imagebuilder-001"
+    },
+    {
+      "title": "Actions defined by EC2 Image Builder",
+      "url": "https://docs.aws.amazon.com/service-authorization/latest/reference/list_amazonec2imagebuilder.html"
+    },
+    {
+      "title": "Security best practices in EC2 Image Builder",
+      "url": "https://docs.aws.amazon.com/imagebuilder/latest/userguide/security-best-practices.html"
+    }
+  ],
+  "mitre": {
+    "tactics": [
+      "TA0004 - Privilege Escalation",
+      "TA0002 - Execution"
+    ],
+    "techniques": [
+      "T1078.004 - Valid Accounts: Cloud Accounts",
+      "T1578 - Modify Cloud Compute Infrastructure"
+    ]
+  },
+  "options": [
+    {
+      "name": "INSTANCE_PROFILE",
+      "description": "Admin IAM instance profile NAME to pass to the Image Builder build EC2 instance (not ARN \u2014 the API requires the profile name)",
+      "required": true,
+      "mockValue": "arn:aws:iam::123456789012:instance-profile/TargetInstanceProfile"
+    },
+    {
+      "name": "PAYLOAD",
+      "description": "Payload type (backdoor/attach-policy)",
+      "required": true
+    },
+    {
+      "name": "TARGET_ARN",
+      "description": "IAM user or role name/ARN to attach AdministratorAccess to (auto-resolved from caller identity if not set)",
+      "required": false,
+      "mockValue": "arn:aws:iam::123456789012:role/TargetRoleName"
+    },
+    {
+      "name": "REGION",
+      "description": "AWS region for Image Builder resources",
+      "required": false,
+      "default": "us-east-1"
+    },
+    {
+      "name": "SUBNET_ID",
+      "description": "Subnet ID for the Image Builder build EC2 instance (uses default VPC subnet if omitted)",
+      "required": false,
+      "mockValue": "subnet-0123456789abcdef0"
+    },
+    {
+      "name": "SECURITY_GROUP_ID",
+      "description": "Security group ID for the build EC2 instance (optional; Image Builder uses the default SG if omitted)",
+      "required": false,
+      "mockValue": "sg-0123456789abcdef0"
+    },
+    {
+      "name": "POLICY_ARN",
+      "description": "Policy ARN to attach to TARGET_ARN via the build component",
+      "required": false,
+      "default": "arn:aws:iam::aws:policy/AdministratorAccess",
+      "mockValue": "arn:aws:iam::123456789012:policy/TargetPolicy"
+    },
+    {
+      "name": "COMPONENT_NAME",
+      "description": "Name prefix for the Image Builder component (auto-generated if omitted)",
+      "required": false,
+      "mockValue": "target-resource-name"
+    },
+    {
+      "name": "CLEANUP",
+      "description": "Delete Image Builder resources after execution (note: the starting user typically lacks imagebuilder:Delete* \u2014 use workspace cleanup with admin credentials)",
+      "required": false,
+      "default": "false"
+    }
+  ],
+  "payloads": [
+    {
+      "name": "backdoor/attach-policy",
+      "description": "Attach AdministratorAccess to an IAM user or role via EC2 Image Builder component using IMDS credentials",
+      "slug": "imagebuilder-backdoor-attach-policy",
+      "qualifiedName": "imagebuilder:backdoor/attach-policy",
+      "service": "imagebuilder",
+      "tags": [
+        "imagebuilder",
+        "bash",
+        "backdoor"
+      ]
+    }
+  ],
+  "cliSteps": [
+    "pathrunner use imagebuilder-001",
+    "pathrunner show payloads",
+    "pathrunner set PAYLOAD backdoor/attach-policy",
+    "pathrunner set INSTANCE_PROFILE arn:aws:iam::123456789012:instance-profile/TargetInstanceProfile",
+    "pathrunner set TARGET_ARN arn:aws:iam::123456789012:role/TargetRoleName",
+    "pathrunner exploit"
+  ],
+  "labSlug": "imagebuilder-001",
+  "gifs": [
+    {
+      "name": "imagebuilder-001",
+      "ext": "webm"
+    }
+  ]
+}

@@ -160,6 +160,7 @@ Supported tools:
 - `pathrunner` - Pathrunner
 - `gcloud` - Google Cloud CLI
 - `azurecli` - Azure CLI
+- `gcpwn` - GCPwn (NetSPI GCP pentesting framework)
 
 Each step object contains:
 - `step` (integer, required): Step number (1, 2, 3, etc.)

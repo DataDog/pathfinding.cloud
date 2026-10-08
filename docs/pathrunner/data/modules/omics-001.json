@@ -1,0 +1,153 @@
+{
+  "id": "omics-001",
+  "name": "iam:PassRole + omics:CreateWorkflow + omics:StartRun",
+  "description": "Create an AWS HealthOmics WDL workflow that exfiltrates the execution role's temporary credentials to an attacker-controlled S3 bucket. The module starts a run passing an admin role via iam:PassRole, waits for completion, retrieves the exfiltrated credentials from S3, and uses them to attach AdministratorAccess to the starting user. HealthOmics tasks have network isolation from the public internet but retain S3 access.",
+  "category": "new-passrole",
+  "services": [
+    "iam",
+    "omics",
+    "s3"
+  ],
+  "primaryService": "omics",
+  "aliases": [
+    "omics-passrole",
+    "exploit/omics_passrole"
+  ],
+  "author": "Seth Art",
+  "pathfindingCloudUrl": "https://pathfinding.cloud/paths/omics-001",
+  "permissions": {
+    "required": [
+      {
+        "permission": "iam:PassRole",
+        "description": "Must be able to pass the target admin IAM execution role to the HealthOmics service"
+      },
+      {
+        "permission": "omics:CreateWorkflow"
+      },
+      {
+        "permission": "omics:StartRun"
+      },
+      {
+        "permission": "s3:GetObject",
+        "description": "Read exfiltrated credentials from the attacker-controlled S3 bucket after the workflow completes"
+      }
+    ],
+    "additional": [
+      {
+        "permission": "omics:GetWorkflow",
+        "description": "Poll workflow creation status"
+      },
+      {
+        "permission": "omics:GetRun",
+        "description": "Monitor run status and verify completion"
+      },
+      {
+        "permission": "omics:ListRuns",
+        "description": "Discover existing runs"
+      },
+      {
+        "permission": "iam:ListAttachedUserPolicies",
+        "description": "Verify privilege escalation success"
+      }
+    ]
+  },
+  "prerequisites": {
+    "admin": [
+      "A role must exist that trusts omics.amazonaws.com with administrative permissions",
+      "An attacker-controlled S3 bucket must be accessible from HealthOmics (execution role needs s3:PutObject)",
+      "A private ECR repository must contain a container image suitable for running AWS CLI commands (HealthOmics requires private ECR images)"
+    ],
+    "lateral": [
+      "A role must exist that trusts omics.amazonaws.com with elevated permissions",
+      "An attacker-controlled S3 bucket accessible from HealthOmics execution environment"
+    ]
+  },
+  "references": [
+    {
+      "title": "Pathfinding Cloud - omics-001",
+      "url": "https://pathfinding.cloud/paths/omics-001"
+    },
+    {
+      "title": "Actions defined by AWS HealthOmics",
+      "url": "https://docs.aws.amazon.com/service-authorization/latest/reference/list_awshealthomics.html"
+    },
+    {
+      "title": "IAM roles and policies for AWS HealthOmics",
+      "url": "https://docs.aws.amazon.com/omics/latest/dev/security-iam-roles.html"
+    }
+  ],
+  "mitre": {
+    "tactics": [
+      "TA0004 - Privilege Escalation",
+      "TA0002 - Execution"
+    ],
+    "techniques": [
+      "T1078.004 - Valid Accounts: Cloud Accounts",
+      "T1578 - Modify Cloud Compute Infrastructure"
+    ]
+  },
+  "options": [
+    {
+      "name": "ROLE_ARN",
+      "description": "Target IAM role ARN to pass to the HealthOmics workflow run as the execution role",
+      "required": true,
+      "mockValue": "arn:aws:iam::123456789012:role/TargetRoleName"
+    },
+    {
+      "name": "CONTAINER_URI",
+      "description": "Private ECR image URI for the WDL task container (e.g., 123456789012.dkr.ecr.us-east-1.amazonaws.com/aws-cli:latest). HealthOmics does not support public Docker Hub images.",
+      "required": true,
+      "mockValue": "123456789012.dkr.ecr.us-east-1.amazonaws.com/target-image:latest"
+    },
+    {
+      "name": "EXFIL_BUCKET",
+      "description": "Attacker-controlled S3 bucket for credential exfiltration. Auto-populated from attacker infra if not set. The execution role must have s3:PutObject on this bucket.",
+      "required": false,
+      "mockValue": "target-s3-bucket-123456789012"
+    },
+    {
+      "name": "EXFIL_KEY",
+      "description": "S3 object key for the exfiltrated credentials",
+      "required": false,
+      "default": "exfil/creds.json"
+    },
+    {
+      "name": "TARGET_ARN",
+      "description": "IAM user or role name/ARN to attach AdministratorAccess to (auto-resolved from caller identity if not set)",
+      "required": false,
+      "mockValue": "arn:aws:iam::123456789012:role/TargetRoleName"
+    },
+    {
+      "name": "REGION",
+      "description": "AWS region for HealthOmics workflow deployment",
+      "required": false,
+      "default": "us-east-1"
+    },
+    {
+      "name": "WORKFLOW_NAME",
+      "description": "Name for the HealthOmics workflow",
+      "required": false,
+      "mockValue": "target-resource-name"
+    },
+    {
+      "name": "CLEANUP",
+      "description": "Delete the HealthOmics workflow and run after execution. Note: policy attachment is tracked separately via workspace cleanup.",
+      "required": false,
+      "default": "true"
+    }
+  ],
+  "cliSteps": [
+    "pathrunner use omics-001",
+    "pathrunner set ROLE_ARN arn:aws:iam::123456789012:role/TargetRoleName",
+    "pathrunner set CONTAINER_URI 123456789012.dkr.ecr.us-east-1.amazonaws.com/target-image:latest",
+    "pathrunner exploit"
+  ],
+  "labSlug": "omics-001",
+  "gifs": [
+    {
+      "name": "omics-001",
+      "ext": "webm"
+    }
+  ],
+  "payloads": []
+}

@@ -35,6 +35,7 @@
         // Restore group states (paths collapsed by default, labs expanded by default)
         restoreGroup('paths', false);
         restoreGroup('labs', true);
+        restoreGroup('pathrunner', true);
 
         // Mark the active nav item
         markActive();

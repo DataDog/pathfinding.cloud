@@ -1,0 +1,258 @@
+{
+  "id": "ec2-005",
+  "name": "ec2:CreateLaunchTemplateVersion + ec2:ModifyLaunchTemplate",
+  "description": "Create a new version of an existing EC2 launch template, embedding a malicious user-data script and explicitly setting a privileged IAM instance profile. Set the new version as the default. Trigger an Auto Scaling Group to launch an instance \u2014 the ASG service role holds iam:PassRole, so the attacker avoids the PassRole requirement \u2014 and let the user-data script attach AdministratorAccess to the starting principal.",
+  "category": "existing-passrole",
+  "services": [
+    "iam",
+    "ec2"
+  ],
+  "primaryService": "ec2",
+  "aliases": [
+    "ec2-launch-template-version",
+    "exploit/ec2_launch_template_version"
+  ],
+  "author": "Seth Art",
+  "pathfindingCloudUrl": "https://pathfinding.cloud/paths/ec2-005",
+  "permissions": {
+    "required": [
+      {
+        "permission": "ec2:CreateLaunchTemplateVersion",
+        "description": "Must be able to create a new version of the target launch template"
+      },
+      {
+        "permission": "ec2:ModifyLaunchTemplate",
+        "description": "Must be able to modify the target launch template to set the new version as default"
+      },
+      {
+        "permission": "autoscaling:SetDesiredCapacity",
+        "description": "Must be able to set ASG desired capacity to trigger an instance launch"
+      }
+    ],
+    "additional": [
+      {
+        "permission": "ec2:DescribeLaunchTemplates",
+        "description": "Helpful for discovering launch templates"
+      },
+      {
+        "permission": "ec2:DescribeLaunchTemplateVersions",
+        "description": "Useful for viewing current default version configuration"
+      },
+      {
+        "permission": "autoscaling:DescribeAutoScalingGroups",
+        "description": "Used to discover ASGs using the target launch template"
+      },
+      {
+        "permission": "iam:ListAttachedUserPolicies",
+        "description": "Useful for verifying privilege escalation success"
+      }
+    ]
+  },
+  "prerequisites": {
+    "admin": [
+      "An existing EC2 launch template must exist that the starting principal can create new versions of",
+      "An Auto Scaling Group must use the target launch template as its launch template",
+      "A privileged IAM instance profile must exist that the ASG service role can pass",
+      "The privileged instance profile role must have permissions to call iam:AttachUserPolicy"
+    ],
+    "lateral": [
+      "An existing EC2 launch template must exist with elevated IAM instance profile accessible via an ASG"
+    ]
+  },
+  "references": [
+    {
+      "title": "Pathfinding Cloud - ec2-005",
+      "url": "https://pathfinding.cloud/paths/ec2-005"
+    },
+    {
+      "title": "IAM permissions required for Amazon EC2 launch templates (AWS Documentation)",
+      "url": "https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/permissions-for-launch-templates.html"
+    },
+    {
+      "title": "Actions defined by Amazon EC2 - Service Authorization Reference",
+      "url": "https://docs.aws.amazon.com/service-authorization/latest/reference/list_amazonec2.html"
+    }
+  ],
+  "relatedPaths": [
+    "ec2-002",
+    "ec2-003",
+    "ec2-004"
+  ],
+  "mitre": {
+    "tactics": [
+      "TA0004 - Privilege Escalation",
+      "TA0003 - Persistence"
+    ],
+    "techniques": [
+      "T1098.001 - Account Manipulation: Additional Cloud Credentials",
+      "T1578 - Modify Cloud Compute Infrastructure"
+    ]
+  },
+  "options": [
+    {
+      "name": "LAUNCH_TEMPLATE_NAME",
+      "description": "Name of the existing target launch template",
+      "required": true,
+      "mockValue": "target-launch-template"
+    },
+    {
+      "name": "ASG_NAME",
+      "description": "Name of the Auto Scaling Group to trigger for instance launch (avoids iam:PassRole requirement) [auto]",
+      "required": true,
+      "mockValue": "target-auto-scaling-group"
+    },
+    {
+      "name": "INSTANCE_PROFILE",
+      "description": "ARN or name of the privileged IAM instance profile to embed in the new template version [auto]",
+      "required": true,
+      "mockValue": "arn:aws:iam::123456789012:instance-profile/TargetInstanceProfile"
+    },
+    {
+      "name": "PAYLOAD",
+      "description": "Payload type (backdoor/attach-policy, revshell/tls, exfil/https)",
+      "required": true
+    },
+    {
+      "name": "TARGET_ARN",
+      "description": "IAM user or role ARN/name to receive elevated permissions (used by backdoor/attach-policy payload)",
+      "required": false,
+      "mockValue": "arn:aws:iam::123456789012:role/TargetRoleName"
+    },
+    {
+      "name": "REGION",
+      "description": "AWS region",
+      "required": false,
+      "default": "us-east-1"
+    },
+    {
+      "name": "WAIT_FOR_POLICY",
+      "description": "Poll for IAM policy attachment after instance launch (up to 5 minutes, from demo_attack.sh)",
+      "required": false,
+      "default": "true"
+    },
+    {
+      "name": "CLEANUP",
+      "description": "Restore original default version after execution",
+      "required": false,
+      "default": "false"
+    }
+  ],
+  "payloads": [
+    {
+      "name": "backdoor/attach-policy",
+      "description": "Attach AdministratorAccess policy to an IAM user or role via EC2 user-data",
+      "slug": "ec2-backdoor-attach-policy",
+      "qualifiedName": "ec2:backdoor/attach-policy",
+      "service": "ec2",
+      "tags": [
+        "ec2",
+        "bash",
+        "backdoor"
+      ]
+    },
+    {
+      "name": "backdoor/create-access-key",
+      "description": "Create access keys for an existing IAM user via EC2 user-data",
+      "slug": "ec2-backdoor-create-access-key",
+      "qualifiedName": "ec2:backdoor/create-access-key",
+      "service": "ec2",
+      "tags": [
+        "ec2",
+        "bash",
+        "backdoor"
+      ]
+    },
+    {
+      "name": "backdoor/create-role",
+      "description": "Create an IAM role with administrator privileges and custom trust policy via EC2 user-data",
+      "slug": "ec2-backdoor-create-role",
+      "qualifiedName": "ec2:backdoor/create-role",
+      "service": "ec2",
+      "tags": [
+        "ec2",
+        "bash",
+        "backdoor"
+      ]
+    },
+    {
+      "name": "backdoor/create-user",
+      "description": "Create an IAM user with administrator privileges and optional console/programmatic access via EC2 user-data",
+      "slug": "ec2-backdoor-create-user",
+      "qualifiedName": "ec2:backdoor/create-user",
+      "service": "ec2",
+      "tags": [
+        "ec2",
+        "bash",
+        "backdoor"
+      ]
+    },
+    {
+      "name": "backdoor/update-role-trust",
+      "description": "Append a trust policy statement to an existing IAM role via EC2 user-data",
+      "slug": "ec2-backdoor-update-role-trust",
+      "qualifiedName": "ec2:backdoor/update-role-trust",
+      "service": "ec2",
+      "tags": [
+        "ec2",
+        "bash",
+        "backdoor"
+      ]
+    },
+    {
+      "name": "exfil/https",
+      "description": "Exfiltrate instance role credentials to an attacker-controlled HTTPS endpoint via EC2 user-data",
+      "slug": "ec2-exfil-https",
+      "qualifiedName": "ec2:exfil/https",
+      "service": "ec2",
+      "tags": [
+        "ec2",
+        "bash",
+        "exfil",
+        "https"
+      ]
+    },
+    {
+      "name": "exfil/s3",
+      "description": "Exfiltrate EC2 instance role credentials to an attacker-controlled S3 bucket via user-data",
+      "slug": "ec2-exfil-s3",
+      "qualifiedName": "ec2:exfil/s3",
+      "service": "ec2",
+      "tags": [
+        "ec2",
+        "bash",
+        "exfil",
+        "filesystem"
+      ]
+    },
+    {
+      "name": "revshell/tls",
+      "description": "Establish a TLS-encrypted reverse shell via EC2 user-data",
+      "slug": "ec2-revshell-tls",
+      "qualifiedName": "ec2:revshell/tls",
+      "service": "ec2",
+      "tags": [
+        "ec2",
+        "bash",
+        "access",
+        "https"
+      ]
+    }
+  ],
+  "cliSteps": [
+    "pathrunner use ec2-005",
+    "pathrunner show payloads",
+    "pathrunner set PAYLOAD backdoor/attach-policy",
+    "pathrunner set LAUNCH_TEMPLATE_NAME target-launch-template",
+    "pathrunner set ASG_NAME target-auto-scaling-group",
+    "pathrunner set INSTANCE_PROFILE arn:aws:iam::123456789012:instance-profile/TargetInstanceProfile",
+    "pathrunner set TARGET_ARN arn:aws:iam::123456789012:role/TargetRoleName",
+    "pathrunner exploit"
+  ],
+  "labSlug": "ec2-005",
+  "gifs": [
+    {
+      "name": "ec2-005",
+      "ext": "webm"
+    }
+  ]
+}

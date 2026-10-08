@@ -1,0 +1,181 @@
+{
+  "id": "bedrock-003",
+  "name": "iam:PassRole + bedrock-agentcore:CreateAgentRuntime + bedrock-agentcore:CreateAgentRuntimeEndpoint + bedrock-agentcore:CreateWorkloadIdentity + bedrock-agentcore:InvokeAgentRuntimeCommand",
+  "description": "A principal with iam:PassRole, bedrock-agentcore:CreateAgentRuntime, bedrock-agentcore:CreateAgentRuntimeEndpoint, bedrock-agentcore:CreateWorkloadIdentity, and bedrock-agentcore:InvokeAgentRuntimeCommand can deploy a new AgentCore Runtime with a privileged IAM execution role and then run shell commands as root inside its Firecracker microVM. InvokeAgentRuntimeCommand executes a submitted command as root parallel to the customer agent process, bypassing the agent, model and guardrails entirely. The command reads the execution role temporary credentials from the MicroVM Metadata Service (MMDS) at 169.254.169.254, AgentCore's equivalent of EC2's IMDS, granting the attacker the full permissions of the chosen execution role.",
+  "category": "new-passrole",
+  "services": [
+    "iam",
+    "bedrock-agentcore"
+  ],
+  "primaryService": "bedrock",
+  "aliases": [
+    "bedrock-passrole-createagentruntime",
+    "exploit/bedrock_passrole_createagentruntime"
+  ],
+  "author": "Seth Art",
+  "pathfindingCloudUrl": "https://pathfinding.cloud/paths/bedrock-003",
+  "permissions": {
+    "required": [
+      {
+        "permission": "iam:PassRole",
+        "description": "Target role ARN must be in Resource; role must trust bedrock-agentcore.amazonaws.com"
+      },
+      {
+        "permission": "bedrock-agentcore:CreateAgentRuntime",
+        "description": "Must have permission to create Bedrock AgentCore runtimes"
+      },
+      {
+        "permission": "bedrock-agentcore:CreateAgentRuntimeEndpoint",
+        "description": "Must have permission to create the runtime endpoint used to invoke the runtime"
+      },
+      {
+        "permission": "bedrock-agentcore:CreateWorkloadIdentity",
+        "description": "Must have permission to create the workload identity the runtime requires at creation"
+      },
+      {
+        "permission": "bedrock-agentcore:InvokeAgentRuntimeCommand",
+        "description": "Must have permission to invoke commands on the created runtime"
+      }
+    ],
+    "additional": [
+      {
+        "permission": "iam:ListRoles",
+        "description": "Helpful for discovering AgentCore execution roles available to pass"
+      },
+      {
+        "permission": "iam:GetRole",
+        "description": "Useful for viewing role trust policies and attached permissions"
+      },
+      {
+        "permission": "bedrock-agentcore:GetAgentRuntime",
+        "description": "Useful for confirming the new runtime reached a READY state before invoking it"
+      }
+    ]
+  },
+  "prerequisites": {
+    "admin": [
+      "A role must exist that trusts bedrock-agentcore.amazonaws.com to assume it",
+      "The role must have administrative permissions (e.g., AdministratorAccess or equivalent)",
+      "An attacker-controlled container image must be available in ECR (the runtime pulls it on startup)"
+    ],
+    "lateral": [
+      "A role must exist that trusts bedrock-agentcore.amazonaws.com to assume it",
+      "An attacker-controlled container image must be available in ECR"
+    ]
+  },
+  "references": [
+    {
+      "title": "Pathfinding Cloud - bedrock-003",
+      "url": "https://pathfinding.cloud/paths/bedrock-003"
+    },
+    {
+      "title": "Mapping Every Privilege Escalation Path in AWS AgentCore",
+      "url": "https://www.beyondtrust.com/blog/entry/aws-agentcore-privilege-escalation"
+    },
+    {
+      "title": "Understanding Credentials Management in Amazon Bedrock AgentCore",
+      "url": "https://docs.aws.amazon.com/bedrock-agentcore/latest/devguide/security-credentials-management.html"
+    },
+    {
+      "title": "AgentCore Runtime execution role permissions",
+      "url": "https://docs.aws.amazon.com/bedrock-agentcore/latest/devguide/runtime-permissions.html"
+    }
+  ],
+  "relatedPaths": [
+    "bedrock-001",
+    "bedrock-004",
+    "bedrock-005",
+    "ec2-001",
+    "sagemaker-001"
+  ],
+  "mitre": {
+    "tactics": [
+      "TA0004 - Privilege Escalation",
+      "TA0006 - Credential Access"
+    ],
+    "techniques": [
+      "T1098.001 - Account Manipulation: Additional Cloud Credentials",
+      "T1552.005 - Unsecured Credentials: Cloud Instance Metadata API"
+    ]
+  },
+  "options": [
+    {
+      "name": "EXECUTION_ROLE_ARN",
+      "description": "ARN of the IAM role to pass to the new runtime as its execution role; must trust bedrock-agentcore.amazonaws.com",
+      "required": true,
+      "mockValue": "arn:aws:iam::123456789012:role/TargetRoleName"
+    },
+    {
+      "name": "CONTAINER_URI",
+      "description": "ECR image URI for the runtime (e.g., <account>.dkr.ecr.<region>.amazonaws.com/<repo>:<tag>); the image is always built and pushed by pathrunner \u2014 set this to control which ECR repo is used, or leave empty to auto-find/create the attacker ECR repo",
+      "required": false,
+      "mockValue": "123456789012.dkr.ecr.us-east-1.amazonaws.com/target-image:latest"
+    },
+    {
+      "name": "REGION",
+      "description": "AWS region to create the runtime in",
+      "required": false,
+      "default": "us-east-1"
+    },
+    {
+      "name": "RUNTIME_NAME",
+      "description": "Name for the new AgentCore Runtime (auto-generated if not set)",
+      "required": false,
+      "mockValue": "target-resource-name"
+    },
+    {
+      "name": "PAYLOAD",
+      "description": "Payload to run inside the runtime microVM via InvokeAgentRuntimeCommand (exfil/response or backdoor/attach-policy)",
+      "required": false,
+      "default": "exfil/response"
+    },
+    {
+      "name": "CLEANUP",
+      "description": "Whether to delete the runtime after credential extraction. Defaults to false because the starting identity typically lacks bedrock-agentcore:DeleteAgentRuntime; use 'workspace cleanup' with the extracted admin identity instead.",
+      "required": false,
+      "default": "false"
+    }
+  ],
+  "payloads": [
+    {
+      "name": "backdoor/attach-policy",
+      "description": "Attach AdministratorAccess (or custom policy) to an IAM user/role using the execution role's boto3 credentials",
+      "slug": "bedrock-backdoor-attach-policy",
+      "qualifiedName": "bedrock:backdoor/attach-policy",
+      "service": "bedrock",
+      "tags": [
+        "bedrock",
+        "python",
+        "backdoor"
+      ]
+    },
+    {
+      "name": "exfil/mmds",
+      "description": "Extract execution-role credentials from the MicroVM Metadata Service (MMDS) at 169.254.169.254",
+      "slug": "bedrock-exfil-mmds",
+      "qualifiedName": "bedrock:exfil/mmds",
+      "service": "bedrock",
+      "tags": [
+        "bedrock",
+        "python",
+        "exfil",
+        "response"
+      ]
+    }
+  ],
+  "cliSteps": [
+    "pathrunner use bedrock-003",
+    "pathrunner show payloads",
+    "pathrunner set PAYLOAD backdoor/attach-policy",
+    "pathrunner set EXECUTION_ROLE_ARN arn:aws:iam::123456789012:role/TargetRoleName",
+    "pathrunner set TARGET_ARN arn:aws:iam::123456789012:role/TargetRoleName",
+    "pathrunner exploit"
+  ],
+  "labSlug": null,
+  "gifs": [
+    {
+      "name": "bedrock-003",
+      "ext": "webm"
+    }
+  ]
+}
