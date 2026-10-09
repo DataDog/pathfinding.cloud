@@ -1100,7 +1100,7 @@ function showPathDetails(path) {
 
         <div class="detail-section">
             ${createHeadingWithAnchor('Exploitation Steps')}
-            ${renderExploitationSteps(path.exploitationSteps)}
+            ${renderExploitationSteps(path.exploitationSteps, path.id)}
         </div>
 
         ${path.learningEnvironments ? `
@@ -1511,7 +1511,7 @@ function renderMarkdown(text) {
 }
 
 // Render exploitation steps with tabs for different tools
-function renderExploitationSteps(steps) {
+function renderExploitationSteps(steps, pathId) {
     // Check if new format (dict) or legacy format (list)
     if (Array.isArray(steps)) {
         // Legacy format: render as simple list
@@ -1552,8 +1552,21 @@ function renderExploitationSteps(steps) {
         </button>
     `).join('');
 
+    // For the Pathrunner tab, prepend a note pointing to the installation guide
+    // and the module's full reference page in the /pathrunner/ section. Only
+    // shown when we know the path id (always, for real paths).
+    const pathrunnerNote = pathId ? `
+        <div class="pathrunner-steps-note">
+            New to Pathrunner? Start with the
+            <a href="/pathrunner/getting-started">installation &amp; getting started guide</a>.
+            For options, payloads, and the full command reference, see the
+            <a href="/pathrunner/modules/${escapeHtml(pathId)}">${escapeHtml(pathId.toUpperCase())} module page</a>.
+        </div>
+    ` : '';
+
     const contentHtml = tools.map((tool, index) => `
         <div id="${uniqueId}-${tool}" class="tab-content ${index === 0 ? 'active' : ''}" data-tab-group="${uniqueId}">
+            ${tool === 'pathrunner' ? pathrunnerNote : ''}
             ${steps[tool].map(step => `
                 <div class="step-item">
                     <div class="step-header"><span class="step-number">Step ${step.step}</span> - ${escapeHtml(step.description)}</div>

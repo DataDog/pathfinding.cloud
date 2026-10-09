@@ -208,10 +208,6 @@ function renderLanding() {
             <div class="pr-card-desc">${escapeHtml(c.desc)}</div>
         </a>`).join('');
 
-    const versionLine = gen.pathrunnerVersion
-        ? `<div class="pr-version">pathrunner ${escapeHtml(gen.pathrunnerVersion)} &middot; reference schema v${escapeHtml(gen.schemaVersion || '?')}</div>`
-        : '';
-
     landing.innerHTML = `
         <div class="pr-hero">
             <h1>Pathrunner</h1>
@@ -222,7 +218,6 @@ function renderLanding() {
                 <div class="pr-stat"><span class="pr-stat-num">${escapeHtml(counts.services ?? '-')}</span><span class="pr-stat-label">AWS Services</span></div>
                 <div class="pr-stat"><span class="pr-stat-num">${escapeHtml(counts.commands ?? '-')}</span><span class="pr-stat-label">Commands</span></div>
             </div>
-            ${versionLine}
         </div>
         <div class="pr-search-bar">
             <input type="text" id="pr-search" placeholder="Search modules, payloads, and commands..." autocomplete="off">
@@ -556,6 +551,24 @@ function panel(title, bodyHtml) {
     return `<section class="pr-panel">${title ? `<h2 class="pr-panel-title">${escapeHtml(title)}</h2>` : ''}${bodyHtml}</section>`;
 }
 
+// Highlight the argument portion of a pathrunner command (everything after the
+// verb). Shared by the CLI and REPL step renderers so both colour `set NAME value`
+// and plain args identically.
+function prCommandRestHtml(verb, rest) {
+    if (verb === 'set' && rest.length) {
+        // "set NAME value..." — colour the option name distinctly from its value.
+        const optName = rest[0];
+        const optValue = rest.slice(1).join(' ');
+        let html = `<span class="pr-cli-opt">${escapeHtml(optName)}</span>`;
+        if (optValue) html += ` <span class="pr-cli-val">${escapeHtml(optValue)}</span>`;
+        return html;
+    }
+    if (rest.length) {
+        return `<span class="pr-cli-arg">${escapeHtml(rest.join(' '))}</span>`;
+    }
+    return '';
+}
+
 // Render one cliStep (e.g. "pathrunner set ROLE_ARN arn:aws:...") as a single
 // syntax-highlighted terminal line. The leading "$" prompt is presentational
 // only — it is never part of the copied text. Highlighting is intentionally
@@ -566,16 +579,7 @@ function cliStepLine(step) {
     const bin = tokens[0] || '';          // "pathrunner"
     const verb = tokens[1] || '';         // use | show | set | exploit
     const rest = tokens.slice(2);
-    let restHtml = '';
-    if (verb === 'set' && rest.length) {
-        // "set NAME value..." — colour the option name distinctly from its value.
-        const optName = rest[0];
-        const optValue = rest.slice(1).join(' ');
-        restHtml = `<span class="pr-cli-opt">${escapeHtml(optName)}</span>`;
-        if (optValue) restHtml += ` <span class="pr-cli-val">${escapeHtml(optValue)}</span>`;
-    } else if (rest.length) {
-        restHtml = `<span class="pr-cli-arg">${escapeHtml(rest.join(' '))}</span>`;
-    }
+    const restHtml = prCommandRestHtml(verb, rest);
     const isExploit = verb === 'exploit';
     const verbHtml = verb ? ` <span class="pr-cli-verb">${escapeHtml(verb)}</span>` : '';
     return `<span class="pr-cli-line${isExploit ? ' pr-cli-fire' : ''}">` +
@@ -584,6 +588,48 @@ function cliStepLine(step) {
         (restHtml ? ` ${restHtml}` : '') +
         (isExploit ? ` <span class="pr-cli-comment"># runs the attack</span>` : '') +
         `</span>`;
+}
+
+// Render one REPL command (e.g. "set ROLE_ARN arn:aws:...") as it is typed inside
+// the interactive pathrunner REPL — no "pathrunner" binary prefix, with a ">"
+// prompt. The prompt is presentational and never part of the copied text.
+function replStepLine(step) {
+    const tokens = String(step).trim().split(/\s+/);
+    const verb = tokens[0] || '';         // use | show | set | exploit
+    const rest = tokens.slice(1);
+    const restHtml = prCommandRestHtml(verb, rest);
+    const isExploit = verb === 'exploit';
+    const verbHtml = verb ? `<span class="pr-cli-verb">${escapeHtml(verb)}</span>` : '';
+    return `<span class="pr-cli-line${isExploit ? ' pr-cli-fire' : ''}">` +
+        `<span class="pr-cli-prompt">&gt;</span> ` +
+        verbHtml +
+        (restHtml ? ` ${restHtml}` : '') +
+        (isExploit ? ` <span class="pr-cli-comment"># runs the attack</span>` : '') +
+        `</span>`;
+}
+
+// Build the copy-pastable REPL workflow block from a module's cliSteps: the same
+// commands as the CLI block, but as typed inside the interactive REPL (launch
+// `pathrunner`, then the bare commands with the "pathrunner" prefix stripped).
+// This mirrors how the demo recording is produced. Copy yields the bare REPL
+// commands — the launch line is presentational, like the prompts.
+function replWorkflowBlock(mod) {
+    const steps = mod.cliSteps || [];
+    if (!steps.length) return '';
+    const replSteps = steps.map((s) => String(s).replace(/^pathrunner\s+/, ''));
+    const launchHtml = `<span class="pr-cli-line">` +
+        `<span class="pr-cli-prompt">$</span> ` +
+        `<span class="pr-cli-bin">pathrunner</span> ` +
+        `<span class="pr-cli-comment"># launch the interactive REPL</span></span>`;
+    // Join with no separator: each line is a display:block span, so a literal
+    // newline between them inside <pre> would render as an extra blank line.
+    const linesHtml = launchHtml + replSteps.map(replStepLine).join('');
+    const raw = replSteps.join('\n');
+    return `<div class="pr-cli">
+        <button type="button" class="pr-cli-copy" data-cli="${escapeHtml(raw)}" onclick="prCopyCli(this)">Copy</button>
+        <pre class="pr-cli-body"><code>${linesHtml}</code></pre>
+        <p class="pr-cli-note">Run <span class="pr-mono">pathrunner</span> to enter the REPL, then type these commands. Mock values are placeholders — swap in your target's real ARNs.</p>
+    </div>`;
 }
 
 // Build the copy-pastable CLI workflow block from a module's cliSteps: the exact
@@ -601,7 +647,7 @@ function cliWorkflowBlock(mod) {
     return `<div class="pr-cli">
         <button type="button" class="pr-cli-copy" data-cli="${escapeHtml(raw)}" onclick="prCopyCli(this)">Copy</button>
         <pre class="pr-cli-body"><code>${linesHtml}</code></pre>
-        <p class="pr-cli-note">Mock values are placeholders — swap in your target's real ARNs. The demo above stops before <span class="pr-mono">pathrunner exploit</span>.</p>
+        <p class="pr-cli-note">Mock values are placeholders — swap in your target's real ARNs. The demo below stops before <span class="pr-mono">pathrunner exploit</span>.</p>
     </div>`;
 }
 
@@ -665,15 +711,21 @@ function renderModuleDetail(mod) {
         <div class="pr-xref-row">${xrefs}</div>`;
     html += `<section class="pr-panel">${overviewBody}</section>`;
 
-    // ── Demo: the per-module VHS recording (use module + show options + show
-    // payloads), keyed by module id. Rendered when the GIF has been produced. ──
-    const gifs = gifsBlock(mod);
-    if (gifs) html += panel('REPL mode workflow', gifs);
+    // ── REPL mode workflow: the commands as typed inside the interactive REPL
+    // (launch `pathrunner`, then the bare commands), derived from cliSteps. ──
+    const repl = replWorkflowBlock(mod);
+    if (repl) html += panel('REPL mode workflow', repl);
 
-    // ── CLI workflow: the copy-pastable one-shot commands (mock values filled
-    // in, payload pre-selected) that reproduce this module end-to-end. ──
+    // ── CLI mode workflow: the copy-pastable one-shot commands (mock values
+    // filled in, payload pre-selected) that reproduce this module end-to-end. ──
     const cli = cliWorkflowBlock(mod);
     if (cli) html += panel('CLI mode workflow', cli);
+
+    // ── Demo: the per-module VHS recording (use module + show options + show
+    // payloads), keyed by module id. Rendered when the recording has been
+    // produced; it visually walks through the REPL workflow above. ──
+    const gifs = gifsBlock(mod);
+    if (gifs) html += panel('Demo', gifs);
 
     // ── Options ──
     html += panel('Options',
