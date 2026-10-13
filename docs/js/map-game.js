@@ -11,15 +11,12 @@
 // start/pause/complete overlay screens.
 // The HTML panel handles: node details, mission briefing, commands.
 
-// ---- Play Online: flip to true when the API Gateway / Lambda backend is deployed ----
-// When false, all labs show "Coming Soon" tease. When true, labs with
-// supportsOnlineMode: true in their YAML will open a live terminal session.
-const PLAY_ONLINE_GLOBALLY_ENABLED = false;
-
-// ---- Demo/dev mode: when true, the terminal uses mock responses instead of a real API ----
-// Set PLAY_ONLINE_GLOBALLY_ENABLED = true and this = true to test the terminal UI locally.
-// Flip both to false (and set per-lab supportsOnlineMode: true) when the real backend is ready.
-const PLAY_ONLINE_MOCK_MODE = false;
+// ---- Play Online: live labs through pathfinding-backend and Cybr ----
+// When false, all labs show the "Coming Soon" tease. When true, labs with
+// supportsOnlineMode: true in their YAML open the live lab panel. It is on
+// automatically for local development (localhost) so the flow can be tested
+// against a local backend before it is enabled for everyone.
+const PLAY_ONLINE_GLOBALLY_ENABLED = ['localhost', '127.0.0.1'].includes(window.location.hostname);
 
 // ---- Preload pixel font for arcade start overlay ----
 (function () {
@@ -3821,7 +3818,7 @@ function buildPlayingButtons(w, h, state) {
     }
 
     // Play Online button — always in the bottom bar (bottom-left)
-    const labOnlineEnabled = PLAY_ONLINE_GLOBALLY_ENABLED && (PLAY_ONLINE_MOCK_MODE || !!state.lab?.supportsOnlineMode);
+    const labOnlineEnabled = PLAY_ONLINE_GLOBALLY_ENABLED && !!state.lab?.supportsOnlineMode && !!window.pfAccount;
     buttons.push({
         id: 'play-online',
         x: playOnlineX, y: btnY,
@@ -8275,7 +8272,24 @@ function toggleComingSoonTerminal(state) {
     state._redraw();
 }
 
-// Open or close the live xterm terminal (used when PLAY_ONLINE_GLOBALLY_ENABLED is true).
+// ============================================================
+// Play Online: live Cybr lab sessions
+// ============================================================
+// The Play Online panel drives one lab deployment through pathfinding-backend
+// (see window.pfAccount in pf-account.js):
+//   launch -> wait until ready -> connection details + web terminal
+//   -> submit the flag (or mark complete) -> end the lab.
+// The backend holds the Cybr API key and checks that the deployment belongs to
+// this browser's session; the browser only ever sends the lab slug.
+//
+// Lab credentials and terminal output are marked data-dd-privacy="hidden" so
+// Datadog session replay never records them.
+
+const CYBR_TERMINAL_MODULE = '/js/vendor/cybr-labs-sdk-0.1.1/terminal.js';
+const CYBR_TERMINAL_XTERM_MODULE = '/js/vendor/cybr-labs-sdk-0.1.1/terminal-xterm.js';
+const LAB_STATUS_POLL_MS = 5000;
+
+// Open or close the live lab panel (used when online play is enabled for the lab).
 async function togglePlayOnlineTerminal(state) {
     if (state.terminalOpen) {
         closePlayOnlineTerminal(state);
@@ -8283,28 +8297,7 @@ async function togglePlayOnlineTerminal(state) {
     }
     skipToObjective(state);
     initTerminalPanel(state);
-
-    // Show header immediately while xterm loads
-    const panel = state._terminalPanelEl;
-    panel.innerHTML = `
-        <div class="mg-terminal-header">
-            <div class="mg-terminal-header-title">
-                <span class="mg-terminal-status-dot"></span>
-                <span>Lab Terminal &mdash; ${state.lab.displayName || state.lab.name || state.lab.slug || ''}</span>
-            </div>
-            <div class="mg-terminal-header-actions">
-                <button class="mg-terminal-btn mg-terminal-expand-btn" title="Expand to full height">&#x2B06;</button>
-                <button class="mg-terminal-close" title="Close">&times;</button>
-            </div>
-        </div>
-        <div class="mg-terminal-viewport" id="${state._mapId}-terminal-vp"></div>`;
-
-    panel.querySelector('.mg-terminal-close').addEventListener('click', () => {
-        closePlayOnlineTerminal(state);
-    });
-    panel.querySelector('.mg-terminal-expand-btn').addEventListener('click', () => {
-        toggleExpandTerminal(state);
-    });
+    if (!state._liveLabPanelBuilt) buildLiveLabPanel(state);
 
     state._terminalResizeHandleEl.classList.add('visible');
     state._layoutEl.classList.add('terminal-open');
@@ -8312,103 +8305,310 @@ async function togglePlayOnlineTerminal(state) {
     state.buttons = buildPlayingButtons(state._w, state._h, state);
     state._redraw();
 
-    await loadXterm();
+    await refreshLiveLab(state);
+}
 
-    // Only create a new Terminal instance if one doesn't exist yet (survives open/close cycles)
-    if (!state._xtermInstance) {
-        const term = new window.Terminal({
-            theme: {
-                background: '#0d1117',
-                foreground: '#c9d1d9',
-                cursor: '#58a6ff',
-                selectionBackground: '#264f78',
-            },
-            fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace',
-            fontSize: 13,
-            cursorBlink: true,
-            convertEol: true,
-            scrollback: 2000,
-        });
+// Builds the panel once per game instance; later opens reuse it so the xterm
+// instance keeps its DOM node.
+function buildLiveLabPanel(state) {
+    const panel = state._terminalPanelEl;
+    const labName = state.lab.displayName || state.lab.name || state.lab.slug || '';
+    panel.innerHTML = `
+        <div class="mg-terminal-header">
+            <div class="mg-terminal-header-title">
+                <span class="mg-terminal-status-dot"></span>
+                <span class="mg-live-lab-title"></span>
+            </div>
+            <div class="mg-terminal-header-actions">
+                <button class="mg-terminal-btn mg-terminal-expand-btn" title="Expand to full height">&#x2B06;</button>
+                <button class="mg-terminal-close" title="Close">&times;</button>
+            </div>
+        </div>
+        <div class="mg-lab-controls"></div>
+        <div class="mg-lab-details" data-dd-privacy="hidden" hidden></div>
+        <div class="mg-terminal-viewport" data-dd-privacy="hidden" id="${state._mapId}-terminal-vp"></div>`;
+    panel.querySelector('.mg-live-lab-title').textContent = `Live Lab — ${labName}`;
+    panel.querySelector('.mg-terminal-close').addEventListener('click', () => closePlayOnlineTerminal(state));
+    panel.querySelector('.mg-terminal-expand-btn').addEventListener('click', () => toggleExpandTerminal(state));
+    state._liveLab = { phase: 'unknown', message: '' };
+    state._liveLabPanelBuilt = true;
+}
 
-        // addon-fit sizes the terminal to fill its container instead of
-        // defaulting to a fixed 80x24 grid that overflows or leaves gaps
-        const fitAddon = new window.FitAddon.FitAddon();
-        term.loadAddon(fitAddon);
+function liveLabPath(state, suffix) {
+    return `/labs/${encodeURIComponent(state.lab.slug)}/${suffix}`;
+}
 
-        const vp = document.getElementById(`${state._mapId}-terminal-vp`);
-        term.open(vp);
-        fitAddon.fit();
-        state._xtermFitAddon = fitAddon;
-
-        // Re-fit when the panel resizes (e.g. when the layout height changes)
-        const fitObserver = new ResizeObserver(() => fitAddon.fit());
-        fitObserver.observe(vp);
-        state._xtermFitObserver = fitObserver;
-
-        term.writeln('\x1b[1;32mPathfinding Labs Terminal\x1b[0m');
-        term.writeln('Type \x1b[33mhelp\x1b[0m for available commands.\r\n');
-        term.write('$ ');
-
-        let inputBuffer = '';
-        const cmdHistory = [];
-        let historyIdx = -1;
-
-        term.onData((data) => {
-            if (data === '\r') {
-                // Enter — async handler writes the next prompt after the response
-                term.writeln('');
-                const cmd = inputBuffer.trim();
-                inputBuffer = '';
-                if (cmd) {
-                    cmdHistory.unshift(cmd);
-                    historyIdx = -1;
-                    sendTerminalCommand(cmd, term, state);
-                } else {
-                    term.write('$ ');
-                }
-            } else if (data === '\x7f') {
-                // Backspace
-                if (inputBuffer.length > 0) {
-                    inputBuffer = inputBuffer.slice(0, -1);
-                    term.write('\b \b');
-                }
-            } else if (data === '\x1b[A') {
-                // Arrow up: history recall
-                if (cmdHistory.length > 0 && historyIdx < cmdHistory.length - 1) {
-                    historyIdx++;
-                    // Clear current line and write history entry
-                    term.write('\r\x1b[2K$ ' + cmdHistory[historyIdx]);
-                    inputBuffer = cmdHistory[historyIdx];
-                }
-            } else if (data === '\x1b[B') {
-                // Arrow down: history forward
-                if (historyIdx > 0) {
-                    historyIdx--;
-                    term.write('\r\x1b[2K$ ' + cmdHistory[historyIdx]);
-                    inputBuffer = cmdHistory[historyIdx];
-                } else if (historyIdx === 0) {
-                    historyIdx = -1;
-                    term.write('\r\x1b[2K$ ');
-                    inputBuffer = '';
-                }
-            } else if (data.charCodeAt(0) >= 32) {
-                // Printable character
-                inputBuffer += data;
-                term.write(data);
-            }
-        });
-
-        state._xtermInstance = term;
-    } else {
-        // Re-attach existing terminal to the new DOM node and re-fit
-        const vp = document.getElementById(`${state._mapId}-terminal-vp`);
-        state._xtermInstance.open(vp);
-        state._xtermFitAddon?.fit();
+// Reads the deployment state from the backend and re-renders the panel.
+async function refreshLiveLab(state) {
+    const live = state._liveLab;
+    clearTimeout(live.pollTimer);
+    try {
+        const deployment = await window.pfAccount.api('GET', liveLabPath(state, 'deployment'));
+        Object.assign(live, deployment, { phase: deployment.state });
+    } catch (error) {
+        if (error.status === 404) live.phase = 'none';
+        else { live.phase = live.phase === 'unknown' ? 'none' : live.phase; live.message = error.message; }
     }
+    if (live.phase === 'ended') live.phase = 'none';
+    renderLiveLab(state);
+
+    if (!state.terminalOpen) return;
+    if (live.phase === 'starting' || live.phase === 'loading') {
+        live.pollTimer = setTimeout(() => refreshLiveLab(state), LAB_STATUS_POLL_MS);
+    }
+    if (live.phase === 'ready' && live.webTerminal) connectLiveTerminal(state);
+    if (live.phase === 'none') disconnectLiveTerminal(state);
+}
+
+function renderLiveLab(state) {
+    const live = state._liveLab;
+    const { createElement } = window.pfAccount;
+    const controls = state._terminalPanelEl.querySelector('.mg-lab-controls');
+    const statusLine = createElement('div', { className: 'mg-lab-status' });
+    const actions = [];
+    clearInterval(live.countdownTimer);
+
+    if (live.phase === 'none' || live.phase === 'unknown') {
+        statusLine.append('Launch a private, temporary AWS environment for this lab. ');
+        actions.push(createElement('button', { className: 'pf-button pf-button-primary', onClick: () => launchLiveLab(state) }, 'Launch lab'));
+    } else if (live.phase === 'starting' || live.phase === 'loading') {
+        const minutes = live.estimatedLaunchSeconds ? Math.max(1, Math.round(live.estimatedLaunchSeconds / 60)) : null;
+        statusLine.append(createElement('strong', {}, 'Starting your lab… '),
+            minutes ? `This usually takes about ${minutes} minute${minutes === 1 ? '' : 's'}.` : 'This can take a few minutes.');
+        actions.push(createElement('button', { className: 'pf-button', onClick: () => endLiveLab(state) }, 'End lab'));
+    } else if (live.phase === 'ready') {
+        const remaining = createElement('span', {});
+        statusLine.append(createElement('strong', {}, 'Lab ready. '), remaining);
+        const updateRemaining = () => {
+            if (!live.endsAt) { remaining.textContent = ''; return; }
+            const secondsLeft = Math.max(0, Math.round((new Date(live.endsAt).getTime() - Date.now()) / 1000));
+            remaining.textContent = `Ends in ${Math.floor(secondsLeft / 60)}:${String(secondsLeft % 60).padStart(2, '0')}.`;
+            if (secondsLeft === 0) { clearInterval(live.countdownTimer); refreshLiveLab(state); }
+        };
+        updateRemaining();
+        live.countdownTimer = setInterval(updateRemaining, 1000);
+
+        if (live.ctf) actions.push(buildFlagForm(state));
+        else actions.push(createElement('button', { className: 'pf-button pf-button-primary', onClick: () => markLiveLabComplete(state) }, 'Mark complete'));
+        actions.push(createElement('button', { className: 'pf-button', onClick: () => endLiveLab(state) }, 'End lab'));
+    }
+
+    const me = window.pfAccount.current();
+    if (me.kind !== 'user' && window.pfAccount.signInAvailable()) {
+        actions.push(createElement('button', { className: 'pf-button', onClick: () => window.pfAccount.openSignIn() }, 'Sign in to save progress'));
+    }
+    const message = live.message ? createElement('div', { className: 'mg-lab-status', role: 'status' }, live.message) : null;
+    controls.replaceChildren(statusLine, ...actions, ...(message ? [message] : []));
+    renderLiveLabDetails(state);
+}
+
+// Connection details (console URL, credentials). Sensitive values stay masked
+// until the learner reveals them.
+function renderLiveLabDetails(state) {
+    const live = state._liveLab;
+    const { createElement } = window.pfAccount;
+    const details = state._terminalPanelEl.querySelector('.mg-lab-details');
+    const rows = live.phase === 'ready' && Array.isArray(live.outputs) ? live.outputs : [];
+    details.hidden = rows.length === 0;
+    details.replaceChildren(...rows.flatMap((row) => {
+        const valueEl = createElement('code', {}, row.sensitive ? '•'.repeat(12) : row.value);
+        let revealed = !row.sensitive;
+        const buttons = createElement('span', {},
+            row.sensitive ? createElement('button', { onClick: (event) => {
+                revealed = !revealed;
+                valueEl.textContent = revealed ? row.value : '•'.repeat(12);
+                event.target.textContent = revealed ? 'Hide' : 'Show';
+            } }, 'Show') : null,
+            createElement('button', { onClick: async (event) => {
+                try { await navigator.clipboard.writeText(row.value); event.target.textContent = 'Copied'; } catch (_) { /* clipboard blocked */ }
+            } }, 'Copy'));
+        const label = row.kind === 'console_url' || row.kind === 'web_app'
+            ? createElement('a', { href: row.value, target: '_blank', rel: 'noopener noreferrer' }, row.label)
+            : createElement('span', {}, row.label);
+        return [label, valueEl, buttons];
+    }));
+}
+
+function buildFlagForm(state) {
+    const { createElement } = window.pfAccount;
+    const input = createElement('input', { type: 'text', placeholder: 'Enter flag', 'aria-label': 'Flag', autocomplete: 'off', spellcheck: 'false' });
+    const submit = createElement('button', { type: 'submit', className: 'pf-button pf-button-primary' }, 'Submit flag');
+    return createElement('form', { className: 'pf-flag-form', 'data-dd-privacy': 'hidden', onSubmit: async (event) => {
+        event.preventDefault();
+        if (!input.value.trim()) return;
+        submit.disabled = true;
+        try {
+            const result = await window.pfAccount.api('POST', liveLabPath(state, 'flag'), { flag: input.value });
+            if (result.correct) {
+                input.value = '';
+                await celebrateCompletion(state, result);
+            } else {
+                window.pfAccount.showToast('That flag is not correct. Keep going.', 'error');
+            }
+        } catch (error) {
+            window.pfAccount.showToast(error.message, 'error');
+        } finally {
+            submit.disabled = false;
+        }
+    } }, input, submit);
+}
+
+async function markLiveLabComplete(state) {
+    try {
+        const result = await window.pfAccount.api('POST', liveLabPath(state, 'complete'));
+        await celebrateCompletion(state, result);
+    } catch (error) {
+        window.pfAccount.showToast(error.message, 'error');
+    }
+}
+
+// Shared success handling for flags and non-CTF completions.
+async function celebrateCompletion(state, result) {
+    if (result.signInToSave) {
+        if (window.pfAccount.signInAvailable()) {
+            window.pfAccount.openSignIn('Lab completed! Sign in to keep this completion.');
+        } else {
+            window.pfAccount.showToast('Lab completed!', 'success');
+        }
+        return;
+    }
+    if (result.alreadyCompleted) {
+        window.pfAccount.showToast('Correct. You had already completed this lab.', 'success');
+        return;
+    }
+    window.pfAccount.showToast(`Lab completed! You have now completed ${result.completedCount} lab${result.completedCount === 1 ? '' : 's'}.`, 'success');
+    const me = await window.pfAccount.refresh();
+    if (result.newMilestone) {
+        if (me.username) window.pfAccount.shareMilestone(result.newMilestone);
+        else window.pfAccount.openUsernameModal();
+    }
+}
+
+async function launchLiveLab(state) {
+    const live = state._liveLab;
+    live.message = '';
+    try {
+        const launched = await window.pfAccount.api('POST', liveLabPath(state, 'launch'));
+        Object.assign(live, launched, { phase: launched.state });
+        // Launching as a guest creates a session; refresh the header control.
+        window.pfAccount.refresh();
+    } catch (error) {
+        if (error.code === 'LAUNCH_IN_PROGRESS') live.phase = 'starting';
+        else live.message = error.message;
+        if (error.code === 'GUEST_LAUNCH_LIMIT') window.pfAccount.openSignIn(error.message);
+    }
+    await refreshLiveLab(state);
+}
+
+async function endLiveLab(state) {
+    if (!window.confirm('End this lab? Its AWS environment is destroyed. Your completion is kept.')) return;
+    try {
+        await window.pfAccount.api('POST', liveLabPath(state, 'end'));
+    } catch (error) {
+        if (error.status !== 404) window.pfAccount.showToast(error.message, 'error');
+    }
+    disconnectLiveTerminal(state);
+    state._liveLab.phase = 'none';
+    await refreshLiveLab(state);
+}
+
+// Creates the xterm instance once per game instance.
+function ensureXtermInstance(state) {
+    if (state._xtermInstance) return state._xtermInstance;
+    const term = new window.Terminal({
+        theme: {
+            background: '#0d1117',
+            foreground: '#c9d1d9',
+            cursor: '#58a6ff',
+            selectionBackground: '#264f78',
+        },
+        fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace',
+        fontSize: 13,
+        cursorBlink: true,
+        scrollback: 5000,
+    });
+    // addon-fit sizes the terminal to fill its container instead of
+    // defaulting to a fixed 80x24 grid that overflows or leaves gaps
+    const fitAddon = new window.FitAddon.FitAddon();
+    term.loadAddon(fitAddon);
+    term.open(document.getElementById(`${state._mapId}-terminal-vp`));
+    fitAddon.fit();
+    state._xtermInstance = term;
+    state._xtermFitAddon = fitAddon;
+    return term;
+}
+
+// Connects the Cybr web terminal: our backend issues short-lived session
+// credentials for this browser's own deployment, and the browser then opens
+// a WebSocket straight to the lab's terminal host.
+async function connectLiveTerminal(state) {
+    const live = state._liveLab;
+    if (live.terminalClient || live.terminalConnecting) return;
+    live.terminalConnecting = true;
+    try {
+        await loadXterm();
+        const [terminalModule, xtermModule] = await Promise.all([
+            import(CYBR_TERMINAL_MODULE),
+            import(CYBR_TERMINAL_XTERM_MODULE),
+        ]);
+        const term = ensureXtermInstance(state);
+        const sessionUrl = window.pfAccount.apiBaseUrl + liveLabPath(state, 'terminal-session');
+        const client = terminalModule.createTerminalClient({
+            getSession: (signal) => terminalModule.fetchTerminalSession(sessionUrl, { signal, credentials: 'include' }),
+            ...xtermModule.xtermCallbacks(term),
+            autoReconnect: true,
+            onReconnect: (info) => {
+                const reconnectText = {
+                    starting: 'Starting the terminal…',
+                    session_expired: 'Reopening the terminal…',
+                    connection_lost: 'Connection lost. Trying again…',
+                    refused: 'The terminal is busy. Trying again…',
+                };
+                setLiveLabMessage(state, reconnectText[info.cause] || 'Reconnecting…');
+            },
+            onStateChange: (terminalState) => {
+                if (terminalState === 'open') setLiveLabMessage(state, '');
+            },
+            onError: (error) => setLiveLabMessage(state, error.message),
+            onClose: (info) => {
+                disconnectLiveTerminal(state);
+                if (info.labEnded) refreshLiveLab(state);
+                else if (info.retryable) setLiveLabMessage(state, 'The terminal closed. Close and reopen this panel to reconnect.');
+            },
+        });
+        live.terminalClient = client;
+        live.detachTerminal = xtermModule.attachXterm(term, client, { fit: state._xtermFitAddon });
+        // connect() rejects when the terminal cannot open; the callbacks above
+        // already report it, so this only prevents an unhandled rejection.
+        client.connect().catch(() => {});
+    } finally {
+        live.terminalConnecting = false;
+    }
+}
+
+function disconnectLiveTerminal(state) {
+    const live = state._liveLab;
+    if (!live) return;
+    if (live.detachTerminal) live.detachTerminal();
+    if (live.terminalClient) live.terminalClient.dispose();
+    live.detachTerminal = null;
+    live.terminalClient = null;
+}
+
+function setLiveLabMessage(state, message) {
+    state._liveLab.message = message;
+    renderLiveLab(state);
 }
 
 // Collapse the terminal panel and update button state.
 function closePlayOnlineTerminal(state) {
+    // The lab keeps running when the panel closes; only this page's polling
+    // and terminal connection stop. Reopening reconnects (output is replayed).
+    if (state._liveLab) {
+        clearTimeout(state._liveLab.pollTimer);
+        clearInterval(state._liveLab.countdownTimer);
+        disconnectLiveTerminal(state);
+    }
     // Reset any manual height so CSS transition starts clean next open
     if (state._terminalPanelEl) state._terminalPanelEl.style.height = '';
     if (state._terminalResizeHandleEl) state._terminalResizeHandleEl.classList.remove('visible');
@@ -8503,181 +8703,6 @@ function updateExpandButton(state) {
         btn.title = 'Expand to full height';
     }
 }
-
-// Send a command to the lab's API endpoint and echo the response in the terminal.
-async function sendTerminalCommand(command, term, state) {
-    if (PLAY_ONLINE_MOCK_MODE) {
-        await sendTerminalCommandMock(command, term, state);
-        return;
-    }
-
-    // Built-in help command (always available, no API needed)
-    if (command === 'help') {
-        term.writeln('Available commands are provided by the deployed lab environment.');
-        term.writeln('Type any AWS CLI command or lab-specific command to interact with the lab.\r\n');
-        term.write('$ ');
-        return;
-    }
-
-    const endpoint = state.lab?.onlineEndpoint;
-    if (!endpoint) {
-        term.writeln('\x1b[33mNo API endpoint configured for this lab.\x1b[0m\r\n');
-        term.write('$ ');
-        return;
-    }
-
-    try {
-        term.write('\x1b[2m...running\x1b[0m');
-        const resp = await fetch(endpoint, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ command }),
-        });
-        // Clear the "...running" text before printing response
-        term.write('\r\x1b[2K');
-        const text = await resp.text();
-        const lines = text.split('\n');
-        lines.forEach((line, i) => {
-            if (i < lines.length - 1) term.writeln(line);
-            else if (line) term.writeln(line);
-        });
-    } catch (err) {
-        term.write('\r\x1b[2K');
-        term.writeln(`\x1b[31mError: ${err.message}\x1b[0m`);
-    }
-
-    term.write('$ ');
-    term.scrollToBottom();
-}
-
-// Mock backend for local demo/testing. Simulates an AWS lab environment.
-async function sendTerminalCommandMock(command, term, state) {
-    // Simulate a short network round-trip
-    term.write('\x1b[2m  executing...\x1b[0m');
-    await new Promise(r => setTimeout(r, 280 + Math.random() * 220));
-    term.write('\r\x1b[2K');
-
-    const cmd = command.trim();
-    const acct = '123456789012';
-    const region = 'us-east-1';
-    const slug = state.lab?.slug || 'lab';
-
-    // Derive lab-specific names from the slug if possible
-    const labPrefix = `pl-prod-${slug}`;
-    const startingUser = `${labPrefix}-starting-user`;
-    const targetRole = `${labPrefix}-target-role`;
-
-    // Match common AWS CLI patterns and return plausible mock output
-    if (cmd === 'help' || cmd === '--help') {
-        term.writeln('\x1b[1mPathfinding Labs Terminal\x1b[0m');
-        term.writeln('Connected to lab: \x1b[33m' + (state.lab?.displayName || slug) + '\x1b[0m\r\n');
-        term.writeln('Your starting identity has been pre-configured. Try:');
-        term.writeln('  \x1b[32maws sts get-caller-identity\x1b[0m');
-        term.writeln('  \x1b[32maws iam list-attached-user-policies --user-name <user>\x1b[0m');
-        term.writeln('  \x1b[32maws iam get-policy-version ...\x1b[0m');
-        term.writeln('  \x1b[32maws apprunner create-service ...\x1b[0m');
-
-    } else if (cmd.match(/aws sts get-caller-identity/)) {
-        term.writeln('{');
-        term.writeln(`    "UserId": "AIDA${randHex(16).toUpperCase()}",`);
-        term.writeln(`    "Account": "${acct}",`);
-        term.writeln(`    "Arn": "arn:aws:iam::${acct}:user/${startingUser}"`);
-        term.writeln('}');
-
-    } else if (cmd.match(/aws iam list-attached-user-policies/)) {
-        term.writeln('{');
-        term.writeln('    "AttachedPolicies": [');
-        term.writeln('        {');
-        term.writeln(`            "PolicyName": "${labPrefix}-starting-policy",`);
-        term.writeln(`            "PolicyArn": "arn:aws:iam::${acct}:policy/${labPrefix}-starting-policy"`);
-        term.writeln('        }');
-        term.writeln('    ]');
-        term.writeln('}');
-
-    } else if (cmd.match(/aws iam get-policy-version|aws iam get-policy/)) {
-        term.writeln('{');
-        term.writeln('    "PolicyVersion": {');
-        term.writeln('        "Document": {');
-        term.writeln('            "Version": "2012-10-17",');
-        term.writeln('            "Statement": [');
-        term.writeln('                { "Effect": "Allow", "Action": ["apprunner:CreateService", "iam:PassRole", "iam:CreateServiceLinkedRole"], "Resource": "*" }');
-        term.writeln('            ]');
-        term.writeln('        }');
-        term.writeln('    }');
-        term.writeln('}');
-
-    } else if (cmd.match(/aws iam list-roles/)) {
-        term.writeln('{');
-        term.writeln('    "Roles": [');
-        term.writeln('        {');
-        term.writeln(`            "RoleName": "${targetRole}",`);
-        term.writeln(`            "Arn": "arn:aws:iam::${acct}:role/${targetRole}",`);
-        term.writeln('            "AssumeRolePolicyDocument": { "Statement": [{ "Principal": { "Service": "tasks.apprunner.amazonaws.com" } }] }');
-        term.writeln('        }');
-        term.writeln('    ]');
-        term.writeln('}');
-
-    } else if (cmd.match(/aws apprunner create-service/)) {
-        const svcId = randHex(8);
-        term.writeln('{');
-        term.writeln('    "Service": {');
-        term.writeln(`        "ServiceName": "pl-exploit-${svcId}",`);
-        term.writeln(`        "ServiceId": "${svcId}",`);
-        term.writeln(`        "ServiceArn": "arn:aws:apprunner:${region}:${acct}:service/pl-exploit-${svcId}/${randHex(16)}",`);
-        term.writeln('        "Status": "OPERATION_IN_PROGRESS"');
-        term.writeln('    },');
-        term.writeln('    "OperationId": "' + randHex(32) + '"');
-        term.writeln('}');
-        term.writeln('\x1b[33m[i] Service is starting — poll with: aws apprunner describe-service --service-arn <arn>\x1b[0m');
-
-    } else if (cmd.match(/aws apprunner describe-service/)) {
-        term.writeln('{');
-        term.writeln('    "Service": {');
-        term.writeln('        "Status": "RUNNING",');
-        term.writeln(`        "ServiceUrl": "https://${randHex(8)}.${region}.awsapprunner.com"`);
-        term.writeln('    }');
-        term.writeln('}');
-
-    } else if (cmd.match(/aws iam attach-user-policy|aws iam put-user-policy/)) {
-        // This is the payload command that would run inside App Runner
-        term.writeln('\x1b[32m[+] Policy attached successfully.\x1b[0m');
-        term.writeln('\x1b[32m[+] Starting user now has AdministratorAccess.\x1b[0m');
-
-    } else if (cmd.match(/aws sts assume-role/)) {
-        term.writeln('{');
-        term.writeln('    "Credentials": {');
-        term.writeln(`        "AccessKeyId": "ASIA${randHex(16).toUpperCase()}",`);
-        term.writeln(`        "SecretAccessKey": "${randHex(40)}",`);
-        term.writeln(`        "SessionToken": "${randHex(100)}",`);
-        term.writeln(`        "Expiration": "${new Date(Date.now() + 3600000).toISOString()}"`);
-        term.writeln('    }');
-        term.writeln('}');
-
-    } else if (cmd.match(/^aws /)) {
-        // Generic AWS CLI passthrough for anything else
-        term.writeln('\x1b[33mCommand forwarded to lab environment.\x1b[0m');
-        term.writeln('{}');
-
-    } else if (cmd === 'whoami') {
-        term.writeln(startingUser);
-
-    } else if (cmd === 'clear') {
-        term.clear();
-
-    } else {
-        term.writeln(`\x1b[31mbash: ${cmd.split(' ')[0]}: command not found\x1b[0m`);
-        term.writeln('Type \x1b[33mhelp\x1b[0m to see available commands.');
-    }
-
-    term.writeln('');
-    term.write('$ ');
-    term.scrollToBottom();
-}
-
-function randHex(len) {
-    return Array.from({length: len}, () => Math.floor(Math.random() * 16).toString(16)).join('');
-}
-
 
 // ---- Static Map Preview (for Single Page Mode) ----
 
