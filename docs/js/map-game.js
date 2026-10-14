@@ -18,6 +18,21 @@
 // against a local backend before it is enabled for everyone.
 const PLAY_ONLINE_GLOBALLY_ENABLED = ['localhost', '127.0.0.1'].includes(window.location.hostname);
 
+// True when this lab can be played live in the browser right now. Online labs
+// get "online-first" defaults: the page opens in Game Mode (labs.js), the
+// arcade splash, setup panel and idle hint arrow are skipped, and the terminal
+// panel opens on load (idle until the learner starts the lab).
+function isOnlineLab(lab) {
+    return PLAY_ONLINE_GLOBALLY_ENABLED && !!lab?.supportsOnlineMode && !!window.pfAccount;
+}
+
+// Schema-only check that does not require window.pfAccount. Use this at
+// initMapGame time (pfAccount may not be loaded yet) to set game-state defaults
+// that depend on the lab supporting online play, independent of auth state.
+function isOnlineLabBySchema(lab) {
+    return PLAY_ONLINE_GLOBALLY_ENABLED && !!lab?.supportsOnlineMode;
+}
+
 // ---- Preload pixel font for arcade start overlay ----
 (function () {
     if (!document.getElementById('arcade-font-link')) {
@@ -225,6 +240,7 @@ function getIslandBottomY(pos, islandRadius, spriteKey, footprintWidth) {
 // wooded, or fortress target style).
 function pickIslandSpriteKey(state, nodeIdx) {
     const node = state.nodes?.[nodeIdx];
+    if (node?._companionStyle) return 'resource'; // toggled to companion-islet appearance
     const isTarget = !!node?.isTarget;
     const targetStyle = state.targetStyle || 'flag-shape';
     if (isTarget && targetStyle === 'flag-shape') return 'target';
@@ -728,6 +744,7 @@ function drawGameIslandLabels(ctx, w, h, state) {
         const isFirst = i === 0, isLast = i === lastIdx;
         const node = nodes[i];
 
+        if (node?._hideLabel) return null;
         let label = node?.displayLabel || '';
         if (!label) label = isFirst ? 'Startington' : isLast ? 'Targetville' : (node?.label || '');
         if (label.length > 20) label = label.substring(0, 18) + '...';
@@ -738,7 +755,14 @@ function drawGameIslandLabels(ctx, w, h, state) {
             ? awsIconSprites.get(node?.subType || '') : null;
 
         const spriteKey = pickIslandSpriteKey(state, i);
-        const labelY   = getIslandBottomY(pos, ir, spriteKey) - 20;
+        // When a node is toggled to companion-islet appearance, the drawn sprite
+        // uses the companion radius (56 * 0.8^shrinkSteps), not the principal ir.
+        // Pass that same radius to getIslandBottomY so the label plate anchors
+        // directly below the smaller islet rather than below the (larger) principal footprint.
+        const effectiveIr = node?._companionStyle
+            ? (56 * Math.pow(0.8, Math.max(0, nodes.length - 3)))
+            : ir;
+        const labelY   = getIslandBottomY(pos, effectiveIr, spriteKey) - 20;
         const plateTop = labelY - 2;
 
         let plateW, plateH, subtitleText = '';
@@ -1402,6 +1426,25 @@ function drawCompanions(ctx, w, h, state) {
 
         const pos = companionPositions[ci];
         if (!pos || (pos.x === 0 && pos.y === 0)) continue;
+
+        // Toggled to principal-island appearance — draw as a full island without branch line.
+        if (companions[ci]?._principalStyle) {
+            ctx.save();
+            const ir = state.islandRadius || 52;
+            const seed = ci * 997 + 1;
+            const p = state.palette;
+            const drawIslandTerrain = islandStyleRenderers[state.islandStyle] || drawIslandClassic;
+            drawIslandTerrain(ctx, pos, ir, seed, p, false, false);
+            switch (state.effectiveIconStyle || state.iconStyle || 'crest') {
+                case 'on-island': drawIconOnIsland(ctx, pos, ir, companions[ci]); break;
+                case 'building':  drawIconBuilding(ctx,  pos, ir, companions[ci], p); break;
+                case 'banner':    drawIconBanner(ctx,    pos, ir, companions[ci], p); break;
+                case 'crest':
+                default:          drawIconCrest(ctx,     pos, ir, companions[ci], p); break;
+            }
+            ctx.restore();
+            continue;
+        }
 
         const companionAlpha = isHeliRevealed(state, `companion:${ci}`) ? 1 : 0.25;
 
@@ -3111,6 +3154,7 @@ function syncRevealToNavigation(state) {
 // Drawn in screen space so size stays constant regardless of zoom.
 function drawIdleHintArrow(ctx, w, h, state) {
     if (state.arcadeStartShown) return; // don't show while arcade start overlay is up
+    if (state.online) return; // online labs start on the overview with the terminal open; no nudging
     if (!state._heliRevealSeq) return;
     if (state._heliRevealNextIdx >= state._heliRevealSeq.length) return;
     if (!state._heliLastRevealTime) return;
@@ -3371,10 +3415,12 @@ function renderMapGame(ctx, w, h, state) {
             drawPlayingHUD(ctx, w, h, state);  // HUD stays in screen space
             drawIdleHintArrow(ctx, w, h, state); // screen space, above HUD
             // Helicopter drawn last so it always renders above the HUD
-            withViewTransform(() => {
-                const planePos = getPlanePosition(state);
-                drawPlaneIndicator(ctx, planePos.x, planePos.y, state.palette, state.planeStyle);
-            });
+            if (state.heliEnabled) {
+                withViewTransform(() => {
+                    const planePos = getPlanePosition(state);
+                    drawPlaneIndicator(ctx, planePos.x, planePos.y, state.palette, state.planeStyle);
+                });
+            }
             // Path violation flash: brief red vignette when helicopter strays off the path
             if (state._pathViolationTime) {
                 const flashAge = (Date.now() - state._pathViolationTime) / 1000;
@@ -3405,11 +3451,12 @@ function renderMapGame(ctx, w, h, state) {
             });
             drawPlayingHUD(ctx, w, h, state);
             drawCompleteOverlay(ctx, w, h, state);
-            // Helicopter drawn last so it always renders above the overlay
-            withViewTransform(() => {
-                const planePos = getPlanePosition(state);
-                drawPlaneIndicator(ctx, planePos.x, planePos.y, state.palette, state.planeStyle);
-            });
+            if (state.heliEnabled) {
+                withViewTransform(() => {
+                    const planePos = getPlanePosition(state);
+                    drawPlaneIndicator(ctx, planePos.x, planePos.y, state.palette, state.planeStyle);
+                });
+            }
             break;
     }
 }
@@ -3818,7 +3865,7 @@ function buildPlayingButtons(w, h, state) {
     }
 
     // Play Online button — always in the bottom bar (bottom-left)
-    const labOnlineEnabled = PLAY_ONLINE_GLOBALLY_ENABLED && !!state.lab?.supportsOnlineMode && !!window.pfAccount;
+    const labOnlineEnabled = isOnlineLab(state.lab);
     buttons.push({
         id: 'play-online',
         x: playOnlineX, y: btnY,
@@ -6460,7 +6507,11 @@ function drawGameMap(ctx, w, h, state) {
         const isFortressTarget = isTargetIsland && targetStyle === 'fortress';
         const isFlagShapeTarget = isTargetIsland && targetStyle === 'flag-shape';
 
-        if (isFlagShapeTarget) {
+        if (nodes[i]?._companionStyle) {
+            // Toggled to companion-islet appearance — draw as a compact rocky islet.
+            // drawCompanionIslet handles both the terrain sprite and the AWS icon crest.
+            drawCompanionIslet(ctx, pos, nodes[i], false, state, i);
+        } else if (isFlagShapeTarget) {
             // Flag-shape draws its own terrain (with gold grass built in)
             // and its own mast. Normal icon dispatch still runs below.
             drawTargetIslandFlagShape(ctx, pos, islandRadius, seed, p);
@@ -6484,7 +6535,8 @@ function drawGameMap(ctx, w, h, state) {
         // Flag-shape target's procedural fallback uses a smaller silhouette
         // and shrinks the icon to 60%; the sprite-backed flag-shape island
         // is normal-sized, so when the sprite is loaded we use full radius.
-        if (!isFortressTarget && !state._thumbnailMode) {
+        // Also skip for _companionStyle nodes — drawCompanionIslet drew the icon.
+        if (!isFortressTarget && !state._thumbnailMode && !nodes[i]?._companionStyle) {
             const targetSpriteLoaded = !!islandSprites.images.target;
             const iconRadius = (isFlagShapeTarget && !targetSpriteLoaded)
                 ? islandRadius * 0.60
@@ -6651,6 +6703,27 @@ function clampIslandsAboveHud(positions, nodeCount, canvasH, baseIslandRadius) {
     positions.forEach(p => { p.y = Math.min(p.y, maxY); });
 }
 
+// V5 (capcom top-left HUD) game layout for a w x h canvas: cloud band, base
+// island radius and island positions. Shared by initMapGame and its resize
+// handler so a short canvas (terminal panel open at ~50%) still fits the map.
+//
+// - Cloud band: on tall canvases clouds sit between the title (~110px) and
+//   h*0.42, leaving ~55% of the height for islands. Below 560px the band
+//   shrinks toward the title so the islands get the room instead.
+// - Base island radius: w*0.09 (~73 at ~810px wide) scales islands up on wide
+//   screens; the h*0.16 cap keeps island bodies + label plates above the HUD
+//   bar on short canvases.
+function computeV5Layout(nodeCount, w, h) {
+    const tallCloudBottom = h * 0.42;
+    const cloudBottom = Math.round(h >= 560
+        ? tallCloudBottom
+        : Math.max(105, tallCloudBottom - (560 - h) * 0.35));
+    const baseRadius = Math.round(Math.max(45, Math.min(120, w * 0.09, h * 0.16)));
+    const positions = computeMapLayout(nodeCount, w, h, cloudBottom + 20, 110);
+    clampIslandsAboveHud(positions, nodeCount, h, baseRadius);
+    return { cloudBottom, baseRadius, positions };
+}
+
 function initMapGame(mapId, nodes, edges, companions, lab) {
     const canvas = document.getElementById(`${mapId}-canvas`);
     const panelEl = document.getElementById(`${mapId}-panel`);
@@ -6688,17 +6761,10 @@ function initMapGame(mapId, nodes, edges, companions, lab) {
     awsIconSprites.preload(nodes);
     if (companions) awsIconSprites.preload(companions);
 
-    // V5 (capcom top-left) is the default. Clouds sit between y=110 (just below
-    // the title text stack, which tops out at ~95px) and cloudBandBottom. Islands
-    // start 20px below cloudBandBottom so cloud and island zones don't overlap.
-    // Using h*0.42 gives a generous cloud band while still leaving ~55% of the canvas height for islands.
-    const cloudBandBottom = Math.round(h * 0.42);
-    // Base island radius scales with canvas width so islands feel appropriately
-    // sized on large screens and in fullscreen. w*0.09 yields ~73 at ~810px
-    // (matching the old fixed value) and grows for wider canvases.
-    const initialBaseRadius = Math.round(Math.max(45, Math.min(120, w * 0.09)));
-    const positions = computeMapLayout(nodes.length, w, h, cloudBandBottom + 20, 110);
-    clampIslandsAboveHud(positions, nodes.length, h, initialBaseRadius);
+    // V5 (capcom top-left) is the default HUD. Clouds sit between y=110 (just
+    // below the title text stack) and cloudBandBottom; islands start 20px below.
+    const { cloudBottom: cloudBandBottom, baseRadius: initialBaseRadius, positions } =
+        computeV5Layout(nodes.length, w, h);
     // Pre-compute the island radius (same formula as drawGameMap) so companion
     // placement can avoid landing on main island bodies.
     const initShrinkSteps = Math.max(0, nodes.length - 3);
@@ -6710,9 +6776,15 @@ function initMapGame(mapId, nodes, edges, companions, lab) {
     const decorations = allDecorations.filter(d => d.type !== 'mountain');
     const palette = getGameUIPalette();
 
+    // Use the schema-only check so defaults are correct even when pfAccount
+    // hasn't finished loading yet (it's deferred and may load after initMapGame).
+    const online = isOnlineLabBySchema(lab);
+
     const state = {
         screen: 'playing',       // skip start screen, go directly to map
-        arcadeStartShown: true,  // show NES-style start overlay until any key/click
+        online,                  // online-first defaults (see isOnlineLabBySchema)
+        arcadeStartShown: !online, // show NES-style start overlay until any key/click
+        heliEnabled: !online,    // online labs: static map view, no helicopter navigation
         revealed: new Set(nodes.map((_, i) => i)),
         currentNode: 0,
         currentEdge: -1,         // index of the last completed edge (-1 = none)
@@ -6722,7 +6794,9 @@ function initMapGame(mapId, nodes, edges, companions, lab) {
         selectedEdge: null,
         selectedCompanion: null, // index into companions[] or null
         completeView: null,      // 'cspm' | 'cloudsiem' | null -- which defense panel to show
-        gameViewPhase: 'setup',  // 'setup' | 'overview' | 'navigation' -- controls initial flow
+        // 'setup' | 'overview' | 'navigation' -- controls initial flow. Online labs
+        // skip the self-hosted setup panel (still reachable from the Lab Setup button).
+        gameViewPhase: online ? 'overview' : 'setup',
         panelOverride: null,     // 'setup' | 'overview' | null -- temporary panel switch via buttons
         positions,
         companionPositions,
@@ -6827,9 +6901,15 @@ function initMapGame(mapId, nodes, edges, companions, lab) {
 
     // Build reveal sequence first so we can compute the starting position
     state._heliRevealSeq = buildRevealSequence(state.edges);
-    // lab-setup is already showing (gameViewPhase defaults to 'setup'), so pre-reveal it
-    state._heliRevealed = new Set(['hud:lab-setup']);
-    state._heliRevealNextIdx = 1; // next: 'hud:lab-overview'
+    // lab-setup is already showing (gameViewPhase defaults to 'setup'), so pre-reveal it.
+    // Online labs open on the overview, so it counts as revealed too.
+    if (state.online) {
+        state._heliRevealed = new Set(['hud:lab-setup', 'hud:lab-overview']);
+        state._heliRevealNextIdx = 2; // next: 'node:0'
+    } else {
+        state._heliRevealed = new Set(['hud:lab-setup']);
+        state._heliRevealNextIdx = 1; // next: 'hud:lab-overview'
+    }
 
     // Park helicopter above the lab-setup button; fall back to first island if button is hidden
     const _labSetupBtn = state.buttons.find(b => b.id === 'lab-setup');
@@ -6964,23 +7044,25 @@ function initMapGame(mapId, nodes, edges, companions, lab) {
 
             const keys = state._heliKeys;
             let dx = 0, dy = 0;
-            if (keys.ArrowLeft)  dx -= 1;
-            if (keys.ArrowRight) dx += 1;
-            if (keys.ArrowUp)    dy -= 1;
-            if (keys.ArrowDown)  dy += 1;
+            if (state.heliEnabled) {
+                if (keys.ArrowLeft)  dx -= 1;
+                if (keys.ArrowRight) dx += 1;
+                if (keys.ArrowUp)    dy -= 1;
+                if (keys.ArrowDown)  dy += 1;
 
-            // Add gamepad analog stick and d-pad to helicopter movement
-            const _gpAxis = state._gpAxis;
-            const _gpDpad = state._gpDpad;
-            if (_gpAxis) { dx += _gpAxis.x; dy += _gpAxis.y; }
-            if (_gpDpad) {
-                if (_gpDpad.left)  dx -= 1;
-                if (_gpDpad.right) dx += 1;
-                if (_gpDpad.up)    dy -= 1;
-                if (_gpDpad.down)  dy += 1;
+                // Add gamepad analog stick and d-pad to helicopter movement
+                const _gpAxis = state._gpAxis;
+                const _gpDpad = state._gpDpad;
+                if (_gpAxis) { dx += _gpAxis.x; dy += _gpAxis.y; }
+                if (_gpDpad) {
+                    if (_gpDpad.left)  dx -= 1;
+                    if (_gpDpad.right) dx += 1;
+                    if (_gpDpad.up)    dy -= 1;
+                    if (_gpDpad.down)  dy += 1;
+                }
+                dx = Math.max(-1, Math.min(1, dx));
+                dy = Math.max(-1, Math.min(1, dy));
             }
-            dx = Math.max(-1, Math.min(1, dx));
-            dy = Math.max(-1, Math.min(1, dy));
 
             let changed = false;
 
@@ -7003,6 +7085,7 @@ function initMapGame(mapId, nodes, edges, companions, lab) {
                 changed = true;
             }
 
+            if (state.heliEnabled) {
             // Visual helicopter center in world space (sprite offset after scale transform)
             const vx = state.heliPos.x + 21;
             const vy = state.heliPos.y - 60;
@@ -7258,6 +7341,7 @@ function initMapGame(mapId, nodes, edges, companions, lab) {
             if (state._pathViolationTime && Date.now() - state._pathViolationTime < 500) changed = true;
 
             if (changed) redraw();
+            } // end if (state.heliEnabled)
         }
 
         state._heliAnimFrame = requestAnimationFrame(tick);
@@ -7276,6 +7360,10 @@ function initMapGame(mapId, nodes, edges, companions, lab) {
     redraw();
     updateGamePanel(state);
 
+    // Online labs open with the terminal docked below the map. Opening only
+    // reads the deployment state; nothing launches until the learner types
+    // `start` or clicks Start lab.
+    if (state.online) togglePlayOnlineTerminal(state);
 
     // Returns screen-space (sx/sy) for HUD/button hit testing
     // and world-space (x/y) for island/edge/companion hit testing
@@ -7666,8 +7754,7 @@ function initMapGame(mapId, nodes, edges, companions, lab) {
             }
             if (state.screen === 'playing') {
                 // Clicking any map element (island, companion, edge) drops
-                // out of setup/overview into the per-node/edge navigation
-                // panel so the side page tracks the helicopter.
+                // out of setup/overview into the per-node/edge navigation panel.
                 state.gameViewPhase = 'navigation';
                 state.buttons = buildPlayingButtons(w, h, state);
             }
@@ -7677,6 +7764,13 @@ function initMapGame(mapId, nodes, edges, companions, lab) {
     }
 
     function onKeyDown(e) {
+        // Keys typed into the terminal, the flag box or any other form field
+        // belong to that field, not the game (e.g. "m" in "aws ssm" must not
+        // open the menu, and shell history arrows must not fly the helicopter).
+        if (e.target instanceof Element &&
+            e.target.closest('input, textarea, select, [contenteditable], .mg-terminal-panel')) {
+            return;
+        }
         // Dismiss arcade start overlay on any key press
         if (state.arcadeStartShown) {
             state.arcadeStartShown = false;
@@ -7909,7 +8003,7 @@ function initMapGame(mapId, nodes, edges, companions, lab) {
                     if (e.key === 'ArrowDown') panelEl.scrollTop += scrollAmount;
                     // Left/Right are not bound in panel mode — no horizontal scroll on the panel
                 }
-            } else {
+            } else if (state.heliEnabled) {
                 state._heliKeys[e.key] = true;
             }
         }
@@ -8098,20 +8192,17 @@ function initMapGame(mapId, nodes, edges, companions, lab) {
         canvas.style.height = h + 'px';
         ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
 
-        // Recompute base island radius for new canvas width
-        state._baseIslandRadius = Math.round(Math.max(45, Math.min(120, w * 0.09)));
-
         // Recompute layout for new dimensions, respecting the active HUD variant's margins.
         const resizeV = state.hudVariant || 0;
+        const resizeLayout = computeV5Layout(state.nodes.length, w, h);
+        state._baseIslandRadius = resizeLayout.baseRadius;
         if (resizeV === 4) {
             state.positions = computeMapLayout(state.nodes.length, w, h, 48, 230);
             const rd4 = generateMapDecorations(state.positions, w, h, 48, 180);
             state.decorations = rd4.filter(d => d.type !== 'mountain');
         } else if (resizeV === 5) {
-            const resizeCloudBottom = Math.round(h * 0.42);
-            state._cloudBottom = resizeCloudBottom;
-            state.positions = computeMapLayout(state.nodes.length, w, h, resizeCloudBottom + 20, 110);
-            clampIslandsAboveHud(state.positions, state.nodes.length, h, state._baseIslandRadius);
+            state._cloudBottom = resizeLayout.cloudBottom;
+            state.positions = resizeLayout.positions;
             const rd5 = generateMapDecorations(state.positions, w, h, 150, 56);
             state.decorations = rd5.filter(d => d.type !== 'mountain');
         } else {
@@ -8285,9 +8376,19 @@ function toggleComingSoonTerminal(state) {
 // Lab credentials and terminal output are marked data-dd-privacy="hidden" so
 // Datadog session replay never records them.
 
-const CYBR_TERMINAL_MODULE = '/js/vendor/cybr-labs-sdk-0.1.1/terminal.js';
-const CYBR_TERMINAL_XTERM_MODULE = '/js/vendor/cybr-labs-sdk-0.1.1/terminal-xterm.js';
+const CYBR_TERMINAL_MODULE = '/js/vendor/cybr-labs-sdk-0.1.2/terminal.js';
+const CYBR_TERMINAL_XTERM_MODULE = '/js/vendor/cybr-labs-sdk-0.1.2/terminal-xterm.js';
 const LAB_STATUS_POLL_MS = 5000;
+
+// Terminal visual constants (match cybr-lab.js reference POC)
+const HIDE_CURSOR = '\x1b[?25l';
+const SHOW_CURSOR = '\x1b[?25h';
+// Strip ANSI escapes to detect real visible output vs control sequences.
+const ANSI_RE = /\x1b(?:\[[0-?]*[ -\/]*[@-~]|\][^\x07\x1b]*(?:\x07|\x1b\\)|[@-Z\\-_])/g;
+const SPINNER_FRAMES = '⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏';
+const SPINNER_MS = 100;
+// Reveal the shell regardless after this many ms, even if no visible output arrived.
+const SHELL_REVEAL_FALLBACK_MS = 10000;
 
 // Open or close the live lab panel (used when online play is enabled for the lab).
 async function togglePlayOnlineTerminal(state) {
@@ -8297,13 +8398,35 @@ async function togglePlayOnlineTerminal(state) {
     }
     skipToObjective(state);
     initTerminalPanel(state);
-    if (!state._liveLabPanelBuilt) buildLiveLabPanel(state);
+    const fresh = !state._liveLabPanelBuilt;
+    if (fresh) buildLiveLabPanel(state);
 
     state._terminalResizeHandleEl.classList.add('visible');
     state._layoutEl.classList.add('terminal-open');
     state.terminalOpen = true;
+
+    // 50/50 split on first open (no prior drag height saved).
+    if (!state._terminalNormalHeight) {
+        const layoutH = state._layoutEl.getBoundingClientRect().height;
+        if (layoutH > 200) {
+            const half = Math.round(layoutH * 0.5);
+            state._terminalPanelEl.style.height = half + 'px';
+            state._terminalNormalHeight = half;
+        }
+    } else {
+        state._terminalPanelEl.style.height = state._terminalNormalHeight + 'px';
+    }
+
     state.buttons = buildPlayingButtons(state._w, state._h, state);
     state._redraw();
+
+    // Create xterm once so the idle banner can write immediately.
+    if (fresh) {
+        await loadXterm();
+        ensureXtermInstance(state);
+        renderIdleBanner(state);
+    }
+    state._xtermFitAddon?.fit();
 
     await refreshLiveLab(state);
 }
@@ -8313,24 +8436,32 @@ async function togglePlayOnlineTerminal(state) {
 function buildLiveLabPanel(state) {
     const panel = state._terminalPanelEl;
     const labName = state.lab.displayName || state.lab.name || state.lab.slug || '';
+    const vpId = `${state._mapId}-terminal-vp`;
     panel.innerHTML = `
-        <div class="mg-terminal-header">
+        <div class="mg-terminal-header mg-live-header">
             <div class="mg-terminal-header-title">
                 <span class="mg-terminal-status-dot"></span>
-                <span class="mg-live-lab-title"></span>
+                <span class="mg-live-lab-name">Live Lab — ${labName}</span>
+                <span class="mg-live-lab-status"></span>
+            </div>
+            <div class="mg-live-header-center">
+                <span class="mg-lab-countdown" hidden></span>
+                <button class="mg-terminal-btn mg-lab-values-btn" hidden>Values</button>
+                <div class="mg-live-flag-area" hidden data-dd-privacy="hidden"></div>
+                <div class="mg-live-action-area"></div>
             </div>
             <div class="mg-terminal-header-actions">
                 <button class="mg-terminal-btn mg-terminal-expand-btn" title="Expand to full height">&#x2B06;</button>
                 <button class="mg-terminal-close" title="Close">&times;</button>
             </div>
         </div>
-        <div class="mg-lab-controls"></div>
-        <div class="mg-lab-details" data-dd-privacy="hidden" hidden></div>
-        <div class="mg-terminal-viewport" data-dd-privacy="hidden" id="${state._mapId}-terminal-vp"></div>`;
-    panel.querySelector('.mg-live-lab-title').textContent = `Live Lab — ${labName}`;
+        <div class="mg-terminal-viewport" data-dd-privacy="hidden" id="${vpId}"></div>`;
+
     panel.querySelector('.mg-terminal-close').addEventListener('click', () => closePlayOnlineTerminal(state));
     panel.querySelector('.mg-terminal-expand-btn').addEventListener('click', () => toggleExpandTerminal(state));
-    state._liveLab = { phase: 'unknown', message: '' };
+    panel.querySelector('.mg-lab-values-btn').addEventListener('click', () => showValuesInTerminal(state));
+
+    state._liveLab = { phase: 'unknown' };
     state._liveLabPanelBuilt = true;
 }
 
@@ -8347,7 +8478,7 @@ async function refreshLiveLab(state) {
         Object.assign(live, deployment, { phase: deployment.state });
     } catch (error) {
         if (error.status === 404) live.phase = 'none';
-        else { live.phase = live.phase === 'unknown' ? 'none' : live.phase; live.message = error.message; }
+        else { live.phase = live.phase === 'unknown' ? 'none' : live.phase; live.errorMessage = error.message; }
     }
     if (live.phase === 'ended') live.phase = 'none';
     renderLiveLab(state);
@@ -8360,80 +8491,99 @@ async function refreshLiveLab(state) {
     if (live.phase === 'none') disconnectLiveTerminal(state);
 }
 
+// Updates the compact single-row header: status dot, status text, countdown,
+// Values button, flag form or Mark Complete, and Start/End action.
 function renderLiveLab(state) {
     const live = state._liveLab;
+    const panel = state._terminalPanelEl;
+    if (!panel) return;
     const { createElement } = window.pfAccount;
-    const controls = state._terminalPanelEl.querySelector('.mg-lab-controls');
-    const statusLine = createElement('div', { className: 'mg-lab-status' });
-    const actions = [];
+
     clearInterval(live.countdownTimer);
+    const dot = panel.querySelector('.mg-terminal-status-dot');
+    const statusText = panel.querySelector('.mg-live-lab-status');
+    const countdownEl = panel.querySelector('.mg-lab-countdown');
+    const valuesBtn = panel.querySelector('.mg-lab-values-btn');
+    const flagArea = panel.querySelector('.mg-live-flag-area');
+    const actionArea = panel.querySelector('.mg-live-action-area');
+
+    // Status dot color: amber=starting, red=error, green=ready, grey=idle
+    dot.className = 'mg-terminal-status-dot';
+    if (live.phase === 'starting' || live.phase === 'loading') dot.classList.add('starting');
+    else if (live.phase === 'error') dot.classList.add('error');
+    else if (live.phase === 'ready') dot.classList.add('ready');
+    // idle / unknown: default grey (no extra class)
 
     if (live.phase === 'none' || live.phase === 'unknown') {
-        statusLine.append('Launch a private, temporary AWS environment for this lab. ');
-        actions.push(createElement('button', { className: 'pf-button pf-button-primary', onClick: () => launchLiveLab(state) }, 'Launch lab'));
+        statusText.textContent = '';
+        countdownEl.hidden = true;
+        valuesBtn.hidden = true;
+        flagArea.hidden = true;
+        const signInBtn = !window.pfAccount.current() || window.pfAccount.current().kind !== 'user'
+            ? (window.pfAccount.signInAvailable()
+                ? createElement('button', { className: 'mg-terminal-btn', onClick: () => window.pfAccount.openSignIn() }, 'Sign in')
+                : null)
+            : null;
+        actionArea.replaceChildren(...[
+            createElement('button', { className: 'mg-terminal-btn mg-btn-primary', onClick: () => launchLiveLab(state) }, 'Start lab'),
+            ...(signInBtn ? [signInBtn] : []),
+        ]);
     } else if (live.phase === 'starting' || live.phase === 'loading') {
         const minutes = live.estimatedLaunchSeconds ? Math.max(1, Math.round(live.estimatedLaunchSeconds / 60)) : null;
-        statusLine.append(createElement('strong', {}, 'Starting your lab… '),
-            minutes ? `This usually takes about ${minutes} minute${minutes === 1 ? '' : 's'}.` : 'This can take a few minutes.');
-        actions.push(createElement('button', { className: 'pf-button', onClick: () => endLiveLab(state) }, 'End lab'));
+        statusText.textContent = minutes ? `Provisioning — about ${minutes} min` : 'Provisioning…';
+        countdownEl.hidden = true;
+        valuesBtn.hidden = true;
+        flagArea.hidden = true;
+        actionArea.replaceChildren(
+            createElement('button', { className: 'mg-terminal-btn', onClick: () => endLiveLab(state) }, 'End lab'),
+        );
     } else if (live.phase === 'ready') {
-        const remaining = createElement('span', {});
-        statusLine.append(createElement('strong', {}, 'Lab ready. '), remaining);
-        const updateRemaining = () => {
-            if (!live.endsAt) { remaining.textContent = ''; return; }
-            const secondsLeft = Math.max(0, Math.round((new Date(live.endsAt).getTime() - Date.now()) / 1000));
-            remaining.textContent = `Ends in ${Math.floor(secondsLeft / 60)}:${String(secondsLeft % 60).padStart(2, '0')}.`;
-            if (secondsLeft === 0) { clearInterval(live.countdownTimer); refreshLiveLab(state); }
-        };
-        updateRemaining();
-        live.countdownTimer = setInterval(updateRemaining, 1000);
+        statusText.textContent = 'Connected';
+        valuesBtn.hidden = !Array.isArray(live.outputs) || live.outputs.length === 0;
 
-        if (live.ctf) actions.push(buildFlagForm(state));
-        else actions.push(createElement('button', { className: 'pf-button pf-button-primary', onClick: () => markLiveLabComplete(state) }, 'Mark complete'));
-        actions.push(createElement('button', { className: 'pf-button', onClick: () => endLiveLab(state) }, 'End lab'));
+        // Countdown: MM:SS remaining
+        if (live.endsAt) {
+            countdownEl.hidden = false;
+            const tick = () => {
+                const secondsLeft = Math.max(0, Math.round((new Date(live.endsAt).getTime() - Date.now()) / 1000));
+                countdownEl.textContent = `${Math.floor(secondsLeft / 60)}:${String(secondsLeft % 60).padStart(2, '0')}`;
+                if (secondsLeft === 0) { clearInterval(live.countdownTimer); refreshLiveLab(state); }
+            };
+            tick();
+            live.countdownTimer = setInterval(tick, 1000);
+        } else {
+            countdownEl.hidden = true;
+        }
+
+        // Flag form or Mark Complete
+        flagArea.hidden = false;
+        if (live.ctf) {
+            flagArea.replaceChildren(buildFlagForm(state));
+        } else {
+            flagArea.replaceChildren(
+                createElement('button', { className: 'mg-terminal-btn mg-btn-primary', onClick: () => markLiveLabComplete(state) }, 'Mark complete'),
+            );
+        }
+
+        actionArea.replaceChildren(
+            createElement('button', { className: 'mg-terminal-btn', onClick: () => endLiveLab(state) }, 'End lab'),
+        );
     }
 
-    const me = window.pfAccount.current();
-    if (me.kind !== 'user' && window.pfAccount.signInAvailable()) {
-        actions.push(createElement('button', { className: 'pf-button', onClick: () => window.pfAccount.openSignIn() }, 'Sign in to save progress'));
+    // Error messages write into the terminal as colored lines (handled in connectLiveTerminal),
+    // but also surface in the status text for quick scanning.
+    if (live.errorMessage) {
+        statusText.textContent = live.errorMessage;
+        live.errorMessage = null;
     }
-    const message = live.message ? createElement('div', { className: 'mg-lab-status', role: 'status' }, live.message) : null;
-    controls.replaceChildren(statusLine, ...actions, ...(message ? [message] : []));
-    renderLiveLabDetails(state);
 }
 
-// Connection details (console URL, credentials). Sensitive values stay masked
-// until the learner reveals them.
-function renderLiveLabDetails(state) {
-    const live = state._liveLab;
-    const { createElement } = window.pfAccount;
-    const details = state._terminalPanelEl.querySelector('.mg-lab-details');
-    const rows = live.phase === 'ready' && Array.isArray(live.outputs) ? live.outputs : [];
-    details.hidden = rows.length === 0;
-    details.replaceChildren(...rows.flatMap((row) => {
-        const valueEl = createElement('code', {}, row.sensitive ? '•'.repeat(12) : row.value);
-        let revealed = !row.sensitive;
-        const buttons = createElement('span', {},
-            row.sensitive ? createElement('button', { onClick: (event) => {
-                revealed = !revealed;
-                valueEl.textContent = revealed ? row.value : '•'.repeat(12);
-                event.target.textContent = revealed ? 'Hide' : 'Show';
-            } }, 'Show') : null,
-            createElement('button', { onClick: async (event) => {
-                try { await navigator.clipboard.writeText(row.value); event.target.textContent = 'Copied'; } catch (_) { /* clipboard blocked */ }
-            } }, 'Copy'));
-        const label = row.kind === 'console_url' || row.kind === 'web_app'
-            ? createElement('a', { href: row.value, target: '_blank', rel: 'noopener noreferrer' }, row.label)
-            : createElement('span', {}, row.label);
-        return [label, valueEl, buttons];
-    }));
-}
-
+// Populates the values drawer overlay (credentials, console URLs, etc.).
 function buildFlagForm(state) {
     const { createElement } = window.pfAccount;
-    const input = createElement('input', { type: 'text', placeholder: 'Enter flag', 'aria-label': 'Flag', autocomplete: 'off', spellcheck: 'false' });
-    const submit = createElement('button', { type: 'submit', className: 'pf-button pf-button-primary' }, 'Submit flag');
-    return createElement('form', { className: 'pf-flag-form', 'data-dd-privacy': 'hidden', onSubmit: async (event) => {
+    const input = createElement('input', { type: 'text', placeholder: 'Flag', 'aria-label': 'Flag', autocomplete: 'off', spellcheck: 'false', className: 'mg-flag-input' });
+    const submit = createElement('button', { type: 'submit', className: 'mg-terminal-btn mg-btn-primary' }, 'Submit');
+    return createElement('form', { className: 'mg-flag-form', onSubmit: async (event) => {
         event.preventDefault();
         if (!input.value.trim()) return;
         submit.disabled = true;
@@ -8486,17 +8636,26 @@ async function celebrateCompletion(state, result) {
 
 async function launchLiveLab(state) {
     const live = state._liveLab;
-    live.message = '';
+    // Switch to provisioning spinner in the terminal immediately.
+    startTermSpinner(state, 'Launching…');
+    setLiveLabStatus(state, 'starting', 'Launching…');
     try {
         const launched = await window.pfAccount.api('POST', liveLabPath(state, 'launch'));
         Object.assign(live, launched, { phase: launched.state });
-        // Launching as a guest creates a session; refresh the header control.
+        // Launching as a guest creates a session; refresh the page header.
         window.pfAccount.refresh();
     } catch (error) {
-        if (error.code === 'LAUNCH_IN_PROGRESS') live.phase = 'starting';
-        else live.message = error.message;
-        if (error.code === 'GUEST_LAUNCH_LIMIT') window.pfAccount.openSignIn(error.message);
+        stopTermSpinner(state);
+        if (error.code === 'LAUNCH_IN_PROGRESS') {
+            live.phase = 'starting';
+        } else {
+            live.phase = live.phase === 'unknown' ? 'none' : live.phase;
+            const term = state._xtermInstance;
+            if (term) term.writeln(`\r\n\x1b[31m${error.message}\x1b[0m`);
+            if (error.code === 'GUEST_LAUNCH_LIMIT') window.pfAccount.openSignIn(error.message);
+        }
     }
+    renderLiveLab(state);
     await refreshLiveLab(state);
 }
 
@@ -8509,10 +8668,14 @@ async function endLiveLab(state) {
     }
     disconnectLiveTerminal(state);
     state._liveLab.phase = 'none';
+    renderLiveLab(state);
+    // Return to idle banner so learner can relaunch without closing the panel.
+    renderIdleBanner(state);
     await refreshLiveLab(state);
 }
 
-// Creates the xterm instance once per game instance.
+// Creates the xterm instance once per game instance. Must be called after
+// loadXterm() so window.Terminal and window.FitAddon are available.
 function ensureXtermInstance(state) {
     if (state._xtermInstance) return state._xtermInstance;
     const term = new window.Terminal({
@@ -8526,9 +8689,9 @@ function ensureXtermInstance(state) {
         fontSize: 13,
         cursorBlink: true,
         scrollback: 5000,
+        // Stdin disabled until the remote shell is ready to accept input.
+        disableStdin: true,
     });
-    // addon-fit sizes the terminal to fill its container instead of
-    // defaulting to a fixed 80x24 grid that overflows or leaves gaps
     const fitAddon = new window.FitAddon.FitAddon();
     term.loadAddon(fitAddon);
     term.open(document.getElementById(`${state._mapId}-terminal-vp`));
@@ -8538,6 +8701,96 @@ function ensureXtermInstance(state) {
     return term;
 }
 
+// Writes the idle banner and wires a minimal local line editor.
+// Typing "start" and pressing Enter calls launchLiveLab; any other input
+// prints a one-line hint. Disposed when the lab launches.
+function renderIdleBanner(state) {
+    const term = state._xtermInstance;
+    if (!term) return;
+    // Cancel any previous idle input handler.
+    if (state._idleInputSub) { state._idleInputSub.dispose(); state._idleInputSub = null; }
+    term.reset();
+    term.write(HIDE_CURSOR);
+    term.writeln('\x1b[2mThis lab runs in a private, temporary AWS environment.\x1b[0m');
+    term.writeln('\x1b[2mType \x1b[0m\x1b[1mstart\x1b[0m\x1b[2m to launch it. Type \x1b[0m\x1b[1mvalues\x1b[0m\x1b[2m to see details about the lab including account ARNs and resource names.\x1b[0m');
+    term.writeln('');
+    term.write('\x1b[2m$ \x1b[0m');
+    term.options.disableStdin = false;
+
+    let lineBuffer = '';
+    state._idleInputSub = term.onData((data) => {
+        if (data === '\r') {
+            // Enter
+            term.writeln('');
+            const cmd = lineBuffer.trim();
+            lineBuffer = '';
+            if (cmd === 'start') {
+                if (state._idleInputSub) { state._idleInputSub.dispose(); state._idleInputSub = null; }
+                launchLiveLab(state);
+            } else if (cmd === 'values') {
+                showValuesInTerminal(state);
+                term.write('\x1b[2m$ \x1b[0m');
+            } else {
+                term.writeln('\x1b[2mCommands: \x1b[0m\x1b[1mstart\x1b[0m\x1b[2m  \x1b[0m\x1b[1mvalues\x1b[0m');
+                term.write('\x1b[2m$ \x1b[0m');
+            }
+        } else if (data === '\x7f' || data === '\b') {
+            // Backspace
+            if (lineBuffer.length > 0) {
+                lineBuffer = lineBuffer.slice(0, -1);
+                term.write('\b \b');
+            }
+        } else if (data >= ' ') {
+            // Printable character
+            lineBuffer += data;
+            term.write(data);
+        }
+    });
+}
+
+// Prints lab output values directly in the terminal. Shown in both the idle
+// and connected phases so learners can copy credentials without leaving xterm.
+function showValuesInTerminal(state) {
+    const term = state._xtermInstance;
+    if (!term) return;
+    const outputs = state._liveLab?.outputs;
+    if (!Array.isArray(outputs) || outputs.length === 0) {
+        term.writeln('\x1b[2mNo values available yet — start the lab first.\x1b[0m');
+        return;
+    }
+    const maxLen = Math.max(...outputs.map(r => (r.label || '').length));
+    term.writeln('\x1b[2m── Lab Values ──\x1b[0m');
+    for (const row of outputs) {
+        const label = (row.label || '').padEnd(maxLen);
+        term.writeln(`  \x1b[2m${label}\x1b[0m  \x1b[33m${row.value || ''}\x1b[0m`);
+    }
+    term.writeln('');
+}
+
+// Braille spinner written into xterm so the learner never sees a stuck screen
+// during a long Terraform provisioning wait.
+function startTermSpinner(state, label) {
+    stopTermSpinner(state);
+    const term = state._xtermInstance;
+    if (!term) return;
+    term.options.disableStdin = true;
+    term.write(HIDE_CURSOR);
+    let frame = 0;
+    const draw = () => term.write(`\r\x1b[2K\x1b[36m${SPINNER_FRAMES[frame++ % SPINNER_FRAMES.length]}\x1b[0m \x1b[2m${label}\x1b[0m`);
+    draw();
+    state._spinnerTimer = setInterval(draw, SPINNER_MS);
+}
+
+function stopTermSpinner(state, finalLine) {
+    if (!state._spinnerTimer) return;
+    clearInterval(state._spinnerTimer);
+    state._spinnerTimer = null;
+    const term = state._xtermInstance;
+    if (!term) return;
+    term.write('\r\x1b[2K');
+    if (finalLine) term.writeln(`\x1b[2m${finalLine}\x1b[0m`);
+}
+
 // Connects the Cybr web terminal: our backend issues short-lived session
 // credentials for this browser's own deployment, and the browser then opens
 // a WebSocket straight to the lab's terminal host.
@@ -8545,59 +8798,188 @@ async function connectLiveTerminal(state) {
     const live = state._liveLab;
     if (live.terminalClient || live.terminalConnecting) return;
     live.terminalConnecting = true;
-    try {
-        await loadXterm();
-        const [terminalModule, xtermModule] = await Promise.all([
-            import(CYBR_TERMINAL_MODULE),
-            import(CYBR_TERMINAL_XTERM_MODULE),
-        ]);
-        const term = ensureXtermInstance(state);
-        const sessionUrl = window.pfAccount.apiBaseUrl + liveLabPath(state, 'terminal-session');
-        const client = terminalModule.createTerminalClient({
-            getSession: (signal) => terminalModule.fetchTerminalSession(sessionUrl, { signal, credentials: 'include' }),
-            ...xtermModule.xtermCallbacks(term),
-            autoReconnect: true,
-            onReconnect: (info) => {
-                const reconnectText = {
-                    starting: 'Starting the terminal…',
-                    session_expired: 'Reopening the terminal…',
-                    connection_lost: 'Connection lost. Trying again…',
-                    refused: 'The terminal is busy. Trying again…',
-                };
-                setLiveLabMessage(state, reconnectText[info.cause] || 'Reconnecting…');
-            },
-            onStateChange: (terminalState) => {
-                if (terminalState === 'open') setLiveLabMessage(state, '');
-            },
-            onError: (error) => setLiveLabMessage(state, error.message),
-            onClose: (info) => {
-                disconnectLiveTerminal(state);
-                if (info.labEnded) refreshLiveLab(state);
-                else if (info.retryable) setLiveLabMessage(state, 'The terminal closed. Close and reopen this panel to reconnect.');
-            },
-        });
-        live.terminalClient = client;
-        live.detachTerminal = xtermModule.attachXterm(term, client, { fit: state._xtermFitAddon });
-        // connect() rejects when the terminal cannot open; the callbacks above
-        // already report it, so this only prevents an unhandled rejection.
-        client.connect().catch(() => {});
-    } finally {
-        live.terminalConnecting = false;
+
+    // Modules are already loaded by togglePlayOnlineTerminal, but import() is
+    // idempotent so this is safe on reconnect paths.
+    const [terminalModule, xtermModule] = await Promise.all([
+        import(CYBR_TERMINAL_MODULE),
+        import(CYBR_TERMINAL_XTERM_MODULE),
+    ]);
+    live.terminalConnecting = false;
+
+    const term = state._xtermInstance;
+    if (!term) return; // panel was closed before modules loaded
+
+    // Dispose idle input handler; the shell will take over stdin after reveal.
+    if (state._idleInputSub) { state._idleInputSub.dispose(); state._idleInputSub = null; }
+
+    startTermSpinner(state, 'Starting your terminal…');
+    setLiveLabStatus(state, 'starting', 'Starting terminal…');
+
+    // Hold output chunks until the first visible (non-whitespace, non-ANSI)
+    // character arrives, so the learner never sees an idle cursor they can't
+    // type into while the shell is replaying setup output.
+    let heldChunks = [];
+    let revealTimer = null;
+    let everRevealed = false;
+
+    function reveal() {
+        if (heldChunks === null) return; // already revealed
+        clearTimeout(revealTimer);
+        const chunks = heldChunks;
+        heldChunks = null;
+        stopTermSpinner(state);
+        term.reset();
+        term.write(SHOW_CURSOR);
+        term.options.disableStdin = false;
+        for (const chunk of chunks) term.write(chunk);
+        setLiveLabStatus(state, 'ready', 'Connected');
+        if (!everRevealed) { term.focus(); everRevealed = true; }
     }
+
+    function holdOutput() {
+        // Called by onReset: a new connection is starting; buffer output again.
+        heldChunks = [];
+        clearTimeout(revealTimer);
+        revealTimer = setTimeout(reveal, SHELL_REVEAL_FALLBACK_MS);
+    }
+
+    function onOutput(data) {
+        if (heldChunks === null) {
+            term.write(data);
+        } else {
+            heldChunks.push(data);
+            // Reveal as soon as real visible content arrives.
+            const text = new TextDecoder().decode(data).replace(ANSI_RE, '');
+            if (/\S/.test(text)) reveal();
+        }
+    }
+
+    // Start buffering now; the fallback timer starts in onReset once we have
+    // an actual connection.
+    heldChunks = [];
+
+    const sessionUrl = window.pfAccount.apiBaseUrl + liveLabPath(state, 'terminal-session');
+    const client = terminalModule.createTerminalClient({
+        getSession: (signal) => terminalModule.fetchTerminalSession(sessionUrl, { signal, credentials: 'include' }),
+        onOutput,
+        onReset: holdOutput,
+        autoReconnect: true,
+        onStateChange: (terminalState) => {
+            if (terminalState === 'ready') {
+                // 'ready' fires before onReset starts buffering; if output already
+                // arrived the reveal happened in onOutput, so this is a no-op then.
+                if (heldChunks !== null) setLiveLabStatus(state, 'starting', 'Starting terminal…');
+            } else if (terminalState === 'reconnecting') {
+                setLiveLabStatus(state, 'starting', 'Reconnecting…');
+            } else if (terminalState === 'connecting') {
+                setLiveLabStatus(state, 'starting', 'Connecting…');
+            }
+        },
+        onError: (error) => {
+            stopTermSpinner(state);
+            term.writeln(`\r\n\x1b[31m${error.message}\x1b[0m`);
+            setLiveLabStatus(state, 'error', 'Error');
+        },
+        onClose: (info) => {
+            stopTermSpinner(state);
+            clearTimeout(revealTimer);
+            disconnectLiveTerminal(state);
+            if (info.labEnded) {
+                setLiveLabStatus(state, 'error', 'Lab ended');
+                term.writeln('\r\n\x1b[33mThe lab has ended. Click Start lab to launch a new one.\x1b[0m');
+                renderIdleBanner(state);
+                refreshLiveLab(state);
+            } else if (info.retryable) {
+                setLiveLabStatus(state, 'error', 'Disconnected');
+                term.writeln('\r\n\x1b[33mDisconnected. Press Enter to reconnect.\x1b[0m');
+                term.options.disableStdin = false;
+                term.write(SHOW_CURSOR);
+                // A single Enter press reconnects; we re-enter connectLiveTerminal.
+                const sub = term.onData((data) => {
+                    if (data !== '\r') return;
+                    sub.dispose();
+                    connectLiveTerminal(state);
+                });
+            }
+        },
+    });
+
+    live.terminalClient = client;
+    live.detachTerminal = xtermModule.attachXterm(term, client, { fit: state._xtermFitAddon });
+
+    // Intercept the `values` command so it never reaches the PTY.
+    //
+    // attachXterm's onData handler does `client.write(text)` — a live property
+    // lookup on the `client` object each time it fires, not a captured reference.
+    // Wrapping client.write HERE (after attachXterm) means the wrapper runs for
+    // every keystroke that attachXterm would otherwise forward to the PTY.
+    //
+    // When the user has typed "values" and presses Enter (\r), we show the values
+    // in the terminal and swallow the \r so the PTY never sees it. The shell's
+    // readline buffer still holds "values" — the user can Ctrl+C to clear it —
+    // but no command executes and no "command not found" appears.
+    let termCmdBuffer = '';
+    const _origWrite = client.write;
+    client.write = function(data) {
+        if (typeof data === 'string') {
+            for (let i = 0; i < data.length; i++) {
+                const ch = data[i];
+                if (ch === '\r') {
+                    if (termCmdBuffer.trim() === 'values') {
+                        termCmdBuffer = '';
+                        term.writeln('');
+                        showValuesInTerminal(state);
+                        // The individual letters of "values" were already forwarded to the PTY
+                        // as they were typed. Send Ctrl+C to cancel that pending input so the
+                        // PTY doesn't execute it when the user next presses Enter.
+                        _origWrite.call(client, '\x03');
+                        // Forward any remaining bytes after \r (e.g. a pasted multi-line)
+                        const rest = data.slice(i + 1);
+                        if (rest) _origWrite.call(client, rest);
+                        return;
+                    }
+                    termCmdBuffer = '';
+                } else if (ch === '\x03' || ch === '\x15') {
+                    termCmdBuffer = '';
+                } else if (ch === '\x7f' || ch === '\b') {
+                    termCmdBuffer = termCmdBuffer.slice(0, -1);
+                } else if (ch >= ' ') {
+                    termCmdBuffer += ch;
+                }
+            }
+        }
+        _origWrite.call(client, data);
+    };
+
+    client.connect().catch(() => {});
 }
 
 function disconnectLiveTerminal(state) {
     const live = state._liveLab;
     if (!live) return;
+    stopTermSpinner(state);
     if (live.detachTerminal) live.detachTerminal();
     if (live.terminalClient) live.terminalClient.dispose();
     live.detachTerminal = null;
     live.terminalClient = null;
+    live.terminalConnecting = false;
 }
 
-function setLiveLabMessage(state, message) {
-    state._liveLab.message = message;
-    renderLiveLab(state);
+// Updates the status dot + text in the live-lab header without rebuilding the
+// full controls row.
+function setLiveLabStatus(state, dotKind, text) {
+    const panel = state._terminalPanelEl;
+    if (!panel) return;
+    const dot = panel.querySelector('.mg-terminal-status-dot');
+    const statusEl = panel.querySelector('.mg-live-lab-status');
+    if (dot) {
+        dot.className = 'mg-terminal-status-dot';
+        if (dotKind === 'starting') dot.classList.add('starting');
+        else if (dotKind === 'error') dot.classList.add('error');
+        else if (dotKind === 'ready') dot.classList.add('ready');
+    }
+    if (statusEl) statusEl.textContent = text;
 }
 
 // Collapse the terminal panel and update button state.

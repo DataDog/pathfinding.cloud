@@ -6,14 +6,36 @@ function xtermCallbacks(term) {
   };
 }
 function attachXterm(term, client, options = {}) {
-  const { fit, copyOnCtrlC = true } = options;
+  const { fit, copyOnCtrlC = true, resizeDelayMs = 100 } = options;
+  if (!Number.isFinite(resizeDelayMs) || resizeDelayMs < 0) {
+    throw new TypeError("resizeDelayMs must be a nonnegative finite number");
+  }
   const cleanups = [];
   let detached = false;
+  let sent;
+  let latest = { cols: term.cols, rows: term.rows };
+  let pending;
+  const sendSize = () => {
+    pending = void 0;
+    if (detached) return;
+    const { cols, rows } = latest;
+    if (sent && sent.cols === cols && sent.rows === rows) return;
+    sent = { cols, rows };
+    client.resize(cols, rows);
+  };
+  const scheduleSize = (size) => {
+    latest = { cols: size.cols, rows: size.rows };
+    if (resizeDelayMs === 0) return sendSize();
+    if (pending !== void 0) clearTimeout(pending);
+    pending = setTimeout(sendSize, resizeDelayMs);
+  };
   const data = term.onData((text) => {
     client.write(text);
   });
-  const resize = term.onResize((size) => client.resize(size.cols, size.rows));
-  cleanups.push(() => data.dispose(), () => resize.dispose());
+  const resize = term.onResize((size) => scheduleSize(size));
+  cleanups.push(() => data.dispose(), () => resize.dispose(), () => {
+    if (pending !== void 0) clearTimeout(pending);
+  });
   if (copyOnCtrlC) {
     term.attachCustomKeyEventHandler((event) => {
       if (detached) return true;
@@ -62,7 +84,9 @@ function attachXterm(term, client, options = {}) {
       });
     }
   }
-  client.resize(term.cols, term.rows);
+  if (pending !== void 0) clearTimeout(pending);
+  latest = { cols: term.cols, rows: term.rows };
+  sendSize();
   return () => {
     if (detached) return;
     detached = true;

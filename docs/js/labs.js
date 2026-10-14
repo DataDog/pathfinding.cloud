@@ -1296,7 +1296,15 @@ function renderLabDetailContent(lab, container) {
 
     // Two modes: Guided v2 (default) and Game (desktop-only)
     const isMobile = window.innerWidth <= 768;
-    const currentMode = 'guidedv2';
+    // Default to Game Mode for online labs on desktop; fall back to saved choice or Guided v2.
+    let currentMode = 'guidedv2';
+    const savedMode = (() => { try { return localStorage.getItem('pf-lab-mode'); } catch (_) { return null; } })();
+    if (savedMode === 'mapgame' || savedMode === 'guidedv2') {
+        currentMode = savedMode;
+    } else if (!isMobile && typeof isOnlineLab === 'function' && isOnlineLab(lab)) {
+        currentMode = 'mapgame';
+    }
+    if (isMobile) currentMode = 'guidedv2';
 
     // Mode toggle
     const modeToggle = hasRichContent ? `
@@ -1679,6 +1687,9 @@ function getNodeTypeFromColor(colorObj) {
 function switchDetailMode(mode, lab) {
     // Game mode is desktop-only; ignore requests on mobile
     if (mode === 'mapgame' && window.innerWidth <= 768) return;
+
+    // Persist the explicit user choice so it survives page reloads.
+    try { localStorage.setItem('pf-lab-mode', mode); } catch (_) {}
 
     // Toggle body class so CSS can expand/restore max-width constraints for game mode
     document.body.classList.toggle('lab-game-mode', mode === 'mapgame');

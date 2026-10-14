@@ -1,4 +1,4 @@
-Vendored browser entry points of `@cybr/labs-sdk` 0.1.1 (MIT, see LICENSE):
+Vendored browser entry points of `@cybr/labs-sdk` 0.1.2 (MIT, see LICENSE):
 
 - `terminal.js` comes from `dist/terminal.js`
 - `terminal-xterm.js` comes from `dist/terminal/xterm.js`
