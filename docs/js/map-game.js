@@ -8428,7 +8428,22 @@ async function togglePlayOnlineTerminal(state) {
     }
     state._xtermFitAddon?.fit();
 
+    await ensureLiveLabSession();
     await refreshLiveLab(state);
+}
+
+// Visitors without a session get a guest session as soon as the panel opens,
+// before a lab can be started, so two overlapping first requests (another
+// tab, a double click) can't each create a different guest and strand a lab.
+async function ensureLiveLabSession() {
+    const me = await window.pfAccount.me();
+    if (me.kind !== 'anonymous' || me.unavailable) return;
+    try {
+        await window.pfAccount.api('POST', '/session/guest');
+        await window.pfAccount.refresh();
+    } catch (_) {
+        // Starting a lab still creates a session if this fails.
+    }
 }
 
 // Builds the panel once per game instance; later opens reuse it so the xterm
@@ -8636,6 +8651,9 @@ async function celebrateCompletion(state, result) {
 
 async function launchLiveLab(state) {
     const live = state._liveLab;
+    // One launch at a time, whether started from the button or the `start` command.
+    if (live.launching) return;
+    live.launching = true;
     // Switch to provisioning spinner in the terminal immediately.
     startTermSpinner(state, 'Launching…');
     setLiveLabStatus(state, 'starting', 'Launching…');
@@ -8654,6 +8672,8 @@ async function launchLiveLab(state) {
             if (term) term.writeln(`\r\n\x1b[31m${error.message}\x1b[0m`);
             if (error.code === 'GUEST_LAUNCH_LIMIT') window.pfAccount.openSignIn(error.message);
         }
+    } finally {
+        live.launching = false;
     }
     renderLiveLab(state);
     await refreshLiveLab(state);
