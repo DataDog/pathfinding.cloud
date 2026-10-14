@@ -63,6 +63,7 @@
     function createElement(tagName, attributes, ...children) {
         const element = document.createElement(tagName);
         for (const [name, value] of Object.entries(attributes || {})) {
+            if (value === null || value === undefined) continue;
             if (name === 'className') element.className = value;
             else if (name.startsWith('on')) element.addEventListener(name.slice(2).toLowerCase(), value);
             else element.setAttribute(name, value);
@@ -117,6 +118,8 @@
     function openSignIn(reason) {
         if (enabledProviders().length === 0) {
             if (reason) showToast(reason);
+            else if (currentMe.unavailable) showToast('Sign-in is unavailable right now. Try again in a little while.', 'error');
+            else showToast('Sign-in is not available yet. You can still play every lab as a guest.');
             return;
         }
         openModal('Sign in to pathfinding.cloud',
@@ -144,7 +147,8 @@
                 const result = await api('POST', '/me/username', { username: input.value });
                 closeModal();
                 showToast(`You are now @${result.username}.`, 'success');
-                loadMe();
+                await loadMe();
+                if (window.location.pathname.startsWith('/profile')) window.location.reload();
             } catch (error) {
                 errorLine.textContent = error.message;
             }
@@ -161,22 +165,36 @@
 
     // ---- Share modal ----
 
+    /** Milestone name from the ladder the backend returns, e.g. "Role Hopper". */
+    function milestoneName(milestone) {
+        const entry = (currentMe.milestoneCatalog || []).find((item) => item.id === milestone);
+        return entry ? entry.name : milestone;
+    }
+
     function milestoneText(milestone) {
         if (milestone === 'all') return 'completed every lab';
         return milestone === '1' ? 'completed my first lab' : `completed ${milestone} labs`;
     }
 
-    function shareMilestone(milestone) {
+    // Profiles are private, so cards are reachable only through a link the
+    // backend issues to the signed-in owner.
+    async function shareMilestone(milestone) {
         const username = currentMe.username;
         if (!username) { openUsernameModal(); return; }
-        const shareUrl = `${API_BASE_URL}/s/${encodeURIComponent(username)}/${encodeURIComponent(milestone)}`;
-        const imageUrl = `${API_BASE_URL}/og/${encodeURIComponent(username)}/${encodeURIComponent(milestone)}.png`;
-        const text = `I just ${milestoneText(milestone)} on pathfinding.cloud: hands-on AWS IAM privilege escalation labs.`;
+        const name = milestoneName(milestone);
+        let shareUrl, imageUrl;
+        try {
+            ({ shareUrl, imageUrl } = await api('POST', '/me/share-links', { milestone }));
+        } catch (error) {
+            showToast(error.message, 'error');
+            return;
+        }
+        const text = `I just earned "${name}" on pathfinding.cloud: ${milestoneText(milestone)} of hands-on AWS IAM privilege escalation labs.`;
         const copyButton = createElement('button', { className: 'pf-button', onClick: async () => {
             try { await navigator.clipboard.writeText(shareUrl); copyButton.textContent = 'Copied'; } catch (_) { copyButton.textContent = shareUrl; }
         } }, 'Copy link');
-        openModal('Share your progress',
-            createElement('img', { className: 'pf-share-preview', src: imageUrl, alt: `Share card: ${username} ${milestoneText(milestone)}`, width: '600', height: '315' }),
+        openModal(`Share "${name}"`,
+            createElement('img', { className: 'pf-share-preview', src: imageUrl, alt: `Share card: ${username} earned ${name}`, width: '600', height: '315' }),
             createElement('div', { className: 'pf-share-buttons' },
                 createElement('a', { className: 'pf-button', target: '_blank', rel: 'noopener noreferrer',
                     href: `https://www.linkedin.com/sharing/share-offsite/?url=${encodeURIComponent(shareUrl)}` }, 'LinkedIn'),
@@ -187,35 +205,43 @@
                 copyButton));
     }
 
-    // ---- Header account control ----
+    // ---- Header: Leaderboard link and account pill (far right, on every page) ----
+
+    const TROPHY_ICON = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 21h8M12 17v4M7 4h10v5a5 5 0 0 1-10 0V4z"/><path d="M17 5h3v2a3 3 0 0 1-3 3M7 5H4v2a3 3 0 0 0 3 3"/></svg>';
 
     function renderAccountControl() {
         const headerRight = document.querySelector('.header-right');
         if (!headerRight) return;
-        document.getElementById('pf-account-control')?.remove();
-        // No control at all while the API is unreachable or no provider is enabled.
-        if (currentMe.unavailable || !signInAvailable()) return;
+        document.getElementById('pf-header-account')?.remove();
 
-        let control;
+        const onLeaderboard = window.location.pathname.startsWith('/leaderboard');
+        const leaderboardLink = createElement('a', { href: '/leaderboard/', className: `pf-leaderboard-link${onLeaderboard ? ' active' : ''}`,
+            ...(onLeaderboard ? { 'aria-current': 'page' } : {}) });
+        leaderboardLink.innerHTML = TROPHY_ICON; // static markup, no user data
+        leaderboardLink.append(createElement('span', {}, 'Labs Leaderboard'));
+
+        let accountControl;
         if (currentMe.kind === 'user') {
-            const label = currentMe.username ? `@${currentMe.username}` : 'Choose username';
             const menu = createElement('div', { className: 'pf-account-menu', hidden: '' },
-                currentMe.username ? createElement('a', { href: `/profile/?u=${encodeURIComponent(currentMe.username)}` }, 'My profile') : null,
-                createElement('a', { href: '/leaderboard/' }, 'Leaderboard'),
-                createElement('button', { onClick: openUsernameModal }, currentMe.username ? 'Change username' : 'Choose username'),
-                createElement('button', { onClick: syncProgress }, 'Sync progress'),
-                createElement('button', { onClick: signOut }, 'Sign out'),
-                createElement('button', { className: 'pf-danger', onClick: deleteAccount }, 'Delete account'));
-            const toggle = createElement('button', { className: 'pf-account-toggle', 'aria-haspopup': 'true', onClick: (event) => {
+                currentMe.username
+                    ? createElement('a', { href: '/profile/' }, 'My profile')
+                    : createElement('button', { onClick: openUsernameModal }, 'Choose username'),
+                createElement('button', { onClick: signOut }, 'Sign out'));
+            const toggle = createElement('button', { className: 'pf-account-pill', 'aria-haspopup': 'true', 'aria-expanded': 'false', onClick: (event) => {
                 event.stopPropagation();
                 menu.hidden = !menu.hidden;
-            } }, label, createElement('span', { className: 'pf-account-count' }, String(currentMe.completedCount || 0)));
-            control = createElement('div', { id: 'pf-account-control', className: 'pf-account' }, toggle, menu);
+                toggle.setAttribute('aria-expanded', String(!menu.hidden));
+            } },
+                createElement('span', { className: 'pf-account-name' }, currentMe.username ? `@${currentMe.username}` : 'Choose username'),
+                createElement('span', { className: 'pf-account-count', title: 'Labs completed' }, String(currentMe.completedCount || 0)));
+            accountControl = createElement('div', { className: 'pf-account' }, toggle, menu);
         } else {
-            control = createElement('div', { id: 'pf-account-control', className: 'pf-account' },
-                createElement('button', { className: 'pf-account-toggle', onClick: () => openSignIn() }, 'Sign in'));
+            accountControl = createElement('div', { className: 'pf-account' },
+                createElement('button', { className: 'pf-account-pill', onClick: () => openSignIn() }, 'Sign in'));
         }
-        headerRight.prepend(control);
+
+        // Appended last so it sits after the Datadog, theme and GitHub links.
+        headerRight.append(createElement('div', { id: 'pf-header-account', className: 'pf-header-account' }, leaderboardLink, accountControl));
     }
 
     async function signOut() {
@@ -224,25 +250,17 @@
         loadMe();
     }
 
-    async function syncProgress() {
-        try {
-            const result = await api('POST', '/me/sync');
-            showToast(result.importedCount ? `Imported ${result.importedCount} completed lab(s).` : 'Your progress is up to date.', 'success');
-            loadMe();
-        } catch (error) {
-            showToast(error.message, 'error');
-        }
-    }
-
     async function deleteAccount() {
         const confirmed = window.confirm('Delete your pathfinding.cloud account? Your username, progress and leaderboard entry are removed permanently.');
-        if (!confirmed) return;
+        if (!confirmed) return false;
         try {
             await api('DELETE', '/me');
             showToast('Your account was deleted.');
-            loadMe();
+            await loadMe();
+            return true;
         } catch (error) {
             showToast(error.message, 'error');
+            return false;
         }
     }
 
@@ -276,6 +294,7 @@
         onChange: (listener) => changeListeners.push(listener),
         openSignIn,
         signInAvailable,
+        deleteAccount,
         openUsernameModal,
         shareMilestone,
         showToast,

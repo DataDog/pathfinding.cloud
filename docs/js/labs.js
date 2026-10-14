@@ -1042,13 +1042,12 @@ function renderLabTable() {
         const startLabel = startAccessLabels[lab.startAccessType] || '';
         const hopsVal = lab.principalHopCount !== null && lab.principalHopCount !== undefined ? lab.principalHopCount : '';
         const serviceIcons = renderServiceIcons(lab.permissions || {});
-        const onlineLabel = lab.supportsOnlineMode ? 'Yes' : '';
         const plabsId = getPlabsId(lab);
 
         html += `
             <tr class="lab-row" data-slug="${lab.slug}">
                 <td class="lab-name-desc-cell">
-                    <span class="lab-name-text">${escapeHtml(lab.displayName || lab.name)}</span>
+                    <span class="lab-name-text">${escapeHtml(lab.displayName || lab.name)}</span>${renderOnlineBadge(lab) ? ` ${renderOnlineBadge(lab)}` : ''}
                     ${plabsId ? `<div class="lab-table-plabs-id" title="Scenario ID used by the plabs CLI"><span class="lab-table-plabs-id-label">plabs id</span><code class="lab-table-plabs-id-value">${escapeHtml(plabsId)}</code></div>` : ''}
                     <div class="lab-table-description">${escapeHtml(truncate(lab.description, 120))}</div>
                 </td>
@@ -1175,7 +1174,7 @@ function renderCardA(lab) {
             ${renderBannerA(lab)}
             <div class="lab-card-body">
                 <div class="lab-card-name">${escapeHtml(lab.displayName || lab.name)}</div>
-                ${plabsId ? `<div class="lab-card-plabs-id-wrap"><span class="lab-kv-pill lab-card-plabs-id" title="Scenario ID used by the plabs CLI"><span class="lab-kv-pill-key">plabs id</span><span class="lab-kv-pill-value">${escapeHtml(plabsId)}</span></span></div>` : ''}
+                ${plabsId || lab.supportsOnlineMode ? `<div class="lab-card-plabs-id-wrap">${plabsId ? `<span class="lab-kv-pill lab-card-plabs-id" title="Scenario ID used by the plabs CLI"><span class="lab-kv-pill-key">plabs id</span><span class="lab-kv-pill-value">${escapeHtml(plabsId)}</span></span>` : ''}${renderOnlineBadge(lab)}</div>` : ''}
                 <div class="lab-card-description">${escapeHtml(truncate(lab.description, 450))}</div>
                 <div class="lab-card-badges">
                     <span class="lab-card-badge-item"><span class="lab-card-badge-label">Principal Hops</span> <span class="lab-badge lab-hops-badge">${hopsLabel}</span></span>
@@ -1184,6 +1183,12 @@ function renderCardA(lab) {
                 </div>
             </div>
         </div>`;
+}
+
+// Marks labs that can be played in the browser (hosted by Cybr) as well as self-hosted.
+function renderOnlineBadge(lab) {
+    if (!lab.supportsOnlineMode) return '';
+    return '<span class="lab-online-badge" title="Play this lab online for free, no AWS account needed">Play online &middot; Free</span>';
 }
 
 // Card Style B: 1-column, foreground-only banner, name + full description + bottom pills
@@ -1198,7 +1203,7 @@ function renderCardB(lab) {
             ${renderBannerB(lab)}
             <div class="lab-card-body">
                 <div class="lab-card-name">${escapeHtml(lab.displayName || lab.name)}</div>
-                ${plabsId ? `<div class="lab-card-plabs-id-wrap"><span class="lab-kv-pill lab-card-plabs-id" title="Scenario ID used by the plabs CLI"><span class="lab-kv-pill-key">plabs id</span><span class="lab-kv-pill-value">${escapeHtml(plabsId)}</span></span></div>` : ''}
+                ${plabsId || lab.supportsOnlineMode ? `<div class="lab-card-plabs-id-wrap">${plabsId ? `<span class="lab-kv-pill lab-card-plabs-id" title="Scenario ID used by the plabs CLI"><span class="lab-kv-pill-key">plabs id</span><span class="lab-kv-pill-value">${escapeHtml(plabsId)}</span></span>` : ''}${renderOnlineBadge(lab)}</div>` : ''}
                 <div class="lab-card-description lab-card-description-full">${escapeHtml(lab.description)}</div>
                 <div class="lab-card-badges">
                     <span class="lab-badge lab-hops-badge">${hopsLabel}</span>
