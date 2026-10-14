@@ -1,0 +1,1721 @@
+<!DOCTYPE html>
+<html lang="en" class="light-theme">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Scene Generator — pathfinding.cloud</title>
+    <meta name="robots" content="noindex, nofollow">
+    <style>
+        :root {
+            --bg: #0e1320;
+            --panel-bg: #161d2e;
+            --panel-border: #243049;
+            --text: #e6ecf5;
+            --muted: #8390a8;
+            --accent: #f0b040;
+            --danger: #ef4444;
+            --input-bg: #0b1021;
+            --input-border: #2a3452;
+            --shadow: 0 10px 30px rgba(0,0,0,0.35);
+        }
+        html.light-theme {
+            --bg: #eef1f6;
+            --panel-bg: #ffffff;
+            --panel-border: #d6dae4;
+            --text: #1a1f2c;
+            --muted: #5a6478;
+            --accent: #92600a;
+            --input-bg: #f5f7fb;
+            --input-border: #cbd1de;
+            --shadow: 0 6px 24px rgba(20, 24, 40, 0.10);
+        }
+
+        * { box-sizing: border-box; }
+        html, body { margin: 0; padding: 0; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+            background: var(--bg);
+            color: var(--text);
+            min-height: 100vh;
+        }
+
+        .page {
+            display: grid;
+            grid-template-columns: 360px 1fr;
+            gap: 24px;
+            padding: 24px;
+            min-height: 100vh;
+        }
+
+        /* ---- Controls panel ---- */
+        .controls {
+            background: var(--panel-bg);
+            border: 1px solid var(--panel-border);
+            border-radius: 12px;
+            padding: 20px;
+            box-shadow: var(--shadow);
+            height: fit-content;
+            position: sticky;
+            top: 24px;
+            max-height: calc(100vh - 48px);
+            overflow-y: auto;
+        }
+        .controls h1 { margin: 0 0 4px; font-size: 18px; letter-spacing: 0.02em; }
+        .controls p.sub { margin: 0 0 16px; font-size: 12px; color: var(--muted); line-height: 1.45; }
+        .section-title {
+            font-size: 11px; font-weight: 700; text-transform: uppercase;
+            letter-spacing: 0.08em; color: var(--muted);
+            margin-bottom: 8px; display: block;
+        }
+        .divider { height: 1px; background: var(--panel-border); margin: 14px 0; }
+        .row { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+        .row > .grow { flex: 1; }
+        .two-col { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+        .hint { font-size: 11px; color: var(--muted); line-height: 1.4; margin: 6px 0 0; }
+
+        .preset-btn, button.secondary {
+            font: inherit; font-size: 11px;
+            background: var(--input-bg);
+            border: 1px solid var(--input-border);
+            border-radius: 5px;
+            padding: 6px 8px;
+            color: var(--text);
+            cursor: pointer;
+            transition: border-color 0.15s, background 0.15s;
+        }
+        .preset-btn { color: var(--muted); }
+        .preset-btn:hover, button.secondary:hover { border-color: var(--accent); color: var(--text); }
+        .preset-btn.active { background: var(--accent); color: #1a1a1a; border-color: var(--accent); }
+        button:disabled { opacity: 0.45; cursor: not-allowed; }
+        button.danger {
+            font: inherit; font-size: 11px;
+            background: rgba(239, 68, 68, 0.08);
+            color: var(--danger);
+            border: 1px solid rgba(239, 68, 68, 0.3);
+            border-radius: 5px;
+            padding: 6px 8px;
+            cursor: pointer;
+        }
+        button.danger:hover { background: rgba(239, 68, 68, 0.15); border-color: var(--danger); }
+        button.primary {
+            width: 100%;
+            font: inherit; font-size: 13px; font-weight: 700;
+            background: linear-gradient(180deg, #fff8c0 0%, #f0b030 45%, #c06010 100%);
+            border: none; border-radius: 8px;
+            padding: 10px 14px;
+            color: #1a0a00;
+            cursor: pointer;
+            letter-spacing: 0.04em; text-transform: uppercase;
+            box-shadow: 0 4px 12px rgba(240, 176, 64, 0.3);
+        }
+        button.primary:hover { box-shadow: 0 6px 18px rgba(240, 176, 64, 0.45); }
+
+        .step-tab { min-width: 34px; font-weight: 700; }
+
+        .field { margin-bottom: 9px; }
+        .field > label {
+            display: block;
+            font-size: 10px; font-weight: 700; text-transform: uppercase;
+            letter-spacing: 0.07em; color: var(--muted);
+            margin-bottom: 4px;
+        }
+        .field input[type="text"],
+        .field input[type="number"],
+        .field select {
+            font: inherit; font-size: 12px;
+            width: 100%;
+            background: var(--input-bg);
+            border: 1px solid var(--input-border);
+            border-radius: 5px;
+            padding: 5px 8px;
+            color: var(--text);
+            outline: none;
+        }
+        .field input:focus, .field select:focus { border-color: var(--accent); }
+        .range-row { display: grid; grid-template-columns: 1fr 44px; gap: 8px; align-items: center; }
+        .range-row input[type="range"] { width: 100%; accent-color: var(--accent); }
+        .range-val { font-variant-numeric: tabular-nums; text-align: right; font-size: 12px; }
+        .inline-check {
+            display: flex; align-items: center; gap: 6px;
+            font-size: 12px; color: var(--muted); cursor: pointer;
+        }
+        .inline-check input { accent-color: var(--accent); cursor: pointer; }
+
+        #props-panel {
+            background: var(--input-bg);
+            border: 1px solid var(--input-border);
+            border-radius: 8px;
+            padding: 12px;
+        }
+        #props-panel .field input[type="text"],
+        #props-panel .field select { background: var(--panel-bg); }
+        .props-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; }
+        .props-title {
+            font-size: 11px; font-weight: 700; text-transform: uppercase;
+            letter-spacing: 0.08em; color: var(--accent);
+        }
+        .seg { display: flex; gap: 4px; }
+        .seg .preset-btn { flex: 1; padding: 5px 4px; }
+
+        .edge-list { display: flex; flex-direction: column; gap: 4px; }
+        .edge-item {
+            display: flex; align-items: center; gap: 6px;
+            font-size: 11px;
+            padding: 5px 7px;
+            border: 1px solid var(--input-border);
+            border-radius: 5px;
+            background: var(--input-bg);
+            cursor: pointer;
+        }
+        .edge-item:hover { border-color: var(--accent); }
+        .edge-item.active { border-color: var(--accent); box-shadow: 0 0 0 2px rgba(240, 176, 64, 0.25); }
+        .edge-item .step-badge {
+            font-size: 9px; font-weight: 700; color: var(--muted);
+            border: 1px solid var(--input-border); border-radius: 3px; padding: 0 4px;
+        }
+        .edge-item .edge-text { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+        /* ---- Preview ---- */
+        .preview { display: flex; flex-direction: column; gap: 12px; min-width: 0; }
+        .preview-header { display: flex; align-items: center; justify-content: space-between; padding: 0 4px; }
+        .preview-header .meta { font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; }
+        .preview-header a.back { font-size: 12px; color: var(--muted); text-decoration: none; }
+        .preview-header a.back:hover { color: var(--accent); }
+        .canvas-wrap {
+            background: var(--panel-bg);
+            border: 1px solid var(--panel-border);
+            border-radius: 12px;
+            padding: 16px;
+            box-shadow: var(--shadow);
+        }
+        .canvas-stage {
+            background: repeating-conic-gradient(#0000 0 25%, rgba(128,128,128,0.10) 0 50%) 0 0 / 20px 20px;
+            border-radius: 8px;
+        }
+        #scene-canvas { display: block; width: 100%; height: auto; cursor: default; }
+        .canvas-hint { font-size: 11px; color: var(--muted); text-align: center; margin: 0; line-height: 1.6; }
+        kbd {
+            font-size: 10px; padding: 1px 4px;
+            border: 1px solid var(--panel-border); border-radius: 3px;
+        }
+
+        @media (max-width: 900px) {
+            .page { grid-template-columns: 1fr; padding: 16px; }
+            .controls { position: static; max-height: none; }
+        }
+    </style>
+</head>
+<body>
+    <div class="page">
+        <aside class="controls">
+            <h1>Scene Generator</h1>
+            <p class="sub">
+                Free-form island scenes for slides. Build a diagram in steps, then
+                export every step as a transparent PNG with the same frame so the
+                images stack exactly in Keynote / Slides.
+            </p>
+
+            <!-- Steps -->
+            <span class="section-title">Steps</span>
+            <div class="row" id="step-tabs"></div>
+            <div class="row" style="margin-top: 6px;">
+                <button class="secondary" id="add-step-btn">+ Add step</button>
+                <button class="secondary" id="remove-step-btn">Remove last step</button>
+            </div>
+            <div style="margin-top: 8px;">
+                <label class="inline-check">
+                    <input type="checkbox" id="dim-earlier">
+                    Dim paths from earlier steps
+                </label>
+            </div>
+            <p class="hint">New islands and edges are added to the step you're viewing.</p>
+
+            <div class="divider"></div>
+
+            <!-- Add -->
+            <span class="section-title">Add</span>
+            <div class="two-col">
+                <button class="secondary" data-add-kind="attacker">Attacker</button>
+                <button class="secondary" data-add-kind="resource">Resource island</button>
+                <button class="secondary" data-add-kind="principal">Principal island</button>
+                <button class="secondary" data-add-kind="target">Target island</button>
+            </div>
+            <div style="margin-top: 6px;">
+                <button class="secondary" id="add-edge-btn" style="width: 100%;" disabled>Connect selected (A &rarr; B)</button>
+            </div>
+            <p class="hint">Shift-click two islands in order, then connect them.</p>
+
+            <div class="divider"></div>
+
+            <!-- Selection properties -->
+            <div id="props-panel" hidden>
+                <div class="props-header">
+                    <span class="props-title" id="props-title">Island</span>
+                    <button class="danger" id="delete-btn">Delete</button>
+                </div>
+                <div id="props-content"></div>
+            </div>
+            <p class="hint" id="props-empty">Click an island or edge label to edit it.</p>
+
+            <!-- Align -->
+            <div style="margin-top: 12px;">
+                <span class="section-title">Align selected</span>
+                <div class="two-col">
+                    <button class="secondary" data-align="row" disabled>Same row (Y)</button>
+                    <button class="secondary" data-align="col" disabled>Same column (X)</button>
+                    <button class="secondary" data-align="dist-x" disabled>Distribute &harr;</button>
+                    <button class="secondary" data-align="dist-y" disabled>Distribute &varr;</button>
+                </div>
+                <div style="margin-top: 8px;">
+                    <label class="inline-check">
+                        <input type="checkbox" id="snap-guides" checked>
+                        Snap to other islands while dragging
+                    </label>
+                </div>
+            </div>
+
+            <div class="divider"></div>
+
+            <!-- Edges -->
+            <span class="section-title">Edges</span>
+            <div class="edge-list" id="edge-list"></div>
+
+            <div class="divider"></div>
+
+            <!-- Appearance -->
+            <span class="section-title">Appearance</span>
+            <div class="field">
+                <label>Island label size</label>
+                <div class="range-row">
+                    <input type="range" id="label-size" min="10" max="32" step="1" value="20">
+                    <span class="range-val" id="label-size-val">20</span>
+                </div>
+            </div>
+            <div class="field">
+                <label>Edge label size</label>
+                <div class="range-row">
+                    <input type="range" id="edge-label-size" min="9" max="28" step="1" value="20">
+                    <span class="range-val" id="edge-label-size-val">20</span>
+                </div>
+            </div>
+            <div class="field">
+                <label>Theme</label>
+                <div class="seg">
+                    <button class="preset-btn" id="theme-dark">Dark</button>
+                    <button class="preset-btn active" id="theme-light">Light</button>
+                </div>
+            </div>
+            <div class="field">
+                <label>Attacker sprite</label>
+                <div class="seg" id="attacker-seg">
+                    <button class="preset-btn active" data-attacker="helicopter">Helicopter</button>
+                    <button class="preset-btn" data-attacker="hacker">Hacker</button>
+                </div>
+            </div>
+            <div class="field">
+                <label>Background</label>
+                <div class="seg" id="bg-seg">
+                    <button class="preset-btn active" data-bg="transparent">Transparent</button>
+                    <button class="preset-btn" data-bg="sky">Sky</button>
+                </div>
+            </div>
+
+            <div class="divider"></div>
+
+            <!-- Export -->
+            <span class="section-title">Export</span>
+            <div class="field">
+                <label>Resolution</label>
+                <div class="seg" id="scale-seg">
+                    <button class="preset-btn" data-scale="1">1x</button>
+                    <button class="preset-btn active" data-scale="2">2x</button>
+                    <button class="preset-btn" data-scale="3">3x</button>
+                </div>
+            </div>
+            <div style="margin-bottom: 10px;">
+                <label class="inline-check">
+                    <input type="checkbox" id="crop-content" checked>
+                    Crop to content (same frame for every step)
+                </label>
+            </div>
+            <button class="primary" id="export-all-btn">Export all steps</button>
+            <div style="height: 6px;"></div>
+            <button class="secondary" id="export-current-btn" style="width: 100%;">Export current step only</button>
+
+            <div class="divider"></div>
+
+            <!-- Scene file -->
+            <span class="section-title">Scene</span>
+            <div class="row">
+                <button class="secondary grow" id="save-json-btn">Save JSON</button>
+                <button class="secondary grow" id="load-json-btn">Load JSON</button>
+                <button class="danger grow" id="reset-btn">Reset</button>
+            </div>
+            <input type="file" id="load-json-input" accept="application/json,.json" hidden>
+            <p class="hint">Edits auto-save in this browser. Save JSON to keep a scene for later.</p>
+        </aside>
+
+        <section class="preview">
+            <div class="preview-header">
+                <a class="back" href="/labs/">← Back to Labs</a>
+                <span class="meta" id="preview-meta"></span>
+            </div>
+            <div class="canvas-wrap">
+                <div class="canvas-stage">
+                    <canvas id="scene-canvas"></canvas>
+                </div>
+            </div>
+            <p class="canvas-hint">
+                Drag to move &middot; Shift-click to multi-select &middot;
+                <kbd>&larr;</kbd><kbd>&rarr;</kbd><kbd>&uarr;</kbd><kbd>&darr;</kbd> nudge (Shift = 10) &middot;
+                <kbd>Del</kbd> remove &middot; <kbd>Esc</kbd> deselect
+            </p>
+        </section>
+    </div>
+
+    <!-- map-game.js provides the island sprites, AWS icon crests, palette and
+         rounded-rect helpers, so scenes stay visually identical to the live
+         attack maps. labs.js is intentionally not loaded: it expects the
+         /labs page DOM and nothing here depends on it. -->
+    <script src="/js/viz-shared.js"></script>
+    <script src="/js/map-game.js"></script>
+
+    <script>
+    (function () {
+        'use strict';
+
+        // ---- Constants ----
+        // All scene coordinates live in a fixed design space. The preview and
+        // every export render the same design space at different pixel scales,
+        // which is what keeps the step images aligned with each other.
+        const DESIGN_W = 1600;
+        const DESIGN_H = 900;
+        const PREVIEW_SCALE = 2;          // backing-store multiplier for a crisp preview
+        const PRINCIPAL_RADIUS = 73;      // matches drawGameMap's base island radius
+        const RESOURCE_RADIUS = 56;       // matches drawCompanionIslet's base radius
+        const ATTACKER_HEIGHT = 120;
+        const SNAP_DISTANCE = 10;         // design units within which drag snaps to a guide
+        const DIM_ALPHA = 0.28;
+        const EXPORT_PADDING = 24;        // design units of transparent margin around cropped content
+        const STORAGE_KEY = 'pf-scene-generator-v1';
+
+        // Extra icons that aren't in map-game.js's catalog. Registered on the
+        // shared loader so drawIconCrest can render them like any other subType.
+        Object.assign(awsIconSprites.iconPaths, {
+            'client':              '/img/aws-icons/Resource-Icons_01302026/Res_General-Icons/Res_48_Light/Res_Client_48_Light.png',
+            'generic-application': '/img/aws-icons/Resource-Icons_01302026/Res_General-Icons/Res_48_Light/Res_Generic-Application_48_Light.png',
+            'git-repository':      '/img/aws-icons/Resource-Icons_01302026/Res_General-Icons/Res_48_Light/Res_Git-Repository_48_Light.png',
+            'internet':            '/img/aws-icons/Resource-Icons_01302026/Res_General-Icons/Res_48_Light/Res_Internet_48_Light.png',
+            'email':               '/img/aws-icons/Resource-Icons_01302026/Res_General-Icons/Res_48_Light/Res_Email_48_Light.png',
+            'credentials':         '/img/aws-icons/Resource-Icons_01302026/Res_General-Icons/Res_48_Light/Res_Credentials_48_Light.png',
+            'ecr-image':           '/img/aws-icons/Resource-Icons_01302026/Res_Containers/Res_Amazon-Elastic-Container-Registry_Image_48.png',
+        });
+
+        const ICON_OPTIONS = [
+            ['',                     '— No icon —'],
+            ['client',               'Workstation / Client'],
+            ['generic-application',  'Generic Application'],
+            ['git-repository',       'Git Repository'],
+            ['ecr-image',            'Container Image (ECR)'],
+            ['internet',             'Internet'],
+            ['email',                'Email'],
+            ['credentials',          'Credentials'],
+            ['iam-user',             'IAM User'],
+            ['iam-role',             'IAM Role'],
+            ['iam-policy',           'IAM Policy'],
+            ['iam-group',            'IAM Group'],
+            ['ec2-instance',         'EC2 Instance'],
+            ['lambda-function',      'Lambda Function'],
+            ['ecs-task',             'ECS Task'],
+            ['apprunner-service',    'App Runner Service'],
+            ['codebuild-project',    'CodeBuild Project'],
+            ['cloudformation-stack', 'CloudFormation Stack'],
+            ['s3-bucket',            'S3 Bucket'],
+            ['dynamodb-table',       'DynamoDB Table'],
+            ['ssm-parameter',        'SSM Parameter'],
+            ['sagemaker-notebook',   'SageMaker Notebook'],
+            ['glue-job',             'Glue Job'],
+            ['bedrock-agent',        'Bedrock Agent'],
+            ['mwaa-environment',     'MWAA Environment'],
+        ];
+
+        const KIND_LABELS = { attacker: 'Attacker', resource: 'Resource', principal: 'Principal', target: 'Target' };
+        const LABEL_COLOR_OPTIONS = [
+            ['default',  'Dark'],
+            ['start',    'Green'],
+            ['end',      'Orange'],
+            ['attacker', 'Red'],
+        ];
+
+        // ---- Attacker sprites ----
+        // Selectable per scene via scene.attackerStyle. Both PNGs have
+        // transparent padding around the artwork, so we measure the opaque
+        // bounds once at load and draw only that sub-rectangle -- that way the
+        // label plate, shadow and edge anchor line up with the visible figure
+        // rather than the padded canvas. If a file is missing, a procedural
+        // placeholder figure is drawn instead.
+        //   height:   rendered height in design units at scale 1. The helicopter
+        //             is ~1.7x wider than tall and reads best small, so it's
+        //             drawn well under the hacker's height.
+        //   grounded: draw a ground shadow (the helicopter is airborne). Airborne
+        //             sprites are also centred on the edge anchor rather than on
+        //             node.y, so the attack line meets the cabin, not the skids.
+        const ATTACKER_SPRITES = {
+            helicopter: { src: '/img/helicopter.png', height: 40,  grounded: false, img: null, crop: null },
+            hacker:     { src: '/img/attacker.png',   height: 120, grounded: true,  img: null, crop: null },
+        };
+        for (const sprite of Object.values(ATTACKER_SPRITES)) {
+            const img = new Image();
+            img.onload = () => {
+                if (!img.naturalWidth) return;
+                sprite.img = img;
+                sprite.crop = opaqueBounds(img);
+                render();
+            };
+            img.onerror = () => {};  // no sprite -- keep the placeholder
+            img.src = sprite.src;
+        }
+
+        function currentAttackerSprite() {
+            return ATTACKER_SPRITES[scene?.attackerStyle] || ATTACKER_SPRITES.helicopter;
+        }
+
+        function opaqueBounds(img) {
+            const probe = document.createElement('canvas');
+            probe.width = img.naturalWidth;
+            probe.height = img.naturalHeight;
+            const probeCtx = probe.getContext('2d');
+            probeCtx.drawImage(img, 0, 0);
+            const pixels = probeCtx.getImageData(0, 0, probe.width, probe.height).data;
+            let minX = probe.width, minY = probe.height, maxX = -1, maxY = -1;
+            for (let y = 0; y < probe.height; y++) {
+                for (let x = 0; x < probe.width; x++) {
+                    if (pixels[(y * probe.width + x) * 4 + 3] === 0) continue;
+                    if (x < minX) minX = x;
+                    if (x > maxX) maxX = x;
+                    if (y < minY) minY = y;
+                    if (y > maxY) maxY = y;
+                }
+            }
+            if (maxX < 0) return { sx: 0, sy: 0, sw: probe.width, sh: probe.height };
+            return { sx: minX, sy: minY, sw: maxX - minX + 1, sh: maxY - minY + 1 };
+        }
+
+        // 16x16 grid. K outline, H hood, h hood highlight, F face shadow,
+        // E eyes, L laptop body, s laptop screen.
+        const ATTACKER_PIXELS = [
+            '.....KKKKKK.....',
+            '....KHHHHHHK....',
+            '...KHHhhhhHHK...',
+            '..KHHhFFFFhHHK..',
+            '..KHhFFFFFFhHK..',
+            '..KHhFEFFEFhHK..',
+            '..KHhFFFFFFhHK..',
+            '..KHHhFFFFhHHK..',
+            '.KHHHHhhhhHHHHK.',
+            'KHHHHHHHHHHHHHHK',
+            'KHHHHHHHHHHHHHHK',
+            'KHHLLLLLLLLLLHHK',
+            'KHHLssssssssLHHK',
+            'KHHLssssssssLHHK',
+            'KHLLLLLLLLLLLLHK',
+            'KKKKKKKKKKKKKKKK',
+        ];
+        const ATTACKER_COLORS = {
+            K: '#14121f', H: '#3b3a56', h: '#55547a', F: '#0b0a12',
+            E: '#ff3b3b', L: '#8a94a6', s: '#2ee86b',
+        };
+
+        // ---- Scene state ----
+        // nodes: { id, kind, x, y, label, subtitle, icon, labelColor, step, scale, hideLabel }
+        // edges: { id, from, to, label, labelStyle, lineStyle, step, labelT }
+        //   labelStyle: 'access' (red initial-access pill) | 'permission' (beige) | 'none'
+        //   lineStyle:  'attack' (red dashes) | 'path' (standard gold dashes)
+        let scene = null;
+        let currentStep = 1;
+        let selectedNodeIds = [];   // ordered: selection order drives "Connect A -> B"
+        let selectedEdgeId = null;
+        let dragState = null;
+        let activeGuides = [];      // [{ axis: 'x'|'y', value }] shown while dragging
+
+        function defaultScene() {
+            // Builds up the story one slide at a time:
+            //   1. the sensitive bucket on its own
+            //   2. the IAM role that has read access to it
+            //   3. the public app that assumes that role
+            //   4. an attacker exploiting the public app
+            //   5. a second attacker via supply chain into a non-public app
+            //   6. a third attacker via phishing a developer workstation
+            // All three initial-access paths converge on the same IAM role. Each
+            // attacker sits on the same row as its entry island.
+            return {
+                version: 1,
+                stepCount: 6,
+                dimEarlier: false,
+                labelSize: 20,
+                edgeLabelSize: 20,
+                background: 'transparent',
+                attackerStyle: 'helicopter',
+                nextId: 20,
+                nodes: [
+                    { id: 1, kind: 'attacker',  x: 140,  y: 450, label: 'Attacker',               subtitle: '', icon: '',           labelColor: 'attacker', step: 4, scale: 1, hideLabel: false },
+                    { id: 2, kind: 'resource',  x: 560,  y: 450, label: 'Public Application',     subtitle: '', icon: 'ec2-instance', labelColor: 'default',  step: 3, scale: 1, hideLabel: false },
+                    { id: 3, kind: 'principal', x: 1000, y: 450, label: 'IAM Role',               subtitle: '', icon: 'iam-role',     labelColor: 'default',  step: 2, scale: 1, hideLabel: false },
+                    { id: 4, kind: 'target',    x: 1420, y: 450, label: 'Sensitive Data',         subtitle: '', icon: 's3-bucket',    labelColor: 'end',      step: 1, scale: 1, hideLabel: false },
+                    { id: 5, kind: 'resource',  x: 560,  y: 260, label: 'Non-Public Application', subtitle: '', icon: 'ecs-task',     labelColor: 'default',  step: 5, scale: 1, hideLabel: false },
+                    { id: 6, kind: 'resource',  x: 560,  y: 640, label: 'Developer Workstation',  subtitle: '', icon: 'client',       labelColor: 'default',  step: 6, scale: 1, hideLabel: false },
+                    { id: 7, kind: 'attacker',  x: 140,  y: 260, label: 'Attacker',               subtitle: '', icon: '',           labelColor: 'attacker', step: 5, scale: 1, hideLabel: false },
+                    { id: 8, kind: 'attacker',  x: 140,  y: 640, label: 'Attacker',               subtitle: '', icon: '',           labelColor: 'attacker', step: 6, scale: 1, hideLabel: false },
+                ],
+                edges: [
+                    { id: 10, from: 1, to: 2, label: 'exploits vulnerability', labelStyle: 'access',     lineStyle: 'attack', step: 4, labelT: 0.5 },
+                    { id: 11, from: 2, to: 3, label: 'Assumes',                labelStyle: 'permission', lineStyle: 'path',   step: 3, labelT: 0.5 },
+                    { id: 12, from: 3, to: 4, label: 'Read Access',            labelStyle: 'permission', lineStyle: 'path',   step: 2, labelT: 0.5 },
+                    { id: 13, from: 7, to: 5, label: 'supply chain attack',    labelStyle: 'access',     lineStyle: 'attack', step: 5, labelT: 0.5 },
+                    { id: 14, from: 5, to: 3, label: 'Assumes',                labelStyle: 'permission', lineStyle: 'path',   step: 5, labelT: 0.5 },
+                    { id: 15, from: 8, to: 6, label: 'phishing attack',        labelStyle: 'access',     lineStyle: 'attack', step: 6, labelT: 0.5 },
+                    { id: 16, from: 6, to: 3, label: 'Assumes',                labelStyle: 'permission', lineStyle: 'path',   step: 6, labelT: 0.5 },
+                ],
+            };
+        }
+
+        // ---- Persistence ----
+        // localStorage is a per-browser convenience only; Save/Load JSON is the
+        // durable way to keep a scene. Every access is guarded because storage
+        // can be unavailable (private windows, blocked site data).
+        function saveToStorage() {
+            try { localStorage.setItem(STORAGE_KEY, JSON.stringify(scene)); } catch (_) { /* storage unavailable */ }
+        }
+
+        function isValidScene(candidate) {
+            return candidate && Array.isArray(candidate.nodes) && Array.isArray(candidate.edges)
+                && Number.isInteger(candidate.stepCount) && candidate.stepCount >= 1;
+        }
+
+        function loadFromStorage() {
+            try {
+                const raw = localStorage.getItem(STORAGE_KEY);
+                if (!raw) return null;
+                const parsed = JSON.parse(raw);
+                return isValidScene(parsed) ? parsed : null;
+            } catch (_) {
+                return null;
+            }
+        }
+
+        // ---- Lookup helpers ----
+        const nodeById = (id) => scene.nodes.find(n => n.id === id);
+        const edgeById = (id) => scene.edges.find(e => e.id === id);
+
+        function isNodeVisible(node, step) { return node.step <= step; }
+        function isEdgeVisible(edge, step) {
+            const fromNode = nodeById(edge.from), toNode = nodeById(edge.to);
+            return edge.step <= step && fromNode && toNode
+                && isNodeVisible(fromNode, step) && isNodeVisible(toNode, step);
+        }
+
+        // When dimming, the current step's edges stay at full strength, plus
+        // everything downstream of where they land. That keeps a shared tail
+        // (e.g. IAM Role -> bucket, added in step 1) bright when a later step
+        // adds a new way in, while the other entry paths fade. The walk starts
+        // from edge *destinations* only, so the attacker's other outgoing
+        // edges don't light up just because the attacker is on the new path.
+        function computeHighlight(step) {
+            const highlightedNodeIds = new Set();
+            const highlightedEdgeIds = new Set();
+            const visibleEdges = scene.edges.filter(e => isEdgeVisible(e, step));
+            const frontier = [];
+            for (const edge of visibleEdges) {
+                if (edge.step !== step) continue;
+                highlightedEdgeIds.add(edge.id);
+                highlightedNodeIds.add(edge.from);
+                highlightedNodeIds.add(edge.to);
+                frontier.push(edge.to);
+            }
+            for (const node of scene.nodes) {
+                if (node.step === step) { highlightedNodeIds.add(node.id); frontier.push(node.id); }
+            }
+            const expanded = new Set();
+            while (frontier.length) {
+                const nodeId = frontier.pop();
+                if (expanded.has(nodeId)) continue;
+                expanded.add(nodeId);
+                for (const edge of visibleEdges) {
+                    if (edge.from !== nodeId) continue;
+                    highlightedEdgeIds.add(edge.id);
+                    highlightedNodeIds.add(edge.to);
+                    frontier.push(edge.to);
+                }
+            }
+            return { highlightedNodeIds, highlightedEdgeIds };
+        }
+
+        // ---- Node geometry ----
+        function islandRadius(node) {
+            const base = node.kind === 'resource' ? RESOURCE_RADIUS : PRINCIPAL_RADIUS;
+            return base * (node.scale || 1);
+        }
+
+        function spriteKeyFor(node) {
+            if (node.kind === 'resource') return 'resource';
+            if (node.kind === 'target') return 'target';
+            return 'principal';
+        }
+
+        // Footprint of the island sprite (or the attacker figure) in design units.
+        function nodeBodyBounds(node) {
+            if (node.kind === 'attacker') {
+                const sprite = currentAttackerSprite();
+                const crop = sprite.crop;
+                // Fall back to the square placeholder's size until the sprite loads.
+                const h = (crop ? sprite.height : ATTACKER_HEIGHT) * (node.scale || 1);
+                const w = crop ? h * (crop.sw / crop.sh) : h;
+                const cy = crop && !sprite.grounded ? edgeAnchor(node).y : node.y;
+                return { x0: node.x - w / 2, y0: cy - h / 2, x1: node.x + w / 2, y1: cy + h / 2 };
+            }
+            const r = islandRadius(node);
+            const key = spriteKeyFor(node);
+            const img = islandSprites.get(key);
+            const w = r * ISLAND_SPRITE_FOOTPRINT_SCALE[key];
+            const h = img && img.naturalWidth ? w * (img.naturalHeight / img.naturalWidth) : w * 0.9;
+            const grass = ISLAND_SPRITE_GRASS_CENTER[key];
+            // The icon crest can poke above the sprite's top edge on principal islands.
+            const crestTop = node.y - r * 0.5;
+            return {
+                x0: node.x - w / 2,
+                y0: Math.min(node.y - h * grass, crestTop),
+                x1: node.x + w / 2,
+                y1: node.y + h * (1 - grass),
+            };
+        }
+
+        // Where edges attach. Islands use the terrain body (same offset as
+        // drawGameMap) so the dashes disappear behind the island, not its badge.
+        // The attacker anchor drops by the same fixed amount as a resource
+        // island's (RESOURCE_RADIUS * 0.25 = 14), independent of attacker
+        // sprite or size, so an attacker on the same row as its entry island
+        // always connects with a perfectly horizontal line.
+        function edgeAnchor(node) {
+            if (node.kind === 'attacker') return { x: node.x, y: node.y + RESOURCE_RADIUS * 0.25 };
+            return { x: node.x, y: node.y + islandRadius(node) * 0.25 };
+        }
+
+        function labelTopY(node) {
+            if (node.kind === 'attacker') return nodeBodyBounds(node).y1 + 10;
+            return getIslandBottomY({ x: node.x, y: node.y }, islandRadius(node), spriteKeyFor(node)) - 20;
+        }
+
+        // ---- Drawing ----
+        function drawAttacker(ctx, node) {
+            const b = nodeBodyBounds(node);
+            const w = b.x1 - b.x0, h = b.y1 - b.y0;
+            const sprite = currentAttackerSprite();
+
+            // Soft ground shadow so a standing figure sits in the scene like
+            // the islands do. Skipped for airborne sprites.
+            if (sprite.grounded || !sprite.img) {
+                ctx.save();
+                ctx.fillStyle = 'rgba(0, 0, 0, 0.18)';
+                ctx.beginPath();
+                ctx.ellipse(node.x, b.y1 + 2, w * 0.42, h * 0.06, 0, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.restore();
+            }
+
+            if (sprite.img) {
+                const { sx, sy, sw, sh } = sprite.crop;
+                // Nearest-neighbour scaling keeps the pixel art crisp; the
+                // sprites are small and get upscaled several times on export.
+                ctx.save();
+                ctx.imageSmoothingEnabled = false;
+                ctx.drawImage(sprite.img, sx, sy, sw, sh, b.x0, b.y0, w, h);
+                ctx.restore();
+                return;
+            }
+            const rows = ATTACKER_PIXELS.length, cols = ATTACKER_PIXELS[0].length;
+            const px = h / rows;
+            for (let r = 0; r < rows; r++) {
+                for (let c = 0; c < cols; c++) {
+                    const color = ATTACKER_COLORS[ATTACKER_PIXELS[r][c]];
+                    if (!color) continue;
+                    ctx.fillStyle = color;
+                    // +0.5 overlap hides hairline seams between pixels at fractional scales
+                    ctx.fillRect(b.x0 + c * px, b.y0 + r * px, px + 0.5, px + 0.5);
+                }
+            }
+        }
+
+        function drawNodeBody(ctx, node, palette) {
+            const pos = { x: node.x, y: node.y };
+            const r = islandRadius(node);
+            const seed = node.id * 997 + 1;
+            const iconNode = { subType: node.icon };
+
+            if (node.kind === 'attacker') {
+                drawAttacker(ctx, node);
+                return;
+            }
+            if (node.kind === 'resource') {
+                const drew = drawIslandSpriteFor(ctx, islandSprites.get('resource'), pos,
+                    r * ISLAND_SPRITE_FOOTPRINT_SCALE.resource, ISLAND_SPRITE_GRASS_CENTER.resource);
+                if (!drew) drawIslandClassic(ctx, pos, r, seed, palette, false, false);
+                // Same upscaled crest drawCompanionIslet uses on resource islets.
+                if (node.icon) drawIconCrest(ctx, pos, r * 1.5, iconNode, palette);
+                return;
+            }
+            if (node.kind === 'target') {
+                drawTargetIslandFlagShape(ctx, pos, r, seed, palette);
+                // drawGameMap lifts the badge 20px on target islands so it clears the flag.
+                if (node.icon) drawIconCrest(ctx, { x: pos.x, y: pos.y - 20 }, r, iconNode, palette);
+                return;
+            }
+            drawIslandWooded(ctx, pos, r, seed, palette, false, false);
+            if (node.icon) drawIconCrest(ctx, pos, r, iconNode, palette);
+        }
+
+        function labelTextColor(colorKey, palette) {
+            if (colorKey === 'start') return palette.startFill || '#22a853';
+            if (colorKey === 'end') return palette.endFill || '#d97706';
+            if (colorKey === 'attacker') return '#dc2626';
+            return palette.labelFill || '#1d1d3f';
+        }
+
+        // Parchment label plate, matching drawGameIslandLabels' styling but
+        // with a configurable font size.
+        function drawNodeLabel(ctx, node, palette) {
+            if (node.hideLabel || !node.label) return null;
+            const fontSize = scene.labelSize;
+            const subSize = Math.round(fontSize * 0.68);
+            const weight = node.labelColor === 'default' ? 600 : 700;
+
+            ctx.font = `${weight} ${fontSize}px -apple-system, BlinkMacSystemFont, sans-serif`;
+            const labelWidth = ctx.measureText(node.label).width;
+            let subWidth = 0;
+            if (node.subtitle) {
+                ctx.font = `500 ${subSize}px -apple-system, BlinkMacSystemFont, sans-serif`;
+                subWidth = ctx.measureText(node.subtitle).width;
+            }
+            const padX = fontSize * 0.85;
+            const padY = fontSize * 0.5;
+            const gap = node.subtitle ? fontSize * 0.35 : 0;
+            const plateW = Math.max(labelWidth, subWidth) + padX * 2;
+            const plateH = fontSize + (node.subtitle ? gap + subSize : 0) + padY * 2;
+            const plateX = node.x - plateW / 2;
+            const plateY = labelTopY(node);
+
+            drawRoundedRect(ctx, plateX, plateY, plateW, plateH, Math.max(4, fontSize * 0.3));
+            ctx.fillStyle = palette.parchCenter || 'rgba(245, 230, 200, 0.9)';
+            ctx.fill();
+            ctx.strokeStyle = palette.borderDecor || 'rgba(120, 80, 20, 0.3)';
+            ctx.lineWidth = 0.8;
+            ctx.stroke();
+
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.font = `${weight} ${fontSize}px -apple-system, BlinkMacSystemFont, sans-serif`;
+            ctx.fillStyle = labelTextColor(node.labelColor, palette);
+            ctx.fillText(node.label, node.x, plateY + padY + fontSize / 2);
+            if (node.subtitle) {
+                ctx.font = `500 ${subSize}px -apple-system, BlinkMacSystemFont, sans-serif`;
+                ctx.fillStyle = palette.mutedText || '#8a7a5a';
+                ctx.fillText(node.subtitle, node.x, plateY + padY + fontSize + gap + subSize / 2);
+            }
+            return { x0: plateX, y0: plateY, x1: plateX + plateW, y1: plateY + plateH };
+        }
+
+        function edgeEndpoints(edge) {
+            return { a: edgeAnchor(nodeById(edge.from)), b: edgeAnchor(nodeById(edge.to)) };
+        }
+
+        function drawEdgeLine(ctx, edge, palette) {
+            const { a, b } = edgeEndpoints(edge);
+            const isAttack = edge.lineStyle === 'attack';
+
+            // Glow underlay + dashed line, same widths and dash pattern as drawGameMap.
+            ctx.save();
+            ctx.strokeStyle = isAttack ? 'rgba(220, 38, 38, 0.22)' : palette.pathGlow;
+            ctx.lineWidth = 6;
+            ctx.globalAlpha *= isAttack ? 1 : 0.5;
+            ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y); ctx.stroke();
+            ctx.restore();
+
+            ctx.save();
+            ctx.strokeStyle = isAttack ? '#c0392b' : palette.pathStroke;
+            ctx.lineWidth = 2;
+            ctx.setLineDash([8, 6]);
+            ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y); ctx.stroke();
+            ctx.restore();
+        }
+
+        function drawEdgeLabel(ctx, edge, palette, isSelected) {
+            if (edge.labelStyle === 'none' || !edge.label) return null;
+            const { a, b } = edgeEndpoints(edge);
+            const t = edge.labelT ?? 0.5;
+            const mx = a.x + (b.x - a.x) * t;
+            const my = a.y + (b.y - a.y) * t;
+            const fontSize = scene.edgeLabelSize;
+            const isLight = document.documentElement.classList.contains('light-theme');
+            const isAccess = edge.labelStyle === 'access';
+
+            ctx.font = `bold ${fontSize}px -apple-system, BlinkMacSystemFont, sans-serif`;
+            const textWidth = ctx.measureText(edge.label).width;
+            const pillW = textWidth + fontSize * 1.3;
+            const pillH = fontSize * 1.8;
+            const px = mx - pillW / 2, py = my - pillH / 2;
+
+            drawRoundedRect(ctx, px, py, pillW, pillH, Math.max(4, fontSize * 0.4));
+            if (isAccess) {
+                // Initial-access techniques get a red pill so they read as a
+                // different category from the beige AWS-permission pills.
+                ctx.fillStyle = isLight ? '#fde4e1' : '#3a1614';
+                ctx.fill();
+                ctx.strokeStyle = isLight ? '#d64534' : '#ef6b5b';
+                ctx.lineWidth = 1.2;
+            } else {
+                ctx.fillStyle = palette.parchCenter || 'rgba(245, 230, 200, 0.9)';
+                ctx.fill();
+                ctx.strokeStyle = palette.borderDecor || 'rgba(120, 80, 20, 0.3)';
+                ctx.lineWidth = 0.8;
+            }
+            ctx.stroke();
+            if (isSelected) {
+                ctx.save();
+                ctx.strokeStyle = '#f0b040';
+                ctx.lineWidth = 2;
+                ctx.setLineDash([5, 3]);
+                drawRoundedRect(ctx, px - 4, py - 4, pillW + 8, pillH + 8, 6);
+                ctx.stroke();
+                ctx.restore();
+            }
+
+            ctx.fillStyle = isAccess ? (isLight ? '#a3261a' : '#fca5a5') : (palette.bodyText || '#5a4a2a');
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillText(edge.label, mx, my);
+            return { x0: px, y0: py, x1: px + pillW, y1: py + pillH };
+        }
+
+        // Paints the scene for `step` in design coordinates. `interactive`
+        // adds selection outlines and drag guides (preview only, never exported).
+        // Returns the hit-test rectangles for labels drawn this pass.
+        function paintScene(ctx, step, { interactive, background }) {
+            const palette = getGameUIPalette();
+            const hitRects = { nodeLabels: new Map(), edgeLabels: new Map() };
+
+            if (background === 'sky') {
+                const grad = ctx.createLinearGradient(0, -50, 0, DESIGN_H + 50);
+                grad.addColorStop(0, palette.oceanA);
+                grad.addColorStop(0.6, palette.oceanB);
+                grad.addColorStop(1, palette.oceanDeep);
+                ctx.fillStyle = grad;
+                ctx.fillRect(0, 0, DESIGN_W, DESIGN_H);
+            }
+
+            const dim = scene.dimEarlier && step > 1;
+            const { highlightedNodeIds, highlightedEdgeIds } = computeHighlight(step);
+            const nodeAlpha = (node) => (dim && !highlightedNodeIds.has(node.id) ? DIM_ALPHA : 1);
+            const edgeAlpha = (edge) => (dim && !highlightedEdgeIds.has(edge.id) ? DIM_ALPHA : 1);
+
+            const visibleEdges = scene.edges.filter(e => isEdgeVisible(e, step));
+            // Draw lower islands last so they overlap the ones behind them.
+            const visibleNodes = scene.nodes.filter(n => isNodeVisible(n, step)).sort((a, b) => a.y - b.y);
+
+            // 1) Edge lines sit underneath the islands.
+            for (const edge of visibleEdges) {
+                ctx.save();
+                ctx.globalAlpha = edgeAlpha(edge);
+                drawEdgeLine(ctx, edge, palette);
+                ctx.restore();
+            }
+
+            // 2) Island bodies and crests.
+            for (const node of visibleNodes) {
+                ctx.save();
+                ctx.globalAlpha = nodeAlpha(node);
+                drawNodeBody(ctx, node, palette);
+                ctx.restore();
+            }
+
+            // 3) Edge label pills, then island label plates, on top of everything.
+            for (const edge of visibleEdges) {
+                ctx.save();
+                ctx.globalAlpha = edgeAlpha(edge);
+                const rect = drawEdgeLabel(ctx, edge, palette, interactive && edge.id === selectedEdgeId);
+                if (rect) hitRects.edgeLabels.set(edge.id, rect);
+                ctx.restore();
+            }
+            for (const node of visibleNodes) {
+                ctx.save();
+                ctx.globalAlpha = nodeAlpha(node);
+                const rect = drawNodeLabel(ctx, node, palette);
+                if (rect) hitRects.nodeLabels.set(node.id, rect);
+                ctx.restore();
+            }
+
+            if (interactive) paintEditorOverlay(ctx, visibleNodes);
+            return hitRects;
+        }
+
+        function paintEditorOverlay(ctx, visibleNodes) {
+            ctx.save();
+            ctx.strokeStyle = '#f0b040';
+            ctx.lineWidth = 2;
+            ctx.setLineDash([7, 4]);
+            for (const node of visibleNodes) {
+                if (!selectedNodeIds.includes(node.id)) continue;
+                const b = nodeBodyBounds(node);
+                ctx.strokeRect(b.x0 - 4, b.y0 - 4, b.x1 - b.x0 + 8, b.y1 - b.y0 + 8);
+            }
+            // Selection order badges make "Connect A -> B" predictable.
+            if (selectedNodeIds.length > 1) {
+                ctx.setLineDash([]);
+                ctx.font = 'bold 14px -apple-system, BlinkMacSystemFont, sans-serif';
+                ctx.textAlign = 'center';
+                ctx.textBaseline = 'middle';
+                selectedNodeIds.forEach((id, i) => {
+                    const node = nodeById(id);
+                    if (!node || !isNodeVisible(node, currentStep)) return;
+                    const b = nodeBodyBounds(node);
+                    ctx.fillStyle = '#f0b040';
+                    ctx.beginPath(); ctx.arc(b.x0 - 4, b.y0 - 4, 12, 0, Math.PI * 2); ctx.fill();
+                    ctx.fillStyle = '#1a0a00';
+                    ctx.fillText(String.fromCharCode(65 + i), b.x0 - 4, b.y0 - 3);
+                });
+            }
+            // Alignment guides while dragging.
+            ctx.setLineDash([4, 4]);
+            ctx.strokeStyle = 'rgba(217, 70, 239, 0.85)';
+            ctx.lineWidth = 1.5;
+            for (const guide of activeGuides) {
+                ctx.beginPath();
+                if (guide.axis === 'x') { ctx.moveTo(guide.value, 0); ctx.lineTo(guide.value, DESIGN_H); }
+                else { ctx.moveTo(0, guide.value); ctx.lineTo(DESIGN_W, guide.value); }
+                ctx.stroke();
+            }
+            ctx.restore();
+        }
+
+        // ---- Preview render ----
+        const canvas = document.getElementById('scene-canvas');
+        const ctx = canvas.getContext('2d');
+        let lastHitRects = { nodeLabels: new Map(), edgeLabels: new Map() };
+
+        function render() {
+            if (!scene) return;
+            canvas.width = DESIGN_W * PREVIEW_SCALE;
+            canvas.height = DESIGN_H * PREVIEW_SCALE;
+            ctx.setTransform(PREVIEW_SCALE, 0, 0, PREVIEW_SCALE, 0, 0);
+            ctx.clearRect(0, 0, DESIGN_W, DESIGN_H);
+            lastHitRects = paintScene(ctx, currentStep, { interactive: true, background: scene.background });
+            document.getElementById('preview-meta').textContent =
+                `Step ${currentStep} of ${scene.stepCount} · design ${DESIGN_W} × ${DESIGN_H}`;
+        }
+
+        // ---- Export ----
+        // Renders one step offscreen at `scale`. Returns the canvas.
+        function renderStepOffscreen(step, scale, background) {
+            const off = document.createElement('canvas');
+            off.width = Math.round(DESIGN_W * scale);
+            off.height = Math.round(DESIGN_H * scale);
+            const offCtx = off.getContext('2d');
+            offCtx.setTransform(scale, 0, 0, scale, 0, 0);
+            paintScene(offCtx, step, { interactive: false, background });
+            return off;
+        }
+
+        // Bounding box of every non-transparent pixel in a canvas.
+        function alphaBounds(sourceCanvas) {
+            const { width, height } = sourceCanvas;
+            const pixels = sourceCanvas.getContext('2d').getImageData(0, 0, width, height).data;
+            let minX = width, minY = height, maxX = -1, maxY = -1;
+            for (let y = 0; y < height; y++) {
+                const rowOffset = y * width * 4;
+                for (let x = 0; x < width; x++) {
+                    if (pixels[rowOffset + x * 4 + 3] > 2) {
+                        if (x < minX) minX = x;
+                        if (x > maxX) maxX = x;
+                        if (y < minY) minY = y;
+                        if (y > maxY) maxY = y;
+                    }
+                }
+            }
+            return maxX < 0 ? null : { minX, minY, maxX, maxY };
+        }
+
+        // The shared export frame is the content bounds of the union of all
+        // steps: render every step transparently, undimmed, and merge their
+        // bounds. Using one frame for every step is what makes the PNGs stack.
+        function computeSharedFrame(scale) {
+            const savedDim = scene.dimEarlier;
+            scene.dimEarlier = false;
+            let frame = null;
+            try {
+                for (let step = 1; step <= scene.stepCount; step++) {
+                    const bounds = alphaBounds(renderStepOffscreen(step, scale, 'transparent'));
+                    if (!bounds) continue;
+                    frame = frame ? {
+                        minX: Math.min(frame.minX, bounds.minX), minY: Math.min(frame.minY, bounds.minY),
+                        maxX: Math.max(frame.maxX, bounds.maxX), maxY: Math.max(frame.maxY, bounds.maxY),
+                    } : bounds;
+                }
+            } finally {
+                scene.dimEarlier = savedDim;
+            }
+            const fullW = Math.round(DESIGN_W * scale), fullH = Math.round(DESIGN_H * scale);
+            if (!frame) return { x: 0, y: 0, w: fullW, h: fullH };
+            const pad = Math.round(EXPORT_PADDING * scale);
+            const x0 = Math.max(0, frame.minX - pad), y0 = Math.max(0, frame.minY - pad);
+            const x1 = Math.min(fullW - 1, frame.maxX + pad), y1 = Math.min(fullH - 1, frame.maxY + pad);
+            return { x: x0, y: y0, w: x1 - x0 + 1, h: y1 - y0 + 1 };
+        }
+
+        function downloadCanvas(sourceCanvas, filename) {
+            return new Promise((resolve) => {
+                sourceCanvas.toBlob((blob) => {
+                    if (!blob) { resolve(); return; }
+                    const url = URL.createObjectURL(blob);
+                    const a = document.createElement('a');
+                    a.href = url;
+                    a.download = filename;
+                    document.body.appendChild(a);
+                    a.click();
+                    a.remove();
+                    setTimeout(() => URL.revokeObjectURL(url), 1000);
+                    resolve();
+                }, 'image/png');
+            });
+        }
+
+        let exportScale = 2;
+
+        async function exportSteps(steps) {
+            const crop = document.getElementById('crop-content').checked;
+            const fullW = Math.round(DESIGN_W * exportScale), fullH = Math.round(DESIGN_H * exportScale);
+            const frame = crop ? computeSharedFrame(exportScale) : { x: 0, y: 0, w: fullW, h: fullH };
+
+            for (const step of steps) {
+                const full = renderStepOffscreen(step, exportScale, scene.background);
+                const out = document.createElement('canvas');
+                out.width = frame.w;
+                out.height = frame.h;
+                out.getContext('2d').drawImage(full, frame.x, frame.y, frame.w, frame.h, 0, 0, frame.w, frame.h);
+                await downloadCanvas(out, `scene-step${step}-of${scene.stepCount}-${frame.w}x${frame.h}.png`);
+                // Browsers drop rapid back-to-back downloads; give each one a beat.
+                await new Promise(r => setTimeout(r, 350));
+            }
+        }
+
+        // ---- Hit testing ----
+        function toDesignCoords(e) {
+            const rect = canvas.getBoundingClientRect();
+            return {
+                x: (e.clientX - rect.left) * (DESIGN_W / rect.width),
+                y: (e.clientY - rect.top) * (DESIGN_H / rect.height),
+            };
+        }
+
+        const inRect = (r, x, y) => r && x >= r.x0 && x <= r.x1 && y >= r.y0 && y <= r.y1;
+
+        function hitTest(x, y) {
+            // Edge label pills sit on top, so they win first.
+            for (const [edgeId, rect] of lastHitRects.edgeLabels) {
+                if (inRect(rect, x, y)) return { type: 'edge', id: edgeId };
+            }
+            // Topmost (last-drawn = largest y) island first.
+            const visibleNodes = scene.nodes.filter(n => isNodeVisible(n, currentStep)).sort((a, b) => b.y - a.y);
+            for (const node of visibleNodes) {
+                if (inRect(nodeBodyBounds(node), x, y) || inRect(lastHitRects.nodeLabels.get(node.id), x, y)) {
+                    return { type: 'node', id: node.id };
+                }
+            }
+            // Bare edge lines (for edges without a label pill).
+            for (const edge of scene.edges.filter(e => isEdgeVisible(e, currentStep))) {
+                const { a, b } = edgeEndpoints(edge);
+                if (distanceToSegment(x, y, a, b) < 8) return { type: 'edge', id: edge.id };
+            }
+            return null;
+        }
+
+        function distanceToSegment(px, py, a, b) {
+            const dx = b.x - a.x, dy = b.y - a.y;
+            const lengthSquared = dx * dx + dy * dy;
+            const t = lengthSquared ? Math.max(0, Math.min(1, ((px - a.x) * dx + (py - a.y) * dy) / lengthSquared)) : 0;
+            return Math.hypot(px - (a.x + t * dx), py - (a.y + t * dy));
+        }
+
+        // ---- Mouse interaction ----
+        canvas.addEventListener('mousedown', (e) => {
+            e.preventDefault();
+            const { x, y } = toDesignCoords(e);
+            const hit = hitTest(x, y);
+
+            if (!hit) {
+                if (!e.shiftKey) clearSelection();
+                refreshAll();
+                return;
+            }
+            if (hit.type === 'edge') {
+                selectedNodeIds = [];
+                selectedEdgeId = hit.id;
+                refreshAll();
+                return;
+            }
+
+            selectedEdgeId = null;
+            if (e.shiftKey) {
+                selectedNodeIds = selectedNodeIds.includes(hit.id)
+                    ? selectedNodeIds.filter(id => id !== hit.id)
+                    : [...selectedNodeIds, hit.id];
+            } else if (!selectedNodeIds.includes(hit.id)) {
+                selectedNodeIds = [hit.id];
+            }
+            if (selectedNodeIds.includes(hit.id)) {
+                dragState = {
+                    primaryId: hit.id,
+                    startX: x, startY: y,
+                    origins: new Map(selectedNodeIds.map(id => [id, { x: nodeById(id).x, y: nodeById(id).y }])),
+                    moved: false,
+                };
+            }
+            refreshAll();
+        });
+
+        canvas.addEventListener('mousemove', (e) => {
+            const { x, y } = toDesignCoords(e);
+            if (!dragState) {
+                canvas.style.cursor = hitTest(x, y) ? 'move' : 'default';
+                return;
+            }
+            let dx = x - dragState.startX;
+            let dy = y - dragState.startY;
+            if (Math.abs(dx) + Math.abs(dy) > 1) dragState.moved = true;
+
+            // Snap the primary node's centre to any other visible node's x or y.
+            activeGuides = [];
+            if (document.getElementById('snap-guides').checked) {
+                const primaryOrigin = dragState.origins.get(dragState.primaryId);
+                const candidateX = primaryOrigin.x + dx, candidateY = primaryOrigin.y + dy;
+                let bestX = null, bestY = null;
+                for (const other of scene.nodes) {
+                    if (dragState.origins.has(other.id) || !isNodeVisible(other, currentStep)) continue;
+                    const gapX = Math.abs(other.x - candidateX), gapY = Math.abs(other.y - candidateY);
+                    if (gapX < SNAP_DISTANCE && (!bestX || gapX < bestX.gap)) bestX = { gap: gapX, value: other.x };
+                    if (gapY < SNAP_DISTANCE && (!bestY || gapY < bestY.gap)) bestY = { gap: gapY, value: other.y };
+                }
+                if (bestX) { dx = bestX.value - primaryOrigin.x; activeGuides.push({ axis: 'x', value: bestX.value }); }
+                if (bestY) { dy = bestY.value - primaryOrigin.y; activeGuides.push({ axis: 'y', value: bestY.value }); }
+            }
+
+            for (const [id, origin] of dragState.origins) {
+                const node = nodeById(id);
+                node.x = Math.round(origin.x + dx);
+                node.y = Math.round(origin.y + dy);
+            }
+            render();
+        });
+
+        function endDrag() {
+            if (!dragState) return;
+            const moved = dragState.moved;
+            dragState = null;
+            activeGuides = [];
+            if (moved) { saveToStorage(); buildPropsPanel(); }
+            render();
+        }
+        canvas.addEventListener('mouseup', endDrag);
+        canvas.addEventListener('mouseleave', endDrag);
+
+        document.addEventListener('keydown', (e) => {
+            const tag = document.activeElement?.tagName;
+            if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
+
+            if (e.key === 'Escape') { clearSelection(); refreshAll(); return; }
+            if (e.key === 'Delete' || e.key === 'Backspace') {
+                e.preventDefault();
+                deleteSelection();
+                return;
+            }
+            const nudges = { ArrowLeft: [-1, 0], ArrowRight: [1, 0], ArrowUp: [0, -1], ArrowDown: [0, 1] };
+            if (nudges[e.key] && selectedNodeIds.length) {
+                e.preventDefault();
+                const step = e.shiftKey ? 10 : 1;
+                for (const id of selectedNodeIds) {
+                    const node = nodeById(id);
+                    node.x += nudges[e.key][0] * step;
+                    node.y += nudges[e.key][1] * step;
+                }
+                commit();
+            }
+        });
+
+        // ---- Mutations ----
+        function commit() {
+            saveToStorage();
+            render();
+        }
+
+        function refreshAll() {
+            buildStepTabs();
+            buildEdgeList();
+            buildPropsPanel();
+            updateButtonStates();
+            render();
+        }
+
+        function clearSelection() {
+            selectedNodeIds = [];
+            selectedEdgeId = null;
+        }
+
+        function deleteSelection() {
+            if (selectedEdgeId !== null) {
+                scene.edges = scene.edges.filter(e => e.id !== selectedEdgeId);
+            } else if (selectedNodeIds.length) {
+                const doomed = new Set(selectedNodeIds);
+                scene.nodes = scene.nodes.filter(n => !doomed.has(n.id));
+                // Edges can't dangle -- drop any that touched a removed node.
+                scene.edges = scene.edges.filter(e => !doomed.has(e.from) && !doomed.has(e.to));
+            } else {
+                return;
+            }
+            clearSelection();
+            saveToStorage();
+            refreshAll();
+        }
+
+        function addNode(kind) {
+            const defaults = {
+                attacker:  { label: 'Attacker',   icon: '',         labelColor: 'attacker' },
+                resource:  { label: 'Resource',   icon: 'ec2-instance', labelColor: 'default' },
+                principal: { label: 'IAM Role',   icon: 'iam-role', labelColor: 'default' },
+                target:    { label: 'Sensitive Data', icon: 's3-bucket', labelColor: 'end' },
+            }[kind];
+            const node = {
+                id: scene.nextId++,
+                kind,
+                // Offset each new island slightly so repeated adds don't stack exactly.
+                x: DESIGN_W / 2 + (scene.nodes.length % 5) * 30,
+                y: DESIGN_H / 2 + (scene.nodes.length % 5) * 20,
+                subtitle: '',
+                step: currentStep,
+                scale: 1,
+                hideLabel: false,
+                ...defaults,
+            };
+            if (node.icon) awsIconSprites.preload([{ subType: node.icon }]);
+            scene.nodes.push(node);
+            selectedNodeIds = [node.id];
+            selectedEdgeId = null;
+            saveToStorage();
+            refreshAll();
+        }
+
+        function addEdgeBetweenSelected() {
+            if (selectedNodeIds.length !== 2) return;
+            const [from, to] = selectedNodeIds;
+            const fromNode = nodeById(from);
+            // Edges leaving the attacker are initial access; everything else is
+            // an in-account hop.
+            const fromAttacker = fromNode && fromNode.kind === 'attacker';
+            const edge = {
+                id: scene.nextId++,
+                from, to,
+                label: fromAttacker ? 'initial access' : '',
+                labelStyle: fromAttacker ? 'access' : 'none',
+                lineStyle: fromAttacker ? 'attack' : 'path',
+                step: currentStep,
+                labelT: 0.5,
+            };
+            scene.edges.push(edge);
+            selectedNodeIds = [];
+            selectedEdgeId = edge.id;
+            saveToStorage();
+            refreshAll();
+        }
+
+        function alignSelected(mode) {
+            const nodes = selectedNodeIds.map(nodeById).filter(Boolean);
+            if (nodes.length < 2) return;
+            if (mode === 'row') {
+                // Align to the first-selected island so the user controls the anchor.
+                nodes.forEach(n => { n.y = nodes[0].y; });
+            } else if (mode === 'col') {
+                nodes.forEach(n => { n.x = nodes[0].x; });
+            } else if (mode === 'dist-x' || mode === 'dist-y') {
+                if (nodes.length < 3) return;
+                const axis = mode === 'dist-x' ? 'x' : 'y';
+                const sorted = [...nodes].sort((a, b) => a[axis] - b[axis]);
+                const first = sorted[0][axis], last = sorted[sorted.length - 1][axis];
+                const spacing = (last - first) / (sorted.length - 1);
+                sorted.forEach((n, i) => { n[axis] = Math.round(first + spacing * i); });
+            }
+            commit();
+        }
+
+        // ---- Sidebar: steps ----
+        function buildStepTabs() {
+            const tabs = document.getElementById('step-tabs');
+            tabs.innerHTML = '';
+            for (let step = 1; step <= scene.stepCount; step++) {
+                const btn = document.createElement('button');
+                btn.className = 'preset-btn step-tab' + (step === currentStep ? ' active' : '');
+                btn.textContent = String(step);
+                btn.title = `View step ${step}`;
+                btn.addEventListener('click', () => { currentStep = step; refreshAll(); });
+                tabs.appendChild(btn);
+            }
+            document.getElementById('remove-step-btn').disabled = scene.stepCount <= 1;
+            document.getElementById('dim-earlier').checked = !!scene.dimEarlier;
+        }
+
+        document.getElementById('add-step-btn').addEventListener('click', () => {
+            scene.stepCount += 1;
+            currentStep = scene.stepCount;
+            saveToStorage();
+            refreshAll();
+        });
+
+        document.getElementById('remove-step-btn').addEventListener('click', () => {
+            if (scene.stepCount <= 1) return;
+            const removed = scene.stepCount;
+            const affected = scene.nodes.filter(n => n.step === removed).length
+                           + scene.edges.filter(e => e.step === removed).length;
+            if (affected && !confirm(`Move ${affected} item(s) from step ${removed} into step ${removed - 1}?`)) return;
+            scene.stepCount -= 1;
+            scene.nodes.forEach(n => { if (n.step > scene.stepCount) n.step = scene.stepCount; });
+            scene.edges.forEach(e => { if (e.step > scene.stepCount) e.step = scene.stepCount; });
+            currentStep = Math.min(currentStep, scene.stepCount);
+            saveToStorage();
+            refreshAll();
+        });
+
+        document.getElementById('dim-earlier').addEventListener('change', (e) => {
+            scene.dimEarlier = e.target.checked;
+            commit();
+        });
+
+        // ---- Sidebar: edges list ----
+        function buildEdgeList() {
+            const list = document.getElementById('edge-list');
+            list.innerHTML = '';
+            const sorted = [...scene.edges].sort((a, b) => a.step - b.step);
+            if (!sorted.length) {
+                list.innerHTML = '<p class="hint" style="margin:0">No edges yet.</p>';
+                return;
+            }
+            for (const edge of sorted) {
+                const fromNode = nodeById(edge.from), toNode = nodeById(edge.to);
+                const item = document.createElement('div');
+                item.className = 'edge-item' + (edge.id === selectedEdgeId ? ' active' : '');
+                const badge = document.createElement('span');
+                badge.className = 'step-badge';
+                badge.textContent = `S${edge.step}`;
+                const text = document.createElement('span');
+                text.className = 'edge-text';
+                const route = `${fromNode?.label || '?'} → ${toNode?.label || '?'}`;
+                text.textContent = edge.label ? `${route}  ·  ${edge.label}` : route;
+                text.title = text.textContent;
+                item.appendChild(badge);
+                item.appendChild(text);
+                item.addEventListener('click', () => {
+                    selectedNodeIds = [];
+                    selectedEdgeId = edge.id;
+                    // Jump to a step where the edge is visible so the selection shows.
+                    if (edge.step > currentStep) currentStep = edge.step;
+                    refreshAll();
+                });
+                list.appendChild(item);
+            }
+        }
+
+        // ---- Sidebar: properties ----
+        const propsPanel = document.getElementById('props-panel');
+        const propsContent = document.getElementById('props-content');
+        const propsTitle = document.getElementById('props-title');
+        const propsEmpty = document.getElementById('props-empty');
+
+        function field(labelText, control) {
+            const wrap = document.createElement('div');
+            wrap.className = 'field';
+            const label = document.createElement('label');
+            label.textContent = labelText;
+            wrap.appendChild(label);
+            wrap.appendChild(control);
+            propsContent.appendChild(wrap);
+            return control;
+        }
+
+        function textInput(value, onInput) {
+            const input = document.createElement('input');
+            input.type = 'text';
+            input.value = value || '';
+            input.autocomplete = 'off';
+            input.addEventListener('input', () => { onInput(input.value); commit(); });
+            // Labels show up in the edge list, so refresh it once editing settles.
+            input.addEventListener('change', buildEdgeList);
+            return input;
+        }
+
+        function selectInput(options, value, onChange) {
+            const select = document.createElement('select');
+            for (const [optionValue, optionLabel] of options) {
+                const option = document.createElement('option');
+                option.value = optionValue;
+                option.textContent = optionLabel;
+                if (String(optionValue) === String(value)) option.selected = true;
+                select.appendChild(option);
+            }
+            select.addEventListener('change', () => { onChange(select.value); commit(); });
+            return select;
+        }
+
+        function segmented(options, value, onChange) {
+            const seg = document.createElement('div');
+            seg.className = 'seg';
+            for (const [optionValue, optionLabel] of options) {
+                const btn = document.createElement('button');
+                btn.className = 'preset-btn' + (optionValue === value ? ' active' : '');
+                btn.textContent = optionLabel;
+                btn.addEventListener('click', () => {
+                    seg.querySelectorAll('.preset-btn').forEach(b => b.classList.remove('active'));
+                    btn.classList.add('active');
+                    onChange(optionValue);
+                    commit();
+                });
+                seg.appendChild(btn);
+            }
+            return seg;
+        }
+
+        function rangeInput(min, max, step, value, format, onInput) {
+            const row = document.createElement('div');
+            row.className = 'range-row';
+            const input = document.createElement('input');
+            input.type = 'range';
+            input.min = min; input.max = max; input.step = step; input.value = value;
+            const readout = document.createElement('span');
+            readout.className = 'range-val';
+            readout.textContent = format(value);
+            input.addEventListener('input', () => {
+                readout.textContent = format(Number(input.value));
+                onInput(Number(input.value));
+                commit();
+            });
+            row.appendChild(input);
+            row.appendChild(readout);
+            return row;
+        }
+
+        function stepOptions() {
+            return Array.from({ length: scene.stepCount }, (_, i) => [i + 1, `Step ${i + 1}`]);
+        }
+
+        function buildPropsPanel() {
+            propsContent.innerHTML = '';
+            const edge = selectedEdgeId !== null ? edgeById(selectedEdgeId) : null;
+            const node = !edge && selectedNodeIds.length === 1 ? nodeById(selectedNodeIds[0]) : null;
+
+            if (!edge && !node) {
+                propsPanel.hidden = true;
+                propsEmpty.hidden = false;
+                propsEmpty.textContent = selectedNodeIds.length > 1
+                    ? `${selectedNodeIds.length} islands selected. Use Align or Connect below.`
+                    : 'Click an island or edge label to edit it.';
+                return;
+            }
+            propsPanel.hidden = false;
+            propsEmpty.hidden = true;
+
+            if (node) {
+                propsTitle.textContent = KIND_LABELS[node.kind] || 'Island';
+                field('Label', textInput(node.label, v => { node.label = v; }));
+                field('Subtitle (optional)', textInput(node.subtitle, v => { node.subtitle = v; }));
+                field('Type', segmented(
+                    Object.entries(KIND_LABELS), node.kind,
+                    v => { node.kind = v; propsTitle.textContent = KIND_LABELS[v]; }
+                ));
+                if (node.kind !== 'attacker') {
+                    field('Icon', selectInput(ICON_OPTIONS, node.icon, v => {
+                        node.icon = v;
+                        if (v) awsIconSprites.preload([{ subType: v }]);
+                    }));
+                }
+                field('Label color', segmented(LABEL_COLOR_OPTIONS, node.labelColor, v => { node.labelColor = v; }));
+                field('Appears in', selectInput(stepOptions(), node.step, v => { node.step = Number(v); buildEdgeList(); }));
+                field('Size', rangeInput(0.5, 2, 0.05, node.scale || 1, v => `${v.toFixed(2)}×`, v => { node.scale = v; }));
+                const coords = document.createElement('div');
+                coords.className = 'two-col';
+                const xInput = document.createElement('input');
+                xInput.type = 'number'; xInput.value = node.x; xInput.title = 'X';
+                xInput.addEventListener('input', () => { node.x = Number(xInput.value) || 0; commit(); });
+                const yInput = document.createElement('input');
+                yInput.type = 'number'; yInput.value = node.y; yInput.title = 'Y';
+                yInput.addEventListener('input', () => { node.y = Number(yInput.value) || 0; commit(); });
+                coords.appendChild(xInput);
+                coords.appendChild(yInput);
+                field('Position (X, Y)', coords);
+
+                const hideWrap = document.createElement('label');
+                hideWrap.className = 'inline-check';
+                const hideBox = document.createElement('input');
+                hideBox.type = 'checkbox';
+                hideBox.checked = !!node.hideLabel;
+                hideBox.addEventListener('change', () => { node.hideLabel = hideBox.checked; commit(); });
+                hideWrap.appendChild(hideBox);
+                hideWrap.appendChild(document.createTextNode('Hide label'));
+                propsContent.appendChild(hideWrap);
+                return;
+            }
+
+            propsTitle.textContent = 'Edge';
+            const nodeOptions = scene.nodes.map(n => [n.id, `${n.label || KIND_LABELS[n.kind]} (S${n.step})`]);
+            field('From', selectInput(nodeOptions, edge.from, v => { edge.from = Number(v); buildEdgeList(); }));
+            field('To', selectInput(nodeOptions, edge.to, v => { edge.to = Number(v); buildEdgeList(); }));
+            field('Label', textInput(edge.label, v => { edge.label = v; }));
+            field('Label style', segmented(
+                [['access', 'Initial access'], ['permission', 'Permission'], ['none', 'None']],
+                edge.labelStyle, v => { edge.labelStyle = v; }
+            ));
+            field('Line style', segmented(
+                [['attack', 'Red (attack)'], ['path', 'Gold (path)']],
+                edge.lineStyle, v => { edge.lineStyle = v; }
+            ));
+            field('Label position', rangeInput(0.1, 0.9, 0.01, edge.labelT ?? 0.5,
+                v => `${Math.round(v * 100)}%`, v => { edge.labelT = v; }));
+            field('Appears in', selectInput(stepOptions(), edge.step, v => { edge.step = Number(v); buildEdgeList(); }));
+        }
+
+        function updateButtonStates() {
+            const count = selectedNodeIds.length;
+            document.getElementById('add-edge-btn').disabled = count !== 2;
+            document.querySelector('[data-align="row"]').disabled = count < 2;
+            document.querySelector('[data-align="col"]').disabled = count < 2;
+            document.querySelector('[data-align="dist-x"]').disabled = count < 3;
+            document.querySelector('[data-align="dist-y"]').disabled = count < 3;
+        }
+
+        // ---- Sidebar wiring ----
+        document.querySelectorAll('[data-add-kind]').forEach(btn => {
+            btn.addEventListener('click', () => addNode(btn.dataset.addKind));
+        });
+        document.getElementById('add-edge-btn').addEventListener('click', addEdgeBetweenSelected);
+        document.getElementById('delete-btn').addEventListener('click', deleteSelection);
+        document.querySelectorAll('[data-align]').forEach(btn => {
+            btn.addEventListener('click', () => alignSelected(btn.dataset.align));
+        });
+
+        function bindRange(inputId, valueId, key) {
+            const input = document.getElementById(inputId);
+            const readout = document.getElementById(valueId);
+            input.addEventListener('input', () => {
+                scene[key] = Number(input.value);
+                readout.textContent = input.value;
+                commit();
+            });
+            return (value) => { input.value = value; readout.textContent = value; };
+        }
+        const setLabelSizeControl = bindRange('label-size', 'label-size-val', 'labelSize');
+        const setEdgeLabelSizeControl = bindRange('edge-label-size', 'edge-label-size-val', 'edgeLabelSize');
+
+        function setTheme(theme) {
+            document.documentElement.classList.toggle('light-theme', theme === 'light');
+            document.getElementById('theme-dark').classList.toggle('active', theme === 'dark');
+            document.getElementById('theme-light').classList.toggle('active', theme === 'light');
+            render();
+        }
+        document.getElementById('theme-dark').addEventListener('click', () => setTheme('dark'));
+        document.getElementById('theme-light').addEventListener('click', () => setTheme('light'));
+
+        function syncSegment(containerId, attr, value) {
+            document.querySelectorAll(`#${containerId} .preset-btn`).forEach(b => {
+                b.classList.toggle('active', b.dataset[attr] === String(value));
+            });
+        }
+        document.getElementById('bg-seg').addEventListener('click', (e) => {
+            const btn = e.target.closest('.preset-btn');
+            if (!btn) return;
+            scene.background = btn.dataset.bg;
+            syncSegment('bg-seg', 'bg', scene.background);
+            commit();
+        });
+        document.getElementById('attacker-seg').addEventListener('click', (e) => {
+            const btn = e.target.closest('.preset-btn');
+            if (!btn) return;
+            scene.attackerStyle = btn.dataset.attacker;
+            syncSegment('attacker-seg', 'attacker', scene.attackerStyle);
+            commit();
+        });
+        document.getElementById('scale-seg').addEventListener('click', (e) => {
+            const btn = e.target.closest('.preset-btn');
+            if (!btn) return;
+            exportScale = Number(btn.dataset.scale);
+            syncSegment('scale-seg', 'scale', exportScale);
+        });
+
+        document.getElementById('export-all-btn').addEventListener('click', () => {
+            exportSteps(Array.from({ length: scene.stepCount }, (_, i) => i + 1));
+        });
+        document.getElementById('export-current-btn').addEventListener('click', () => {
+            exportSteps([currentStep]);
+        });
+
+        // ---- Scene file ----
+        document.getElementById('save-json-btn').addEventListener('click', () => {
+            const blob = new Blob([JSON.stringify(scene, null, 2)], { type: 'application/json' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = 'scene.json';
+            document.body.appendChild(a);
+            a.click();
+            a.remove();
+            setTimeout(() => URL.revokeObjectURL(url), 1000);
+        });
+
+        const loadInput = document.getElementById('load-json-input');
+        document.getElementById('load-json-btn').addEventListener('click', () => loadInput.click());
+        loadInput.addEventListener('change', () => {
+            const file = loadInput.files[0];
+            loadInput.value = '';
+            if (!file) return;
+            file.text().then((text) => {
+                let parsed;
+                try { parsed = JSON.parse(text); } catch (_) { parsed = null; }
+                if (!isValidScene(parsed)) {
+                    alert('That file is not a scene saved by this page.');
+                    return;
+                }
+                applyScene(parsed);
+                saveToStorage();
+            });
+        });
+
+        document.getElementById('reset-btn').addEventListener('click', () => {
+            if (!confirm('Replace the current scene with the default three-step example?')) return;
+            applyScene(defaultScene());
+            saveToStorage();
+        });
+
+        function applyScene(next) {
+            scene = Object.assign(defaultScene(), next);
+            // Guarantee nextId never collides with ids already in the file.
+            const maxId = Math.max(0, ...scene.nodes.map(n => n.id), ...scene.edges.map(e => e.id));
+            scene.nextId = Math.max(scene.nextId || 0, maxId + 1);
+            currentStep = Math.min(currentStep, scene.stepCount);
+            clearSelection();
+            setLabelSizeControl(scene.labelSize);
+            setEdgeLabelSizeControl(scene.edgeLabelSize);
+            syncSegment('bg-seg', 'bg', scene.background);
+            syncSegment('attacker-seg', 'attacker', scene.attackerStyle);
+            awsIconSprites.preload(scene.nodes.filter(n => n.icon).map(n => ({ subType: n.icon })));
+            refreshAll();
+        }
+
+        // ---- Init ----
+        awsIconSprites.onLoadCallbacks.push(() => render());
+        islandSprites.load().then(render);
+        applyScene(loadFromStorage() || defaultScene());
+    })();
+    </script>
+</body>
+</html>
