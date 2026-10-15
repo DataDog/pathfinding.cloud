@@ -12,10 +12,11 @@
 // The HTML panel handles: node details, mission briefing, commands.
 
 // ---- Play Online: live labs through pathfinding-backend and Cybr ----
-// When false, all labs show the "Coming Soon" tease. When true, labs with
-// supportsOnlineMode: true in their YAML open the live lab panel. It is on
-// automatically for local development (localhost) so the flow can be tested
-// against a local backend before it is enabled for everyone.
+// When false, all labs show the "Coming Soon" tease. When true, labs the
+// backend reports as playable (GET /labs/online, derived from Cybr's catalog)
+// open the live lab panel. It is on automatically for local development
+// (localhost) so the flow can be tested against a local backend before it is
+// enabled for everyone.
 const PLAY_ONLINE_GLOBALLY_ENABLED = ['localhost', '127.0.0.1'].includes(window.location.hostname);
 
 // True when this lab can be played live in the browser right now. Online labs
@@ -31,6 +32,23 @@ function isOnlineLab(lab) {
 // that depend on the lab supporting online play, independent of auth state.
 function isOnlineLabBySchema(lab) {
     return PLAY_ONLINE_GLOBALLY_ENABLED && !!lab?.supportsOnlineMode;
+}
+
+// Sets lab.supportsOnlineMode on each lab from the backend's live list, so
+// Play Online, the catalog badges and the Online Play filter all follow what
+// Cybr can actually run. While online play is switched off, no lab is marked
+// online, so nothing advertises a button that would show "Coming Soon".
+async function markOnlineLabs(labs) {
+    let online = new Set();
+    if (PLAY_ONLINE_GLOBALLY_ENABLED) {
+        // pf-account.js is deferred; it is defined by DOMContentLoaded.
+        if (!window.pfAccount && document.readyState === 'loading') {
+            await new Promise((resolve) => document.addEventListener('DOMContentLoaded', resolve, { once: true }));
+        }
+        if (window.pfAccount) online = await window.pfAccount.onlineLabSlugs();
+    }
+    for (const lab of labs) lab.supportsOnlineMode = online.has(lab.slug);
+    return labs;
 }
 
 // ---- Preload pixel font for arcade start overlay ----
@@ -52,14 +70,17 @@ let _gameTranscriptCache = {};
 async function fetchLabsIndex() {
     if (_gameLabsIndexCache) return _gameLabsIndexCache;
     const resp = await fetch('/labs.json');
-    _gameLabsIndexCache = await resp.json();
+    _gameLabsIndexCache = await markOnlineLabs(await resp.json());
     return _gameLabsIndexCache;
 }
 
 async function fetchLabDetailForGame(slug) {
     if (_gameLabDetailCache[slug]) return _gameLabDetailCache[slug];
     const resp = await fetch(`/labs/data/${slug}.json`);
-    _gameLabDetailCache[slug] = await resp.json();
+    const detail = await resp.json();
+    detail.slug ??= slug;
+    await markOnlineLabs([detail]);
+    _gameLabDetailCache[slug] = detail;
     return _gameLabDetailCache[slug];
 }
 

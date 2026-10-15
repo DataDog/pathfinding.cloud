@@ -749,6 +749,8 @@ async function loadLabs() {
             fetch('/paths.json').then(r => r.ok ? r.json() : []).catch(() => []),
         ]);
 
+        // Online availability comes from the backend (Cybr's catalog), not labs.json.
+        await markOnlineLabs(labs);
         allLabs = labs.filter(lab => !HIDDEN_CATEGORIES.includes(lab.category));
         filteredLabs = allLabs;
         pathsData = paths;
@@ -778,6 +780,8 @@ async function fetchLabDetail(slug) {
     if (!response.ok) throw new Error(`Failed to load lab detail: ${response.status}`);
 
     const data = await response.json();
+    data.slug ??= slug;
+    await markOnlineLabs([data]);
     labDetailCache[slug] = data;
     return data;
 }

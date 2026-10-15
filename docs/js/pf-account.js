@@ -53,6 +53,18 @@
         return mePromise;
     }
 
+    // Which labs can be played online right now, as a Set of lab slugs. The
+    // backend derives it from Cybr's catalog (labs with a browser terminal), so
+    // labs appear as Cybr enables them. Fetched once per page; an unreachable
+    // API means no lab is shown as online.
+    let onlineLabSlugsPromise = null;
+    function onlineLabSlugs() {
+        onlineLabSlugsPromise ??= api('GET', '/labs/online')
+            .then((result) => new Set(Array.isArray(result && result.labs) ? result.labs : []))
+            .catch(() => new Set());
+        return onlineLabSlugsPromise;
+    }
+
     // Single-flight: concurrent callers (two panels, a double click) share one
     // request, so a browser never mints two guest sessions at once.
     let guestSessionPromise = null;
@@ -307,6 +319,7 @@
         openSignIn,
         signInAvailable,
         ensureGuestSession,
+        onlineLabSlugs,
         deleteAccount,
         openUsernameModal,
         shareMilestone,
