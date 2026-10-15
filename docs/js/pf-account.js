@@ -53,6 +53,18 @@
         return mePromise;
     }
 
+    // Single-flight: concurrent callers (two panels, a double click) share one
+    // request, so a browser never mints two guest sessions at once.
+    let guestSessionPromise = null;
+    async function ensureGuestSession() {
+        const me = await (mePromise || loadMe());
+        if (me.kind !== 'anonymous' || me.unavailable) return me;
+        guestSessionPromise ??= api('POST', '/session/guest')
+            .then(() => loadMe())
+            .finally(() => { guestSessionPromise = null; });
+        return guestSessionPromise;
+    }
+
     function signInUrl(provider) {
         const returnTo = window.location.pathname + window.location.search + window.location.hash;
         return `${API_BASE_URL}/auth/${provider}/start?returnTo=${encodeURIComponent(returnTo)}`;
@@ -294,6 +306,7 @@
         onChange: (listener) => changeListeners.push(listener),
         openSignIn,
         signInAvailable,
+        ensureGuestSession,
         deleteAccount,
         openUsernameModal,
         shareMilestone,

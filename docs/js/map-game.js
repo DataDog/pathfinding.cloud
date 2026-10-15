@@ -8436,11 +8436,8 @@ async function togglePlayOnlineTerminal(state) {
 // before a lab can be started, so two overlapping first requests (another
 // tab, a double click) can't each create a different guest and strand a lab.
 async function ensureLiveLabSession() {
-    const me = await window.pfAccount.me();
-    if (me.kind !== 'anonymous' || me.unavailable) return;
     try {
-        await window.pfAccount.api('POST', '/session/guest');
-        await window.pfAccount.refresh();
+        await window.pfAccount.ensureGuestSession();
     } catch (_) {
         // Starting a lab still creates a session if this fails.
     }
@@ -8503,6 +8500,9 @@ async function refreshLiveLab(state) {
         live.pollTimer = setTimeout(() => refreshLiveLab(state), LAB_STATUS_POLL_MS);
     }
     if (live.phase === 'ready' && live.webTerminal) connectLiveTerminal(state);
+    // Ready, but Cybr has no browser terminal for this lab: say so instead of
+    // leaving a spinner running with nothing coming.
+    if (live.phase === 'ready' && !live.webTerminal) announceNoBrowserTerminal(state);
     if (live.phase === 'none') disconnectLiveTerminal(state);
 }
 
@@ -8653,6 +8653,12 @@ async function launchLiveLab(state) {
     const live = state._liveLab;
     // One launch at a time, whether started from the button or the `start` command.
     if (live.launching) return;
+    // Already running: there is nothing to launch. Make sure the terminal is
+    // connecting instead of showing a launch spinner that nothing will stop.
+    if (live.phase === 'ready') {
+        announceLabAlreadyRunning(state);
+        return;
+    }
     live.launching = true;
     // Switch to provisioning spinner in the terminal immediately.
     startTermSpinner(state, 'Launching…');
@@ -8660,6 +8666,12 @@ async function launchLiveLab(state) {
     try {
         const launched = await window.pfAccount.api('POST', liveLabPath(state, 'launch'));
         Object.assign(live, launched, { phase: launched.state });
+        // The backend resumed a lab this learner already has running: stop our
+        // launch spinner, since no launch is happening.
+        if (launched.resumed && launched.state === 'ready') {
+            stopTermSpinner(state);
+            announceLabAlreadyRunning(state);
+        }
         // Launching as a guest creates a session; refresh the page header.
         window.pfAccount.refresh();
     } catch (error) {
@@ -8677,6 +8689,32 @@ async function launchLiveLab(state) {
     }
     renderLiveLab(state);
     await refreshLiveLab(state);
+}
+
+// Shown when `start` finds the lab already running. Connects the terminal if
+// it isn't connected; an existing connection (and its spinner) keeps going.
+function announceLabAlreadyRunning(state) {
+    const live = state._liveLab;
+    if (!live.webTerminal) {
+        announceNoBrowserTerminal(state, { force: true });
+        return;
+    }
+    const term = state._xtermInstance;
+    if (term && !live.terminalClient) term.writeln('\r\n\x1b[2mYour lab is already running. Connecting to it…\x1b[0m');
+    if (!live.terminalClient) connectLiveTerminal(state);
+}
+
+// The lab is ready but Cybr has no browser terminal for it. Every hosted lab
+// should have one, so this is a configuration problem at Cybr, not something
+// the learner can work around: say so plainly instead of leaving a spinner.
+function announceNoBrowserTerminal(state, { force = false } = {}) {
+    const live = state._liveLab;
+    stopTermSpinner(state);
+    if (live.noTerminalNoticeFor === live.launchedAt && !force) return;
+    live.noTerminalNoticeFor = live.launchedAt;
+    setLiveLabStatus(state, 'error', 'Unavailable');
+    const term = state._xtermInstance;
+    if (term) term.writeln("\r\n\x1b[31mThe browser terminal isn't available for this lab right now. Please try another lab.\x1b[0m");
 }
 
 async function endLiveLab(state) {
