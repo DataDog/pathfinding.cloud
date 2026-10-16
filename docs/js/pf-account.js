@@ -65,6 +65,20 @@
         return onlineLabSlugsPromise;
     }
 
+    // Reports commands typed in a live lab's terminal (never its output) for
+    // learner analytics. Best effort: keepalive lets a
+    // batch sent while the page unloads still arrive, and failures are dropped.
+    function sendTerminalCommands(labSlug, commands) {
+        if (!commands.length) return Promise.resolve();
+        return fetch(`${API_BASE_URL}/labs/${encodeURIComponent(labSlug)}/terminal-commands`, {
+            method: 'POST',
+            credentials: 'include',
+            keepalive: true,
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({ commands })
+        }).then(() => {}, () => {});
+    }
+
     // Single-flight: concurrent callers (two panels, a double click) share one
     // request, so a browser never mints two guest sessions at once.
     let guestSessionPromise = null;
@@ -153,8 +167,7 @@
                 ...enabledProviders().map((providerName) =>
                     createElement('a', { className: `pf-button pf-signin-${providerName}`, href: signInUrl(providerName) }, PROVIDER_LABELS[providerName]))),
             createElement('p', { className: 'pf-fine-print' },
-                'We never receive your email address or name. Google and GitHub only tell us an anonymous account ID, and you choose a public username. ',
-                createElement('a', { href: '/privacy/' }, 'Privacy details')));
+                'We never receive your email address or name. Google and GitHub only tell us an anonymous account ID, and you choose a public username.'));
     }
 
     // ---- Username modal ----
@@ -320,6 +333,7 @@
         signInAvailable,
         ensureGuestSession,
         onlineLabSlugs,
+        sendTerminalCommands,
         deleteAccount,
         openUsernameModal,
         shareMilestone,

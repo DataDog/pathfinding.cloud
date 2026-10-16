@@ -8740,6 +8740,11 @@ function announceNoBrowserTerminal(state, { force = false } = {}) {
 
 async function endLiveLab(state) {
     if (!window.confirm('End this lab? Its AWS environment is destroyed. Your completion is kept.')) return;
+    // Commands sent after the lab ends are refused, so send the last ones
+    // first (waiting at most a second).
+    if (state._liveLab.commandRecorder) {
+        await Promise.race([state._liveLab.commandRecorder.flush(), new Promise((resolve) => setTimeout(resolve, 1000))]);
+    }
     try {
         await window.pfAccount.api('POST', liveLabPath(state, 'end'));
     } catch (error) {
@@ -8870,6 +8875,113 @@ function stopTermSpinner(state, finalLine) {
     if (finalLine) term.writeln(`\x1b[2m${finalLine}\x1b[0m`);
 }
 
+// ---- Terminal command recorder ----
+//
+// Reports each command line typed in the live terminal to the backend
+// (POST /labs/:slug/terminal-commands) for learner analytics. Terminal output
+// is never sent. The backend redacts credentials and flags before logging.
+//
+// The command is read from xterm's own buffer as the shell echoed it, so tab
+// completion and history recall are captured as run. Input the shell doesn't
+// echo (password prompts) reads back empty and is skipped. When the buffer
+// can't be trusted (a reconnect reset it, or several lines were pasted at
+// once) the typed keystrokes are sent instead, marked source "typed".
+
+const COMMAND_FLUSH_INTERVAL_MS = 5000;
+const COMMAND_FLUSH_SIZE = 10;
+const COMMAND_BATCH_LIMIT = 25;           // backend maximum per request
+const COMMAND_MAX_LENGTH = 4096;          // backend rejects longer commands
+const COMMAND_ECHO_WAIT_MS = 300;         // time for the shell's echo to arrive
+
+function createCommandRecorder(state, term) {
+    const labSlug = state.lab.slug;
+    let pending = [];
+    let flushTimer = null;
+    let lastSeq = 0;
+    // Where the current command starts in the buffer: the cursor position at
+    // the first keystroke, just after the prompt.
+    let commandStart = null;
+    // Bumped whenever the terminal is reset, which invalidates positions.
+    let bufferGeneration = 0;
+
+    // Milliseconds since the epoch, kept strictly increasing, so commands sort
+    // correctly within an attempt even across page reloads.
+    function nextSeq() {
+        lastSeq = Math.max(Date.now(), lastSeq + 1);
+        return lastSeq;
+    }
+
+    // Sends everything queued. The returned promise settles when the requests
+    // do, so ending a lab can wait for its last commands to arrive first.
+    function flush() {
+        clearTimeout(flushTimer);
+        flushTimer = null;
+        const requests = [];
+        while (pending.length) {
+            requests.push(window.pfAccount.sendTerminalCommands(labSlug, pending.splice(0, COMMAND_BATCH_LIMIT)));
+        }
+        return Promise.all(requests);
+    }
+
+    function enqueue(text, source) {
+        if (!text.trim() || text.length > COMMAND_MAX_LENGTH) return;
+        pending.push({ seq: nextSeq(), text, source });
+        if (pending.length >= COMMAND_FLUSH_SIZE) flush();
+        else flushTimer ??= setTimeout(flush, COMMAND_FLUSH_INTERVAL_MS);
+    }
+
+    // The logical line starting at (row, col): that row plus any rows the
+    // terminal wrapped it onto.
+    function readLogicalLine(row, col) {
+        const buffer = term.buffer.active;
+        let text = '';
+        for (let index = row; index < buffer.length; index++) {
+            const line = buffer.getLine(index);
+            if (!line || (index > row && !line.isWrapped)) break;
+            // Trailing blanks are padding only on the line's last row.
+            const continues = !!buffer.getLine(index + 1)?.isWrapped;
+            text += line.translateToString(!continues, index === row ? col : 0);
+        }
+        return text;
+    }
+
+    return {
+        /** A key that edits the command line (printable, arrow, Tab) went to the shell. */
+        noteKeystroke() {
+            if (commandStart) return;
+            const buffer = term.buffer.active;
+            // Full-screen programs (less, vim) use the alternate buffer; their
+            // keystrokes aren't shell commands.
+            if (buffer.type !== 'normal') return;
+            commandStart = { row: buffer.baseY + buffer.cursorY, col: buffer.cursorX, generation: bufferGeneration };
+        },
+        /** Enter went to the shell; `typed` is what the keystrokes spelled. */
+        noteEnter(typed, { pasted }) {
+            const start = commandStart;
+            commandStart = null;
+            if (term.buffer.active.type !== 'normal') return;
+            if (!start || pasted) {
+                enqueue(typed, 'typed');
+                return;
+            }
+            setTimeout(() => {
+                if (start.generation !== bufferGeneration) enqueue(typed, 'typed');
+                else enqueue(readLogicalLine(start.row, start.col).trim(), 'echo');
+            }, COMMAND_ECHO_WAIT_MS);
+        },
+        /** The pending line was discarded (Ctrl+C, Ctrl+U). */
+        cancelLine() {
+            commandStart = null;
+        },
+        /** The terminal was reset (reconnect); buffer positions are stale. */
+        noteReset() {
+            bufferGeneration++;
+            commandStart = null;
+        },
+        flush,
+    };
+}
+
 // Connects the Cybr web terminal: our backend issues short-lived session
 // credentials for this browser's own deployment, and the browser then opens
 // a WebSocket straight to the lab's terminal host.
@@ -8909,6 +9021,7 @@ async function connectLiveTerminal(state) {
         heldChunks = null;
         stopTermSpinner(state);
         term.reset();
+        commandRecorder.noteReset();
         term.write(SHOW_CURSOR);
         term.options.disableStdin = false;
         for (const chunk of chunks) term.write(chunk);
@@ -8937,6 +9050,14 @@ async function connectLiveTerminal(state) {
     // Start buffering now; the fallback timer starts in onReset once we have
     // an actual connection.
     heldChunks = [];
+
+    const commandRecorder = createCommandRecorder(state, term);
+    live.commandRecorder = commandRecorder;
+    if (!state._commandFlushOnHide) {
+        // Send queued commands when the learner closes or leaves the page.
+        state._commandFlushOnHide = true;
+        window.addEventListener('pagehide', () => { if (state._liveLab?.commandRecorder) state._liveLab.commandRecorder.flush(); });
+    }
 
     const sessionUrl = window.pfAccount.apiBaseUrl + liveLabPath(state, 'terminal-session');
     const client = terminalModule.createTerminalClient({
@@ -8998,14 +9119,18 @@ async function connectLiveTerminal(state) {
     // in the terminal and swallow the \r so the PTY never sees it. The shell's
     // readline buffer still holds "values" — the user can Ctrl+C to clear it —
     // but no command executes and no "command not found" appears.
+    //
+    // The same wrapper feeds the command recorder (createCommandRecorder).
     let termCmdBuffer = '';
     const _origWrite = client.write;
     client.write = function(data) {
         if (typeof data === 'string') {
+            let enterSeen = false;
             for (let i = 0; i < data.length; i++) {
                 const ch = data[i];
                 if (ch === '\r') {
                     if (termCmdBuffer.trim() === 'values') {
+                        commandRecorder.cancelLine();
                         termCmdBuffer = '';
                         term.writeln('');
                         showValuesInTerminal(state);
@@ -9018,13 +9143,23 @@ async function connectLiveTerminal(state) {
                         if (rest) _origWrite.call(client, rest);
                         return;
                     }
+                    // More input after this Enter in the same chunk is a
+                    // multi-line paste; the echo can't be lined up with it.
+                    commandRecorder.noteEnter(termCmdBuffer, { pasted: enterSeen || i < data.length - 1 });
+                    enterSeen = true;
                     termCmdBuffer = '';
                 } else if (ch === '\x03' || ch === '\x15') {
                     termCmdBuffer = '';
+                    commandRecorder.cancelLine();
                 } else if (ch === '\x7f' || ch === '\b') {
                     termCmdBuffer = termCmdBuffer.slice(0, -1);
                 } else if (ch >= ' ') {
+                    commandRecorder.noteKeystroke();
                     termCmdBuffer += ch;
+                } else if (ch === '\x1b' || ch === '\t') {
+                    // Arrow keys (history recall) and Tab also start a command
+                    // without a printable key.
+                    commandRecorder.noteKeystroke();
                 }
             }
         }
@@ -9038,6 +9173,8 @@ function disconnectLiveTerminal(state) {
     const live = state._liveLab;
     if (!live) return;
     stopTermSpinner(state);
+    if (live.commandRecorder) live.commandRecorder.flush();
+    live.commandRecorder = null;
     if (live.detachTerminal) live.detachTerminal();
     if (live.terminalClient) live.terminalClient.dispose();
     live.detachTerminal = null;
