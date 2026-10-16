@@ -4,9 +4,14 @@ This document defines the YAML schema used for documenting AWS IAM privilege esc
 
 ## Schema Version
 
-Current version: `1.7.0`
+Current version: `1.7.1`
 
 ### Version History
+
+#### Version 1.7.1 (2026-10-15)
+- Removed the `supportsOnlineMode` and `onlineEndpoint` **lab data** fields from `labs.json` and `labs/data/*.json`. Path YAML is unchanged.
+- Whether a lab can be played online now comes from pathfinding-backend at runtime: `GET /labs/online` lists the labs Cybr hosts with a browser terminal. The site sets each lab's `supportsOnlineMode` from that list in memory (`markOnlineLabs` in `docs/js/map-game.js`), so pathfinding-labs no longer marks labs and `generate-labs-json.py` no longer emits the field.
+- The in-browser terminal connects to Cybr through pathfinding-backend; there is no per-lab endpoint.
 
 #### Version 1.7.0 (2026-04-18)
 - Added `supportsOnlineMode` optional boolean field to **lab data** (sourced from pathfinding-labs, consumed via `labs.json`): indicates the lab has a deployed online environment that can be played directly from the game map terminal

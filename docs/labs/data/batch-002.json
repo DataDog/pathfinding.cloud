@@ -5,11 +5,11 @@
   "costEstimate": "$0/mo",
   "pathfindingCloudId": "batch-002",
   "interactiveDemo": false,
-  "supportsOnlineMode": false,
   "category": "Privilege Escalation",
   "subCategory": "existing-passrole",
   "pathType": "one-hop",
   "target": "to-admin",
+  "points": 10,
   "environments": [
     "prod"
   ],
@@ -32,7 +32,7 @@
     "modulePath": "modules/scenarios/single-account/privesc-one-hop/to-admin/batch-002-batch-submitjob"
   },
   "githubUrl": "https://github.com/DataDog/pathfinding-labs/tree/main/modules/scenarios/single-account/privesc-one-hop/to-admin/batch-002-batch-submitjob",
-  "schemaVersion": "4.7.1",
+  "schemaVersion": "4.8.0",
   "permissions": {
     "principals": [
       {
@@ -60,6 +60,22 @@
           {
             "permission": "batch:DescribeComputeEnvironments",
             "purpose": "Discover available compute environments"
+          },
+          {
+            "permission": "iam:ListAttachedUserPolicies",
+            "purpose": "verify privilege escalation success by listing attached policies"
+          },
+          {
+            "permission": "iam:ListRoles",
+            "purpose": "discover IAM roles in the account to identify passable admin and execution roles"
+          },
+          {
+            "permission": "ec2:DescribeSubnets",
+            "purpose": "discover subnets for compute environment reconnaissance"
+          },
+          {
+            "permission": "ec2:DescribeSecurityGroups",
+            "purpose": "discover security groups for compute environment reconnaissance"
           }
         ]
       }
@@ -91,8 +107,8 @@
     },
     "defend": {
       "cspm": {
-        "whatToDetect": "- AWS Batch job definition with `jobRoleArn` set to a role that carries `AdministratorAccess` or equivalent broad permissions\n- IAM user or role with `batch:SubmitJob` permission scoped to `*` \u2014 any principal that can submit jobs to this definition can abuse the admin `jobRoleArn` without holding `iam:PassRole`\n- Privilege escalation path from `batch:SubmitJob` alone to admin via an existing Batch job definition with a privileged `jobRoleArn` \u2014 CSPM tools that only flag `iam:PassRole + batch:RegisterJobDefinition` chains will miss this path\n- Admin IAM role that trusts `ecs-tasks.amazonaws.com` and is referenced as a `jobRoleArn` in an active Batch job definition",
-        "prevention": "- Never attach `AdministratorAccess` or other broad wildcard policies to roles used as `jobRoleArn` \u2014 scope the job role to only the permissions the workload actually needs\n- Restrict `batch:SubmitJob` to specific job definition ARNs rather than `*`; use IAM resource-level conditions like `batch:JobDefinition` to limit which definitions a principal can submit to\n- Add a resource-based condition on the admin role's trust policy to restrict which job definition ARNs can assume it (using `aws:SourceArn` or a custom condition), preventing arbitrary Batch submissions from inheriting the role\n- Audit all active Batch job definitions and alert whenever `jobRoleArn` references a role with IAM administrative permissions (`iam:*`, `iam:AttachUserPolicy`, `iam:PutRolePolicy`, or managed policies like `AdministratorAccess`)\n- Use AWS Config managed rules or custom rules to continuously evaluate Batch job definitions for overly-permissive `jobRoleArn` values\n- Review `batch:SubmitJob` grants in IAM Access Analyzer findings \u2014 treat this permission as high-risk when any job definition in the account carries a privileged `jobRoleArn`"
+        "whatToDetect": "- AWS Batch job definition with `jobRoleArn` set to a role that carries `AdministratorAccess` or equivalent broad permissions\n- IAM user or role with `batch:SubmitJob` permission scoped to `*` -- any principal that can submit jobs to this definition can abuse the admin `jobRoleArn` without holding `iam:PassRole`\n- Privilege escalation path from `batch:SubmitJob` alone to admin via an existing Batch job definition with a privileged `jobRoleArn` -- CSPM tools that only flag `iam:PassRole + batch:RegisterJobDefinition` chains will miss this path\n- Admin IAM role that trusts `ecs-tasks.amazonaws.com` and is referenced as a `jobRoleArn` in an active Batch job definition",
+        "prevention": "- Never attach `AdministratorAccess` or other broad wildcard policies to roles used as `jobRoleArn` -- scope the job role to only the permissions the workload actually needs\n- Restrict `batch:SubmitJob` to specific job definition ARNs rather than `*`; use IAM resource-level conditions like `batch:JobDefinition` to limit which definitions a principal can submit to\n- Add a resource-based condition on the admin role's trust policy to restrict which job definition ARNs can assume it (using `aws:SourceArn` or a custom condition), preventing arbitrary Batch submissions from inheriting the role\n- Audit all active Batch job definitions and alert whenever `jobRoleArn` references a role with IAM administrative permissions (`iam:*`, `iam:AttachUserPolicy`, `iam:PutRolePolicy`, or managed policies like `AdministratorAccess`)\n- Use AWS Config managed rules or custom rules to continuously evaluate Batch job definitions for overly-permissive `jobRoleArn` values\n- Review `batch:SubmitJob` grants in IAM Access Analyzer findings \u2014 treat this permission as high-risk when any job definition in the account carries a privileged `jobRoleArn`"
       },
       "cloudSiem": {
         "cloudTrailEvents": "- `batch:SubmitJob` -- Batch job submitted; inspect `requestParameters.containerOverrides.command`. Any command override on a job definition carrying a privileged `jobRoleArn` is suspicious \u2014 the payload is often a shell wrapper (`sh -c ...`) that hides the real intent, so match on shell invocation, package installs (`pip install`, `apt-get`), or embedded IAM verbs (`iam:AttachUserPolicy`, `iam:PutUserPolicy`, `iam:PutRolePolicy`) inside the argument string, not just the first array element; also inspect `requestParameters.jobDefinition` to identify which definition was targeted\n- `iam:AttachUserPolicy` -- managed policy attached to an IAM user from within a Batch/ECS task context; critical when the policy is `AdministratorAccess` and the caller's ARN includes `ecs-tasks` or a Batch job role\n- `iam:PutUserPolicy` -- inline policy added to an IAM user from a Batch job context; monitor for policies granting broad IAM or `*` permissions",

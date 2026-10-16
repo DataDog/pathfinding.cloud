@@ -2,14 +2,14 @@
   "displayName": "AWS CodeDeploy CreateDeployment to Admin via Existing Admin EC2 Instance Profile",
   "name": "codedeploy-001-codedeploy-createdeployment",
   "description": "Principal with codedeploy:CreateDeployment can escalate privileges by deploying a malicious revision whose lifecycle hooks execute as the target EC2 instance's admin instance profile",
-  "costEstimate": "~$0.01/hr (t3.micro EC2 instance)",
+  "costEstimate": "$8/mo",
   "pathfindingCloudId": "codedeploy-001",
   "interactiveDemo": false,
-  "supportsOnlineMode": false,
   "category": "Privilege Escalation",
   "subCategory": "existing-passrole",
   "pathType": "one-hop",
   "target": "to-admin",
+  "points": 10,
   "environments": [
     "prod"
   ],
@@ -32,7 +32,7 @@
     "modulePath": "modules/scenarios/single-account/privesc-one-hop/to-admin/codedeploy-001-codedeploy-createdeployment"
   },
   "githubUrl": "https://github.com/DataDog/pathfinding-labs/tree/main/modules/scenarios/single-account/privesc-one-hop/to-admin/codedeploy-001-codedeploy-createdeployment",
-  "schemaVersion": "4.7.1",
+  "schemaVersion": "4.8.0",
   "permissions": {
     "principals": [
       {
@@ -114,8 +114,8 @@
     },
     "defend": {
       "cspm": {
-        "whatToDetect": "- IAM user `pl-prod-codedeploy-001-to-admin-starting-user` has `codedeploy:CreateDeployment` scoped to `*` \u2014 any deployment group in the account is a valid target, including those backed by admin-role EC2 instances\n- EC2 instance with `AdministratorAccess` instance profile (`pl-prod-codedeploy-001-to-admin-ec2-role`) is enrolled in a CodeDeploy deployment group (`pl-prod-codedeploy-001-to-admin-dg`)\n- The combination of a principal with `codedeploy:CreateDeployment` and at least one CodeDeploy deployment group whose target instances hold a privileged instance profile constitutes a complete privilege escalation path \u2014 no `iam:PassRole` needed\n- CodeDeploy deployment role (`pl-prod-codedeploy-001-to-admin-deploy-svc-role`) can be leveraged by any principal who can trigger a deployment, not just those with `iam:PassRole` on it\n- Attacker-controlled S3 bucket (`pl-attacker-codedeploy-001-revision-{account_id}`) is whitelisted as a revision source by the bucket policy \u2014 CSPM should flag deployment groups that accept revisions from buckets in external AWS accounts",
-        "prevention": "- Scope `codedeploy:CreateDeployment` to specific CodeDeploy application ARNs using the `codedeploy:Application` condition key rather than allowing `*` \u2014 limit who can deploy to any group\n- Use IAM condition keys (e.g., `codedeploy:DeploymentGroupArn`) to restrict `codedeploy:CreateDeployment` to a named set of trusted deployment groups\n- Avoid attaching `AdministratorAccess` or other overly broad managed policies to EC2 instance profiles used as CodeDeploy targets; follow least-privilege and scope to only the permissions the application actually requires\n- Require that CodeDeploy revisions originate from specific trusted S3 buckets in the same AWS account; reject revisions from external accounts using S3 bucket policies and CodeDeploy deployment group configuration\n- Enable CodeDeploy deployment notifications and alert on deployments whose revision source is an S3 bucket in an account other than the deploying account\n- Periodically enumerate all CodeDeploy deployment groups and cross-reference target instance profiles against the set of privileged IAM roles; treat any overlap as a high-severity finding"
+        "whatToDetect": "- IAM user `pl-prod-codedeploy-001-to-admin-starting-user` has `codedeploy:CreateDeployment` scoped to `*` -- any deployment group in the account is a valid target, including those backed by admin-role EC2 instances\n- EC2 instance with `AdministratorAccess` instance profile (`pl-prod-codedeploy-001-to-admin-ec2-role`) is enrolled in a CodeDeploy deployment group (`pl-prod-codedeploy-001-to-admin-dg`)\n- The combination of a principal with `codedeploy:CreateDeployment` and at least one CodeDeploy deployment group whose target instances hold a privileged instance profile constitutes a complete privilege escalation path \u2014 no `iam:PassRole` needed\n- CodeDeploy deployment role (`pl-prod-codedeploy-001-to-admin-deploy-svc-role`) can be leveraged by any principal who can trigger a deployment, not just those with `iam:PassRole` on it\n- Attacker-controlled S3 bucket (`pl-attacker-codedeploy-001-revision-{account_id}`) is whitelisted as a revision source by the bucket policy \u2014 CSPM should flag deployment groups that accept revisions from buckets in external AWS accounts",
+        "prevention": "- Scope `codedeploy:CreateDeployment` to specific CodeDeploy application ARNs using the `codedeploy:Application` condition key rather than allowing `*` -- limit who can deploy to any group\n- Use IAM condition keys (e.g., `codedeploy:DeploymentGroupArn`) to restrict `codedeploy:CreateDeployment` to a named set of trusted deployment groups\n- Avoid attaching `AdministratorAccess` or other overly broad managed policies to EC2 instance profiles used as CodeDeploy targets; follow least-privilege and scope to only the permissions the application actually requires\n- Require that CodeDeploy revisions originate from specific trusted S3 buckets in the same AWS account; reject revisions from external accounts using S3 bucket policies and CodeDeploy deployment group configuration\n- Enable CodeDeploy deployment notifications and alert on deployments whose revision source is an S3 bucket in an account other than the deploying account\n- Periodically enumerate all CodeDeploy deployment groups and cross-reference target instance profiles against the set of privileged IAM roles; treat any overlap as a high-severity finding"
       },
       "cloudSiem": {
         "cloudTrailEvents": "- `codedeploy:CreateDeployment` -- a new deployment was triggered; high severity when the revision source is an S3 bucket in an external AWS account or an unexpected bucket name\n- `codedeploy:RegisterApplicationRevision` -- a revision was registered before deployment; inspect `requestParameters.revision.s3Location.bucket` for external accounts\n- `iam:AttachUserPolicy` -- a managed policy was attached to a user; critical when the source is EC2 instance profile credentials (AssumedRole session for the instance profile role) rather than a human or CI/CD actor \u2014 especially when the attached policy is `AdministratorAccess`\n- `sts:AssumeRole` -- not directly observable for instance profile credential use, but EC2 instance profile credential calls will show as `arn:aws:sts::{account_id}:assumed-role/pl-prod-codedeploy-001-to-admin-ec2-role/i-*` in CloudTrail \u2014 correlate unexpected `iam:AttachUserPolicy` calls from this role ARN pattern\n- `ssm:GetParameter` -- flag parameter read; correlate with the deployment timeline to identify exploitation",
