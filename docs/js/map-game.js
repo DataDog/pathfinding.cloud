@@ -113,7 +113,7 @@ const cloudSprites = {
     loaded: false,
     load() {
         if (this.loaded) return Promise.resolve();
-        const ids = [2, 4, 5, 6, 7, 10, 14, 17, 20];
+        const ids = [2, 5, 7, 10, 14, 17, 20];
         const promises = ids.map(id => new Promise((resolve) => {
             const img = new Image();
             img.onload = () => { this.images.push(img); resolve(); };
