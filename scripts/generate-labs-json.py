@@ -38,6 +38,7 @@ REQUIRED_README_METADATA_BASE = [
     "Category",
     "Path Type",
     "Target",
+    "Points",
     "Environments",
     "Technique",
 ]
@@ -58,6 +59,7 @@ INDEX_FIELDS = [
     "subCategory",
     "pathType",
     "target",
+    "points",
     "costEstimate",
     "interactiveDemo",
     "pathfindingCloudId",
@@ -980,6 +982,7 @@ def transform_readme(readme_text, module_path, readme_dir=None):
         "subCategory": metadata.get("Sub-Category", ""),
         "pathType": metadata.get("Path Type", ""),
         "target": metadata.get("Target", ""),
+        "points": int(metadata["Points"]) if str(metadata.get("Points", "")).strip().isdigit() else 0,
         "environments": environments,
         "attackPath": {
             "principals": parse_principals(metadata.get("Attack Principals", "")),

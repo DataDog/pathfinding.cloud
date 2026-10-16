@@ -15,7 +15,7 @@ let labDetailCache = {}; // Cache for fetched per-scenario detail JSON
 let currentRoute = { view: 'list', slug: null };
 let sortColumn = 'name';
 let sortDirection = 'asc';
-let currentView = 'cards';
+let currentView = 'table';
 
 // Card style from URL param (A, B) -- default A
 const cardStyleParam = new URLSearchParams(window.location.search).get('cardStyle');
@@ -48,6 +48,7 @@ const hopsFilter = document.getElementById('hops-filter');
 const startFilter = document.getElementById('start-filter');
 const serviceFilter = document.getElementById('service-filter');
 const onlineFilter = document.getElementById('online-filter');
+const onlineToggle = document.getElementById('online-toggle');
 const resetButton = document.getElementById('reset-filters');
 const totalLabsCountEl = document.getElementById('total-labs-count');
 const filteredLabsCountEl = document.getElementById('filtered-labs-count');
@@ -512,10 +513,8 @@ document.addEventListener('DOMContentLoaded', () => {
     setupTabListeners();
 
     // Set initial view toggle button state
-    if (currentView === 'cards') {
-        viewCardsBtn.classList.add('active');
-        viewTableBtn.classList.remove('active');
-    }
+    viewCardsBtn.classList.toggle('active', currentView === 'cards');
+    viewTableBtn.classList.toggle('active', currentView === 'table');
 
     loadLabs();
 });
@@ -530,6 +529,11 @@ function setupEventListeners() {
     startFilter.addEventListener('change', applyFilters);
     serviceFilter.addEventListener('change', applyFilters);
     onlineFilter.addEventListener('change', applyFilters);
+    onlineToggle.addEventListener('click', () => {
+        onlineFilter.value = onlineFilter.value === 'yes' ? '' : 'yes';
+        syncOnlineToggle();
+        applyFilters();
+    });
     resetButton.addEventListener('click', resetFilters);
     themeToggle.addEventListener('click', toggleTheme);
 
@@ -620,6 +624,13 @@ const FILTER_PARAM_MAP = [
     { param: 'online',   id: 'online-filter' },
 ];
 
+// The online filter is a pressed/unpressed toggle button over its hidden <select>.
+function syncOnlineToggle() {
+    const pressed = onlineFilter.value === 'yes';
+    onlineToggle.classList.toggle('is-pressed', pressed);
+    onlineToggle.setAttribute('aria-pressed', String(pressed));
+}
+
 // Sync a pill's visual state to match its hidden <select> element's current value.
 function syncPillToSelect(filterId) {
     const wrapper = document.getElementById(`pill-wrapper-${filterId}`);
@@ -663,6 +674,7 @@ function applyURLParams() {
             }
         }
     }
+    syncOnlineToggle();
     if (anyApplied) applyFilters();
 }
 
@@ -922,7 +934,6 @@ function applyFilters() {
 
         // Online play filter
         if (selectedOnline === 'yes' && !lab.supportsOnlineMode) return false;
-        if (selectedOnline === 'no' && lab.supportsOnlineMode) return false;
 
         return true;
     });
@@ -944,6 +955,7 @@ function resetFilters() {
     onlineFilter.value = '';
     filteredLabs = allLabs;
     resetPillValues();
+    syncOnlineToggle();
     updateStats();
     renderLabs();
     syncFiltersToURL();
@@ -1000,6 +1012,8 @@ function getSortedLabs() {
             case 'target': aVal = a.target; bVal = b.target; break;
             case 'hops': aVal = a.principalHopCount ?? -1; bVal = b.principalHopCount ?? -1;
                 return sortDirection === 'asc' ? aVal - bVal : bVal - aVal;
+            case 'points': aVal = a.points ?? 0; bVal = b.points ?? 0;
+                return sortDirection === 'asc' ? aVal - bVal : bVal - aVal;
             case 'cost': aVal = a.costEstimate; bVal = b.costEstimate; break;
             case 'online': aVal = a.supportsOnlineMode ? 1 : 0; bVal = b.supportsOnlineMode ? 1 : 0;
                 return sortDirection === 'asc' ? aVal - bVal : bVal - aVal;
@@ -1035,7 +1049,8 @@ function renderLabTable() {
                 <th class="sortable" data-sort="start">Start${sortIndicator('start')}</th>
                 <th class="sortable" data-sort="target">Target${sortIndicator('target')}</th>
                 <th class="sortable" data-sort="hops">Hops${sortIndicator('hops')}</th>
-                <th class="sortable" data-sort="cost">AWS Cost${sortIndicator('cost')}</th>
+                <th class="sortable" data-sort="points">Points${sortIndicator('points')}</th>
+                <th class="sortable" data-sort="online">Online${sortIndicator('online')}</th>
                 <th>Services</th>
             </tr>
         </thead>
@@ -1060,7 +1075,8 @@ function renderLabTable() {
                 <td class="lab-table-nowrap">${startLabel ? `<span class="lab-badge lab-badge-start">${escapeHtml(startLabel)}</span>` : ''}</td>
                 <td>${targetLabel ? `<span class="lab-badge ${targetClass}">${targetLabel}</span>` : ''}</td>
                 <td class="lab-table-center">${hopsVal !== '' ? `<span class="lab-hops-count">${hopsVal}</span>` : ''}</td>
-                <td><span class="lab-badge ${costClass}">${costLabel}</span></td>
+                <td class="lab-table-center">${lab.points ? `<span class="lab-points-badge">${lab.points}</span>` : ''}</td>
+                <td class="lab-table-center">${lab.supportsOnlineMode ? '<span class="lab-online-yn lab-online-yes">Yes</span>' : '<span class="lab-online-yn lab-online-no">No</span>'}</td>
                 <td class="lab-table-services">${serviceIcons}</td>
             </tr>`;
     }
@@ -1183,7 +1199,7 @@ function renderCardA(lab) {
                 <div class="lab-card-badges">
                     <span class="lab-card-badge-item"><span class="lab-card-badge-label">Principal Hops</span> <span class="lab-badge lab-hops-badge">${hopsLabel}</span></span>
                     ${targetLabel ? `<span class="lab-card-badge-item"><span class="lab-card-badge-label">Target</span> <span class="lab-badge ${targetClass}">${targetLabel}</span></span>` : ''}
-                    <span class="lab-card-badge-item"><span class="lab-card-badge-label">Est. AWS Cost</span> <span class="lab-badge ${costClass}">${costLabel}</span></span>
+                    ${lab.points ? `<span class="lab-card-badge-item"><span class="lab-card-badge-label">Points</span> <span class="lab-badge lab-points-badge">${lab.points}</span></span>` : ''}
                 </div>
             </div>
         </div>`;
@@ -1212,7 +1228,7 @@ function renderCardB(lab) {
                 <div class="lab-card-badges">
                     <span class="lab-badge lab-hops-badge">${hopsLabel}</span>
                     ${targetLabel ? `<span class="lab-badge ${targetClass}">${targetLabel}</span>` : ''}
-                    <span class="lab-badge ${costClass}">${costLabel}</span>
+                    ${lab.points ? `<span class="lab-badge lab-points-badge">${lab.points} pts</span>` : ''}
                 </div>
             </div>
         </div>`;
@@ -1298,15 +1314,18 @@ function renderLabDetailContent(lab, container) {
     const hasReadme = lab.readme && Object.keys(lab.readme).length > 0;
     const hasRichContent = hasReadme || isV3Schema(lab);
 
-    // Two modes: Guided v2 (default) and Game (desktop-only)
+    // Two modes: Guided v2 (default) and Game (desktop-only).
     const isMobile = window.innerWidth <= 768;
-    // Default to Game Mode for online labs on desktop; fall back to saved choice or Guided v2.
+    // Online-playable labs always open in Game Mode on desktop, even when the
+    // visitor has a saved global preference — the browser terminal is the point
+    // of an online lab. Non-online labs honor the saved choice, else Guided v2.
     let currentMode = 'guidedv2';
     const savedMode = (() => { try { return localStorage.getItem('pf-lab-mode'); } catch (_) { return null; } })();
-    if (savedMode === 'mapgame' || savedMode === 'guidedv2') {
-        currentMode = savedMode;
-    } else if (!isMobile && typeof isOnlineLab === 'function' && isOnlineLab(lab)) {
+    const isOnlinePlayable = !isMobile && typeof isOnlineLab === 'function' && isOnlineLab(lab);
+    if (isOnlinePlayable) {
         currentMode = 'mapgame';
+    } else if (savedMode === 'mapgame' || savedMode === 'guidedv2') {
+        currentMode = savedMode;
     }
     if (isMobile) currentMode = 'guidedv2';
 
@@ -1889,7 +1908,7 @@ function renderLabKVPills(lab) {
         pill('Category', catConfig.cssClass, catConfig.label, 'category ← README: **Category:**'),
         lab.pathType ? pill('Path Type', pathTypeClass, pathTypeLabel, 'pathType ← README: **Path Type:**') : '',
         targetLabel ? pill('Target', targetClass, targetLabel, 'target ← README: **Target:**') : '',
-        pill('Est. AWS Cost', isFree ? 'lab-cost-free' : 'lab-cost-paid', isFree ? 'Free' : lab.costEstimate, 'costEstimate ← README: **Cost Estimate:**'),
+        pill('Est. Self Hosted AWS Cost', isFree ? 'lab-cost-free' : 'lab-cost-paid', isFree ? 'Free' : lab.costEstimate, 'costEstimate ← README: **Cost Estimate:**'),
         ...(lab.environments || []).map(env => pill('Env', 'lab-badge-env', env, 'environments[] ← README: **Environments:** (comma list)')),
     ].filter(Boolean);
 
@@ -1921,7 +1940,7 @@ function buildPreviewFooterHTML(lab) {
         pill('Category', catConfig.cssClass, catConfig.label),
         lab.pathType ? pill('Path Type', pathTypeClass, pathTypeLabel) : '',
         targetLabel ? pill('Target', targetClass, targetLabel) : '',
-        pill('Est. AWS Cost', isFree ? 'lab-cost-free' : 'lab-cost-paid', isFree ? 'Free' : lab.costEstimate),
+        pill('Est. Self Hosted AWS Cost', isFree ? 'lab-cost-free' : 'lab-cost-paid', isFree ? 'Free' : lab.costEstimate),
         ...(lab.environments || []).map(env => pill('Env', 'lab-badge-env', env)),
     ].filter(Boolean).join('');
 

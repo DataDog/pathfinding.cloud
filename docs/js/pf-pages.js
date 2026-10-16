@@ -40,6 +40,100 @@
         return new Date(isoDate).toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' });
     }
 
+    const relativeTimeFormat = new Intl.RelativeTimeFormat(undefined, { numeric: 'auto' });
+
+    /** "today", "3 days ago", "2 months ago" for a past ISO date. */
+    function formatRelativeDate(isoDate) {
+        const elapsedDays = Math.floor((Date.now() - new Date(isoDate).getTime()) / 86400000);
+        if (elapsedDays < 1) return relativeTimeFormat.format(0, 'day');
+        if (elapsedDays < 30) return relativeTimeFormat.format(-elapsedDays, 'day');
+        if (elapsedDays < 365) return relativeTimeFormat.format(-Math.floor(elapsedDays / 30), 'month');
+        return relativeTimeFormat.format(-Math.floor(elapsedDays / 365), 'year');
+    }
+
+    /** Stable hue per username so each player keeps the same avatar color. */
+    function usernameHue(username) {
+        let hash = 0;
+        for (const character of username) hash = (hash * 31 + character.codePointAt(0)) >>> 0;
+        return hash % 360;
+    }
+
+    function avatar(username, sizeClass) {
+        const { createElement } = window.pfAccount;
+        const hue = usernameHue(username);
+        // Only computed numbers go into the style attribute; the initial is set as text.
+        return createElement('span', { className: `pf-lb-avatar ${sizeClass || ''}`, 'aria-hidden': 'true',
+            style: `--avatar-hue: ${hue}` }, username.charAt(0).toUpperCase());
+    }
+
+    function usernameLabel(entry, me) {
+        const { createElement } = window.pfAccount;
+        const isMe = me.username === entry.username;
+        return createElement('span', { className: 'pf-lb-name' },
+            isMe ? createElement('a', { href: '/profile/' }, entry.username) : entry.username,
+            isMe ? createElement('span', { className: 'pf-lb-you' }, 'You') : null);
+    }
+
+    function labCountLabel(count) {
+        return `${count} lab${count === 1 ? '' : 's'}`;
+    }
+
+    function pointsOf(entry) {
+        return entry.totalPoints ?? 0;
+    }
+
+    // Top three, laid out 2-1-3 like a podium.
+    function podium(topEntries, me) {
+        const { createElement } = window.pfAccount;
+        const placeNames = { 1: 'gold', 2: 'silver', 3: 'bronze' };
+        const order = [topEntries[1], topEntries[0], topEntries[2]].filter(Boolean);
+        return createElement('ol', { className: `pf-lb-podium pf-lb-podium-${topEntries.length}`, 'aria-label': 'Top three' },
+            ...order.map((entry) => createElement('li', {
+                className: `pf-lb-podium-place pf-lb-${placeNames[entry.rank]}${me.username === entry.username ? ' pf-me' : ''}` },
+                createElement('span', { className: 'pf-lb-medal', 'aria-label': `Rank ${entry.rank}` }, String(entry.rank)),
+                avatar(entry.username, 'pf-lb-avatar-lg'),
+                usernameLabel(entry, me),
+                createElement('span', { className: 'pf-lb-podium-count' },
+                    createElement('strong', {}, String(pointsOf(entry))), ' pts'),
+                createElement('span', { className: 'pf-lb-podium-sub' }, labCountLabel(entry.completedCount)),
+                createElement('span', { className: 'pf-lb-when', title: formatDate(entry.lastCompletedAt) },
+                    `Last completion ${formatRelativeDate(entry.lastCompletedAt)}`),
+                createElement('span', { className: 'pf-lb-plinth', 'aria-hidden': 'true' }))));
+    }
+
+    // Where the signed-in visitor stands, or how to get on the board.
+    function standingCard(entries, me) {
+        const { createElement } = window.pfAccount;
+        const card = (title, detail, action) => createElement('div', { className: 'pf-lb-standing' },
+            createElement('div', {}, createElement('strong', {}, title), createElement('p', {}, detail)), action);
+
+        if (me.kind !== 'user') {
+            if (!window.pfAccount.signInAvailable()) return null;
+            return card('Want to see your name here?', 'Sign in, pick a username and complete a lab to join the leaderboard.',
+                createElement('button', { className: 'pf-button pf-button-primary', onClick: () => window.pfAccount.openSignIn() }, 'Sign in'));
+        }
+        if (!me.username) {
+            return card('You are not on the board yet', 'Choose a public username to appear on the leaderboard.',
+                createElement('button', { className: 'pf-button pf-button-primary', onClick: window.pfAccount.openUsernameModal }, 'Choose username'));
+        }
+        const myEntry = entries.find((entry) => entry.username === me.username);
+        if (!myEntry) {
+            return card(`@${me.username}, you are almost there`, 'Complete your first lab to claim a spot on the leaderboard.',
+                createElement('a', { className: 'pf-button pf-button-primary', href: '/labs/' }, 'Browse labs'));
+        }
+        if (myEntry.rank === 1) {
+            return card(`You are #1, @${me.username}`, `${pointsOf(myEntry)} points from ${labCountLabel(myEntry.completedCount)}. Everyone else is chasing you.`, null);
+        }
+        const nextEntry = entries[myEntry.rank - 2];
+        const pointsBehind = pointsOf(nextEntry) - pointsOf(myEntry);
+        // A tie on points is broken by who got there first, so you still need to earn a little more.
+        const detail = pointsBehind > 0
+            ? `${pointsBehind} point${pointsBehind === 1 ? '' : 's'} behind @${nextEntry.username}.`
+            : `Tied with @${nextEntry.username} on points — earn more to pull ahead.`;
+        return card(`You are #${myEntry.rank}, @${me.username}`, detail,
+            createElement('a', { className: 'pf-button pf-button-primary', href: '/labs/' }, 'Keep climbing'));
+    }
+
     async function renderLeaderboard(container) {
         const { api, createElement } = window.pfAccount;
         let entries;
@@ -49,21 +143,45 @@
             setChildren(container, createElement('p', { className: 'pf-empty' }, 'The leaderboard is unavailable right now. Try again later.'));
             return;
         }
+        const me = await window.pfAccount.me();
         if (entries.length === 0) {
-            setChildren(container, createElement('p', { className: 'pf-empty' }, 'Nobody is on the leaderboard yet. Sign in, pick a username and complete a lab to be first.'));
+            setChildren(container,
+                createElement('div', { className: 'pf-lb-empty' },
+                    createElement('strong', {}, 'The board is wide open'),
+                    createElement('p', {}, 'Nobody is on the leaderboard yet. Sign in, pick a username and complete a lab to be first.')),
+                standingCard(entries, me));
             return;
         }
-        const me = await window.pfAccount.me();
-        const rows = entries.map((entry) => createElement('tr', { className: me.username === entry.username ? 'pf-me' : '' },
-            createElement('td', { className: 'pf-rank' }, `#${entry.rank}`),
-            createElement('td', {}, me.username === entry.username ? createElement('a', { href: '/profile/' }, entry.username) : entry.username),
-            createElement('td', { className: 'pf-count' }, String(entry.completedCount)),
-            createElement('td', {}, formatDate(entry.lastCompletedAt))));
-        setChildren(container, createElement('table', { className: 'pf-table' },
-            createElement('thead', {}, createElement('tr', {},
-                createElement('th', {}, 'Rank'), createElement('th', {}, 'Username'),
-                createElement('th', {}, 'Labs completed'), createElement('th', {}, 'Last completion'))),
-            createElement('tbody', {}, ...rows)));
+
+        const totalPoints = entries.reduce((sum, entry) => sum + pointsOf(entry), 0);
+        const leaderPoints = Math.max(1, pointsOf(entries[0]));
+        const stats = createElement('div', { className: 'pf-lb-stats' },
+            createElement('div', {}, createElement('strong', {}, String(entries.length)), createElement('span', {}, entries.length === 1 ? 'player ranked' : 'players ranked')),
+            createElement('div', {}, createElement('strong', {}, String(totalPoints)), createElement('span', {}, 'points earned')),
+            createElement('div', {}, createElement('strong', {}, String(pointsOf(entries[0]))), createElement('span', {}, 'top score')));
+
+        // Bars are relative to the leader's points so the chase is visible at a glance.
+        const rows = entries.slice(3).map((entry) => {
+            const percent = Math.max(4, Math.round((pointsOf(entry) / leaderPoints) * 100));
+            return createElement('li', { className: `pf-lb-row${me.username === entry.username ? ' pf-me' : ''}` },
+                createElement('span', { className: 'pf-lb-rank' }, String(entry.rank)),
+                avatar(entry.username),
+                createElement('div', { className: 'pf-lb-row-main' },
+                    usernameLabel(entry, me),
+                    createElement('div', { className: 'pf-lb-bar', 'aria-hidden': 'true' }, createElement('div', { style: `width: ${percent}%` }))),
+                createElement('span', { className: 'pf-lb-when', title: formatDate(entry.lastCompletedAt) }, formatRelativeDate(entry.lastCompletedAt)),
+                createElement('span', { className: 'pf-lb-count' },
+                    createElement('span', { className: 'pf-lb-count-main' }, createElement('strong', {}, String(pointsOf(entry))), ' pts'),
+                    createElement('span', { className: 'pf-lb-count-sub' }, labCountLabel(entry.completedCount))));
+        });
+
+        setChildren(container,
+            stats,
+            standingCard(entries, me),
+            podium(entries.slice(0, 3), me),
+            rows.length
+                ? createElement('ol', { className: 'pf-lb-list', start: '4', 'aria-label': 'Rankings from fourth place' }, ...rows)
+                : null);
     }
 
     // One card per milestone: earned ones can be shared (on your own profile),
@@ -157,8 +275,8 @@
 
         setChildren(container,
             createElement('h1', {}, me.username),
-            createElement('p', { className: 'pf-subtitle' }, `${me.completedCount} of ${me.totalLabCount} labs completed${me.memberSince ? ` · member since ${formatDate(me.memberSince)}` : ''}`),
-            createElement('p', { className: 'pf-fine-print' }, 'Only you can see this page. The leaderboard shows your username and lab count.'),
+            createElement('p', { className: 'pf-subtitle' }, `${me.totalPoints ?? 0} points · ${me.completedCount} of ${me.totalLabCount} labs completed${me.memberSince ? ` · member since ${formatDate(me.memberSince)}` : ''}`),
+            createElement('p', { className: 'pf-fine-print' }, 'Only you can see this page. The leaderboard shows your username, points and lab count.'),
             progress,
             createElement('div', { className: 'pf-section-heading' },
                 createElement('h2', {}, 'Milestones'),

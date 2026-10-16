@@ -12,35 +12,58 @@
 // The HTML panel handles: node details, mission briefing, commands.
 
 // ---- Play Online: live labs through pathfinding-backend and Cybr ----
-// When false, all labs show the "Coming Soon" tease. When true, labs the
-// backend reports as playable (GET /labs/online, derived from Cybr's catalog)
-// open the live lab panel. It is on automatically for local development
-// (localhost) so the flow can be tested against a local backend before it is
-// enabled for everyone.
-const PLAY_ONLINE_GLOBALLY_ENABLED = ['localhost', '127.0.0.1'].includes(window.location.hostname);
+// Online play for everyone. Flip to true to launch it. While false, labs show
+// the "Coming Soon" tease, except where PLAY_ONLINE_ENABLED turns it on below.
+const PLAY_ONLINE_GLOBALLY_ENABLED = false;
+
+// Before launch, ?play_online=1 on any page that loads this script turns online play on in this
+// browser only, remembered in localStorage, so the real site can be tested
+// end to end; ?play_online=0 turns it off again. Nothing links to it. Once
+// PLAY_ONLINE_GLOBALLY_ENABLED is true it has no effect and can be removed.
+const PLAY_ONLINE_PREVIEW = (function () {
+    const storageKey = 'pf_play_online_preview';
+    try {
+        const requested = new URLSearchParams(window.location.search).get('play_online');
+        if (requested === '1') window.localStorage.setItem(storageKey, '1');
+        else if (requested === '0') window.localStorage.removeItem(storageKey);
+        return window.localStorage.getItem(storageKey) === '1';
+    } catch (_) {
+        // Storage blocked (private mode, disabled site data): no preview.
+        return false;
+    }
+})();
+
+// Whether this page offers online play: for everyone once launched, always in
+// local development (localhost), and in browsers that opted into the preview.
+// When on, labs the backend reports as playable (GET /labs/online, derived
+// from Cybr's catalog) open the live lab panel.
+const PLAY_ONLINE_ENABLED =
+    PLAY_ONLINE_GLOBALLY_ENABLED ||
+    ['localhost', '127.0.0.1'].includes(window.location.hostname) ||
+    PLAY_ONLINE_PREVIEW;
 
 // True when this lab can be played live in the browser right now. Online labs
 // get "online-first" defaults: the page opens in Game Mode (labs.js), the
 // arcade splash, setup panel and idle hint arrow are skipped, and the terminal
 // panel opens on load (idle until the learner starts the lab).
 function isOnlineLab(lab) {
-    return PLAY_ONLINE_GLOBALLY_ENABLED && !!lab?.supportsOnlineMode && !!window.pfAccount;
+    return PLAY_ONLINE_ENABLED && !!lab?.supportsOnlineMode && !!window.pfAccount;
 }
 
 // Schema-only check that does not require window.pfAccount. Use this at
 // initMapGame time (pfAccount may not be loaded yet) to set game-state defaults
 // that depend on the lab supporting online play, independent of auth state.
 function isOnlineLabBySchema(lab) {
-    return PLAY_ONLINE_GLOBALLY_ENABLED && !!lab?.supportsOnlineMode;
+    return PLAY_ONLINE_ENABLED && !!lab?.supportsOnlineMode;
 }
 
 // Sets lab.supportsOnlineMode on each lab from the backend's live list, so
 // Play Online, the catalog badges and the Online Play filter all follow what
-// Cybr can actually run. While online play is switched off, no lab is marked
+// Cybr can actually run. Where online play is off (see PLAY_ONLINE_ENABLED), no lab is marked
 // online, so nothing advertises a button that would show "Coming Soon".
 async function markOnlineLabs(labs) {
     let online = new Set();
-    if (PLAY_ONLINE_GLOBALLY_ENABLED) {
+    if (PLAY_ONLINE_ENABLED) {
         // pf-account.js is deferred; it is defined by DOMContentLoaded.
         if (!window.pfAccount && document.readyState === 'loading') {
             await new Promise((resolve) => document.addEventListener('DOMContentLoaded', resolve, { once: true }));
@@ -2357,7 +2380,7 @@ function renderGamePanelOverview(panelEl, state) {
         lab?.category ? kvPill('Category', catConfig.cssClass, catConfig.label, 'category ← README: **Category:**') : '',
         lab?.pathType ? kvPill('Path Type', ptClass, ptLabel, 'pathType ← README: **Path Type:**') : '',
         tgtLabel ? kvPill('Target', tgtClass, tgtLabel, 'target ← README: **Target:**') : '',
-        lab?.costEstimate ? kvPill('Est. AWS Cost', costIsFree ? 'lab-cost-free' : 'lab-cost-paid', costIsFree ? 'Free' : lab.costEstimate, 'costEstimate ← README: **Cost Estimate:**') : '',
+        lab?.costEstimate ? kvPill('Est. Self Hosted AWS Cost', costIsFree ? 'lab-cost-free' : 'lab-cost-paid', costIsFree ? 'Free' : lab.costEstimate, 'costEstimate ← README: **Cost Estimate:**') : '',
         ...(lab?.environments || []).map(env => kvPill('Env', 'lab-badge-env', env, 'environments[] ← README: **Environments:** (comma list)')),
     ].filter(Boolean);
 
@@ -2963,7 +2986,7 @@ function renderGamePanelDeploy(panelEl, state) {
         lab?.category ? kvPillDeploy('Category', deployCatConfig.cssClass, deployCatConfig.label, 'category ← README: **Category:**') : '',
         lab?.pathType ? kvPillDeploy('Path Type', deployPtClass, deployPtLabel, 'pathType ← README: **Path Type:**') : '',
         deployTgtLabel ? kvPillDeploy('Target', deployTgtClass, deployTgtLabel, 'target ← README: **Target:**') : '',
-        lab?.costEstimate ? kvPillDeploy('Est. AWS Cost', deployCostIsFree ? 'lab-cost-free' : 'lab-cost-paid', deployCostIsFree ? 'Free' : lab.costEstimate, 'costEstimate ← README: **Cost Estimate:**') : '',
+        lab?.costEstimate ? kvPillDeploy('Est. Self Hosted AWS Cost', deployCostIsFree ? 'lab-cost-free' : 'lab-cost-paid', deployCostIsFree ? 'Free' : lab.costEstimate, 'costEstimate ← README: **Cost Estimate:**') : '',
         ...(lab?.environments || []).map(env => kvPillDeploy('Env', 'lab-badge-env', env, 'environments[] ← README: **Environments:** (comma list)')),
     ].filter(Boolean);
 
