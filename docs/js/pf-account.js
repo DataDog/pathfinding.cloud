@@ -13,6 +13,8 @@
 
     const isLocalDevelopment = ['localhost', '127.0.0.1'].includes(window.location.hostname);
     const API_BASE_URL = isLocalDevelopment ? 'http://localhost:8787' : 'https://api.pathfinding.cloud';
+    // pathfinding.cloud has no privacy page of its own; it uses Datadog's.
+    const PRIVACY_POLICY_URL = 'https://www.datadoghq.com/legal/privacy/';
 
     // ---- API client ----
 
@@ -205,7 +207,8 @@
             benefitList,
             createElement('div', { className: 'pf-signin-privacy' },
                 iconElement('pf-signin-privacy-icon', SHIELD_ICON),
-                createElement('p', {}, 'We never receive your email address or name. GitHub and Google only tell us an anonymous account ID, and you choose a public username.')),
+                createElement('p', {}, 'We never receive your email address or name. GitHub and Google only tell us an anonymous account ID, and you choose a public username. ',
+                    createElement('a', { href: PRIVACY_POLICY_URL, target: '_blank', rel: 'noopener noreferrer' }, 'Privacy policy'))),
             createElement('button', { className: 'pf-signin-guest', type: 'button', onClick: closeModal }, 'Not now, keep playing as a guest'));
         dialog.classList.add('pf-modal-signin');
         providerButtons[0].focus();
