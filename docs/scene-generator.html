@@ -335,7 +335,7 @@
             <div style="margin-bottom: 10px;">
                 <label class="inline-check">
                     <input type="checkbox" id="crop-content" checked>
-                    Crop to content (same frame for every step)
+                    Crop to content (same frame for every step and scene)
                 </label>
             </div>
             <button class="primary" id="export-all-btn">Export all steps</button>
@@ -346,13 +346,16 @@
 
             <!-- Scene file -->
             <span class="section-title">Scene</span>
+            <div class="field">
+                <select id="scene-slot" aria-label="Scene"></select>
+            </div>
             <div class="row">
                 <button class="secondary grow" id="save-json-btn">Save JSON</button>
                 <button class="secondary grow" id="load-json-btn">Load JSON</button>
                 <button class="danger grow" id="reset-btn">Reset</button>
             </div>
             <input type="file" id="load-json-input" accept="application/json,.json" hidden>
-            <p class="hint">Edits auto-save in this browser. Save JSON to keep a scene for later.</p>
+            <p class="hint">Each scene auto-saves separately in this browser, so you can switch between them freely. Reset restores the selected scene's default layout. Save JSON to keep a scene for later.</p>
         </aside>
 
         <section class="preview">
@@ -397,7 +400,8 @@
         const SNAP_DISTANCE = 10;         // design units within which drag snaps to a guide
         const DIM_ALPHA = 0.28;
         const EXPORT_PADDING = 24;        // design units of transparent margin around cropped content
-        const STORAGE_KEY = 'pf-scene-generator-v1';
+        const STORAGE_KEY_PREFIX = 'pf-scene-generator-v1';
+        const ACTIVE_SLOT_KEY = 'pf-scene-generator-active-slot';
 
         // Extra icons that aren't in map-game.js's catalog. Registered on the
         // shared loader so drawIconCrest can render them like any other subType.
@@ -447,8 +451,35 @@
             ['attacker', 'Red'],
         ];
 
+        // AI agent robot, 16x16 like ATTACKER_PIXELS below. K outline,
+        // M metal body, m metal shade, V visor, E eyes, C glowing core,
+        // R antenna light.
+        const AGENT_PIXELS = [
+            '.......RR.......',
+            '.......KK.......',
+            '...KKKKKKKKKK...',
+            '..KMMMMMMMMMMK..',
+            '..KMVVVVVVVVMK..',
+            '..KMVEEVVEEVMK..',
+            '..KMVVVVVVVVMK..',
+            '..KmMMMMMMMMmK..',
+            '...KKKKKKKKKK...',
+            '.KK.KMMMMMMK.KK.',
+            'KMMKMMCCCCMMKMMK',
+            'KmmKMmCCCCmMKmmK',
+            'KKKKMMMMMMMMKKKK',
+            '....KmMKKMmK....',
+            '....KMK..KMK....',
+            '...KKKK..KKKK...',
+        ];
+        const AGENT_COLORS = {
+            K: '#14121f', M: '#8a94a6', m: '#5d6678', V: '#0b0a12',
+            E: '#38e1ff', C: '#38e1ff', R: '#ff3b3b',
+        };
+
         // ---- Attacker sprites ----
-        // Selectable per scene via scene.attackerStyle. Both PNGs have
+        // Selectable per scene via scene.attackerStyle, and per node via
+        // node.sprite (empty = use the scene's style). Both PNGs have
         // transparent padding around the artwork, so we measure the opaque
         // bounds once at load and draw only that sub-rectangle -- that way the
         // label plate, shadow and edge anchor line up with the visible figure
@@ -460,11 +491,22 @@
         //   grounded: draw a ground shadow (the helicopter is airborne). Airborne
         //             sprites are also centred on the edge anchor rather than on
         //             node.y, so the attack line meets the cabin, not the skids.
+        //   pixels:   a procedural sprite drawn from a square pixel grid instead
+        //             of a PNG (no src). The AI agent robot is one of these.
         const ATTACKER_SPRITES = {
             helicopter: { src: '/img/helicopter.png', height: 40,  grounded: false, img: null, crop: null },
             hacker:     { src: '/img/attacker.png',   height: 120, grounded: true,  img: null, crop: null },
+            agent:      { src: null,                  height: 64,  grounded: true,  img: null, crop: null,
+                          pixels: AGENT_PIXELS, colors: AGENT_COLORS },
         };
+        const ATTACKER_SPRITE_OPTIONS = [
+            ['',           'Scene default'],
+            ['helicopter', 'Helicopter'],
+            ['hacker',     'Hacker'],
+            ['agent',      'AI agent'],
+        ];
         for (const sprite of Object.values(ATTACKER_SPRITES)) {
+            if (!sprite.src) continue;
             const img = new Image();
             img.onload = () => {
                 if (!img.naturalWidth) return;
@@ -476,8 +518,8 @@
             img.src = sprite.src;
         }
 
-        function currentAttackerSprite() {
-            return ATTACKER_SPRITES[scene?.attackerStyle] || ATTACKER_SPRITES.helicopter;
+        function attackerSpriteFor(node) {
+            return ATTACKER_SPRITES[node.sprite] || ATTACKER_SPRITES[scene?.attackerStyle] || ATTACKER_SPRITES.helicopter;
         }
 
         function opaqueBounds(img) {
@@ -527,30 +569,27 @@
         };
 
         // ---- Scene state ----
-        // nodes: { id, kind, x, y, label, subtitle, icon, labelColor, step, scale, hideLabel }
+        // nodes: { id, kind, x, y, label, subtitle, icon, labelColor, step, scale, hideLabel, sprite? }
+        //   sprite: attacker nodes only; overrides scene.attackerStyle when set
         // edges: { id, from, to, label, labelStyle, lineStyle, step, labelT }
         //   labelStyle: 'access' (red initial-access pill) | 'permission' (beige) | 'none'
         //   lineStyle:  'attack' (red dashes) | 'path' (standard gold dashes)
         let scene = null;
+        let activeSlot = 'target-first';   // key into SCENE_PRESETS
         let currentStep = 1;
         let selectedNodeIds = [];   // ordered: selection order drives "Connect A -> B"
         let selectedEdgeId = null;
         let dragState = null;
         let activeGuides = [];      // [{ axis: 'x'|'y', value }] shown while dragging
 
-        function defaultScene() {
-            // Builds up the story one slide at a time:
-            //   1. the sensitive bucket on its own
-            //   2. the IAM role that has read access to it
-            //   3. the public app that assumes that role
-            //   4. an attacker exploiting the public app
-            //   5. a second attacker via supply chain into a non-public app
-            //   6. a third attacker via phishing a developer workstation
-            // All three initial-access paths converge on the same IAM role. Each
-            // attacker sits on the same row as its entry island.
+        // Shared layout for the built-in scenes: three initial-access paths that
+        // converge on the same IAM role, each attacker on the same row as its
+        // entry island. Presets differ only in the order things are revealed,
+        // so `step` is filled in by presetScene() from SCENE_PRESETS.
+        function baseScene() {
             return {
                 version: 1,
-                stepCount: 6,
+                stepCount: 1,
                 dimEarlier: false,
                 labelSize: 20,
                 edgeLabelSize: 20,
@@ -558,33 +597,111 @@
                 attackerStyle: 'helicopter',
                 nextId: 20,
                 nodes: [
-                    { id: 1, kind: 'attacker',  x: 140,  y: 450, label: 'Attacker',               subtitle: '', icon: '',           labelColor: 'attacker', step: 4, scale: 1, hideLabel: false },
-                    { id: 2, kind: 'resource',  x: 560,  y: 450, label: 'Public Application',     subtitle: '', icon: 'ec2-instance', labelColor: 'default',  step: 3, scale: 1, hideLabel: false },
-                    { id: 3, kind: 'principal', x: 1000, y: 450, label: 'IAM Role',               subtitle: '', icon: 'iam-role',     labelColor: 'default',  step: 2, scale: 1, hideLabel: false },
-                    { id: 4, kind: 'target',    x: 1420, y: 450, label: 'Sensitive Data',         subtitle: '', icon: 's3-bucket',    labelColor: 'end',      step: 1, scale: 1, hideLabel: false },
-                    { id: 5, kind: 'resource',  x: 560,  y: 260, label: 'Non-Public Application', subtitle: '', icon: 'ecs-task',     labelColor: 'default',  step: 5, scale: 1, hideLabel: false },
-                    { id: 6, kind: 'resource',  x: 560,  y: 640, label: 'Developer Workstation',  subtitle: '', icon: 'client',       labelColor: 'default',  step: 6, scale: 1, hideLabel: false },
-                    { id: 7, kind: 'attacker',  x: 140,  y: 260, label: 'Attacker',               subtitle: '', icon: '',           labelColor: 'attacker', step: 5, scale: 1, hideLabel: false },
-                    { id: 8, kind: 'attacker',  x: 140,  y: 640, label: 'Attacker',               subtitle: '', icon: '',           labelColor: 'attacker', step: 6, scale: 1, hideLabel: false },
+                    { id: 1, kind: 'attacker',  x: 140,  y: 450, label: 'Attacker',               subtitle: '', icon: '',           labelColor: 'attacker', scale: 1, hideLabel: false },
+                    { id: 2, kind: 'resource',  x: 560,  y: 450, label: 'Public Application',     subtitle: '', icon: 'ec2-instance', labelColor: 'default',  scale: 1, hideLabel: false },
+                    { id: 3, kind: 'principal', x: 1000, y: 450, label: 'IAM Role',               subtitle: '', icon: 'iam-role',     labelColor: 'default',  scale: 1, hideLabel: false },
+                    { id: 4, kind: 'target',    x: 1420, y: 450, label: 'Sensitive Data',         subtitle: '', icon: 's3-bucket',    labelColor: 'end',      scale: 1, hideLabel: false },
+                    { id: 5, kind: 'resource',  x: 560,  y: 260, label: 'Non-Public Application', subtitle: '', icon: 'ecs-task',     labelColor: 'default',  scale: 1, hideLabel: false },
+                    { id: 6, kind: 'resource',  x: 560,  y: 640, label: 'Developer Workstation',  subtitle: '', icon: 'client',       labelColor: 'default',  scale: 1, hideLabel: false },
+                    { id: 7, kind: 'attacker',  x: 140,  y: 260, label: 'Attacker',               subtitle: '', icon: '',           labelColor: 'attacker', scale: 1, hideLabel: false },
+                    { id: 8, kind: 'attacker',  x: 140,  y: 640, label: 'Attacker',               subtitle: '', icon: '',           labelColor: 'attacker', scale: 1, hideLabel: false },
                 ],
                 edges: [
-                    { id: 10, from: 1, to: 2, label: 'exploits vulnerability', labelStyle: 'access',     lineStyle: 'attack', step: 4, labelT: 0.5 },
-                    { id: 11, from: 2, to: 3, label: 'Assumes',                labelStyle: 'permission', lineStyle: 'path',   step: 3, labelT: 0.5 },
-                    { id: 12, from: 3, to: 4, label: 'Read Access',            labelStyle: 'permission', lineStyle: 'path',   step: 2, labelT: 0.5 },
-                    { id: 13, from: 7, to: 5, label: 'supply chain attack',    labelStyle: 'access',     lineStyle: 'attack', step: 5, labelT: 0.5 },
-                    { id: 14, from: 5, to: 3, label: 'Assumes',                labelStyle: 'permission', lineStyle: 'path',   step: 5, labelT: 0.5 },
-                    { id: 15, from: 8, to: 6, label: 'phishing attack',        labelStyle: 'access',     lineStyle: 'attack', step: 6, labelT: 0.5 },
-                    { id: 16, from: 6, to: 3, label: 'Assumes',                labelStyle: 'permission', lineStyle: 'path',   step: 6, labelT: 0.5 },
+                    { id: 10, from: 1, to: 2, label: 'exploits vulnerability', labelStyle: 'access',     lineStyle: 'attack', labelT: 0.5 },
+                    { id: 11, from: 2, to: 3, label: 'Assumes',                labelStyle: 'permission', lineStyle: 'path',   labelT: 0.5 },
+                    { id: 12, from: 3, to: 4, label: 'Read Access',            labelStyle: 'permission', lineStyle: 'path',   labelT: 0.5 },
+                    { id: 13, from: 7, to: 5, label: 'supply chain attack',    labelStyle: 'access',     lineStyle: 'attack', labelT: 0.5 },
+                    { id: 14, from: 5, to: 3, label: 'Assumes',                labelStyle: 'permission', lineStyle: 'path',   labelT: 0.5 },
+                    { id: 15, from: 8, to: 6, label: 'phishing attack',        labelStyle: 'access',     lineStyle: 'attack', labelT: 0.5 },
+                    { id: 16, from: 6, to: 3, label: 'Assumes',                labelStyle: 'permission', lineStyle: 'path',   labelT: 0.5 },
                 ],
             };
+        }
+
+        // Node ids: 1/7/8 attackers, 2 public app, 3 IAM role, 4 bucket,
+        // 5 non-public app, 6 developer workstation. Edge ids 10-16.
+        const SCENE_PRESETS = {
+            // Works backwards from the data: bucket, the role that reads it,
+            // the app running as that role, then each way an attacker gets in.
+            'target-first': {
+                name: 'Target first (6 steps)',
+                stepCount: 6,
+                nodeSteps: { 4: 1, 3: 2, 2: 3, 1: 4, 7: 5, 5: 5, 8: 6, 6: 6 },
+                edgeSteps: { 12: 2, 11: 3, 10: 4, 13: 5, 14: 5, 15: 6, 16: 6 },
+            },
+            // Follows the attacker: one island per step along the first path to
+            // the bucket, then the second and third attackers and their entry
+            // points. An edge appears with the later of its two endpoints.
+            'attacker-first': {
+                name: 'Attacker first (8 steps)',
+                stepCount: 8,
+                nodeSteps: { 1: 1, 2: 2, 3: 3, 4: 4, 7: 5, 5: 6, 8: 7, 6: 8 },
+                edgeSteps: { 10: 2, 11: 3, 12: 4, 13: 6, 14: 6, 15: 8, 16: 8 },
+            },
+            // The final target-first image with only the left side swapped for
+            // AI-native initial access. See buildAiNativeScene().
+            'ai-native': {
+                name: 'AI-native foothold (1 step)',
+                build: () => buildAiNativeScene(),
+            },
+        };
+        const DEFAULT_SLOT = 'target-first';
+
+        function presetScene(slot) {
+            const preset = SCENE_PRESETS[slot];
+            if (preset.build) return preset.build();
+            const built = baseScene();
+            built.stepCount = preset.stepCount;
+            built.nodes.forEach(n => { n.step = preset.nodeSteps[n.id]; });
+            built.edges.forEach(e => { e.step = preset.edgeSteps[e.id]; });
+            return built;
+        }
+
+        // Clones the target-first scene as it currently stands (saved edits
+        // included) and collapses it to its final step, so every island from
+        // the apps rightward is pixel-identical to that scene's last image.
+        // Only the attackers and their initial-access edges change:
+        //   public app:      prompt injection tricks the app's custom agent
+        //   non-public app:  content the internal agent reads carries hidden
+        //                    instructions (indirect prompt injection)
+        //   dev workstation: the developer's own coding agent overreaches,
+        //                    so there is no outside attacker on that row
+        function buildAiNativeScene() {
+            const sourceSlot = DEFAULT_SLOT;
+            const built = structuredClone(savedOrPresetScene(sourceSlot));
+            built.stepCount = 1;
+            built.nodes.forEach(n => { n.step = 1; });
+            built.edges.forEach(e => { e.step = 1; });
+
+            const swap = (items, id, changes) => {
+                const item = items.find(i => i.id === id);
+                if (!item) throw new Error(`AI-native scene: "${SCENE_PRESETS[sourceSlot].name}" has no node/edge ${id} to swap; reset that scene first.`);
+                Object.assign(item, changes);
+            };
+            swap(built.nodes, 8,  { label: 'Coding Agent', sprite: 'agent' });
+            swap(built.edges, 10, { label: 'prompt injection' });
+            swap(built.edges, 13, { label: 'indirect prompt injection' });
+            swap(built.edges, 15, { label: 'excessive agency' });
+            return built;
+        }
+
+        // Fallback values for any setting a saved scene predates.
+        function defaultScene() {
+            return presetScene(DEFAULT_SLOT);
         }
 
         // ---- Persistence ----
         // localStorage is a per-browser convenience only; Save/Load JSON is the
         // durable way to keep a scene. Every access is guarded because storage
         // can be unavailable (private windows, blocked site data).
+        // The target-first scene keeps the original key so scenes saved before
+        // slots existed still load into it.
+        function storageKeyFor(slot) {
+            return slot === DEFAULT_SLOT ? STORAGE_KEY_PREFIX : `${STORAGE_KEY_PREFIX}:${slot}`;
+        }
+
         function saveToStorage() {
-            try { localStorage.setItem(STORAGE_KEY, JSON.stringify(scene)); } catch (_) { /* storage unavailable */ }
+            try { localStorage.setItem(storageKeyFor(activeSlot), JSON.stringify(scene)); } catch (_) { /* storage unavailable */ }
         }
 
         function isValidScene(candidate) {
@@ -592,9 +709,9 @@
                 && Number.isInteger(candidate.stepCount) && candidate.stepCount >= 1;
         }
 
-        function loadFromStorage() {
+        function loadFromStorage(slot) {
             try {
-                const raw = localStorage.getItem(STORAGE_KEY);
+                const raw = localStorage.getItem(storageKeyFor(slot));
                 if (!raw) return null;
                 const parsed = JSON.parse(raw);
                 return isValidScene(parsed) ? parsed : null;
@@ -650,6 +767,12 @@
             return { highlightedNodeIds, highlightedEdgeIds };
         }
 
+        // Another slot's scene as it would open, with defaults filled in for
+        // any setting a saved copy predates (the same merge applyScene does).
+        function savedOrPresetScene(slot) {
+            return Object.assign(defaultScene(), loadFromStorage(slot) || presetScene(slot));
+        }
+
         // ---- Node geometry ----
         function islandRadius(node) {
             const base = node.kind === 'resource' ? RESOURCE_RADIUS : PRINCIPAL_RADIUS;
@@ -665,10 +788,11 @@
         // Footprint of the island sprite (or the attacker figure) in design units.
         function nodeBodyBounds(node) {
             if (node.kind === 'attacker') {
-                const sprite = currentAttackerSprite();
+                const sprite = attackerSpriteFor(node);
                 const crop = sprite.crop;
-                // Fall back to the square placeholder's size until the sprite loads.
-                const h = (crop ? sprite.height : ATTACKER_HEIGHT) * (node.scale || 1);
+                // Fall back to the square placeholder's size until a PNG sprite
+                // loads. Pixel-grid sprites are square and always ready.
+                const h = (crop || sprite.pixels ? sprite.height : ATTACKER_HEIGHT) * (node.scale || 1);
                 const w = crop ? h * (crop.sw / crop.sh) : h;
                 const cy = crop && !sprite.grounded ? edgeAnchor(node).y : node.y;
                 return { x0: node.x - w / 2, y0: cy - h / 2, x1: node.x + w / 2, y1: cy + h / 2 };
@@ -709,7 +833,7 @@
         function drawAttacker(ctx, node) {
             const b = nodeBodyBounds(node);
             const w = b.x1 - b.x0, h = b.y1 - b.y0;
-            const sprite = currentAttackerSprite();
+            const sprite = attackerSpriteFor(node);
 
             // Soft ground shadow so a standing figure sits in the scene like
             // the islands do. Skipped for airborne sprites.
@@ -732,11 +856,15 @@
                 ctx.restore();
                 return;
             }
-            const rows = ATTACKER_PIXELS.length, cols = ATTACKER_PIXELS[0].length;
+            // Pixel-grid sprite, or the placeholder figure for a PNG that
+            // hasn't loaded (or is missing).
+            const pixels = sprite.pixels || ATTACKER_PIXELS;
+            const colors = sprite.colors || ATTACKER_COLORS;
+            const rows = pixels.length, cols = pixels[0].length;
             const px = h / rows;
             for (let r = 0; r < rows; r++) {
                 for (let c = 0; c < cols; c++) {
-                    const color = ATTACKER_COLORS[ATTACKER_PIXELS[r][c]];
+                    const color = colors[pixels[r][c]];
                     if (!color) continue;
                     ctx.fillStyle = color;
                     // +0.5 overlap hides hairline seams between pixels at fractional scales
@@ -1042,24 +1170,41 @@
             return maxX < 0 ? null : { minX, minY, maxX, maxY };
         }
 
-        // The shared export frame is the content bounds of the union of all
-        // steps: render every step transparently, undimmed, and merge their
-        // bounds. Using one frame for every step is what makes the PNGs stack.
-        function computeSharedFrame(scale) {
-            const savedDim = scene.dimEarlier;
-            scene.dimEarlier = false;
+        function unionBounds(a, b) {
+            if (!a) return b;
+            if (!b) return a;
+            return {
+                minX: Math.min(a.minX, b.minX), minY: Math.min(a.minY, b.minY),
+                maxX: Math.max(a.maxX, b.maxX), maxY: Math.max(a.maxY, b.maxY),
+            };
+        }
+
+        // Content bounds of every step of `target`, rendered transparently and
+        // undimmed. paintScene draws the global `scene`, so it's swapped in
+        // for the duration.
+        function sceneContentBounds(target, scale) {
+            const ownScene = scene;
+            scene = { ...target, dimEarlier: false };
             let frame = null;
             try {
                 for (let step = 1; step <= scene.stepCount; step++) {
-                    const bounds = alphaBounds(renderStepOffscreen(step, scale, 'transparent'));
-                    if (!bounds) continue;
-                    frame = frame ? {
-                        minX: Math.min(frame.minX, bounds.minX), minY: Math.min(frame.minY, bounds.minY),
-                        maxX: Math.max(frame.maxX, bounds.maxX), maxY: Math.max(frame.maxY, bounds.maxY),
-                    } : bounds;
+                    frame = unionBounds(frame, alphaBounds(renderStepOffscreen(step, scale, 'transparent')));
                 }
             } finally {
-                scene.dimEarlier = savedDim;
+                scene = ownScene;
+            }
+            return frame;
+        }
+
+        // The shared export frame is the content bounds of the union of all
+        // steps of every scene slot. One frame for every step is what makes a
+        // scene's PNGs stack; sharing it across slots means the AI-native
+        // image also lines up pixel for pixel with the other scenes' images.
+        function computeSharedFrame(scale) {
+            let frame = sceneContentBounds(scene, scale);
+            for (const slot of Object.keys(SCENE_PRESETS)) {
+                if (slot === activeSlot) continue;
+                frame = unionBounds(frame, sceneContentBounds(savedOrPresetScene(slot), scale));
             }
             const fullW = Math.round(DESIGN_W * scale), fullH = Math.round(DESIGN_H * scale);
             if (!frame) return { x: 0, y: 0, w: fullW, h: fullH };
@@ -1099,7 +1244,7 @@
                 out.width = frame.w;
                 out.height = frame.h;
                 out.getContext('2d').drawImage(full, frame.x, frame.y, frame.w, frame.h, 0, 0, frame.w, frame.h);
-                await downloadCanvas(out, `scene-step${step}-of${scene.stepCount}-${frame.w}x${frame.h}.png`);
+                await downloadCanvas(out, `scene-${activeSlot}-step${step}-of${scene.stepCount}-${frame.w}x${frame.h}.png`);
                 // Browsers drop rapid back-to-back downloads; give each one a beat.
                 await new Promise(r => setTimeout(r, 350));
             }
@@ -1534,7 +1679,9 @@
                     Object.entries(KIND_LABELS), node.kind,
                     v => { node.kind = v; propsTitle.textContent = KIND_LABELS[v]; }
                 ));
-                if (node.kind !== 'attacker') {
+                if (node.kind === 'attacker') {
+                    field('Sprite', segmented(ATTACKER_SPRITE_OPTIONS, node.sprite || '', v => { node.sprite = v; }));
+                } else {
                     field('Icon', selectInput(ICON_OPTIONS, node.icon, v => {
                         node.icon = v;
                         if (v) awsIconSprites.preload([{ subType: v }]);
@@ -1665,7 +1812,7 @@
             const url = URL.createObjectURL(blob);
             const a = document.createElement('a');
             a.href = url;
-            a.download = 'scene.json';
+            a.download = `scene-${activeSlot}.json`;
             document.body.appendChild(a);
             a.click();
             a.remove();
@@ -1691,8 +1838,8 @@
         });
 
         document.getElementById('reset-btn').addEventListener('click', () => {
-            if (!confirm('Replace the current scene with the default three-step example?')) return;
-            applyScene(defaultScene());
+            if (!confirm(`Replace this scene with the default "${SCENE_PRESETS[activeSlot].name}" layout?`)) return;
+            applyScene(presetScene(activeSlot));
             saveToStorage();
         });
 
@@ -1711,10 +1858,42 @@
             refreshAll();
         }
 
+        // ---- Scene slots ----
+        const slotSelect = document.getElementById('scene-slot');
+        for (const [slot, preset] of Object.entries(SCENE_PRESETS)) {
+            const option = document.createElement('option');
+            option.value = slot;
+            option.textContent = preset.name;
+            slotSelect.appendChild(option);
+        }
+
+        // Each slot keeps its own saved scene. Opening a slot shows its final
+        // step so the whole diagram is visible straight away.
+        function openSlot(slot) {
+            activeSlot = slot;
+            slotSelect.value = slot;
+            try { localStorage.setItem(ACTIVE_SLOT_KEY, slot); } catch (_) { /* storage unavailable */ }
+            currentStep = Number.MAX_SAFE_INTEGER;  // applyScene clamps to the last step
+            applyScene(loadFromStorage(slot) || presetScene(slot));
+        }
+
+        slotSelect.addEventListener('change', () => {
+            saveToStorage();
+            openSlot(slotSelect.value);
+        });
+
+        function initialSlot() {
+            try {
+                const saved = localStorage.getItem(ACTIVE_SLOT_KEY);
+                if (saved && SCENE_PRESETS[saved]) return saved;
+            } catch (_) { /* storage unavailable */ }
+            return DEFAULT_SLOT;
+        }
+
         // ---- Init ----
         awsIconSprites.onLoadCallbacks.push(() => render());
         islandSprites.load().then(render);
-        applyScene(loadFromStorage() || defaultScene());
+        openSlot(initialSlot());
     })();
     </script>
 </body>
