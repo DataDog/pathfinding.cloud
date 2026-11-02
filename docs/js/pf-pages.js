@@ -9,6 +9,16 @@
 (function () {
     'use strict';
 
+    // The leaderboard and profile pages are part of the account features and
+    // stay dark until launch. pf-account.js (loaded before this script, and
+    // only defining window.pfAccount when the features are on: launch,
+    // localhost, or the ?play_online=1 preview) decides; without it there is
+    // nothing to render, so send visitors to the home page.
+    if (!window.pfAccount) {
+        window.location.replace('/');
+        return;
+    }
+
     function initTheme() {
         const themeToggle = document.getElementById('theme-toggle');
         if (!themeToggle) return;

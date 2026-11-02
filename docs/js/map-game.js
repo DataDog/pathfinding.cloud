@@ -14,33 +14,33 @@
 // ---- Play Online: live labs through pathfinding-backend and Cybr ----
 // Online play for everyone. Flip to true to launch it. While false, labs show
 // the "Coming Soon" tease, except where PLAY_ONLINE_ENABLED turns it on below.
+// At launch, flip this AND ACCOUNTS_GLOBALLY_ENABLED in pf-account.js in the
+// same PR, bump the ?v= on the scripts, regenerate the lab stubs, and remove
+// the preview code from both files.
 const PLAY_ONLINE_GLOBALLY_ENABLED = false;
 
-// Before launch, ?play_online=1 on any page that loads this script turns online play on in this
-// browser only, remembered in localStorage, so the real site can be tested
-// end to end; ?play_online=0 turns it off again. Nothing links to it. Once
-// PLAY_ONLINE_GLOBALLY_ENABLED is true it has no effect and can be removed.
-const PLAY_ONLINE_PREVIEW = (function () {
+// Before launch, ?play_online=1 on any page that loads this script (or
+// pf-account.js) turns online play AND the account features (sign-in, the
+// leaderboard, profiles, and the copy marked .pf-preview-feature) on in this
+// browser only, remembered in localStorage under pf_play_online_preview, so
+// the real site can be tested end to end; ?play_online=0 turns it all off
+// again, and it also beats localhost, so the pre-launch dark state can be
+// checked locally. Nothing links to it. Once PLAY_ONLINE_GLOBALLY_ENABLED and
+// ACCOUNTS_GLOBALLY_ENABLED are true it has no effect and can be removed.
+// pf-account.js computes the same flag from the same storage key, so keep the
+// two blocks in sync.
+const PLAY_ONLINE_ENABLED = (function () {
+    if (PLAY_ONLINE_GLOBALLY_ENABLED) return true;
     const storageKey = 'pf_play_online_preview';
+    let requested = null;
+    try { requested = new URLSearchParams(window.location.search).get('play_online'); } catch (_) { /* no query string */ }
     try {
-        const requested = new URLSearchParams(window.location.search).get('play_online');
-        if (requested === '1') window.localStorage.setItem(storageKey, '1');
-        else if (requested === '0') window.localStorage.removeItem(storageKey);
-        return window.localStorage.getItem(storageKey) === '1';
-    } catch (_) {
-        // Storage blocked (private mode, disabled site data): no preview.
-        return false;
-    }
+        if (requested === '1') { window.localStorage.setItem(storageKey, '1'); return true; }
+        if (requested === '0') { window.localStorage.removeItem(storageKey); return false; }
+    } catch (_) { /* storage blocked; fall through to the hostname check */ }
+    if (['localhost', '127.0.0.1'].includes(window.location.hostname)) return true;
+    try { return window.localStorage.getItem(storageKey) === '1'; } catch (_) { return false; }
 })();
-
-// Whether this page offers online play: for everyone once launched, always in
-// local development (localhost), and in browsers that opted into the preview.
-// When on, labs the backend reports as playable (GET /labs/online, derived
-// from Cybr's catalog) open the live lab panel.
-const PLAY_ONLINE_ENABLED =
-    PLAY_ONLINE_GLOBALLY_ENABLED ||
-    ['localhost', '127.0.0.1'].includes(window.location.hostname) ||
-    PLAY_ONLINE_PREVIEW;
 
 // True when this lab can be played live in the browser right now. Online labs
 // get "online-first" defaults: the page opens in Game Mode (labs.js), the

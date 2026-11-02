@@ -16,6 +16,41 @@
     // pathfinding.cloud has no privacy page of its own; it uses Datadog's.
     const PRIVACY_POLICY_URL = 'https://www.datadoghq.com/legal/privacy/';
 
+    // ---- Launch switch: accounts, leaderboard and profiles ----
+    // ACCOUNTS_GLOBALLY_ENABLED is false until launch. While it is false, none
+    // of this runs for regular visitors: no sign-in pill or leaderboard link in
+    // the header, no /me request, and window.pfAccount stays undefined (which
+    // also keeps Play Online off; see the matching switch in map-game.js). The
+    // features still turn on for local development, and in browsers that opted
+    // into the hidden preview with ?play_online=1 (the same localStorage key
+    // map-game.js uses, so one switch turns on both), so the live site can be
+    // tested end to end before launch. ?play_online=0 turns them off again and
+    // also beats localhost, so the pre-launch dark state can be checked
+    // locally. At launch, set this to true in the same PR that flips
+    // PLAY_ONLINE_GLOBALLY_ENABLED in map-game.js, then remove the preview code
+    // from both files.
+    const ACCOUNTS_GLOBALLY_ENABLED = false;
+
+    // Computes the same flag as the PLAY_ONLINE_ENABLED block in map-game.js,
+    // from the same storage key; keep the two in sync.
+    const ACCOUNTS_FEATURES_ENABLED = (function () {
+        if (ACCOUNTS_GLOBALLY_ENABLED) return true;
+        const storageKey = 'pf_play_online_preview';
+        let requested = null;
+        try { requested = new URLSearchParams(window.location.search).get('play_online'); } catch (_) { /* no query string */ }
+        try {
+            if (requested === '1') { window.localStorage.setItem(storageKey, '1'); return true; }
+            if (requested === '0') { window.localStorage.removeItem(storageKey); return false; }
+        } catch (_) { /* storage blocked; fall through to the hostname check */ }
+        if (isLocalDevelopment) return true;
+        try { return window.localStorage.getItem(storageKey) === '1'; } catch (_) { return false; }
+    })();
+
+    // Reveals the static page copy marked .pf-preview-feature (Online Labs nav
+    // links, leaderboard links, online-play copy). pf-pages.js hides the
+    // leaderboard and profile pages entirely when the features are off.
+    if (ACCOUNTS_FEATURES_ENABLED) document.documentElement.classList.add('pf-features-on');
+
     // ---- API client ----
 
     class PfApiError extends Error {
@@ -365,7 +400,10 @@
         });
     }
 
-    window.pfAccount = {
+    // Only exposed when the account features are on (see the launch switch
+    // above). map-game.js keeps Play Online off without it, and pf-pages.js
+    // redirects the leaderboard and profile pages away.
+    if (ACCOUNTS_FEATURES_ENABLED) window.pfAccount = {
         apiBaseUrl: API_BASE_URL,
         api,
         PfApiError,
@@ -393,6 +431,8 @@
         loadMe();
         consumeSignInRedirectParameters();
     }
-    if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', start);
-    else start();
+    if (ACCOUNTS_FEATURES_ENABLED) {
+        if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', start);
+        else start();
+    }
 }());
