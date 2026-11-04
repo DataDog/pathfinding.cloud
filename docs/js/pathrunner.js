@@ -210,6 +210,7 @@ function renderLanding() {
 
     landing.innerHTML = `
         <div class="pr-hero">
+            <img class="pr-hero-logo" src="/images/brand/pathrunner-logo.png" alt="" width="84" height="84">
             <h1>Pathrunner</h1>
             <div class="pr-tagline">A modular AWS privilege escalation exploitation framework - a Metasploit-style REPL, a scriptable CLI, interchangeable payloads, and built-in attacker infrastructure. This is the command, module, and payload reference, generated directly from the Pathrunner source.</div>
             <div class="pr-stat-row">

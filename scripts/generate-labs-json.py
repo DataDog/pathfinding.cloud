@@ -38,6 +38,7 @@ REQUIRED_README_METADATA_BASE = [
     "Category",
     "Path Type",
     "Target",
+    "Points",
     "Environments",
     "Technique",
 ]
@@ -58,6 +59,7 @@ INDEX_FIELDS = [
     "subCategory",
     "pathType",
     "target",
+    "points",
     "costEstimate",
     "interactiveDemo",
     "pathfindingCloudId",
@@ -65,7 +67,6 @@ INDEX_FIELDS = [
     "githubUrl",
     "hasAttackMap",
     "hasDemoTranscript",
-    "supportsOnlineMode",
     "source",
     "modifications",
     "principalHopCount",
@@ -947,9 +948,9 @@ def transform_readme(readme_text, module_path, readme_dir=None):
     interactive_raw = metadata.get("Interactive Demo", "").lower()
     interactive_demo = interactive_raw in ("yes", "true")
 
-    # Determine online play support
-    online_mode_raw = metadata.get("Supports Online Mode", "").lower()
-    supports_online_mode = online_mode_raw in ("yes", "true")
+    # Online play availability is not read from the README: the site gets it
+    # at runtime from pathfinding-backend (GET /labs/online, derived from
+    # Cybr's catalog), so labs become playable as Cybr enables them.
 
     # Directory name as scenario name/id
     name = Path(module_path).name
@@ -977,11 +978,11 @@ def transform_readme(readme_text, module_path, readme_dir=None):
         "costEstimate": metadata.get("Cost Estimate", "$0/mo"),
         "pathfindingCloudId": metadata.get("Pathfinding.cloud ID") or None,
         "interactiveDemo": interactive_demo,
-        "supportsOnlineMode": supports_online_mode,
         "category": metadata.get("Category", ""),
         "subCategory": metadata.get("Sub-Category", ""),
         "pathType": metadata.get("Path Type", ""),
         "target": metadata.get("Target", ""),
+        "points": int(metadata["Points"]) if str(metadata.get("Points", "")).strip().isdigit() else 0,
         "environments": environments,
         "attackPath": {
             "principals": parse_principals(metadata.get("Attack Principals", "")),

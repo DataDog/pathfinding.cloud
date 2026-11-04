@@ -245,6 +245,7 @@
             width: auto;
             box-shadow: 0 4px 20px rgba(0,0,0,0.2);
             border-radius: 4px;
+            cursor: default;
         }
 
         /* Labels & Icons dynamic section */
@@ -292,10 +293,42 @@
             text-transform: none;
         }
 
+        .type-toggle {
+            font: inherit;
+            font-size: 10px;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+            border-radius: 4px;
+            padding: 3px 6px;
+            cursor: pointer;
+            border: 1px solid;
+            white-space: nowrap;
+            line-height: 1;
+        }
+        .type-toggle.is-big {
+            background: rgba(240, 176, 64, 0.12);
+            border-color: var(--accent);
+            color: var(--accent);
+        }
+        .type-toggle.is-small {
+            background: rgba(8, 145, 178, 0.12);
+            border-color: #0891b2;
+            color: #0891b2;
+        }
+        html.light-theme .type-toggle.is-small {
+            border-color: #0e7490;
+            color: #0e7490;
+        }
+        .type-toggle:disabled {
+            opacity: 0.40;
+            cursor: default;
+        }
+
         .label-row .fields {
             display: grid;
             gap: 6px;
-            grid-template-columns: minmax(100px, 40%) 1fr;
+            grid-template-columns: auto minmax(70px, 30%) 1fr;
             min-width: 0;
         }
         .label-row.edge .fields,
@@ -363,18 +396,18 @@
             </div>
 
             <div class="field">
-                <label>Big islands</label>
+                <label>Islands</label>
                 <div class="range-row">
-                    <input type="range" id="big-count" min="2" max="7" value="4">
-                    <span class="range-val" id="big-count-val">4</span>
+                    <input type="range" id="island-count" min="2" max="12" value="4">
+                    <span class="range-val" id="island-count-val">4</span>
                 </div>
             </div>
 
             <div class="field">
-                <label>Small islands</label>
-                <div class="range-row">
-                    <input type="range" id="small-count" min="0" max="6" value="2">
-                    <span class="range-val" id="small-count-val">2</span>
+                <label>Layout shape</label>
+                <div class="theme-row" id="layout-shape-row">
+                    <button class="preset-btn active" data-layout-shape="organic" id="layout-shape-organic">Organic</button>
+                    <button class="preset-btn" data-layout-shape="strip" id="layout-shape-strip">Footer strip</button>
                 </div>
             </div>
 
@@ -391,6 +424,14 @@
                 <div class="range-row">
                     <input type="range" id="cloud-size" min="0.25" max="4.00" step="0.05" value="1.35">
                     <span class="range-val" id="cloud-size-val">1.35×</span>
+                </div>
+            </div>
+
+            <div class="field">
+                <label>Cloud coverage</label>
+                <div class="range-row">
+                    <input type="range" id="cloud-coverage" min="0" max="80" step="1" value="30">
+                    <span class="range-val" id="cloud-coverage-val">30%</span>
                 </div>
             </div>
 
@@ -467,12 +508,22 @@
                 </div>
                 <div id="labels-rows"></div>
             </div>
+            <div style="margin-top: -10px; margin-bottom: 14px;">
+                <label class="inline-check">
+                    <input type="checkbox" id="show-subtitles" checked>
+                    Start/target labels
+                </label>
+            </div>
 
             <div class="divider"></div>
 
             <button class="primary" id="download-btn">Download PNG</button>
             <div style="height: 8px;"></div>
+            <button class="secondary" id="export-footer-btn">Export island chain (transparent PNG)</button>
+            <div style="height: 6px;"></div>
             <button class="secondary" id="shuffle-btn">Shuffle layout (new seed)</button>
+            <div style="height: 6px;"></div>
+            <button class="secondary" id="reset-positions-btn">Reset island positions</button>
         </aside>
 
         <section class="preview">
@@ -485,6 +536,7 @@
                     <canvas id="hero-canvas"></canvas>
                 </div>
             </div>
+            <p style="font-size:11px;color:var(--muted);text-align:center;margin:4px 0 0;">Drag to reposition &middot; Hover + <kbd style="font-size:10px;padding:1px 4px;border:1px solid var(--panel-border);border-radius:3px;">T</kbd> to toggle big&thinsp;↔&thinsp;small &middot; Reset to restore computed positions</p>
         </section>
     </div>
 
@@ -502,14 +554,14 @@
         const $ = (id) => document.getElementById(id);
         const titleInput = $('title-input');
         const subtitleInput = $('subtitle-input');
-        const bigCountInput = $('big-count');
-        const bigCountVal = $('big-count-val');
-        const smallCountInput = $('small-count');
-        const smallCountVal = $('small-count-val');
+        const islandCountInput = $('island-count');
+        const islandCountVal = $('island-count-val');
         const islandSizeInput = $('island-size');
         const islandSizeVal = $('island-size-val');
         const cloudSizeInput = $('cloud-size');
         const cloudSizeVal = $('cloud-size-val');
+        const cloudCoverageInput = $('cloud-coverage');
+        const cloudCoverageVal = $('cloud-coverage-val');
         const seedInput = $('seed-input');
         const seedVal = $('seed-val');
         const islandStyle = $('island-style');
@@ -526,12 +578,40 @@
         const labelsRows = $('labels-rows');
         const showLabels = $('show-labels');
         const showPathLabels = $('show-path-labels');
+        const showSubtitles = $('show-subtitles');
         const showTitle = $('show-title');
         const titleStyleTwo = $('title-style-two');
         const titleStyleSingle = $('title-style-single');
         const titleFontScaleInput = $('title-font-scale');
         const titleFontScaleVal = $('title-font-scale-val');
         let titleStyle = 'two-line'; // 'two-line' | 'single-line'
+        const layoutShapeOrganic = $('layout-shape-organic');
+        const layoutShapeStrip = $('layout-shape-strip');
+        let layoutShape = 'organic'; // 'organic' | 'strip'
+
+        // ---- Visual sprite toggle state ----
+        // Islands that should be drawn as companion islets instead of big wooded islands.
+        // This is purely visual — toggled islands stay in the same chain position.
+        // Both the per-row buttons and the T-key write to this set.
+        let toggledNodes = new Set();
+
+        // Last cursor position in design space, updated on every mousemove so the
+        // T keydown handler knows which island to toggle without needing a separate
+        // click-to-select step.
+        let _cursorDesignX = -Infinity, _cursorDesignY = -Infinity;
+
+        // ---- Drag-and-drop state ----
+        // manualPositions overrides the layout-engine positions for principal islands.
+        // null means "use whatever buildState computed". Set on first drag, cleared
+        // when island count or layout mode changes, or when the user shuffles.
+        let manualPositions   = null;
+        let dragNodeIdx       = null;      // index of island being dragged, or null
+        let dragOffset        = { x: 0, y: 0 }; // click→center offset in design coords
+        // Snapshot of the last render's coordinate-transform params so mouse handlers
+        // can convert screen pixels → design-space coords without re-running render().
+        let _renderScale      = 1;
+        let _renderHeaderZone = 0;
+        let _lastBuiltState   = null;
 
         // ---- AWS icon catalog (subset of map-game.js iconPaths, with friendly names) ----
         const ICON_OPTIONS = [
@@ -555,43 +635,45 @@
         ];
 
         // ---- Label/icon state -- survives count changes so user input isn't lost ----
-        // Defaults match the requested sample attack path.
-        const defaultNodeLabels  = ['Startington', 'Lambda Role', 'EC2 role', 'Targetville'];
-        const defaultNodeIcons   = ['iam-user', 'iam-role', 'iam-role', 's3-bucket'];
-        const defaultEdgeLabels  = ['Hop 1', 'Hop 2', 'Hop 3'];
-        const defaultSmallLabels = ['Lambda Function', 'EC2 Instance'];
-        const defaultSmallIcons  = ['lambda-function', 'ec2-instance'];
-        // Subtitle text that appears underneath the start/target islands (the
-        // small gray line below the main label). Only applies to the first and
-        // last big islands, so we track them independently of the counts.
+        // nodeLabels/nodeIcons are indexed by total island position (0..totalCount-1),
+        // regardless of whether the island is big or small. edgeLabels[k] is the
+        // k-th edge between consecutive big islands.
+        const defaultNodeLabels = ['Startington', 'Lambda Role', 'EC2 role', 'Targetville'];
+        const defaultNodeIcons  = ['iam-user', 'iam-role', 'iam-role', 's3-bucket'];
+        const defaultEdgeLabels = ['Hop 1', 'Hop 2', 'Hop 3'];
         const defaultStartSubtitle = 'user/lab-starting-user';
         const defaultEndSubtitle   = 'bucket/sensitive-data';
 
         const labelState = {
-            nodeLabels:  defaultNodeLabels.slice(),
-            nodeIcons:   defaultNodeIcons.slice(),
-            edgeLabels:  defaultEdgeLabels.slice(),
-            smallLabels: defaultSmallLabels.slice(),
-            smallIcons:  defaultSmallIcons.slice(),
+            nodeLabels:    defaultNodeLabels.slice(),
+            nodeIcons:     defaultNodeIcons.slice(),
+            edgeLabels:    defaultEdgeLabels.slice(),
             startSubtitle: defaultStartSubtitle,
             endSubtitle:   defaultEndSubtitle,
         };
 
-        // Ensure the label/icon arrays are sized to match the current counts;
-        // extend with sensible blanks and truncate extras (preserving any user
-        // edits to the first N entries).
-        function ensureLabelArraySize(arr, n, fillerFn) {
-            while (arr.length < n) arr.push(fillerFn(arr.length));
-            arr.length = n;
+        // Ensure label arrays are sized correctly for the current island count.
+        function syncLabelArrays(totalCount) {
+            const edgeCount = Math.max(0, totalCount - 1);
+            while (labelState.nodeLabels.length < totalCount) labelState.nodeLabels.push('');
+            labelState.nodeLabels.length = totalCount;
+            while (labelState.nodeIcons.length < totalCount) labelState.nodeIcons.push('');
+            labelState.nodeIcons.length = totalCount;
+            while (labelState.edgeLabels.length < edgeCount) {
+                labelState.edgeLabels.push(`Hop ${labelState.edgeLabels.length + 1}`);
+            }
+            labelState.edgeLabels.length = edgeCount;
         }
 
-        function syncLabelArrays(bigCount, smallCount) {
-            const edgeCount = Math.max(0, bigCount - 1);
-            ensureLabelArraySize(labelState.nodeLabels,  bigCount,   (i) => `Island ${i + 1}`);
-            ensureLabelArraySize(labelState.nodeIcons,   bigCount,   () => '');
-            ensureLabelArraySize(labelState.edgeLabels,  edgeCount,  (i) => `Hop ${i + 1}`);
-            ensureLabelArraySize(labelState.smallLabels, smallCount, (i) => `Small ${i + 1}`);
-            ensureLabelArraySize(labelState.smallIcons,  smallCount, () => '');
+        // Build a Big/Small toggle button for an island row.
+        function makeTypeToggleBtn(currentType, onClick) {
+            const btn = document.createElement('button');
+            btn.type = 'button';
+            btn.className = `type-toggle is-${currentType}`;
+            btn.textContent = currentType === 'big' ? 'Big' : 'Small';
+            btn.title = currentType === 'big' ? 'Draw as small islet (or hover + T)' : 'Draw as big island (or hover + T)';
+            btn.addEventListener('click', onClick);
+            return btn;
         }
 
         // Build an icon <select> preloaded with the current catalog.
@@ -635,44 +717,41 @@
             labelsRows.appendChild(row);
         }
 
-        // Rebuild the Labels & Icons UI to match the current big/small counts.
-        // Small islands are assigned round-robin to edges (same rule applied
-        // in buildState), so we interleave the UI rows to match.
-        function rebuildLabelRows(bigCount, smallCount) {
+        // Rebuild the Labels & Icons UI. All islands are principals in the chain;
+        // the Big/Small toggle button is purely visual (same as T-key).
+        function rebuildLabelRows(totalCount) {
             labelsRows.innerHTML = '';
-            const edgeCount = Math.max(0, bigCount - 1);
+            const edgeCount = Math.max(0, totalCount - 1);
 
-            // Group small-island indices by the edge they'll attach to.
-            const smallsByEdge = Array.from({ length: edgeCount }, () => []);
-            for (let i = 0; i < smallCount; i++) {
-                if (edgeCount === 0) break;
-                smallsByEdge[i % edgeCount].push(i);
-            }
+            for (let i = 0; i < totalCount; i++) {
+                const isFirst   = i === 0;
+                const isLast    = i === totalCount - 1;
+                const isToggled = toggledNodes.has(i);
+                const rowClass  = isToggled ? 'small' : 'big';
+                const idx       = i; // capture for closures
 
-            for (let bi = 0; bi < bigCount; bi++) {
-                appendLabelRow('big', `Big ${bi + 1}`, (fields) => {
-                    fields.appendChild(makeIconSelect(labelState.nodeIcons[bi] || '', (v) => {
-                        labelState.nodeIcons[bi] = v;
+                appendLabelRow(rowClass, `Island ${i + 1}`, (fields) => {
+                    fields.appendChild(makeTypeToggleBtn(isToggled ? 'small' : 'big', () => {
+                        if (toggledNodes.has(idx)) toggledNodes.delete(idx);
+                        else toggledNodes.add(idx);
+                        rebuildLabelRows(totalCount);
+                        render();
+                    }));
+                    fields.appendChild(makeIconSelect(labelState.nodeIcons[idx] || '', (v) => {
+                        labelState.nodeIcons[idx] = v;
                         awsIconSprites.preload([{ subType: v }]);
                         render();
                     }));
-                    fields.appendChild(makeTextInput(labelState.nodeLabels[bi] || '', `Island ${bi + 1}`, (v) => {
-                        labelState.nodeLabels[bi] = v;
+                    fields.appendChild(makeTextInput(labelState.nodeLabels[idx] || '', `Island ${idx + 1}`, (v) => {
+                        labelState.nodeLabels[idx] = v;
                         render();
                     }));
                 });
 
-                // Only the first and last big islands render a "subtext" field
-                // (the gray line under Startington/Targetville). The key on
-                // labelState is keyed by position (start/end) rather than by
-                // array index, so the value is preserved when bigCount changes.
-                const isFirst = bi === 0;
-                const isLast = bi === bigCount - 1;
                 if (isFirst || isLast) {
-                    const key = isFirst ? 'startSubtitle' : 'endSubtitle';
-                    const tag = isFirst ? '↳ subtext' : '↳ subtext';
+                    const key         = isFirst ? 'startSubtitle' : 'endSubtitle';
                     const placeholder = isFirst ? defaultStartSubtitle : defaultEndSubtitle;
-                    appendLabelRow('subtitle', tag, (fields) => {
+                    appendLabelRow('subtitle', '↳ subtext', (fields) => {
                         fields.appendChild(makeTextInput(labelState[key] || '', placeholder, (v) => {
                             labelState[key] = v;
                             render();
@@ -680,30 +759,57 @@
                     });
                 }
 
-                // After each big island (except the last) render its outgoing
-                // edge + any small islands attached to that edge.
-                if (bi < edgeCount) {
-                    appendLabelRow('edge', `↓ Edge ${bi + 1}`, (fields) => {
-                        fields.appendChild(makeTextInput(labelState.edgeLabels[bi] || '', `Hop ${bi + 1}`, (v) => {
-                            labelState.edgeLabels[bi] = v;
+                if (i < edgeCount) {
+                    appendLabelRow('edge', `↓ Edge ${i + 1}`, (fields) => {
+                        fields.appendChild(makeTextInput(labelState.edgeLabels[idx] || '', `Hop ${idx + 1}`, (v) => {
+                            labelState.edgeLabels[idx] = v;
                             render();
                         }));
                     });
-                    for (const ci of smallsByEdge[bi]) {
-                        appendLabelRow('small', `Small ${ci + 1}`, (fields) => {
-                            fields.appendChild(makeIconSelect(labelState.smallIcons[ci] || '', (v) => {
-                                labelState.smallIcons[ci] = v;
-                                awsIconSprites.preload([{ subType: v }]);
-                                render();
-                            }));
-                            fields.appendChild(makeTextInput(labelState.smallLabels[ci] || '', `Small ${ci + 1}`, (v) => {
-                                labelState.smallLabels[ci] = v;
-                                render();
-                            }));
-                        });
-                    }
                 }
             }
+        }
+
+        // ---- Drag helpers ----
+        // Convert a mouse event's client position to design-space (x, y) coords,
+        // accounting for the canvas CSS display scale and the ctx.translate(0, headerZone).
+        function canvasToDesign(clientX, clientY) {
+            const rect = canvas.getBoundingClientRect();
+            const cx = (clientX - rect.left) * (canvas.width  / rect.width);
+            const cy = (clientY - rect.top)  * (canvas.height / rect.height);
+            return {
+                x:  cx / _renderScale,
+                y: (cy / _renderScale) - _renderHeaderZone,
+            };
+        }
+
+        // Returns the index of the principal island whose center is within hit radius
+        // of (dx, dy) in design space, or -1 if none.
+        function hitTestNode(dx, dy) {
+            if (!_lastBuiltState) return -1;
+            const positions = manualPositions || _lastBuiltState.positions;
+            const hitR = (_lastBuiltState.islandRadius || 52) * 2.2;
+            for (let i = 0; i < positions.length; i++) {
+                const p = positions[i];
+                const ddx = dx - p.x, ddy = dy - p.y;
+                if (ddx * ddx + ddy * ddy < hitR * hitR) return i;
+            }
+            return -1;
+        }
+
+        // Returns the index of the companion island whose center is within hit radius, or -1.
+        function hitTestCompanion(dx, dy) {
+            if (!_lastBuiltState) return -1;
+            const positions = _lastBuiltState._stripCompanionPositions || _lastBuiltState.companionPositions;
+            if (!positions || !positions.length) return -1;
+            const hitR = 80;
+            for (let i = 0; i < positions.length; i++) {
+                const p = positions[i];
+                if (!p || (p.x === 0 && p.y === 0)) continue;
+                const ddx = dx - p.x, ddy = dy - p.y;
+                if (ddx * ddx + ddy * ddy < hitR * hitR) return i;
+            }
+            return -1;
         }
 
         // ---- Helpers ----
@@ -729,38 +835,233 @@
         // Create a minimal "lab" state structure matching what drawGameMap /
         // drawCompanions expect. Labels and AWS icons are pulled from the
         // user-edited labelState so the hero can mirror a real attack path.
-        function buildState(bigCount, smallCount, seed, islandStyleVal, companionStyleVal, w, h, headerZone, showLabelsVal, showEdgeLabelsVal, showTitleVal, cloudSize, islandSize) {
+        // Footer-strip layout: every island (principals + companions) sits on
+        // a single horizontal line near the bottom of the canvas, with linear
+        // hops between consecutive principals.
+        //
+        // Implementation detail: principals stay in `positions` and companions
+        // stay in `companionPositions`, but we place them on the exact same Y
+        // line and interleave their X positions. The existing edge renderer
+        // draws a straight dashed line from principal[i] to principal[i+1],
+        // which passes through every inline companion on that segment -- so
+        // the footer reads as one continuous chain even though companions
+        // aren't in the edge graph. Companions keep their dedicated sprite
+        // (islet / ship) because they're still drawn via the companion code path.
+        function buildStripState(bigCount, smallCount, seed, islandStyleVal, companionStyleVal, w, h, headerZone, showLabelsVal, showEdgeLabelsVal, showTitleVal, cloudSize, islandSize, cloudCoverage, showSubtitlesVal) {
+            const edgeCount  = Math.max(0, bigCount - 1);
+
+            // Round-robin assignment matches rebuildLabelRows so UI rows map correctly.
+            const smallsByEdge = Array.from({ length: edgeCount }, () => []);
+            for (let ci = 0; ci < smallCount; ci++) {
+                if (edgeCount === 0) break;
+                smallsByEdge[ci % edgeCount].push(ci);
+            }
+
+            // Interleave the chain so we can assign evenly-spaced X slots:
+            // big0, (companions on edge 0), big1, (companions on edge 1), big2, ...
+            const chain = [];
+            for (let bi = 0; bi < bigCount; bi++) {
+                chain.push({ kind: 'big', idx: bi });
+                if (bi < edgeCount) {
+                    for (const ci of smallsByEdge[bi]) chain.push({ kind: 'small', idx: ci });
+                }
+            }
+            const totalSlots = chain.length;
+
+            // Anchor the strip near the bottom of the map zone. The label
+            // plate sits ~1.6r below the island center, plus the start/end
+            // subtitle adds another row, so reserve ~190px of clearance
+            // below the island row.
+            // Reserve clearance below the island center for the label plate
+            // (~1.6r) + subtitle row (~18px) + a small bottom margin (16px).
+            // Base companion radius mirrors drawCompanionIslet: 56 * 0.8^shrink.
+            const shrinkSteps = Math.max(0, bigCount - 3);
+            const estRadius = 56 * Math.pow(0.8, shrinkSteps);
+            const clearanceBelow = Math.round(estRadius * 1.6 + 18 + 16);
+            const stripY = h - clearanceBelow;
+
+            const padX = Math.max(40, w * 0.06);
+            const slotX = (slotIdx) => {
+                const t = totalSlots === 1 ? 0.5 : slotIdx / (totalSlots - 1);
+                return padX + t * (w - padX * 2);
+            };
+
+            // Principals -> positions/nodes
+            const positions = [];
+            const nodes = [];
+            for (let bi = 0; bi < bigCount; bi++) {
+                const slot = chain.findIndex(c => c.kind === 'big' && c.idx === bi);
+                positions.push({ x: slotX(slot), y: stripY });
+
+                const isFirst = bi === 0;
+                const isLast  = bi === bigCount - 1;
+                const hideStartEnd = (isFirst || isLast) && !showSubtitlesVal;
+                const lbl = (showLabelsVal && !hideStartEnd) ? (labelState.nodeLabels[bi] || '') : '';
+                let subtitle = '';
+                if (showLabelsVal && showSubtitlesVal) {
+                    if (isFirst) subtitle = labelState.startSubtitle || '';
+                    else if (isLast) subtitle = labelState.endSubtitle || '';
+                }
+                nodes.push({
+                    label: lbl,
+                    displayLabel: lbl,
+                    displaySubtitle: subtitle,
+                    _hideLabel: hideStartEnd,
+                    type: { type: '', label: '', cssClass: '' },
+                    description: '',
+                    hints: [],
+                    arn: '',
+                    subType: labelState.nodeIcons[bi] || '',
+                    access: null,
+                    isTarget: isLast,
+                });
+            }
+
+            // Linear chain of edges between consecutive principals. Edge
+            // labels are placed on the principal-to-principal hop (the line
+            // passes through any inline companions, so the pill ends up at
+            // the visual midpoint of that segment).
+            const edges = [];
+            for (let i = 0; i < bigCount - 1; i++) {
+                edges.push({
+                    fromIdx: i,
+                    toIdx: i + 1,
+                    label: '',
+                    displayLabel: showEdgeLabelsVal ? (labelState.edgeLabels[i] || '') : '',
+                    description: '',
+                    commands: [],
+                    hints: [],
+                    implicit: false,
+                    companionIndices: [],   // companions are positioned manually below
+                });
+            }
+
+            // Companions -> companionPositions/companions, dropped onto the
+            // same Y line as principals so the dashed edge passes through them.
+            const companions = [];
+            const companionPositions = [];
+            for (let ci = 0; ci < smallCount; ci++) {
+                const slot = chain.findIndex(c => c.kind === 'small' && c.idx === ci);
+                if (slot < 0) continue;
+                companionPositions.push({ x: slotX(slot), y: stripY });
+                companions.push({
+                    label: showLabelsVal ? (labelState.nodeLabels[bigCount + ci] || '') : '',
+                    type: { type: 'resource', label: 'Resource', cssClass: '' },
+                    description: '',
+                    arn: '',
+                    subType: labelState.nodeIcons[bigCount + ci] || '',
+                    edgeLabel: '',
+                    edgeDescription: '',
+                });
+            }
+
+            // Cloud band fills the area above the strip. With a title we
+            // start clouds just below the header scrim; without one we fill
+            // most of the canvas above the strip with clouds so the upper
+            // area doesn't look empty.
+            // cloudCoverage is a 0–1 fraction of the full canvas height.
+            // Convert to map-zone coords and clamp so clouds never overlap
+            // the island row (they must stay at least 140px above stripY).
+            const designH = headerZone + h;
+            const coverageBottom = Math.round(designH * (cloudCoverage || 0.30) - headerZone);
+            const islandClearance = Math.round(stripY - 140);
+            let cloudHudTopTranslated, cloudBottomTranslated, cloudCount;
+            if (cloudCoverage === 0) {
+                cloudHudTopTranslated = 8;
+                cloudBottomTranslated = 0;
+                cloudCount            = 0;  // suppresses the draw loop entirely
+            } else if (showTitleVal) {
+                const titleBottomAbs  = headerZone * 0.825;
+                cloudHudTopTranslated = Math.round(titleBottomAbs - headerZone + 6);
+                cloudBottomTranslated = Math.min(coverageBottom, islandClearance);
+                cloudCount            = Math.max(12, Math.floor(w / 60));
+            } else {
+                cloudHudTopTranslated = 8;
+                cloudBottomTranslated = Math.min(coverageBottom, islandClearance);
+                cloudCount            = Math.max(18, Math.floor(w / 45));
+            }
+
+            return {
+                screen: 'playing',
+                revealed: new Set(nodes.map((_, i) => i)),
+                currentNode: 0,
+                currentEdge: -1,
+                revealedEdges: new Set(edges.map((_, i) => i)),
+                revealedCommands: new Set(),
+                selectedNode: null,
+                selectedEdge: null,
+                selectedCompanion: null,
+                completeView: null,
+                gameViewPhase: 'navigation',
+                panelOverride: null,
+                positions,
+                // Stash companions out of the regular drawCompanions pipeline:
+                // we'll redraw them ourselves after drawMapWithGameLabels so we
+                // can use the proper islet/ship sprite without the dashed
+                // orange branch line (which in strip mode would lie along the
+                // main dashed edge and look messy).
+                companionPositions: [],
+                companions: [],
+                _stripCompanions: companions,
+                _stripCompanionPositions: companionPositions,
+                companionStyle: companionStyleVal,
+                iconStyle: 'crest',
+                islandStyle: islandStyleVal,
+                targetStyle: 'flag-shape',
+                planeStyle: 'helicopter',
+                nodes,
+                edges,
+                decorations: [],   // no scattered decorations in strip mode
+                hintsUsed: 0,
+                revealedHints: {},
+                hoveredButton: null,
+                activeButton: null,
+                hoveredHop: null,
+                buttons: [],
+                lab: null,
+                palette: getGameUIPalette(),
+                _redraw: null,
+                _panelEl: null,
+                _cloudHudTop: cloudHudTopTranslated,
+                _cloudBottom: cloudBottomTranslated,
+                _cloudCount:  cloudCount,
+                _cloudScaleRange: {
+                    min: 2.0 * (cloudSize || 1.35) / (islandSize || 1.35),
+                    max: 4.0 * (cloudSize || 1.35) / (islandSize || 1.35),
+                },
+            };
+        }
+
+        function buildState(bigCount, smallCount, seed, islandStyleVal, companionStyleVal, w, h, headerZone, showLabelsVal, showEdgeLabelsVal, showTitleVal, cloudSize, islandSize, cloudCoverage, showSubtitlesVal) {
             // Nodes: first = start, last = end, middle are intermediate principals.
-            // `displayLabel` is the hero-only override recognised by our patched
-            // drawGameIslandLabels (falls back to Startington/Targetville when blank).
-            // `displaySubtitle` renders the small gray text below the label for
-            // the first/last islands only.
             const nodes = [];
             for (let i = 0; i < bigCount; i++) {
-                const nodeLabel = showLabelsVal ? (labelState.nodeLabels[i] || '') : '';
-                const isFirst = i === 0;
-                const isLast = i === bigCount - 1;
+                const isFirst  = i === 0;
+                const isLast   = i === bigCount - 1;
+                const hideStartEnd = (isFirst || isLast) && !showSubtitlesVal;
+                const nodeLabel = (showLabelsVal && !hideStartEnd) ? (labelState.nodeLabels[i] || '') : '';
                 let displaySubtitle;
-                if (!showLabelsVal) {
-                    displaySubtitle = '';           // labels hidden globally
+                if (!showLabelsVal || !showSubtitlesVal) {
+                    displaySubtitle = '';
                 } else if (isFirst) {
                     displaySubtitle = labelState.startSubtitle || '';
                 } else if (isLast) {
                     displaySubtitle = labelState.endSubtitle || '';
                 } else {
-                    displaySubtitle = '';           // middle islands have no subtitle plate
+                    displaySubtitle = '';
                 }
                 nodes.push({
                     label: nodeLabel,
-                    displayLabel: nodeLabel,    // honoured by drawGameIslandLabels for first/last too
+                    displayLabel: nodeLabel,
                     displaySubtitle: displaySubtitle,
+                    _hideLabel: hideStartEnd,
                     type: { type: '', label: '', cssClass: '' },
                     description: '',
                     hints: [],
                     arn: '',
                     subType: labelState.nodeIcons[i] || '',
                     access: null,
-                    isTarget: isLast,           // last node gets the flag island + bling ring
+                    isTarget: isLast,
                 });
             }
 
@@ -783,18 +1084,17 @@
             }
 
             // Distribute small-island companions round-robin across the edges.
-            // Each companion is attached to at most one edge.
             const companions = [];
             if (edges.length > 0) {
-                for (let i = 0; i < smallCount; i++) {
-                    const edgeIdx = i % edges.length;
+                for (let ci = 0; ci < smallCount; ci++) {
+                    const edgeIdx = ci % edges.length;
                     edges[edgeIdx].companionIndices.push(companions.length);
                     companions.push({
-                        label: showLabelsVal ? (labelState.smallLabels[i] || '') : '',
+                        label: showLabelsVal ? (labelState.nodeLabels[bigCount + ci] || '') : '',
                         type: { type: 'resource', label: 'Resource', cssClass: '' },
                         description: '',
                         arn: '',
-                        subType: labelState.smallIcons[i] || '',
+                        subType: labelState.nodeIcons[bigCount + ci] || '',
                         edgeLabel: '',
                         edgeDescription: '',
                     });
@@ -834,21 +1134,23 @@
             // clouds start near the very top of the canvas and extend a
             // larger share of the map height (~40%) so the extra vertical
             // space is actually used.
+            // cloudCoverage is a 0–1 fraction of the full canvas height.
+            // Convert to map-zone coords (canvas Y − headerZone).
+            const designH = headerZone + h;
+            const coverageBottom = Math.round(designH * (cloudCoverage || 0.30) - headerZone);
             let cloudHudTopTranslated, cloudBottomTranslated, cloudCount;
-            if (showTitleVal) {
+            if (cloudCoverage === 0) {
+                cloudHudTopTranslated = 8;
+                cloudBottomTranslated = 0;
+                cloudCount            = 0;  // suppresses the draw loop entirely
+            } else if (showTitleVal) {
                 const titleBottomAbs      = headerZone * 0.825;
                 cloudHudTopTranslated     = Math.round(titleBottomAbs - headerZone + 6);
-                cloudBottomTranslated     = Math.round(mapH * 0.30);
+                cloudBottomTranslated     = coverageBottom;
                 cloudCount                = undefined; // default density
             } else {
-                // Clouds fill exactly the top quarter. Islands are already
-                // pinned to the bottom three quarters via islandTopMargin
-                // above, so the two zones never overlap.
                 cloudHudTopTranslated     = 8;
-                cloudBottomTranslated     = Math.round(mapH * 0.25);
-                // Pack lots of clouds into the narrower band so the top
-                // quarter reads as a dense cloud layer -- ~1 cloud per 45px
-                // of canvas width, about 2x the default titled density.
+                cloudBottomTranslated     = coverageBottom;
                 cloudCount                = Math.max(18, Math.floor(w / 45));
             }
 
@@ -944,7 +1246,9 @@
             // Cloud size is tracked separately and compensated in buildState so
             // the cloud slider is the only control of apparent cloud size.
             const islandSize = parseFloat(islandSizeInput.value) || 1.0;
-            const cloudSize  = parseFloat(cloudSizeInput.value)  || 1.35;
+            const cloudSize     = parseFloat(cloudSizeInput.value)     || 1.35;
+            const cloudCoverageRaw = parseInt(cloudCoverageInput.value, 10);
+            const cloudCoverage = (isNaN(cloudCoverageRaw) ? 30 : cloudCoverageRaw) / 100;
             const designW = 1600 / islandSize;
             const scale = targetW / designW;
             const designH = targetH / scale;  // preserve target aspect ratio
@@ -954,24 +1258,28 @@
             canvas.style.aspectRatio = `${targetW} / ${targetH}`;
             dimsDisplay.textContent = `${targetW} × ${targetH}`;
 
-            const bigCount = parseInt(bigCountInput.value, 10);
-            const smallCount = parseInt(smallCountInput.value, 10);
+            const totalCount = parseInt(islandCountInput.value, 10);
             const seed = parseInt(seedInput.value, 10);
             const styleVal = islandStyle.value;
             const compVal = companionStyle.value;
             const showLabelsVal = showLabels.checked;
             const showPathLabelsVal = showPathLabels.checked;
+            const showSubtitlesVal = showSubtitles.checked;
             const showTitleVal = showTitle.checked;
 
-            // Keep the labelState arrays sized to the current counts, and
-            // rebuild the Labels & Icons rows if the counts changed since the
-            // last render. Rebuilding on every count change is fine because
-            // the user's values live in labelState (not the DOM).
-            syncLabelArrays(bigCount, smallCount);
-            if (render._lastBig !== bigCount || render._lastSmall !== smallCount) {
-                render._lastBig = bigCount;
-                render._lastSmall = smallCount;
-                rebuildLabelRows(bigCount, smallCount);
+            // Sync label arrays and rebuild the Labels & Icons rows when the count
+            // or toggle state changes. toggledNodes changes are detected via a key
+            // so the panel stays in sync with T-key / button toggles.
+            syncLabelArrays(totalCount);
+            const toggleKey = [...toggledNodes].sort((a, b) => a - b).join(',');
+            if (render._lastTotal !== totalCount || render._lastToggleKey !== toggleKey) {
+                if (render._lastTotal !== totalCount) {
+                    toggledNodes.clear();
+                    manualPositions = null;
+                }
+                render._lastTotal      = totalCount;
+                render._lastToggleKey  = toggleKey;
+                rebuildLabelRows(totalCount);
             }
 
             // Reserve a header band at the top; map (clouds + islands) is
@@ -984,7 +1292,30 @@
             const headerZone = showTitleVal ? Math.round(designH * 0.28) : 0;
             const mapH = designH - headerZone;
 
-            const state = buildState(bigCount, smallCount, seed, styleVal, compVal, designW, mapH, headerZone, showLabelsVal, showPathLabelsVal, showTitleVal, cloudSize, islandSize);
+            // Snapshot transform params for the drag mouse handlers
+            _renderScale      = scale;
+            _renderHeaderZone = headerZone;
+
+            // Reset manual positions if layout mode changed
+            if (render._lastLayout !== layoutShape) {
+                render._lastLayout = layoutShape;
+                manualPositions = null;
+            }
+
+            const builder = layoutShape === 'strip' ? buildStripState : buildState;
+            const state = builder(totalCount, 0, seed, styleVal, compVal, designW, mapH, headerZone, showLabelsVal, showPathLabelsVal, showTitleVal, cloudSize, islandSize, cloudCoverage, showSubtitlesVal);
+
+            // Apply manual position overrides (set by drag interaction).
+            if (manualPositions && manualPositions.length === state.positions.length) {
+                state.positions = manualPositions.map(p => ({ x: p.x, y: p.y }));
+            }
+
+            // Apply visual sprite toggle: draw toggled principal islands as companion islets.
+            for (const i of toggledNodes) {
+                if (state.nodes[i]) state.nodes[i]._companionStyle = true;
+            }
+
+            _lastBuiltState = state;
 
             const ctx = canvas.getContext('2d');
             ctx.clearRect(0, 0, targetW, targetH);
@@ -1016,8 +1347,49 @@
             //    "Hop N" pills at edge midpoints.
             ctx.save();
             ctx.translate(0, headerZone);
-            drawMapWithGameLabels(ctx, designW, mapH, state);
-            if (showPathLabelsVal) {
+
+            // Suppress empty companion label boxes for both layout modes.
+            // drawCompanionLabel always renders a plate even when label === '',
+            // so patch it to be a no-op for empty strings before any draw call.
+            // Suppress empty companion label boxes globally -- drawCompanionLabel
+            // always renders a plate even when label === '' (plateW clamps to 10px).
+            const _origDrawCompanionLabel = window.drawCompanionLabel;
+            window.drawCompanionLabel = function(ctx, x, y, companion, isSelected, state) {
+                if (!companion.label) return;
+                _origDrawCompanionLabel(ctx, x, y, companion, isSelected, state);
+            };
+            try {
+                drawMapWithGameLabels(ctx, designW, mapH, state);
+
+                // Strip mode: manually draw the stashed companions with their
+                // proper sprite (islet / ship / note) and label, but no branch
+                // line. Drawn inside the patch block so empty labels produce no box.
+                if (state._stripCompanions && state._stripCompanions.length) {
+                    for (let ci = 0; ci < state._stripCompanions.length; ci++) {
+                        const cPos = state._stripCompanionPositions[ci];
+                        if (!cPos) continue;
+                        const companion = state._stripCompanions[ci];
+                        switch (state.companionStyle) {
+                            case 'ship':
+                                drawCompanionShip(ctx, cPos, companion, false, state);
+                                break;
+                            case 'note':
+                                drawCompanionNote(ctx, cPos, companion, false, state);
+                                break;
+                            case 'islet':
+                            default:
+                                drawCompanionIslet(ctx, cPos, companion, false, state, ci);
+                                break;
+                        }
+                    }
+                }
+            } finally {
+                window.drawCompanionLabel = _origDrawCompanionLabel;
+            }
+
+            // Hop labels are suppressed in strip mode -- the row reads better
+            // as a clean chain of islands without per-segment pills.
+            if (showPathLabelsVal && layoutShape !== 'strip') {
                 drawEdgeHopLabels(ctx, designW, mapH, state);
             }
             ctx.restore();
@@ -1128,6 +1500,125 @@
             }, 'image/png');
         }
 
+        // ---- Export island chain as transparent PNG ----
+        // Clones the current live state (positions, type toggles, labels) and
+        // re-renders it with a transparent background and no clouds, then
+        // autocrop to the content bounding box.
+        function exportIslandChain() {
+            if (!_lastBuiltState) return;
+
+            const targetW  = Math.max(200, parseInt(widthInput.value, 10)  || 1600);
+            const targetH  = Math.max(200, parseInt(heightInput.value, 10) || 840);
+            const islandSize = parseFloat(islandSizeInput.value) || 1.0;
+            const designW  = 1600 / islandSize;
+            const scale    = targetW / designW;
+            // mapH is what the state was built with (designH minus any header zone).
+            const mapH     = _lastBuiltState.positions.length > 0
+                ? undefined   // resolved below from _renderHeaderZone
+                : designW;    // fallback (shouldn't happen)
+            const headerZone = _renderHeaderZone;
+
+            // Shallow-clone the live state, deep-copy only the palette so we
+            // can make it transparent without touching the preview.
+            const state = Object.assign({}, _lastBuiltState, {
+                palette: Object.assign({}, _lastBuiltState.palette),
+            });
+            state.palette.oceanA    = 'rgba(0,0,0,0)';
+            state.palette.oceanB    = 'rgba(0,0,0,0)';
+            state.palette.oceanDeep = 'rgba(0,0,0,0)';
+            state._cloudCount = 0;
+
+            // Compute the map-zone height the same way render() did.
+            const designH = targetH / scale;
+            const effectiveMapH = designH - headerZone;
+
+            const offCanvas = document.createElement('canvas');
+            offCanvas.width  = targetW;
+            offCanvas.height = targetH;
+            const offCtx = offCanvas.getContext('2d');
+            offCtx.clearRect(0, 0, targetW, targetH);
+            offCtx.save();
+            offCtx.scale(scale, scale);
+            // Mirror the same ctx.translate the main render applies so island
+            // positions (which are in map-zone coords) land at the right pixels.
+            offCtx.translate(0, headerZone);
+
+            // Patch out empty companion label plates (same as main render).
+            const _origDrawCompanionLabel = window.drawCompanionLabel;
+            window.drawCompanionLabel = function(ctx, x, y, companion, isSelected, st) {
+                if (!companion.label) return;
+                _origDrawCompanionLabel(ctx, x, y, companion, isSelected, st);
+            };
+            try {
+                drawMapWithGameLabels(offCtx, designW, effectiveMapH, state);
+
+                // Strip-mode companions are stashed outside the normal pipeline.
+                if (state._stripCompanions && state._stripCompanions.length) {
+                    for (let ci = 0; ci < state._stripCompanions.length; ci++) {
+                        const cPos = state._stripCompanionPositions[ci];
+                        if (!cPos) continue;
+                        const companion = state._stripCompanions[ci];
+                        switch (state.companionStyle) {
+                            case 'ship':  drawCompanionShip(offCtx, cPos, companion, false, state); break;
+                            case 'note':  drawCompanionNote(offCtx, cPos, companion, false, state); break;
+                            default:      drawCompanionIslet(offCtx, cPos, companion, false, state, ci); break;
+                        }
+                    }
+                }
+
+                // Organic layout: draw hop-label pills on edges.
+                if (showPathLabels.checked && layoutShape !== 'strip') {
+                    drawEdgeHopLabels(offCtx, designW, effectiveMapH, state);
+                }
+            } finally {
+                window.drawCompanionLabel = _origDrawCompanionLabel;
+            }
+            offCtx.restore();
+
+            // Autocrop: find the bounding box of all non-transparent pixels.
+            const imageData = offCtx.getImageData(0, 0, targetW, targetH);
+            const pixels    = imageData.data;
+            let minX = targetW, maxX = 0, minY = targetH, maxY = 0;
+            let hasContent = false;
+            for (let y = 0; y < targetH; y++) {
+                for (let x = 0; x < targetW; x++) {
+                    if (pixels[(y * targetW + x) * 4 + 3] > 2) {
+                        if (x < minX) minX = x;
+                        if (x > maxX) maxX = x;
+                        if (y < minY) minY = y;
+                        if (y > maxY) maxY = y;
+                        hasContent = true;
+                    }
+                }
+            }
+            if (!hasContent) return;
+
+            const pad  = 24;
+            minX = Math.max(0, minX - pad);
+            minY = Math.max(0, minY - pad);
+            maxX = Math.min(targetW - 1, maxX + pad);
+            maxY = Math.min(targetH - 1, maxY + pad);
+            const cropW = maxX - minX + 1;
+            const cropH = maxY - minY + 1;
+
+            const cropCanvas = document.createElement('canvas');
+            cropCanvas.width  = cropW;
+            cropCanvas.height = cropH;
+            cropCanvas.getContext('2d').drawImage(offCanvas, minX, minY, cropW, cropH, 0, 0, cropW, cropH);
+
+            cropCanvas.toBlob((blob) => {
+                if (!blob) return;
+                const url = URL.createObjectURL(blob);
+                const a   = document.createElement('a');
+                a.href = url;
+                a.download = `island-chain-${cropW}x${cropH}.png`;
+                document.body.appendChild(a);
+                a.click();
+                a.remove();
+                URL.revokeObjectURL(url);
+            }, 'image/png');
+        }
+
         // ---- Wire up listeners ----
         const rerender = () => render();
 
@@ -1162,17 +1653,27 @@
         titleStyleTwo.addEventListener('click', () => setTitleStyle('two-line'));
         titleStyleSingle.addEventListener('click', () => setTitleStyle('single-line'));
 
+        function setLayoutShape(shape) {
+            layoutShape = shape;
+            layoutShapeOrganic.classList.toggle('active', shape === 'organic');
+            layoutShapeStrip.classList.toggle('active', shape === 'strip');
+            // The seed slider only affects the organic layout -- dim it in
+            // strip mode so the user knows the shuffle button is a no-op.
+            const seedDimmed = shape === 'strip';
+            seedInput.disabled = seedDimmed;
+            seedInput.style.opacity = seedDimmed ? '0.5' : '';
+            render();
+        }
+        layoutShapeOrganic.addEventListener('click', () => setLayoutShape('organic'));
+        layoutShapeStrip.addEventListener('click', () => setLayoutShape('strip'));
+
         titleFontScaleInput.addEventListener('input', () => {
             titleFontScaleVal.textContent = parseFloat(titleFontScaleInput.value).toFixed(2) + '×';
             render();
         });
 
-        bigCountInput.addEventListener('input', () => {
-            syncRangeLabel(bigCountInput, bigCountVal);
-            render();
-        });
-        smallCountInput.addEventListener('input', () => {
-            syncRangeLabel(smallCountInput, smallCountVal);
+        islandCountInput.addEventListener('input', () => {
+            syncRangeLabel(islandCountInput, islandCountVal);
             render();
         });
         islandSizeInput.addEventListener('input', () => {
@@ -1181,6 +1682,11 @@
         });
         cloudSizeInput.addEventListener('input', () => {
             cloudSizeVal.textContent = parseFloat(cloudSizeInput.value).toFixed(2) + '×';
+            render();
+        });
+        cloudCoverageInput.addEventListener('input', () => {
+            const v = parseInt(cloudCoverageInput.value, 10);
+            cloudCoverageVal.textContent = v === 0 ? 'Off' : v + '%';
             render();
         });
         seedInput.addEventListener('input', () => {
@@ -1192,6 +1698,7 @@
         companionStyle.addEventListener('change', rerender);
         showLabels.addEventListener('change', rerender);
         showPathLabels.addEventListener('change', rerender);
+        showSubtitles.addEventListener('change', rerender);
 
         widthInput.addEventListener('input', () => {
             updateSizePresetActive(Number(widthInput.value), Number(heightInput.value));
@@ -1215,27 +1722,91 @@
         });
 
         downloadBtn.addEventListener('click', downloadPNG);
+        document.getElementById('export-footer-btn').addEventListener('click', exportIslandChain);
         shuffleBtn.addEventListener('click', () => {
             seedInput.value = String(1 + Math.floor(Math.random() * 99));
             syncRangeLabel(seedInput, seedVal);
+            manualPositions = null; // shuffle gives a fresh computed layout
             render();
+        });
+        document.getElementById('reset-positions-btn').addEventListener('click', () => {
+            manualPositions = null;
+            toggledNodes.clear();
+            render();
+        });
+
+        // ---- Canvas drag-and-drop ----
+        // Islands can be dragged freely in design-space coordinates. On first drag
+        // we snapshot the current computed positions into manualPositions so that
+        // subsequent renders use those instead of recomputing from seed.
+        canvas.addEventListener('mousedown', (e) => {
+            if (e.button !== 0) return;
+            e.preventDefault();
+            const { x, y } = canvasToDesign(e.clientX, e.clientY);
+            const idx = hitTestNode(x, y);
+            if (idx < 0) return;
+
+            if (!manualPositions && _lastBuiltState) {
+                manualPositions = _lastBuiltState.positions.map(p => ({ x: p.x, y: p.y }));
+            }
+            dragNodeIdx = idx;
+            dragOffset  = {
+                x: manualPositions[idx].x - x,
+                y: manualPositions[idx].y - y,
+            };
+            canvas.style.cursor = 'grabbing';
+        });
+
+        canvas.addEventListener('mousemove', (e) => {
+            const { x, y } = canvasToDesign(e.clientX, e.clientY);
+            _cursorDesignX = x;
+            _cursorDesignY = y;
+
+            if (dragNodeIdx === null) {
+                const overIsland = hitTestNode(x, y) >= 0 || hitTestCompanion(x, y) >= 0;
+                canvas.style.cursor = overIsland ? 'grab' : 'default';
+                return;
+            }
+            e.preventDefault();
+            manualPositions[dragNodeIdx] = {
+                x: x + dragOffset.x,
+                y: y + dragOffset.y,
+            };
+            render();
+        });
+
+        canvas.addEventListener('mouseup',    () => { dragNodeIdx = null; });
+        canvas.addEventListener('mouseleave', () => { dragNodeIdx = null; });
+
+        // ---- T key: toggle hovered island between big and small sprite ----
+        document.addEventListener('keydown', (e) => {
+            if (e.key !== 't' && e.key !== 'T') return;
+            const tag = document.activeElement.tagName;
+            if (tag === 'INPUT' || tag === 'SELECT' || tag === 'TEXTAREA') return;
+
+            const nodeIdx = hitTestNode(_cursorDesignX, _cursorDesignY);
+            if (nodeIdx >= 0) {
+                if (toggledNodes.has(nodeIdx)) toggledNodes.delete(nodeIdx);
+                else toggledNodes.add(nodeIdx);
+                render();
+            }
         });
 
         // ---- Initial render ----
         // Cloud sprites and AWS icons both load async. Render once immediately
         // then re-render after each async load so the image fills in as assets
         // become available.
-        syncRangeLabel(bigCountInput, bigCountVal);
-        syncRangeLabel(smallCountInput, smallCountVal);
+        syncRangeLabel(islandCountInput, islandCountVal);
         syncRangeLabel(seedInput, seedVal);
         islandSizeVal.textContent = parseFloat(islandSizeInput.value).toFixed(2) + '×';
         cloudSizeVal.textContent = parseFloat(cloudSizeInput.value).toFixed(2) + '×';
+        cloudCoverageVal.textContent = parseInt(cloudCoverageInput.value, 10) === 0 ? 'Off' : cloudCoverageInput.value + '%';
         titleFontScaleVal.textContent = parseFloat(titleFontScaleInput.value).toFixed(2) + '×';
 
         // Preload the default set of AWS icons so they appear on the first
         // non-cached render. map-game.js's awsIconSprites.preload takes an
         // array of objects with a `subType` field.
-        const initialSubTypes = [...defaultNodeIcons, ...defaultSmallIcons].map(s => ({ subType: s }));
+        const initialSubTypes = defaultNodeIcons.map(s => ({ subType: s }));
         awsIconSprites.preload(initialSubTypes);
 
         // Re-render whenever an AWS icon finishes loading (map-game.js fires
