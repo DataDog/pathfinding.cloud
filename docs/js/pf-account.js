@@ -281,15 +281,66 @@
 
     // ---- Share modal ----
 
-    /** Milestone name from the ladder the backend returns, e.g. "Role Hopper". */
+    /** The milestone's entry in the ladder the backend returns ({ id, name, threshold, level }). */
+    function milestoneEntry(milestone) {
+        return (currentMe.milestoneCatalog || []).find((item) => item.id === milestone);
+    }
+
+    /** Milestone name from the ladder, e.g. "Role Hopper". */
     function milestoneName(milestone) {
-        const entry = (currentMe.milestoneCatalog || []).find((item) => item.id === milestone);
+        const entry = milestoneEntry(milestone);
         return entry ? entry.name : milestone;
     }
 
-    function milestoneText(milestone) {
-        if (milestone === 'all') return 'completed every lab';
-        return milestone === '1' ? 'completed my first lab' : `completed ${milestone} labs`;
+    /** Post text for sharing a milestone, e.g. "I just completed Level 3 at Pathfinding Labs!" */
+    function sharePostText(milestone, name) {
+        if (milestone === 'all') return 'I just completed every lab at Pathfinding Labs!';
+        if (milestone === '1') return 'I just completed my first lab at Pathfinding Labs!';
+        const level = milestoneEntry(milestone)?.level;
+        return level ? `I just completed Level ${level} at Pathfinding Labs!` : `I just earned "${name}" at Pathfinding Labs!`;
+    }
+
+    // LinkedIn's documented share link (share-offsite) takes only a URL. Its
+    // feed URL with shareActive and text is undocumented but opens the post box
+    // with the text filled in, and the share link in that text unfurls into the
+    // card preview. In case LinkedIn ever stops honoring it, the text is also
+    // copied, ready to paste.
+    function shareOnLinkedIn(postText) {
+        window.open(`https://www.linkedin.com/feed/?shareActive=true&text=${encodeURIComponent(postText)}`, '_blank', 'noopener');
+        navigator.clipboard?.writeText(postText).then(
+            () => showToast('Post text copied too, in case LinkedIn opens an empty post.', 'success'),
+            () => { /* clipboard blocked; the prefilled text usually suffices */ });
+    }
+
+    /** True where the system share sheet can take an image file (mostly phones). */
+    function canShareImageFiles() {
+        try {
+            return typeof navigator.canShare === 'function'
+                && navigator.canShare({ files: [new File([new Uint8Array(1)], 'card.png', { type: 'image/png' })] });
+        } catch (_) {
+            return false;
+        }
+    }
+
+    // The card PNG, fetched at most once per share modal, for download and copy.
+    // The API allows the site's origin, so this cross-origin fetch can read the
+    // bytes. no-store keeps the browser from answering it with the preview <img>'s
+    // cached response, which was fetched without CORS and can't be read.
+    function cardImageLoader(imageUrl) {
+        let pendingBlob;
+        return () => (pendingBlob ??= fetch(imageUrl, { cache: 'no-store' }).then((response) => {
+            if (!response.ok) throw new Error(`Share card request failed (${response.status})`);
+            return response.blob();
+        }));
+    }
+
+    function saveBlob(blob, fileName) {
+        const objectUrl = URL.createObjectURL(blob);
+        const link = createElement('a', { href: objectUrl, download: fileName });
+        document.body.append(link);
+        link.click();
+        link.remove();
+        setTimeout(() => URL.revokeObjectURL(objectUrl), 10000);
     }
 
     // Profiles are private, so cards are reachable only through a link the
@@ -305,15 +356,52 @@
             showToast(error.message, 'error');
             return;
         }
-        const text = `I just earned "${name}" on pathfinding.cloud: ${milestoneText(milestone)} of hands-on AWS IAM privilege escalation labs.`;
+        const text = sharePostText(milestone, name);
+        const loadCardImage = cardImageLoader(imageUrl);
+        const fileName = `pathfinding-labs-${name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '')}.png`;
         const copyButton = createElement('button', { className: 'pf-button', onClick: async () => {
             try { await navigator.clipboard.writeText(shareUrl); copyButton.textContent = 'Copied'; } catch (_) { copyButton.textContent = shareUrl; }
         } }, 'Copy link');
+        const downloadButton = createElement('button', { className: 'pf-button', onClick: async () => {
+            try {
+                saveBlob(await loadCardImage(), fileName);
+            } catch (_) {
+                showToast('Could not download the image. Right-click the preview to save it instead.', 'error');
+            }
+        } }, 'Download image');
+        // Not every browser can put images on the clipboard (Firefox only recently).
+        const canCopyImage = typeof window.ClipboardItem === 'function' && typeof navigator.clipboard?.write === 'function';
+        const copyImageButton = canCopyImage ? createElement('button', { className: 'pf-button', onClick: async () => {
+            try {
+                // Safari only allows the write if the ClipboardItem is created
+                // during the click, so it gets the pending blob, not the bytes.
+                await navigator.clipboard.write([new ClipboardItem({ 'image/png': loadCardImage() })]);
+                copyImageButton.textContent = 'Image copied';
+            } catch (_) {
+                showToast('Your browser could not copy the image. Use Download image instead.', 'error');
+            }
+        } }, 'Copy image') : null;
+        // Phones: the share sheet attaches the PNG itself, so the post carries the
+        // image rather than a link preview. The image is fetched up front so the
+        // share still runs inside the tap (Safari drops it after a slow await).
+        const nativeShareButton = canShareImageFiles() ? createElement('button', { className: 'pf-button pf-button-primary', onClick: async () => {
+            try {
+                const file = new File([await loadCardImage()], fileName, { type: 'image/png' });
+                await navigator.share({ files: [file], text: `${text} ${shareUrl}` });
+            } catch (error) {
+                if (error?.name !== 'AbortError') showToast('Could not open the share sheet. Use Download image instead.', 'error');
+            }
+        } }, 'Share image') : null;
+        if (nativeShareButton) loadCardImage().catch(() => { /* reported when tapped */ });
+        const postText = `${text} ${shareUrl}`;
         openModal(`Share "${name}"`,
             createElement('img', { className: 'pf-share-preview', src: imageUrl, alt: `Share card: ${username} earned ${name}`, width: '600', height: '315' }),
+            createElement('p', { className: 'pf-fine-print' }, 'LinkedIn opens with your post text and the card as the link preview. To attach the image itself, download or copy it.'),
             createElement('div', { className: 'pf-share-buttons' },
-                createElement('a', { className: 'pf-button', target: '_blank', rel: 'noopener noreferrer',
-                    href: `https://www.linkedin.com/sharing/share-offsite/?url=${encodeURIComponent(shareUrl)}` }, 'LinkedIn'),
+                nativeShareButton,
+                createElement('button', { className: 'pf-button pf-button-primary', onClick: () => shareOnLinkedIn(postText) }, 'LinkedIn'),
+                downloadButton,
+                copyImageButton,
                 createElement('a', { className: 'pf-button', target: '_blank', rel: 'noopener noreferrer',
                     href: `https://twitter.com/intent/tweet?text=${encodeURIComponent(text)}&url=${encodeURIComponent(shareUrl)}` }, 'X'),
                 createElement('a', { className: 'pf-button', target: '_blank', rel: 'noopener noreferrer',
