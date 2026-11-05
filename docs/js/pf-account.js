@@ -369,22 +369,10 @@
                 showToast('Could not download the image. Right-click the preview to save it instead.', 'error');
             }
         } }, 'Download image');
-        // Not every browser can put images on the clipboard (Firefox only recently).
-        const canCopyImage = typeof window.ClipboardItem === 'function' && typeof navigator.clipboard?.write === 'function';
-        const copyImageButton = canCopyImage ? createElement('button', { className: 'pf-button', onClick: async () => {
-            try {
-                // Safari only allows the write if the ClipboardItem is created
-                // during the click, so it gets the pending blob, not the bytes.
-                await navigator.clipboard.write([new ClipboardItem({ 'image/png': loadCardImage() })]);
-                copyImageButton.textContent = 'Image copied';
-            } catch (_) {
-                showToast('Your browser could not copy the image. Use Download image instead.', 'error');
-            }
-        } }, 'Copy image') : null;
         // Phones: the share sheet attaches the PNG itself, so the post carries the
         // image rather than a link preview. The image is fetched up front so the
         // share still runs inside the tap (Safari drops it after a slow await).
-        const nativeShareButton = canShareImageFiles() ? createElement('button', { className: 'pf-button pf-button-primary', onClick: async () => {
+        const nativeShareButton = canShareImageFiles() ? createElement('button', { className: 'pf-button', onClick: async () => {
             try {
                 const file = new File([await loadCardImage()], fileName, { type: 'image/png' });
                 await navigator.share({ files: [file], text: `${text} ${shareUrl}` });
@@ -394,19 +382,24 @@
         } }, 'Share image') : null;
         if (nativeShareButton) loadCardImage().catch(() => { /* reported when tapped */ });
         const postText = `${text} ${shareUrl}`;
+        // The public page people land on from the share link (/s redirects
+        // there with the same query), so the owner can see what others see.
+        const sharePageUrl = `/share/${new URL(shareUrl).search}`;
         openModal(`Share "${name}"`,
             createElement('img', { className: 'pf-share-preview', src: imageUrl, alt: `Share card: ${username} earned ${name}`, width: '600', height: '315' }),
-            createElement('p', { className: 'pf-fine-print' }, 'LinkedIn opens with your post text and the card as the link preview. To attach the image itself, download or copy it.'),
+            createElement('p', { className: 'pf-fine-print' }, 'LinkedIn opens with your post text and the card as the link preview. To attach the image itself, download it.'),
+            // Row one: post to a network. Row two: the image and the link.
             createElement('div', { className: 'pf-share-buttons' },
-                nativeShareButton,
                 createElement('button', { className: 'pf-button pf-button-primary', onClick: () => shareOnLinkedIn(postText) }, 'LinkedIn'),
-                downloadButton,
-                copyImageButton,
                 createElement('a', { className: 'pf-button', target: '_blank', rel: 'noopener noreferrer',
                     href: `https://twitter.com/intent/tweet?text=${encodeURIComponent(text)}&url=${encodeURIComponent(shareUrl)}` }, 'X'),
                 createElement('a', { className: 'pf-button', target: '_blank', rel: 'noopener noreferrer',
-                    href: `https://bsky.app/intent/compose?text=${encodeURIComponent(`${text} ${shareUrl}`)}` }, 'Bluesky'),
-                copyButton));
+                    href: `https://bsky.app/intent/compose?text=${encodeURIComponent(`${text} ${shareUrl}`)}` }, 'Bluesky')),
+            createElement('div', { className: 'pf-share-buttons', style: 'margin-top: 0.5rem' },
+                nativeShareButton,
+                downloadButton,
+                copyButton,
+                createElement('a', { className: 'pf-button', target: '_blank', rel: 'noopener', href: sharePageUrl }, 'Browse to share page')));
     }
 
     // ---- Header: Leaderboard link and account pill (far right, on every page) ----
