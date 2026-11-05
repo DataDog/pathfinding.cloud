@@ -92,23 +92,33 @@
         return entry.totalPoints ?? 0;
     }
 
-    // Top three, laid out 2-1-3 like a podium.
-    function podium(topEntries, me) {
+    // Every ranked player in one table. The top three get a gold, silver or
+    // bronze medal in the rank column instead of a podium.
+    function rankingsTable(entries, me) {
         const { createElement } = window.pfAccount;
         const placeNames = { 1: 'gold', 2: 'silver', 3: 'bronze' };
-        const order = [topEntries[1], topEntries[0], topEntries[2]].filter(Boolean);
-        return createElement('ol', { className: `pf-lb-podium pf-lb-podium-${topEntries.length}`, 'aria-label': 'Top three' },
-            ...order.map((entry) => createElement('li', {
-                className: `pf-lb-podium-place pf-lb-${placeNames[entry.rank]}${me.username === entry.username ? ' pf-me' : ''}` },
-                createElement('span', { className: 'pf-lb-medal', 'aria-label': `Rank ${entry.rank}` }, String(entry.rank)),
-                avatar(entry.username, 'pf-lb-avatar-lg'),
-                usernameLabel(entry, me),
-                createElement('span', { className: 'pf-lb-podium-count' },
-                    createElement('strong', {}, String(pointsOf(entry))), ' pts'),
-                createElement('span', { className: 'pf-lb-podium-sub' }, labCountLabel(entry.completedCount)),
-                createElement('span', { className: 'pf-lb-when', title: formatDate(entry.lastCompletedAt) },
-                    `Last completion ${formatRelativeDate(entry.lastCompletedAt)}`),
-                createElement('span', { className: 'pf-lb-plinth', 'aria-hidden': 'true' }))));
+        const headerCell = (label, className) => createElement('th', { scope: 'col', className: className || '' }, label);
+        const rows = entries.map((entry) => {
+            const placeName = placeNames[entry.rank];
+            const rankContent = placeName
+                ? createElement('span', { className: `pf-lb-medal pf-lb-${placeName}` }, String(entry.rank))
+                : String(entry.rank);
+            return createElement('tr', { className: me.username === entry.username ? 'pf-me' : '' },
+                createElement('td', { className: 'pf-lb-rank' }, rankContent),
+                createElement('td', {}, createElement('span', { className: 'pf-lb-player-cell' }, avatar(entry.username), usernameLabel(entry, me))),
+                createElement('td', { className: 'pf-lb-num pf-lb-points' }, String(pointsOf(entry))),
+                createElement('td', { className: 'pf-lb-num' }, String(entry.completedCount)),
+                createElement('td', { className: 'pf-lb-when', title: formatDate(entry.lastCompletedAt) }, formatRelativeDate(entry.lastCompletedAt)));
+        });
+        return createElement('div', { className: 'pf-lb-table-wrap' },
+            createElement('table', { className: 'pf-lb-table', 'aria-label': 'Leaderboard rankings' },
+                createElement('thead', {}, createElement('tr', {},
+                    headerCell('Rank', 'pf-lb-rank'),
+                    headerCell('Player'),
+                    headerCell('Points', 'pf-lb-num'),
+                    headerCell('Labs', 'pf-lb-num'),
+                    headerCell('Last completion', 'pf-lb-when'))),
+                createElement('tbody', {}, ...rows)));
     }
 
     // Where the signed-in visitor stands, or how to get on the board.
@@ -164,34 +174,15 @@
         }
 
         const totalPoints = entries.reduce((sum, entry) => sum + pointsOf(entry), 0);
-        const leaderPoints = Math.max(1, pointsOf(entries[0]));
         const stats = createElement('div', { className: 'pf-lb-stats' },
             createElement('div', {}, createElement('strong', {}, String(entries.length)), createElement('span', {}, entries.length === 1 ? 'player ranked' : 'players ranked')),
             createElement('div', {}, createElement('strong', {}, String(totalPoints)), createElement('span', {}, 'points earned')),
             createElement('div', {}, createElement('strong', {}, String(pointsOf(entries[0]))), createElement('span', {}, 'top score')));
 
-        // Bars are relative to the leader's points so the chase is visible at a glance.
-        const rows = entries.slice(3).map((entry) => {
-            const percent = Math.max(4, Math.round((pointsOf(entry) / leaderPoints) * 100));
-            return createElement('li', { className: `pf-lb-row${me.username === entry.username ? ' pf-me' : ''}` },
-                createElement('span', { className: 'pf-lb-rank' }, String(entry.rank)),
-                avatar(entry.username),
-                createElement('div', { className: 'pf-lb-row-main' },
-                    usernameLabel(entry, me),
-                    createElement('div', { className: 'pf-lb-bar', 'aria-hidden': 'true' }, createElement('div', { style: `width: ${percent}%` }))),
-                createElement('span', { className: 'pf-lb-when', title: formatDate(entry.lastCompletedAt) }, formatRelativeDate(entry.lastCompletedAt)),
-                createElement('span', { className: 'pf-lb-count' },
-                    createElement('span', { className: 'pf-lb-count-main' }, createElement('strong', {}, String(pointsOf(entry))), ' pts'),
-                    createElement('span', { className: 'pf-lb-count-sub' }, labCountLabel(entry.completedCount))));
-        });
-
         setChildren(container,
             stats,
             standingCard(entries, me),
-            podium(entries.slice(0, 3), me),
-            rows.length
-                ? createElement('ol', { className: 'pf-lb-list', start: '4', 'aria-label': 'Rankings from fourth place' }, ...rows)
-                : null);
+            rankingsTable(entries, me));
     }
 
     // One card per milestone: earned ones can be shared (on your own profile),
