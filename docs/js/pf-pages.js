@@ -199,7 +199,11 @@
     function milestoneCard(milestone, completedCount, isOwnProfile) {
         const { createElement } = window.pfAccount;
         const card = createElement('div', { className: `pf-milestone ${milestone.achieved ? 'earned' : 'locked'}` });
-        const countLabel = milestone.id === 'all' ? `All ${milestone.threshold} labs` : milestone.id === '1' ? 'First lab' : `${milestone.threshold} labs`;
+        // Completing every lab is a badge; the rest are numbered levels.
+        const labsLabel = milestone.id === '1' ? 'First lab' : `${milestone.threshold} labs`;
+        const countLabel = milestone.id === 'all'
+            ? `All ${milestone.threshold} labs`
+            : milestone.level ? `Level ${milestone.level} · ${labsLabel}` : labsLabel;
         card.append(
             createElement('span', { className: 'pf-milestone-count' }, countLabel),
             createElement('span', { className: 'pf-milestone-name' }, milestone.name));
@@ -291,7 +295,7 @@
             createElement('div', { className: 'pf-section-heading' },
                 createElement('h2', {}, 'Milestones'),
                 createElement('span', { className: 'pf-fine-print' }, `${earnedCount} of ${ladder.length} earned`)),
-            createElement('p', { className: 'pf-fine-print' }, 'Your first lab, then a new milestone every 10 labs. Share the ones you have earned.'),
+            createElement('p', { className: 'pf-fine-print' }, 'Your first lab is level 1, and each level after it takes a few more labs than the last. Share the ones you have earned.'),
             createElement('div', { className: 'pf-milestones' }, ...ladder.map((milestone) => milestoneCard(milestone, me.completedCount, true))),
             createElement('h2', {}, 'Completed labs'),
             labRows.length
