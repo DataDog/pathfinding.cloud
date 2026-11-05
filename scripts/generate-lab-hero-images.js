@@ -3,24 +3,31 @@
  * Generate per-lab social hero images by rendering each lab's attack map
  * preview in a headless Chromium and capturing the canvas as a PNG.
  *
- * Output: docs/images/labs/{slug}.png
+ * Output: docs/labs/{slug}/hero.png
  *
- * Incremental: skip a lab if its PNG is newer than every input that can
- * affect the rendered output (lab data JSON + the JS/CSS files used to
- * render it). Pass --force to regenerate all.
+ * Incremental by content, not timestamps (a fresh CI checkout gives every file
+ * the same mtime, which used to re-render every lab on every deploy). Each
+ * lab's fingerprint covers its data file, its labs.json entry and
+ * HERO_RENDER_VERSION; docs/labs/hero-manifest.json records the fingerprint
+ * each committed PNG was rendered from. A lab re-renders only when its PNG is
+ * missing or its fingerprint changed. Commit the PNGs and the manifest
+ * together after rendering locally, so deploys can skip them.
  *
  * Usage:
  *   node scripts/generate-lab-hero-images.js                  # all labs (incremental)
+ *   node scripts/generate-lab-hero-images.js --plan           # list labs to render; render nothing
  *   node scripts/generate-lab-hero-images.js --force          # regenerate all
  *   node scripts/generate-lab-hero-images.js --slug iam-002   # single lab
  *   node scripts/generate-lab-hero-images.js --port 8889      # alternate dev-server port
  *
- * Requires: `npm install` (Playwright) and `npx playwright install chromium`.
+ * Requires: `npm install` (Playwright) and `npx playwright install chromium`,
+ * except for --plan, which never loads Playwright.
  *
  * The dev-server (docs/dev-server.py) is started by this script if it isn't
  * already listening on the chosen port.
  */
 
+const crypto = require('crypto');
 const fs = require('fs');
 const path = require('path');
 const { spawn } = require('child_process');
@@ -36,14 +43,16 @@ function heroPathFor(slug) {
     return path.join(LABS_OUTPUT_DIR, slug, 'hero.png');
 }
 
-// Files whose mtime invalidates the cached PNG. If any is newer than the
-// PNG, that lab regenerates.
-const SHARED_INVALIDATORS = [
-    path.join(DOCS_DIR, 'js', 'viz-shared.js'),
-    path.join(DOCS_DIR, 'js', 'labs.js'),
-    path.join(DOCS_DIR, 'js', 'map-game.js'),
-    path.join(DOCS_DIR, 'css', 'style.css'),
-];
+// Bump this when a change alters how hero images look: the map preview
+// drawing in map-game.js (renderStaticMapPreview and what it calls), the
+// title and badge overlays from labs.js or viz-shared.js, the map preview
+// rules in style.css, or the sprites. It is part of every fingerprint, so a
+// bump re-renders every lab. It stands in for hashing those files because
+// they change often for reasons that don't affect the images.
+const HERO_RENDER_VERSION = 1;
+
+// The fingerprint each committed hero.png was rendered from.
+const MANIFEST_PATH = path.join(LABS_OUTPUT_DIR, 'hero-manifest.json');
 
 // Social card target. The native canvas is ~viewport-width x 500 -- we render
 // at this viewport size and capture the canvas element's natural pixels.
@@ -51,14 +60,15 @@ const VIEWPORT_WIDTH = 1200;
 const VIEWPORT_HEIGHT = 800;
 
 function parseArgs(argv) {
-    const args = { force: false, slug: null, port: 8899 };
+    const args = { force: false, plan: false, slug: null, port: 8899 };
     for (let i = 2; i < argv.length; i++) {
         const a = argv[i];
         if (a === '--force') args.force = true;
+        else if (a === '--plan') args.plan = true;
         else if (a === '--slug') args.slug = argv[++i];
         else if (a === '--port') args.port = parseInt(argv[++i], 10);
         else if (a === '--help' || a === '-h') {
-            console.log('Usage: node scripts/generate-lab-hero-images.js [--force] [--slug SLUG] [--port N]');
+            console.log('Usage: node scripts/generate-lab-hero-images.js [--plan] [--force] [--slug SLUG] [--port N]');
             process.exit(0);
         } else {
             console.error(`Unknown arg: ${a}`);
@@ -66,6 +76,31 @@ function parseArgs(argv) {
         }
     }
     return args;
+}
+
+/** labs.json entries by slug. */
+function readLabIndex() {
+    const indexPath = path.join(DOCS_DIR, 'labs.json');
+    if (!fs.existsSync(indexPath)) {
+        throw new Error(`labs.json not found at ${indexPath}. Run scripts/generate-labs-json.py first.`);
+    }
+    const index = new Map();
+    for (const lab of JSON.parse(fs.readFileSync(indexPath, 'utf-8'))) {
+        if (lab.slug) index.set(lab.slug, lab);
+    }
+    return index;
+}
+
+/**
+ * Categories the site hides (HIDDEN_CATEGORIES in docs/js/labs.js): their
+ * detail pages never render, so there is no map preview to capture. Read from
+ * labs.js so the two lists can't drift apart.
+ */
+function readHiddenCategories() {
+    const labsJs = fs.readFileSync(path.join(DOCS_DIR, 'js', 'labs.js'), 'utf-8');
+    const match = labsJs.match(/const HIDDEN_CATEGORIES = (\[[^\]]*\]);/);
+    if (!match) throw new Error('HIDDEN_CATEGORIES not found in docs/js/labs.js; update readHiddenCategories.');
+    return new Set(JSON.parse(match[1]));
 }
 
 function listLabSlugs() {
@@ -76,15 +111,9 @@ function listLabSlugs() {
     // index). Labs that exist in docs/labs/data/ but not in labs.json are
     // hidden/draft and the SPA's router falls back to the list view when
     // visited, so renderStaticMapPreview never runs and we'd just time out.
-    const indexPath = path.join(DOCS_DIR, 'labs.json');
-    if (!fs.existsSync(indexPath)) {
-        throw new Error(`labs.json not found at ${indexPath}. Run scripts/generate-labs-json.py first.`);
-    }
-    const listed = new Set(
-        JSON.parse(fs.readFileSync(indexPath, 'utf-8'))
-            .map(l => l.slug)
-            .filter(Boolean)
-    );
+    const index = readLabIndex();
+    const hiddenCategories = readHiddenCategories();
+    const listed = new Set([...index].filter(([, lab]) => !hiddenCategories.has(lab.category)).map(([slug]) => slug));
     return fs.readdirSync(LABS_DATA_DIR)
         .filter(f => f.endsWith('.json'))
         .map(f => f.slice(0, -'.json'.length))
@@ -92,18 +121,43 @@ function listLabSlugs() {
         .sort();
 }
 
-function mtimeOrZero(p) {
-    try { return fs.statSync(p).mtimeMs; } catch (_) { return 0; }
+/**
+ * JSON with object keys sorted at every level. The labs generator's GitHub and
+ * local-clone modes emit the same data with keys in a different order, so
+ * fingerprints must not depend on key order.
+ */
+function canonicalJson(value) {
+    if (Array.isArray(value)) return `[${value.map(canonicalJson).join(',')}]`;
+    if (value && typeof value === 'object') {
+        return `{${Object.keys(value).sort().map(key => `${JSON.stringify(key)}:${canonicalJson(value[key])}`).join(',')}}`;
+    }
+    return JSON.stringify(value);
 }
 
-function shouldRegenerate(slug, force) {
+/** What a lab's hero image is drawn from, hashed. */
+function fingerprintFor(slug, labIndex) {
+    const data = JSON.parse(fs.readFileSync(path.join(LABS_DATA_DIR, `${slug}.json`), 'utf-8'));
+    const inputs = { rendererVersion: HERO_RENDER_VERSION, data, indexEntry: labIndex.get(slug) ?? null };
+    return crypto.createHash('sha256').update(canonicalJson(inputs)).digest('hex');
+}
+
+function readManifest() {
+    try {
+        return JSON.parse(fs.readFileSync(MANIFEST_PATH, 'utf-8')).labs || {};
+    } catch (_) {
+        return {};
+    }
+}
+
+function writeManifest(labs) {
+    const sorted = Object.fromEntries(Object.keys(labs).sort().map(slug => [slug, labs[slug]]));
+    fs.writeFileSync(MANIFEST_PATH, JSON.stringify({ rendererVersion: HERO_RENDER_VERSION, labs: sorted }, null, 2) + '\n');
+}
+
+function shouldRegenerate(slug, force, fingerprints, manifest) {
     if (force) return true;
-    const pngPath = heroPathFor(slug);
-    if (!fs.existsSync(pngPath)) return true;
-    const pngMtime = mtimeOrZero(pngPath);
-    const dataPath = path.join(LABS_DATA_DIR, `${slug}.json`);
-    const newest = Math.max(mtimeOrZero(dataPath), ...SHARED_INVALIDATORS.map(mtimeOrZero));
-    return newest >= pngMtime;
+    if (!fs.existsSync(heroPathFor(slug))) return true;
+    return manifest[slug] !== fingerprints.get(slug);
 }
 
 function isPortListening(port) {
@@ -212,9 +266,18 @@ async function main() {
         process.exit(2);
     }
 
-    const todo = allSlugs.filter(s => shouldRegenerate(s, args.force));
+    const labIndex = readLabIndex();
+    const fingerprints = new Map(allSlugs.map(slug => [slug, fingerprintFor(slug, labIndex)]));
+    const manifest = readManifest();
+    const todo = allSlugs.filter(s => shouldRegenerate(s, args.force, fingerprints, manifest));
     const skipped = allSlugs.length - todo.length;
     console.log(`${allSlugs.length} labs total, ${todo.length} to (re)generate, ${skipped} cached.`);
+    if (args.plan) {
+        for (const slug of todo) console.log(`  needs render: ${slug}`);
+        // Lets the deploy workflow skip installing Playwright when nothing needs rendering.
+        if (process.env.GITHUB_OUTPUT) fs.appendFileSync(process.env.GITHUB_OUTPUT, `stale_count=${todo.length}\n`);
+        return;
+    }
     if (todo.length === 0) return;
 
     let playwright;
@@ -238,6 +301,7 @@ async function main() {
     for (const slug of todo) {
         try {
             const out = await captureOne(page, slug, args.port);
+            manifest[slug] = fingerprints.get(slug);
             const sz = fs.statSync(out).size;
             console.log(`  ✓ ${slug} → ${path.relative(REPO_ROOT, out)} (${(sz/1024).toFixed(1)}K)`);
             ok++;
@@ -249,6 +313,13 @@ async function main() {
 
     await browser.close();
     if (serverProc) serverProc.kill('SIGTERM');
+
+    // Record what each PNG was rendered from. A full run also drops labs that
+    // are no longer listed, so the manifest doesn't grow forever.
+    if (!args.slug) {
+        for (const slug of Object.keys(manifest)) if (!fingerprints.has(slug)) delete manifest[slug];
+    }
+    writeManifest(manifest);
 
     console.log(`\nDone. ${ok} generated, ${fail} failed, ${skipped} cached.`);
     if (fail > 0 && !process.env.IGNORE_HERO_FAILURES) {

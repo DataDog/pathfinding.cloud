@@ -43,31 +43,57 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
+      # Lab and pathrunner content lives in their own repos, which don't
+      # trigger this workflow, so every deploy rebuilds it from their main
+      # branches. Shallow checkouts plus each generator's local mode give the
+      # same output as fetching every file through the GitHub API, much faster.
+      # Both repos are public, so the default token is enough.
+      - name: Check out pathfinding-labs
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          repository: DataDog/pathfinding-labs
+          path: .external/pathfinding-labs
+          fetch-depth: 1
+
+      - name: Check out pathrunner
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          repository: DataDog/pathrunner
+          path: .external/pathrunner
+          fetch-depth: 1
+
       - name: Generate labs JSON
         run: |
-          python scripts/generate-labs-json.py
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          python scripts/generate-labs-json.py --source-dir .external/pathfinding-labs
 
       # Runs after labs JSON: generate-pathrunner-json.py reads docs/labs.json to
       # deep-link modules to their matching practice lab.
       - name: Generate pathrunner JSON
         run: |
-          python scripts/generate-pathrunner-json.py
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          python scripts/generate-pathrunner-json.py --source-dir .external/pathrunner
 
-      - name: Set up Node.js (for Playwright hero-image generator)
+      - name: Set up Node.js (for the hero-image generator)
         uses: actions/setup-node@v4
         with:
           node-version: '20'
 
+      # Hero images are committed with docs/labs/hero-manifest.json, which
+      # records what each was rendered from. Only labs whose map data changed,
+      # or that have no image yet, need rendering; usually none do, and then
+      # the Playwright install below is skipped too.
+      - name: Plan per-lab social hero images
+        id: hero_plan
+        run: |
+          node scripts/generate-lab-hero-images.js --plan
+
       - name: Install Playwright
+        if: steps.hero_plan.outputs.stale_count != '0'
         run: |
           npm install
           npx playwright install --with-deps chromium
 
       - name: Generate per-lab social hero images
+        if: steps.hero_plan.outputs.stale_count != '0'
         run: |
           node scripts/generate-lab-hero-images.js
 
