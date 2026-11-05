@@ -80,9 +80,10 @@ to them.
 npm install
 npx playwright install chromium
 
-# Regenerate per-lab hero images (incremental: skips labs whose PNG is
-# newer than the lab JSON and the renderer JS/CSS files)
+# Regenerate per-lab hero images (incremental by content: skips labs whose
+# data is unchanged since their committed PNG was rendered)
 node scripts/generate-lab-hero-images.js
+node scripts/generate-lab-hero-images.js --plan           # list labs that need rendering
 node scripts/generate-lab-hero-images.js --force          # force-regen all
 node scripts/generate-lab-hero-images.js --slug iam-002   # single lab
 
@@ -93,6 +94,27 @@ python scripts/generate-lab-stubs.py
 Run hero-image generation BEFORE stub generation so stubs that find a per-lab
 PNG can reference it. If a PNG is missing, the stub falls back to the generic
 `/images/pathfinding-cloud-labs.png`.
+
+**Hero images are cached by content, not timestamps.** `docs/labs/hero-manifest.json`
+records a fingerprint for each committed `hero.png`: a hash of that lab's data
+file, its `labs.json` entry and `HERO_RENDER_VERSION` in the script. The deploy
+workflow renders only labs whose fingerprint changed (new labs, changed attack
+maps or lab metadata) and skips installing Playwright when none did. To keep
+deploys fast:
+- After rendering locally, **commit the PNGs and `hero-manifest.json` together.**
+  Render from freshly generated lab data (`generate-labs-json.py --source-dir`
+  pointed at an up-to-date pathfinding-labs clone), since that is what the deploy
+  fingerprints. A new lab whose hero isn't committed is re-rendered on every
+  deploy until it is.
+- **Bump `HERO_RENDER_VERSION`** in `scripts/generate-lab-hero-images.js` when a
+  change alters how heroes look (the map preview drawing in `map-game.js`, the
+  title or badge overlays, the map preview CSS, the sprites). Changes to those
+  files are not detected on their own, because they change often for unrelated
+  reasons. A bump re-renders every lab.
+
+The deploy workflow checks out pathfinding-labs and pathrunner shallowly and runs
+`generate-labs-json.py` and `generate-pathrunner-json.py` with `--source-dir`;
+the output is the same as their GitHub API mode, only faster.
 
 ### GitHub Token for Better Contributor Info
 
