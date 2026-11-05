@@ -44,9 +44,9 @@
     function renderShare(container, details) {
         const title = headline(details);
         document.title = `${title} - Pathfinding Labs`;
+        // Nothing visible above the card: it already carries the handle and the level.
         container.replaceChildren(
-            createElement('h1', {}, title),
-            createElement('p', { className: 'pf-subtitle' }, `Earned "${details.name}" at Pathfinding Labs.`),
+            createElement('h1', { className: 'pf-visually-hidden' }, `${title}: ${details.name}`),
             createElement('img', { className: 'pf-share-card', src: details.imageUrl, width: '1200', height: '630',
                 alt: `${title}: ${details.name}. Share card from Pathfinding Labs.` }),
             createElement('p', { className: 'pf-share-pitch' },
