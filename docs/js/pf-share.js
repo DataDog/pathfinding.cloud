@@ -37,7 +37,7 @@
 
     function playButtons() {
         return createElement('div', { className: 'pf-share-actions' },
-            createElement('a', { className: 'pf-button pf-button-primary', href: '/labs/' }, 'Play the free labs'),
+            createElement('a', { className: 'pf-button pf-button-primary', href: '/labs/?online=yes' }, 'Play the free labs'),
             createElement('a', { className: 'pf-button', href: '/labs/getting-started/' }, 'How it works'));
     }
 
