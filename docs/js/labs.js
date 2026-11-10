@@ -391,7 +391,19 @@ function getStartDestination(lab) {
     return { start: startNode, destination: destNode };
 }
 
-// Extract unique AWS services from required permissions by splitting on ':'
+// Service part of a permission, matching service_prefix_of() in
+// scripts/generate-labs-json.py: AWS 'service:Action', Azure
+// 'Provider.Namespace/type/action' (checked before GCP because the namespace
+// contains a dot), GCP 'service.resource.verb'. Returns '' when there is none.
+function servicePrefixOf(permission) {
+    if (!permission) return '';
+    for (const separator of [':', '/', '.']) {
+        if (permission.includes(separator)) return permission.split(separator)[0].toLowerCase();
+    }
+    return '';
+}
+
+// Extract unique services from required permissions.
 // Reads from the starting principal only (principals[0]) for display purposes.
 // Falls back to flat permissions.required for legacy (v1/v2) index data.
 function parseServicesFromPermissions(permissions) {
@@ -400,7 +412,7 @@ function parseServicesFromPermissions(permissions) {
     const seen = new Set();
     const services = [];
     for (const p of required) {
-        const service = p.permission?.split(':')?.[0]?.toLowerCase();
+        const service = servicePrefixOf(p.permission);
         if (service && !seen.has(service)) {
             seen.add(service);
             services.push(service);
@@ -409,13 +421,21 @@ function parseServicesFromPermissions(permissions) {
     return services;
 }
 
-// Render small AWS service icon chips from a lab's permissions
-function renderServiceIcons(permissions) {
+// Render small service icon chips from a lab's permissions
+// awsServiceConfig colors and labels only apply to AWS labs; other clouds
+// share some prefixes (e.g. 'iam') that would otherwise get AWS styling.
+function serviceConfigFor(service, cloud) {
+    const awsConfig = (cloud || 'aws') === 'aws' ? awsServiceConfig[service] : null;
+    return awsConfig || { label: service.toUpperCase(), color: '#6B7280' };
+}
+
+function renderServiceIcons(permissions, cloud) {
     const services = parseServicesFromPermissions(permissions);
     if (services.length === 0) return '';
+    const provider = LAB_CLOUD_COPY[cloud || 'aws'].provider;
     return services.map(service => {
-        const cfg = awsServiceConfig[service] || { label: service.toUpperCase(), color: '#6B7280' };
-        return `<span class="lab-service-icon" style="background:${cfg.color}" title="AWS ${cfg.label}">${escapeHtml(cfg.label)}</span>`;
+        const cfg = serviceConfigFor(service, cloud);
+        return `<span class="lab-service-icon" style="background:${cfg.color}" title="${provider} ${escapeHtml(cfg.label)}">${escapeHtml(cfg.label)}</span>`;
     }).join('');
 }
 
@@ -1060,7 +1080,7 @@ function renderLabTable() {
         const { catConfig, pathTypeLabel, pathTypeClass, targetLabel, targetClass, costLabel, costClass } = getLabDisplayValues(lab);
         const startLabel = startAccessLabels[lab.startAccessType] || '';
         const hopsVal = lab.principalHopCount !== null && lab.principalHopCount !== undefined ? lab.principalHopCount : '';
-        const serviceIcons = renderServiceIcons(lab.permissions || {});
+        const serviceIcons = renderServiceIcons(lab.permissions || {}, lab.cloud);
         const plabsId = getPlabsId(lab);
 
         html += `
@@ -1908,11 +1928,11 @@ function renderLabKVPills(lab) {
         pill('Category', catConfig.cssClass, catConfig.label, 'category ← README: **Category:**'),
         lab.pathType ? pill('Path Type', pathTypeClass, pathTypeLabel, 'pathType ← README: **Path Type:**') : '',
         targetLabel ? pill('Target', targetClass, targetLabel, 'target ← README: **Target:**') : '',
-        pill('Est. Self Hosted AWS Cost', isFree ? 'lab-cost-free' : 'lab-cost-paid', isFree ? 'Free' : lab.costEstimate, 'costEstimate ← README: **Cost Estimate:**'),
+        pill(`Est. Self Hosted ${getLabCloudCopy(lab).provider} Cost`, isFree ? 'lab-cost-free' : 'lab-cost-paid', isFree ? 'Free' : lab.costEstimate, 'costEstimate ← README: **Cost Estimate:**'),
         ...(lab.environments || []).map(env => pill('Env', 'lab-badge-env', env, 'environments[] ← README: **Environments:** (comma list)')),
     ].filter(Boolean);
 
-    const serviceIconsHtml = renderServiceIcons(lab.permissions);
+    const serviceIconsHtml = renderServiceIcons(lab.permissions, lab.cloud);
 
     return `<div class="lab-detail-badges lab-kv-pills-row" style="margin-bottom:16px;">
         ${pills.join('')}
@@ -1940,7 +1960,7 @@ function buildPreviewFooterHTML(lab) {
         pill('Category', catConfig.cssClass, catConfig.label),
         lab.pathType ? pill('Path Type', pathTypeClass, pathTypeLabel) : '',
         targetLabel ? pill('Target', targetClass, targetLabel) : '',
-        pill('Est. Self Hosted AWS Cost', isFree ? 'lab-cost-free' : 'lab-cost-paid', isFree ? 'Free' : lab.costEstimate),
+        pill(`Est. Self Hosted ${getLabCloudCopy(lab).provider} Cost`, isFree ? 'lab-cost-free' : 'lab-cost-paid', isFree ? 'Free' : lab.costEstimate),
         ...(lab.environments || []).map(env => pill('Env', 'lab-badge-env', env)),
     ].filter(Boolean).join('');
 
@@ -1949,10 +1969,13 @@ function buildPreviewFooterHTML(lab) {
     const seenPrefixes = new Set();
     const serviceLabels = [];
     for (const p of required) {
-        const prefix = (p.permission || '').split(':')[0].toLowerCase();
-        if (prefix && awsServiceConfig[prefix] && !seenPrefixes.has(prefix)) {
+        const prefix = servicePrefixOf(p.permission);
+        if (prefix && !seenPrefixes.has(prefix)) {
+            // AWS previews only tag services with a configured label; other clouds tag every service.
+            const cfg = (lab.cloud || 'aws') === 'aws' ? awsServiceConfig[prefix] : { label: prefix.toUpperCase() };
+            if (!cfg) continue;
             seenPrefixes.add(prefix);
-            serviceLabels.push(awsServiceConfig[prefix].label);
+            serviceLabels.push(cfg.label);
         }
     }
     const serviceTagsHtml = serviceLabels.length
@@ -2191,7 +2214,7 @@ function buildGuidedV2Sections(lab) {
             label: 'Prerequisites',
             show: true,
             rawHtml: `<div class="lab-tab-prose">
-                <p>Before deploying this lab, you'll need one or more AWS accounts and the <code>plabs</code> binary installed and configured.</p>
+                <p>Before deploying this lab, you'll need one or more ${getLabCloudCopy(lab).accounts} and the <code>plabs</code> binary installed and configured.</p>
                 <p><a href="/labs/getting-started/#prerequisites">Getting Started: Prerequisites →</a></p>
             </div>`,
         });
@@ -2393,12 +2416,12 @@ function buildGuidedV2Sections(lab) {
             rawHtml: `<div class="lab-tab-prose">${renderLabMarkdown(cspmData.whatToDetect)}</div>`,
         });
     }
-    if (siemData?.cloudTrailEvents) {
+    if (siemData?.auditLogEvents) {
         defendTabs.push({
-            id: 'cloudtrail',
-            label: 'CloudTrail Events to Monitor',
+            id: 'auditlog',
+            label: getLabCloudCopy(lab).auditLogEvents,
             show: true,
-            rawHtml: `<div class="lab-tab-prose">${renderLabMarkdown(siemData.cloudTrailEvents)}</div>`,
+            rawHtml: `<div class="lab-tab-prose">${renderLabMarkdown(siemData.auditLogEvents)}</div>`,
         });
     }
     if (siemData?.detonationLogs) {
@@ -2425,7 +2448,7 @@ function buildGuidedV2Sections(lab) {
             title: 'Defend',
             level: 2,
             colorClass: sectionColors['Defend'],
-            debugSource: 'readme.defend.cspm.whatToDetect | readme.defend.cloudSiem.{cloudTrailEvents, detonationLogs} | readme.references',
+            debugSource: 'readme.defend.cspm.whatToDetect | readme.defend.cloudSiem.{auditLogEvents, detonationLogs} | readme.references',
             renderContent: () => renderInnerTabSection(defendTabGroupId, defendTabs),
         });
     }

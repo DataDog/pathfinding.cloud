@@ -32,7 +32,8 @@ Your main jobs are:
      - When PMapper is the first known source, attribute to Erik Steringer (NCC Group)
 
    **For GCP paths**, also check:
-   - Rhino Security Labs' GCP IAM privilege escalation research (Dylan Ayrey & Allison Donovan, ~2020) — the closest GCP analog to their AWS series
+   - Rhino Security Labs' GCP IAM privilege escalation series by Spencer Gietzen (2020), starting at https://rhinosecuritylabs.com/gcp/privilege-escalation-google-cloud-platform-part-1/, with one exploit script per method in https://github.com/RhinoSecurityLabs/GCP-IAM-Privilege-Escalation — the closest GCP analog to Gietzen's AWS series, and the first documentation of most classic GCP paths (see `data/paths/gcp/iam/gcp-iam-001.yaml`)
+   - Dylan Ayrey & Allison Donovan's DEF CON 28 (2020) talk "Lateral Movement & Privilege Escalation in GCP" — a separate source; cite it when it covers a path the Rhino series doesn't, not as the author of the Rhino work
    - Google's own IAM/security documentation and blog
 
    **For Azure paths**, also check:

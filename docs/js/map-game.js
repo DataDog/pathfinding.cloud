@@ -11,6 +11,20 @@
 // start/pause/complete overlay screens.
 // The HTML panel handles: node details, mission briefing, commands.
 
+// ---- Cloud-specific copy ----
+// Lab labels that differ by cloud. lab.cloud comes from generate-labs-json.py
+// (derived from the scenario's modules/scenarios/{cloud}/ path); labs.json
+// entries without it predate GCP support and are all AWS. labs.js shares this.
+const LAB_CLOUD_COPY = {
+    aws:   { provider: 'AWS',   accounts: 'AWS accounts',   auditLogEvents: 'CloudTrail Events to Monitor' },
+    gcp:   { provider: 'GCP',   accounts: 'GCP projects',   auditLogEvents: 'Cloud Audit Log Events to Monitor' },
+    azure: { provider: 'Azure', accounts: 'Azure subscriptions', auditLogEvents: 'Azure Activity Log Events to Monitor' },
+};
+
+function getLabCloudCopy(lab) {
+    return LAB_CLOUD_COPY[lab?.cloud || 'aws'];
+}
+
 // ---- Play Online: live labs through pathfinding-backend and Cybr ----
 // Online play for everyone. Flip to true to launch it. While false, labs show
 // the "Coming Soon" tease, except where PLAY_ONLINE_ENABLED turns it on below.
@@ -2380,7 +2394,7 @@ function renderGamePanelOverview(panelEl, state) {
         lab?.category ? kvPill('Category', catConfig.cssClass, catConfig.label, 'category ← README: **Category:**') : '',
         lab?.pathType ? kvPill('Path Type', ptClass, ptLabel, 'pathType ← README: **Path Type:**') : '',
         tgtLabel ? kvPill('Target', tgtClass, tgtLabel, 'target ← README: **Target:**') : '',
-        lab?.costEstimate ? kvPill('Est. Self Hosted AWS Cost', costIsFree ? 'lab-cost-free' : 'lab-cost-paid', costIsFree ? 'Free' : lab.costEstimate, 'costEstimate ← README: **Cost Estimate:**') : '',
+        lab?.costEstimate ? kvPill(`Est. Self Hosted ${getLabCloudCopy(lab).provider} Cost`, costIsFree ? 'lab-cost-free' : 'lab-cost-paid', costIsFree ? 'Free' : lab.costEstimate, 'costEstimate ← README: **Cost Estimate:**') : '',
         ...(lab?.environments || []).map(env => kvPill('Env', 'lab-badge-env', env, 'environments[] ← README: **Environments:** (comma list)')),
     ].filter(Boolean);
 
@@ -2788,7 +2802,7 @@ function renderGamePanelEdge(panelEl, state) {
         html += `
         <div class="mg-panel-section">
             <span class="mg-section-label">LEARN MORE${_dbgE('pathfindingCloudId ← README: **Pathfinding.cloud ID:**')}</span>
-            <p class="mg-panel-body"><a href="/paths/${escapeHtmlGame(pathId)}" target="_blank" class="mg-path-link">View ${escapeHtmlGame(pathId)} technique details on pathfinding.cloud</a></p>
+            <p class="mg-panel-body"><a href="/paths/${escapeHtmlGame(state.lab?.cloud || 'aws')}/${escapeHtmlGame(pathId)}" target="_blank" class="mg-path-link">View ${escapeHtmlGame(pathId)} technique details on pathfinding.cloud</a></p>
         </div>`;
     }
 
@@ -2924,9 +2938,9 @@ function renderGamePanelComplete(panelEl, state) {
         detectTabs.push({ id: 'cspm', label: 'What CSPM Tools Should Detect', show: true,
             rawHtml: `<div class="lab-tab-prose">${typeof renderLabMarkdown === 'function' ? renderLabMarkdown(cspmData.whatToDetect) : markdownToSimpleHtml(cspmData.whatToDetect)}</div>` });
     }
-    if (siemData?.cloudTrailEvents) {
-        detectTabs.push({ id: 'cloudtrail', label: 'CloudTrail Events to Monitor', show: true,
-            rawHtml: `<div class="lab-tab-prose">${typeof renderLabMarkdown === 'function' ? renderLabMarkdown(siemData.cloudTrailEvents) : markdownToSimpleHtml(siemData.cloudTrailEvents)}</div>` });
+    if (siemData?.auditLogEvents) {
+        detectTabs.push({ id: 'auditlog', label: getLabCloudCopy(lab).auditLogEvents, show: true,
+            rawHtml: `<div class="lab-tab-prose">${typeof renderLabMarkdown === 'function' ? renderLabMarkdown(siemData.auditLogEvents) : markdownToSimpleHtml(siemData.auditLogEvents)}</div>` });
     }
     if (siemData?.detonationLogs) {
         detectTabs.push({ id: 'logs', label: 'Detonation Logs', show: true,
@@ -2986,7 +3000,7 @@ function renderGamePanelDeploy(panelEl, state) {
         lab?.category ? kvPillDeploy('Category', deployCatConfig.cssClass, deployCatConfig.label, 'category ← README: **Category:**') : '',
         lab?.pathType ? kvPillDeploy('Path Type', deployPtClass, deployPtLabel, 'pathType ← README: **Path Type:**') : '',
         deployTgtLabel ? kvPillDeploy('Target', deployTgtClass, deployTgtLabel, 'target ← README: **Target:**') : '',
-        lab?.costEstimate ? kvPillDeploy('Est. Self Hosted AWS Cost', deployCostIsFree ? 'lab-cost-free' : 'lab-cost-paid', deployCostIsFree ? 'Free' : lab.costEstimate, 'costEstimate ← README: **Cost Estimate:**') : '',
+        lab?.costEstimate ? kvPillDeploy(`Est. Self Hosted ${getLabCloudCopy(lab).provider} Cost`, deployCostIsFree ? 'lab-cost-free' : 'lab-cost-paid', deployCostIsFree ? 'Free' : lab.costEstimate, 'costEstimate ← README: **Cost Estimate:**') : '',
         ...(lab?.environments || []).map(env => kvPillDeploy('Env', 'lab-badge-env', env, 'environments[] ← README: **Environments:** (comma list)')),
     ].filter(Boolean);
 
@@ -3587,7 +3601,7 @@ function drawStartOverlay(ctx, w, h, state) {
         ctx.font = '12px -apple-system, BlinkMacSystemFont, sans-serif';
         ctx.textBaseline = 'bottom';
         ctx.fillText('Before you begin, install pathfinding-labs, configure your', w / 2, deployBtn.y - 18);
-        ctx.fillText('AWS accounts, enable this lab, and deploy it:', w / 2, deployBtn.y - 4);
+        ctx.fillText(`${getLabCloudCopy(state.lab).accounts}, enable this lab, and deploy it:`, w / 2, deployBtn.y - 4);
     }
 
     if (missionBtn) {

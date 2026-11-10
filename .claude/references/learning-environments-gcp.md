@@ -4,14 +4,14 @@ Learning platforms to check for GCP IAM privilege escalation practice labs, in p
 
 ## 1. pathfinding Labs (Open Source)
 - **Type**: open-source
-- **Repository**: https://github.com/DataDog/pathfinding-labs (IMPORTANT: this repo is still private for now, so you can't WebSearch it. Instead read `~/Documents/projects/pathfinding-labs/modules/scenarios/single-account` locally and find the scenario there, then create a link that will work once the project goes live.)
-- **What to look for**: Check `modules/scenarios/` for matching GCP attack paths
+- **Repository**: https://github.com/DataDog/pathfinding-labs (public). A local clone is usually at `~/Documents/projects/pathfinding/pathfinding-labs`; GCP scenarios live under `modules/scenarios/gcp/single-account/`. Find the matching scenario first by grepping `scenario.yaml` files for `pathfinding-cloud-id: "<this path's id>"`, then fall back to matching required permissions.)
+- **What to look for**: Check `modules/scenarios/gcp/` for matching GCP attack paths. Use the full module path (from `modules/`) as `scenario`, as in `data/paths/gcp/iam/gcp-iam-001.yaml`
 - **Field requirements**:
   ```yaml
   pathfinding-labs:
     type: open-source
     githubLink: https://github.com/DataDog/pathfinding-labs
-    scenario: "privesc-one-hop/to-admin/gcp-iam-serviceaccounts-actas"
+    scenario: modules/scenarios/gcp/single-account/privesc-one-hop/to-admin/gcp-iam-001-iam-serviceaccountsgetaccesstoken
     description: "Deploy Terraform into your own GCP project to practice this attack path"
   ```
 

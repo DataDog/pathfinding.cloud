@@ -247,7 +247,7 @@ learningEnvironments:
 
 ### Discovery Attribution Field
 
-See [SCHEMA.md#discoveryattribution-array-of-objects-optional](../SCHEMA.md#discoveryattribution-array-of-objects-optional) for complete specification.
+See [SCHEMA.md#discoveryattribution-object](../SCHEMA.md#discoveryattribution-object) for complete specification.
 
 **When to use discoveryAttribution:**
 - Always - this is the required attribution format for all paths
@@ -255,28 +255,38 @@ See [SCHEMA.md#discoveryattribution-array-of-objects-optional](../SCHEMA.md#disc
 - Supports derivative relationships and multi-level attribution chains
 - Provides links to original sources
 
-**Quick reference for single attribution:**
+`discoveryAttribution` is an **object** (not a list) with `firstDocumented` (required), and optionally `derivativeOf` and `ultimateOrigin`.
+
+**Quick reference for an original discovery:**
 ```yaml
 discoveryAttribution:
-  - item: "This attack path was first published by Spencer Gietzen (Rhino Security Labs) in 2019"
-    link: "https://rhinosecuritylabs.com/aws/aws-privilege-escalation-methods-mitigation/"
+  firstDocumented:
+    author: Spencer Gietzen
+    organization: Rhino Security Labs
+    date: 2019
+    link: https://rhinosecuritylabs.com/aws/aws-privilege-escalation-methods-mitigation/
 ```
 
-**Quick reference for derivative with multiple attributions:**
+**Quick reference for a derivative documented elsewhere:**
 ```yaml
 discoveryAttribution:
-  - item: "This attack path is a derivative of IAM-001, which was first published by Spencer Gietzen (Rhino Security Labs) in 2019"
-    link: "https://rhinosecuritylabs.com/aws/aws-privilege-escalation-methods-mitigation/"
-  - item: "This unique variation was first documented by John Doe (Security Corp) in 2024"
-    link: "https://securitycorp.example.com/blog/iam-variation"
+  firstDocumented:
+    source: HackTricks
+    link: https://cloud.hacktricks.wiki/en/pentesting-cloud/aws-security/aws-privilege-escalation/aws-ecs-privesc/
+  derivativeOf:
+    pathId: ecs-004
+    modification: "Uses ecs:CreateService instead of ecs:RunTask to execute the malicious task definition"
 ```
 
 **Quick reference for paths originated on pathfinding.cloud:**
 ```yaml
 discoveryAttribution:
-  - item: "This attack path is a derivative of IAM-004, which was first published by Spencer Gietzen (Rhino Security Labs) in 2019"
-    link: "https://rhinosecuritylabs.com/aws/aws-privilege-escalation-methods-mitigation/"
-  - item: "This unique attack path was first documented here on pathfinding.cloud in 2025"
+  firstDocumented:
+    source: pathfinding.cloud
+    date: 2025
+  derivativeOf:
+    pathId: iam-004
+    modification: "Describe what this path adds or changes compared to iam-004"
 ```
 
 ### Attack Visualization Field

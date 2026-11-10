@@ -72,7 +72,12 @@ INDEX_FIELDS = [
     "principalHopCount",
     "startAccessType",
     "services",
+    "cloud",
 ]
+
+# pathfinding-labs nests non-AWS scenarios under modules/scenarios/{cloud}/;
+# AWS scenarios sit directly under modules/scenarios/ with no cloud segment.
+NON_AWS_SCENARIO_CLOUDS = ("gcp", "azure")
 
 
 # ---------------------------------------------------------------------------
@@ -435,6 +440,17 @@ def parse_starting_permissions_section(section_text):
 # README section parser (v1 schema: H2/H3/H4 hierarchy)
 # ---------------------------------------------------------------------------
 
+def is_audit_log_heading(lowercase_heading):
+    """True for the README heading listing the cloud's audit log events to monitor.
+
+    AWS labs title it "CloudTrail Events to Monitor" and GCP labs "Cloud Audit
+    Log Events to Monitor"; the site labels the tab from the lab's cloud.
+    """
+    return any(
+        marker in lowercase_heading for marker in ("cloudtrail", "cloud trail", "audit log")
+    )
+
+
 def split_by_heading_level(text, level):
     """Split text by headings of a given level. Returns {heading: content} dict.
 
@@ -586,8 +602,8 @@ def parse_readme_sections(readme_text):
         cloud_siem = {}
         for key, content in h3.items():
             low = key.lower()
-            if "cloudtrail" in low or "cloud trail" in low:
-                cloud_siem["cloudTrailEvents"] = content
+            if is_audit_log_heading(low):
+                cloud_siem["auditLogEvents"] = content
             elif "detonation" in low:
                 cloud_siem["detonationLogs"] = content
         if cloud_siem:
@@ -746,8 +762,8 @@ def parse_readme_sections_v3(readme_text):
                 cloud_siem = {}
                 for h4_key, h4_content in h4.items():
                     h4_low = h4_key.lower()
-                    if "cloudtrail" in h4_low or "cloud trail" in h4_low:
-                        cloud_siem["cloudTrailEvents"] = h4_content
+                    if is_audit_log_heading(h4_low):
+                        cloud_siem["auditLogEvents"] = h4_content
                     elif "detonation" in h4_low:
                         cloud_siem["detonationLogs"] = h4_content
                 if cloud_siem:
@@ -872,6 +888,36 @@ def fetch_github_raw_file(file_path, headers):
 # ---------------------------------------------------------------------------
 # Slug generation
 # ---------------------------------------------------------------------------
+
+def cloud_from_module_path(module_path):
+    """Return the cloud a scenario belongs to, from its modules/scenarios/ path."""
+    path_parts = Path(module_path).parts
+    scenarios_root_parts = Path(SCENARIOS_ROOT).parts
+    cloud_segment_index = len(scenarios_root_parts)
+    if (
+        path_parts[:cloud_segment_index] == scenarios_root_parts
+        and len(path_parts) > cloud_segment_index
+        and path_parts[cloud_segment_index] in NON_AWS_SCENARIO_CLOUDS
+    ):
+        return path_parts[cloud_segment_index]
+    return "aws"
+
+
+def service_prefix_of(permission):
+    """Return the service a permission belongs to, or None if it has no service part.
+
+    AWS permissions are 'service:Action', Azure are 'Provider.Namespace/type/action'
+    and GCP are 'service.resource.verb'. Azure is checked before GCP because its
+    provider namespace itself contains a dot.
+    """
+    if ":" in permission:
+        return permission.split(":", 1)[0].lower()
+    if "/" in permission:
+        return permission.split("/", 1)[0].lower()
+    if "." in permission:
+        return permission.split(".", 1)[0].lower()
+    return None
+
 
 def generate_slug(metadata, module_path):
     """Generate a URL slug for a scenario.
@@ -998,6 +1044,7 @@ def transform_readme(readme_text, module_path, readme_dir=None):
         },
         "githubUrl": f"https://github.com/{GITHUB_OWNER}/{GITHUB_REPO}/tree/main/{module_path}",
         "schemaVersion": get_schema_version(metadata),
+        "cloud": cloud_from_module_path(module_path),
     }
 
     if source:
@@ -1115,12 +1162,10 @@ def transform_readme(readme_text, module_path, readme_dir=None):
     if principals:
         for principal in principals:
             for perm in principal.get("required", []):
-                perm_str = perm.get("permission", "")
-                if ":" in perm_str:
-                    svc = perm_str.split(":")[0].lower()
-                    if svc not in seen_services:
-                        seen_services.add(svc)
-                        services.append(svc)
+                svc = service_prefix_of(perm.get("permission", ""))
+                if svc and svc not in seen_services:
+                    seen_services.add(svc)
+                    services.append(svc)
     result["services"] = services
 
     return result, True

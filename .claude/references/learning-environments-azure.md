@@ -4,7 +4,7 @@ Learning platforms to check for Azure / Entra ID privilege escalation practice l
 
 ## 1. pathfinding Labs (Open Source)
 - **Type**: open-source
-- **Repository**: https://github.com/DataDog/pathfinding-labs (IMPORTANT: this repo is still private for now, so you can't WebSearch it. Instead read `~/Documents/projects/pathfinding-labs/modules/scenarios/single-account` locally and find the scenario there, then create a link that will work once the project goes live.)
+- **Repository**: https://github.com/DataDog/pathfinding-labs (public). A local clone is usually at `~/Documents/projects/pathfinding/pathfinding-labs`; Azure scenarios live under `modules/scenarios/azure/single-account/`. Find the matching scenario first by grepping `scenario.yaml` files for `pathfinding-cloud-id: "<this path's id>"`, then fall back to matching required permissions.)
 - **What to look for**: Check `modules/scenarios/` for matching Azure attack paths
 - **Field requirements**:
   ```yaml

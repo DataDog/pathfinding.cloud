@@ -690,7 +690,7 @@ function renderModuleDetail(mod) {
 
     // ── Overview panel: identity, metadata, and the cross-reference links ──
     // (grouped and well-spaced so the links are never crowded by a table).
-    const pathHref = mod.pathfindingCloudUrl || `/paths/${id}`;
+    const pathHref = mod.pathfindingCloudUrl || `/paths/aws/${id}`;
     let xrefs = `<a class="pr-xref" href="${escapeHtml(pathHref)}">Path definition &rarr; /paths/${escapeHtml(id)}</a>`;
     if (mod.labSlug) {
         xrefs += `<a class="pr-xref" href="/labs/${escapeHtml(mod.labSlug)}">Practice lab &rarr; /labs/${escapeHtml(mod.labSlug)}</a>`;
