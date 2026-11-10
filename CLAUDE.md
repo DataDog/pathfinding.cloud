@@ -59,6 +59,9 @@ python scripts/validate-schema.py data/paths/aws/{service}/{service}-###.yaml
 # Validate all files
 python scripts/validate-schema.py data/paths/
 
+# Unit tests for the scripts (stdlib unittest; also runs in the validate workflow)
+python -m unittest discover tests
+
 # Generate JSON for website
 python scripts/generate-json.py
 
@@ -318,6 +321,8 @@ Can you task the detection-tools, learning-environments, add-vis, and attributio
 - Category values are allowed
 - Prerequisites have valid types
 - Exploitation steps are numbered sequentially from 1
+- Exploitation tool keys match the path's cloud (`curl` is allowed on every cloud)
+- The ID's cloud prefix matches its `data/paths/{cloud}/` directory
 - No unexpected fields
 
 ### Draft Mode

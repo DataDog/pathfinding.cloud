@@ -36,7 +36,8 @@ Before creating any visualization:
    - **Pattern A (self-escalation)**: `data/paths/aws/iam/iam-001.yaml`
    - **Pattern B (lateral movement)**: `data/paths/aws/sts/sts-001.yaml`
    - **Pattern C (PassRole workload with multiple methods)**: `data/paths/aws/apprunner/apprunner-001.yaml` and `data/paths/aws/ec2/ec2-001.yaml`
-4. Check if a matching scenario exists in `~/Documents/projects/pathfinding-labs/modules/scenarios/single-account/privesc-one-hop/` and use its scenario.yaml file to:
+   - **GCP (principal access with branching outcomes)**: `data/paths/gcp/iam/gcp-iam-001.yaml`
+4. Check if a matching scenario exists in the local pathfinding-labs clone (`~/Documents/projects/pathfinding/pathfinding-labs`). AWS scenarios are under `modules/scenarios/single-account/`, GCP under `modules/scenarios/gcp/single-account/`; grep `scenario.yaml` files for `pathfinding-cloud-id: "<this path's id>"` to find it. Read its `attack_map.yaml` (the lab's own node/edge graph, the closest starting point for this visualization) and `scenario.yaml` to:
    - Validate your understanding of the attack flow
    - Extract any additional technical details (resource names, command syntax)
    - Ensure consistency with the practical implementation

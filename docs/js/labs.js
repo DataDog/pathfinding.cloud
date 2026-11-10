@@ -47,6 +47,7 @@ const costFilter = document.getElementById('cost-filter');
 const hopsFilter = document.getElementById('hops-filter');
 const startFilter = document.getElementById('start-filter');
 const serviceFilter = document.getElementById('service-filter');
+const cloudFilter = document.getElementById('cloud-filter');
 const onlineFilter = document.getElementById('online-filter');
 const onlineToggle = document.getElementById('online-toggle');
 const resetButton = document.getElementById('reset-filters');
@@ -155,6 +156,23 @@ const awsServiceConfig = {
     'dynamodb':       { label: 'DynamoDB',       color: '#2E73B8' },
     'elasticache':    { label: 'ElastiCache',    color: '#2E73B8' },
 };
+
+// GCP service icon config — maps permission prefix to a short display label, in
+// Google blue. Labels stay short so hero footers don't overflow. Prefixes missing
+// here fall back to the uppercased prefix.
+const gcpServiceConfig = {
+    'iam':            { label: 'IAM',            color: '#4285F4' },
+    'cloudfunctions': { label: 'Functions',      color: '#4285F4' },
+    'run':            { label: 'Run',            color: '#4285F4' },
+    'secretmanager':  { label: 'Secret Mgr',     color: '#4285F4' },
+    'storage':        { label: 'Storage',        color: '#4285F4' },
+    'compute':        { label: 'Compute',        color: '#4285F4' },
+    'logging':        { label: 'Logging',        color: '#4285F4' },
+    'resourcemanager': { label: 'Resource Mgr',  color: '#4285F4' },
+};
+
+// Per-cloud service configs; the two clouds share prefixes such as 'iam'.
+const serviceConfigsByCloud = { aws: awsServiceConfig, gcp: gcpServiceConfig };
 
 // ---------------------------------------------------------------------------
 // Compatibility accessors: work with both v2 and v3 data structures
@@ -391,7 +409,19 @@ function getStartDestination(lab) {
     return { start: startNode, destination: destNode };
 }
 
-// Extract unique AWS services from required permissions by splitting on ':'
+// Service part of a permission, matching service_prefix_of() in
+// scripts/generate-labs-json.py: AWS 'service:Action', Azure
+// 'Provider.Namespace/type/action' (checked before GCP because the namespace
+// contains a dot), GCP 'service.resource.verb'. Returns '' when there is none.
+function servicePrefixOf(permission) {
+    if (!permission) return '';
+    for (const separator of [':', '/', '.']) {
+        if (permission.includes(separator)) return permission.split(separator)[0].toLowerCase();
+    }
+    return '';
+}
+
+// Extract unique services from required permissions.
 // Reads from the starting principal only (principals[0]) for display purposes.
 // Falls back to flat permissions.required for legacy (v1/v2) index data.
 function parseServicesFromPermissions(permissions) {
@@ -400,7 +430,7 @@ function parseServicesFromPermissions(permissions) {
     const seen = new Set();
     const services = [];
     for (const p of required) {
-        const service = p.permission?.split(':')?.[0]?.toLowerCase();
+        const service = servicePrefixOf(p.permission);
         if (service && !seen.has(service)) {
             seen.add(service);
             services.push(service);
@@ -409,13 +439,21 @@ function parseServicesFromPermissions(permissions) {
     return services;
 }
 
-// Render small AWS service icon chips from a lab's permissions
-function renderServiceIcons(permissions) {
+// Render small service icon chips from a lab's permissions
+// Look up a service's label and color in its own cloud's config, so a GCP 'iam'
+// chip doesn't get AWS styling.
+function serviceConfigFor(service, cloud) {
+    const cloudConfig = serviceConfigsByCloud[cloud || 'aws'] || {};
+    return cloudConfig[service] || { label: service.toUpperCase(), color: '#6B7280' };
+}
+
+function renderServiceIcons(permissions, cloud) {
     const services = parseServicesFromPermissions(permissions);
     if (services.length === 0) return '';
+    const provider = LAB_CLOUD_COPY[cloud || 'aws'].provider;
     return services.map(service => {
-        const cfg = awsServiceConfig[service] || { label: service.toUpperCase(), color: '#6B7280' };
-        return `<span class="lab-service-icon" style="background:${cfg.color}" title="AWS ${cfg.label}">${escapeHtml(cfg.label)}</span>`;
+        const cfg = serviceConfigFor(service, cloud);
+        return `<span class="lab-service-icon" style="background:${cfg.color}" title="${provider} ${escapeHtml(cfg.label)}">${escapeHtml(cfg.label)}</span>`;
     }).join('');
 }
 
@@ -528,6 +566,7 @@ function setupEventListeners() {
     hopsFilter.addEventListener('change', applyFilters);
     startFilter.addEventListener('change', applyFilters);
     serviceFilter.addEventListener('change', applyFilters);
+    cloudFilter.addEventListener('change', applyFilters);
     onlineFilter.addEventListener('change', applyFilters);
     onlineToggle.addEventListener('click', () => {
         onlineFilter.value = onlineFilter.value === 'yes' ? '' : 'yes';
@@ -614,6 +653,7 @@ function resetPillValues() {
 // Order determines param order in the generated URL.
 const FILTER_PARAM_MAP = [
     { param: 'q',        id: null,                isSearch: true },
+    { param: 'cloud',    id: 'cloud-filter' },
     { param: 'category', id: 'category-filter' },
     { param: 'type',     id: 'path-type-filter' },
     { param: 'target',   id: 'target-filter' },
@@ -728,6 +768,38 @@ function populateHopsFilter(labs) {
     buildPillMenu('menu-hops-filter', pillOpts);
 }
 
+// Filter label for a service prefix. The filter spans clouds, so use the AWS
+// label when there is one (AWS and GCP 'iam' both read "IAM"), then GCP's.
+function filterServiceConfig(service) {
+    return awsServiceConfig[service] || gcpServiceConfig[service] || { label: service.toUpperCase() };
+}
+
+// Cloud a lab belongs to. labs.json entries generated before GCP support have
+// no cloud field, and all of them are AWS.
+function labCloud(lab) {
+    return lab.cloud || 'aws';
+}
+
+// Cloud badge, styled like the paths page's (.cloud-badge / .cloud-{cloud} in style.css)
+function renderCloudBadge(lab) {
+    const cloud = labCloud(lab);
+    return `<span class="cloud-badge cloud-${escapeHtml(cloud)}">${escapeHtml(cloud.toUpperCase())}</span>`;
+}
+
+// Populate the cloud filter dropdown from labs data
+function populateCloudFilter(labs) {
+    const sorted = [...new Set(labs.map(labCloud))].sort();
+    sorted.forEach(cloud => {
+        const opt = document.createElement('option');
+        opt.value = cloud;
+        opt.textContent = cloud.toUpperCase();
+        cloudFilter.appendChild(opt);
+    });
+    const pillOpts = [{ value: '', label: 'Any' }];
+    sorted.forEach(cloud => pillOpts.push({ value: cloud, label: cloud.toUpperCase() }));
+    buildPillMenu('menu-cloud-filter', pillOpts);
+}
+
 // Populate the service filter dropdown from labs data
 function populateServiceFilter(labs) {
     const serviceSet = new Set();
@@ -736,7 +808,7 @@ function populateServiceFilter(labs) {
     });
     const sorted = [...serviceSet].sort();
     sorted.forEach(service => {
-        const cfg = awsServiceConfig[service] || { label: service.toUpperCase() };
+        const cfg = filterServiceConfig(service);
         const opt = document.createElement('option');
         opt.value = service;
         opt.textContent = cfg.label;
@@ -744,7 +816,7 @@ function populateServiceFilter(labs) {
     });
     const pillOpts = [{ value: '', label: 'Any' }];
     sorted.forEach(service => {
-        const cfg = awsServiceConfig[service] || { label: service.toUpperCase() };
+        const cfg = filterServiceConfig(service);
         pillOpts.push({ value: service, label: cfg.label });
     });
     buildPillMenu('menu-service-filter', pillOpts);
@@ -769,6 +841,7 @@ async function loadLabs() {
 
         populateHopsFilter(labs);
         populateServiceFilter(labs);
+        populateCloudFilter(labs);
         applyURLParams(); // sets filters from URL params before first render (must be after dynamic options are populated)
         updateStats();
         renderLabs();
@@ -888,6 +961,7 @@ function applyFilters() {
     const selectedHops = hopsFilter.value;
     const selectedStart = startFilter.value;
     const selectedService = serviceFilter.value;
+    const selectedCloud = cloudFilter.value;
     const selectedOnline = onlineFilter.value;
 
     filteredLabs = allLabs.filter(lab => {
@@ -906,6 +980,9 @@ function applyFilters() {
 
             if (!searchableText.includes(searchTerm)) return false;
         }
+
+        // Cloud filter
+        if (selectedCloud && labCloud(lab) !== selectedCloud) return false;
 
         // Category filter
         if (selectedCategory && lab.category !== selectedCategory) return false;
@@ -952,6 +1029,7 @@ function resetFilters() {
     hopsFilter.value = '';
     startFilter.value = '';
     serviceFilter.value = '';
+    cloudFilter.value = '';
     onlineFilter.value = '';
     filteredLabs = allLabs;
     resetPillValues();
@@ -1006,6 +1084,7 @@ function getSortedLabs() {
         let aVal, bVal;
         switch (sortColumn) {
             case 'name': aVal = a.displayName || a.name; bVal = b.displayName || b.name; break;
+            case 'cloud': aVal = labCloud(a); bVal = labCloud(b); break;
             case 'category': aVal = a.category; bVal = b.category; break;
             case 'pathType': aVal = a.pathType; bVal = b.pathType; break;
             case 'start': aVal = a.startAccessType; bVal = b.startAccessType; break;
@@ -1044,6 +1123,7 @@ function renderLabTable() {
         <thead>
             <tr>
                 <th class="sortable labs-name-col" data-sort="name">Name${sortIndicator('name')}</th>
+                <th class="sortable" data-sort="cloud">Cloud${sortIndicator('cloud')}</th>
                 <th class="sortable" data-sort="category">Category${sortIndicator('category')}</th>
                 <th class="sortable" data-sort="pathType">Path Type${sortIndicator('pathType')}</th>
                 <th class="sortable" data-sort="start">Start${sortIndicator('start')}</th>
@@ -1060,7 +1140,7 @@ function renderLabTable() {
         const { catConfig, pathTypeLabel, pathTypeClass, targetLabel, targetClass, costLabel, costClass } = getLabDisplayValues(lab);
         const startLabel = startAccessLabels[lab.startAccessType] || '';
         const hopsVal = lab.principalHopCount !== null && lab.principalHopCount !== undefined ? lab.principalHopCount : '';
-        const serviceIcons = renderServiceIcons(lab.permissions || {});
+        const serviceIcons = renderServiceIcons(lab.permissions || {}, lab.cloud);
         const plabsId = getPlabsId(lab);
 
         html += `
@@ -1070,6 +1150,7 @@ function renderLabTable() {
                     ${plabsId ? `<div class="lab-table-plabs-id" title="Scenario ID used by the plabs CLI"><span class="lab-table-plabs-id-label">plabs id</span><code class="lab-table-plabs-id-value">${escapeHtml(plabsId)}</code></div>` : ''}
                     <div class="lab-table-description">${escapeHtml(truncate(lab.description, 120))}</div>
                 </td>
+                <td>${renderCloudBadge(lab)}</td>
                 <td><span class="lab-badge ${catConfig.cssClass}">${catConfig.label}</span></td>
                 <td><span class="lab-badge ${pathTypeClass}">${pathTypeLabel}</span></td>
                 <td class="lab-table-nowrap">${startLabel ? `<span class="lab-badge lab-badge-start">${escapeHtml(startLabel)}</span>` : ''}</td>
@@ -1197,6 +1278,7 @@ function renderCardA(lab) {
                 ${plabsId || lab.supportsOnlineMode ? `<div class="lab-card-plabs-id-wrap">${plabsId ? `<span class="lab-kv-pill lab-card-plabs-id" title="Scenario ID used by the plabs CLI"><span class="lab-kv-pill-key">plabs id</span><span class="lab-kv-pill-value">${escapeHtml(plabsId)}</span></span>` : ''}${renderOnlineBadge(lab)}</div>` : ''}
                 <div class="lab-card-description">${escapeHtml(truncate(lab.description, 450))}</div>
                 <div class="lab-card-badges">
+                    <span class="lab-card-badge-item"><span class="lab-card-badge-label">Cloud</span> ${renderCloudBadge(lab)}</span>
                     <span class="lab-card-badge-item"><span class="lab-card-badge-label">Principal Hops</span> <span class="lab-badge lab-hops-badge">${hopsLabel}</span></span>
                     ${targetLabel ? `<span class="lab-card-badge-item"><span class="lab-card-badge-label">Target</span> <span class="lab-badge ${targetClass}">${targetLabel}</span></span>` : ''}
                     ${lab.points ? `<span class="lab-card-badge-item"><span class="lab-card-badge-label">Points</span> <span class="lab-badge lab-points-badge">${lab.points}</span></span>` : ''}
@@ -1226,6 +1308,7 @@ function renderCardB(lab) {
                 ${plabsId || lab.supportsOnlineMode ? `<div class="lab-card-plabs-id-wrap">${plabsId ? `<span class="lab-kv-pill lab-card-plabs-id" title="Scenario ID used by the plabs CLI"><span class="lab-kv-pill-key">plabs id</span><span class="lab-kv-pill-value">${escapeHtml(plabsId)}</span></span>` : ''}${renderOnlineBadge(lab)}</div>` : ''}
                 <div class="lab-card-description lab-card-description-full">${escapeHtml(lab.description)}</div>
                 <div class="lab-card-badges">
+                    ${renderCloudBadge(lab)}
                     <span class="lab-badge lab-hops-badge">${hopsLabel}</span>
                     ${targetLabel ? `<span class="lab-badge ${targetClass}">${targetLabel}</span>` : ''}
                     ${lab.points ? `<span class="lab-badge lab-points-badge">${lab.points} pts</span>` : ''}
@@ -1908,11 +1991,11 @@ function renderLabKVPills(lab) {
         pill('Category', catConfig.cssClass, catConfig.label, 'category ← README: **Category:**'),
         lab.pathType ? pill('Path Type', pathTypeClass, pathTypeLabel, 'pathType ← README: **Path Type:**') : '',
         targetLabel ? pill('Target', targetClass, targetLabel, 'target ← README: **Target:**') : '',
-        pill('Est. Self Hosted AWS Cost', isFree ? 'lab-cost-free' : 'lab-cost-paid', isFree ? 'Free' : lab.costEstimate, 'costEstimate ← README: **Cost Estimate:**'),
+        pill(`Est. Self Hosted ${getLabCloudCopy(lab).provider} Cost`, isFree ? 'lab-cost-free' : 'lab-cost-paid', isFree ? 'Free' : lab.costEstimate, 'costEstimate ← README: **Cost Estimate:**'),
         ...(lab.environments || []).map(env => pill('Env', 'lab-badge-env', env, 'environments[] ← README: **Environments:** (comma list)')),
     ].filter(Boolean);
 
-    const serviceIconsHtml = renderServiceIcons(lab.permissions);
+    const serviceIconsHtml = renderServiceIcons(lab.permissions, lab.cloud);
 
     return `<div class="lab-detail-badges lab-kv-pills-row" style="margin-bottom:16px;">
         ${pills.join('')}
@@ -1940,7 +2023,7 @@ function buildPreviewFooterHTML(lab) {
         pill('Category', catConfig.cssClass, catConfig.label),
         lab.pathType ? pill('Path Type', pathTypeClass, pathTypeLabel) : '',
         targetLabel ? pill('Target', targetClass, targetLabel) : '',
-        pill('Est. Self Hosted AWS Cost', isFree ? 'lab-cost-free' : 'lab-cost-paid', isFree ? 'Free' : lab.costEstimate),
+        pill(`Est. Self Hosted ${getLabCloudCopy(lab).provider} Cost`, isFree ? 'lab-cost-free' : 'lab-cost-paid', isFree ? 'Free' : lab.costEstimate),
         ...(lab.environments || []).map(env => pill('Env', 'lab-badge-env', env)),
     ].filter(Boolean).join('');
 
@@ -1949,10 +2032,13 @@ function buildPreviewFooterHTML(lab) {
     const seenPrefixes = new Set();
     const serviceLabels = [];
     for (const p of required) {
-        const prefix = (p.permission || '').split(':')[0].toLowerCase();
-        if (prefix && awsServiceConfig[prefix] && !seenPrefixes.has(prefix)) {
+        const prefix = servicePrefixOf(p.permission);
+        if (prefix && !seenPrefixes.has(prefix)) {
+            // AWS previews only tag services with a configured label; other clouds tag every service.
+            const cfg = (lab.cloud || 'aws') === 'aws' ? awsServiceConfig[prefix] : serviceConfigFor(prefix, lab.cloud);
+            if (!cfg) continue;
             seenPrefixes.add(prefix);
-            serviceLabels.push(awsServiceConfig[prefix].label);
+            serviceLabels.push(cfg.label);
         }
     }
     const serviceTagsHtml = serviceLabels.length
@@ -2191,7 +2277,7 @@ function buildGuidedV2Sections(lab) {
             label: 'Prerequisites',
             show: true,
             rawHtml: `<div class="lab-tab-prose">
-                <p>Before deploying this lab, you'll need one or more AWS accounts and the <code>plabs</code> binary installed and configured.</p>
+                <p>Before deploying this lab, you'll need one or more ${getLabCloudCopy(lab).accounts} and the <code>plabs</code> binary installed and configured.</p>
                 <p><a href="/labs/getting-started/#prerequisites">Getting Started: Prerequisites →</a></p>
             </div>`,
         });
@@ -2393,12 +2479,12 @@ function buildGuidedV2Sections(lab) {
             rawHtml: `<div class="lab-tab-prose">${renderLabMarkdown(cspmData.whatToDetect)}</div>`,
         });
     }
-    if (siemData?.cloudTrailEvents) {
+    if (siemData?.auditLogEvents) {
         defendTabs.push({
-            id: 'cloudtrail',
-            label: 'CloudTrail Events to Monitor',
+            id: 'auditlog',
+            label: getLabCloudCopy(lab).auditLogEvents,
             show: true,
-            rawHtml: `<div class="lab-tab-prose">${renderLabMarkdown(siemData.cloudTrailEvents)}</div>`,
+            rawHtml: `<div class="lab-tab-prose">${renderLabMarkdown(siemData.auditLogEvents)}</div>`,
         });
     }
     if (siemData?.detonationLogs) {
@@ -2425,7 +2511,7 @@ function buildGuidedV2Sections(lab) {
             title: 'Defend',
             level: 2,
             colorClass: sectionColors['Defend'],
-            debugSource: 'readme.defend.cspm.whatToDetect | readme.defend.cloudSiem.{cloudTrailEvents, detonationLogs} | readme.references',
+            debugSource: 'readme.defend.cspm.whatToDetect | readme.defend.cloudSiem.{auditLogEvents, detonationLogs} | readme.references',
             renderContent: () => renderInnerTabSection(defendTabGroupId, defendTabs),
         });
     }

@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """
-Validates AWS IAM privilege escalation path YAML files against the schema.
+Validates cloud IAM privilege escalation path YAML files (AWS, GCP, Azure) against the schema.
 
 Usage:
     python validate-schema.py <file_or_directory>
-    python validate-schema.py data/paths/iam/iam-001.yaml
+    python validate-schema.py data/paths/aws/iam/iam-001.yaml
     python validate-schema.py data/paths/
 
 Options:
@@ -101,7 +101,18 @@ ALLOWED_EXPLOITATION_TOOLS = [
     'gcloud',
     'azurecli',
     'gcpwn',
+    'curl',
 ]
+
+# Exploitation tools are cloud-specific, except `curl` (raw REST API calls),
+# which applies to every cloud. A GCP path must not carry an AWS tool tab and
+# vice versa.
+CLOUD_AGNOSTIC_EXPLOITATION_TOOLS = ['curl']
+EXPLOITATION_TOOLS_BY_CLOUD = {
+    'aws': ['awscli', 'pacu', 'pmapper', 'stratus', 'leonidas', 'nebula', 'pathrunner'],
+    'gcp': ['gcloud', 'gcpwn'],
+    'azure': ['azurecli'],
+}
 
 ALLOWED_PREREQUISITE_TABS = [
     'admin',
@@ -122,6 +133,25 @@ PERMISSION_SEPARATORS = [':', '.', '/']
 class ValidationError(Exception):
     """Custom exception for validation errors."""
     pass
+
+
+def cloud_from_id(id_value: str) -> str:
+    """Return the cloud a path ID belongs to: its prefix for GCP/Azure, 'aws' for bare IDs."""
+    id_prefix = id_value.split('-', 1)[0]
+    return id_prefix if id_prefix in CLOUD_ID_PREFIXES else 'aws'
+
+
+def cloud_from_file_path(file_path: str):
+    """Return the {cloud} directory of a data/paths/{cloud}/{service}/ file, or None.
+
+    Files outside a data/paths/ tree (e.g. a scratch file) have no directory
+    cloud, so the ID/directory consistency check is skipped for them.
+    """
+    path_parts = Path(file_path).parts
+    for part_index in range(len(path_parts) - 2):
+        if path_parts[part_index] == 'data' and path_parts[part_index + 1] == 'paths':
+            return path_parts[part_index + 2]
+    return None
 
 
 def validate_id(id_value: str) -> None:
@@ -295,8 +325,11 @@ def validate_prerequisites(prerequisites) -> None:
         raise ValidationError("Prerequisites must be a dict or list")
 
 
-def validate_exploitation_steps(steps) -> None:
-    """Validate the exploitationSteps field (supports both dict and list formats)."""
+def validate_exploitation_steps(steps, cloud: str = None) -> None:
+    """Validate the exploitationSteps field (supports both dict and list formats).
+
+    When cloud is given, each tool key must belong to that cloud (or be cloud-agnostic).
+    """
     if not steps:
         raise ValidationError("ExploitationSteps cannot be empty")
 
@@ -315,6 +348,14 @@ def validate_exploitation_steps(steps) -> None:
                     f"Tool '{tool}' is not valid. "
                     f"Allowed values: {', '.join(ALLOWED_EXPLOITATION_TOOLS)}"
                 )
+
+            if cloud is not None:
+                tools_for_cloud = EXPLOITATION_TOOLS_BY_CLOUD.get(cloud, []) + CLOUD_AGNOSTIC_EXPLOITATION_TOOLS
+                if tool not in tools_for_cloud:
+                    raise ValidationError(
+                        f"Tool '{tool}' does not apply to {cloud} paths. "
+                        f"Allowed for {cloud}: {', '.join(tools_for_cloud)}"
+                    )
 
             if not isinstance(tool_steps, list):
                 raise ValidationError(f"Steps for tool '{tool}' must be a list")
@@ -856,6 +897,17 @@ def validate_file(file_path: str, valid_ids: set = None, allow_draft: bool = Tru
         except ValidationError as e:
             errors.append(str(e))
 
+        # The ID's cloud prefix decides the path's cloud everywhere else
+        # (tool tabs here; generate-json.py reads the directory), so the two
+        # must agree or the path is published under the wrong cloud.
+        path_cloud = cloud_from_id(data['id'])
+        directory_cloud = cloud_from_file_path(file_path)
+        if directory_cloud is not None and directory_cloud != path_cloud:
+            errors.append(
+                f"ID '{data['id']}' belongs to cloud '{path_cloud}' but the file is in the "
+                f"'{directory_cloud}' directory; move it to data/paths/{path_cloud}/"
+            )
+
         try:
             validate_category(data['category'])
         except ValidationError as e:
@@ -881,7 +933,7 @@ def validate_file(file_path: str, valid_ids: set = None, allow_draft: bool = Tru
         # Validate exploitation steps (required for complete, optional for draft)
         if 'exploitationSteps' in data:
             try:
-                validate_exploitation_steps(data['exploitationSteps'])
+                validate_exploitation_steps(data['exploitationSteps'], cloud=path_cloud)
             except ValidationError as e:
                 errors.append(str(e))
 

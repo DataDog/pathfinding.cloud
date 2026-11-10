@@ -13,8 +13,8 @@ let currentRoute = { view: 'list', pathId: null }; // Track current route
 const categoryTooltips = {
     'self-escalation': 'Modify your own permissions directly',
     'principal-access': 'Gain access to a different principal',
-    'new-passrole': 'Create a new resource. Pass a privileged role to it. Gain access to that role',
-    'existing-passrole': 'Modify an existing resource with an attached role, and gain access to that role',
+    'new-passrole': 'Create a new resource. Pass a privileged role or service account to it. Gain access to that identity',
+    'existing-passrole': 'Modify an existing resource with an attached role or service account, and gain access to that identity',
     'credential-access': 'Read permissions that may expose credentials'
 };
 
@@ -420,7 +420,7 @@ function navigateToList() {
     showListView();
 
     // Track pageview for analytics
-    trackPageView('/paths/', 'pathfinding.cloud - AWS IAM Privilege Escalation Paths');
+    trackPageView('/paths/', 'pathfinding.cloud - Cloud IAM Privilege Escalation Paths');
 }
 
 function showListView() {
@@ -459,10 +459,10 @@ function showListView() {
     }
 
     // Update page title
-    document.title = 'pathfinding.cloud - AWS IAM Privilege Escalation Paths';
+    document.title = 'pathfinding.cloud - Cloud IAM Privilege Escalation Paths';
 
     // Update meta description
-    updateMetaTag('description', 'Comprehensive library of AWS IAM privilege escalation paths, techniques, and mitigations');
+    updateMetaTag('description', 'Comprehensive library of AWS and GCP IAM privilege escalation paths, techniques, and mitigations');
 }
 
 function trackPageView(path, title) {
@@ -1539,7 +1539,8 @@ function renderExploitationSteps(steps, pathId) {
         'pathrunner': 'Pathrunner',
         'gcloud': 'gcloud CLI',
         'azurecli': 'Azure CLI',
-        'gcpwn': 'GCPwn'
+        'gcpwn': 'GCPwn',
+        'curl': 'curl (REST API)'
     };
 
     const uniqueId = `tabs-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;

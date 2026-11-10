@@ -23,9 +23,17 @@ Open source security tools to check for GCP IAM privilege escalation detection c
 - **Repository**: https://github.com/NetSPI/GCPwn
 - **What to look for**: This is a GCP pentesting/enumeration tool (built by NetSPI) rather than a pure detector — check its modules for privilege escalation enumeration logic matching this path's required permission(s) (e.g. service account impersonation via `iam.serviceAccounts.getAccessToken`/`generateAccessToken`, or the predefined `roles/iam.serviceAccountTokenCreator` role)
 
+## 5. Rhino Security Labs GCP-IAM-Privilege-Escalation
+- **Repository**: https://github.com/RhinoSecurityLabs/GCP-IAM-Privilege-Escalation
+- **What to look for**: The privesc scanner (`PrivEscScanner/`) that checks a member's permissions against the known GCP escalation methods, plus one exploit script per method under `ExploitScripts/` (e.g. `iam.serviceAccounts.getAccessToken.py`). This is the research repo behind Rhino's GCP privesc blog series, so most classic GCP paths appear here. Link to the scanner line that checks this path's permission(s), not just the exploit script
+
+## 6. PurplePanda
+- **Repository**: https://github.com/carlospolop/PurplePanda
+- **What to look for**: A multi-cloud graph-based privilege escalation analyzer (by the HackTricks author). Check its GCP module for the analysis that flags this path's permission(s) as a privesc edge
+
 ## Output key names
 
-Use lowercase keys in `detectionTools`: `prowler`, `scoutsuite`, `gcp-scanner`, `gcpwn`. Only add a key you've confirmed with a specific file/line link.
+Use lowercase keys in `detectionTools`: `prowler`, `scoutsuite`, `gcp-scanner`, `gcpwn`, `rhino-gcp-privesc`, `purplepanda`. Only add a key you've confirmed with a specific file/line link.
 
 ## Example
 

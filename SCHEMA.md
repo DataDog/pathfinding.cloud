@@ -1,12 +1,19 @@
-# AWS IAM Privilege Escalation Path Schema
+# Cloud IAM Privilege Escalation Path Schema
 
-This document defines the YAML schema used for documenting AWS IAM privilege escalation paths in this repository.
+This document defines the YAML schema used for documenting cloud IAM privilege escalation paths (AWS, GCP and Azure) in this repository.
 
 ## Schema Version
 
-Current version: `1.7.1`
+Current version: `1.8.0`
 
 ### Version History
+
+#### Version 1.8.0 (2026-11-10)
+- Added the `curl` exploitation tool key for raw REST API steps. It is valid on every cloud; every other tool key is now validated against the path's cloud (no `awscli` tab on a GCP path, no `gcloud` tab on an AWS path)
+- The validator now rejects a path whose ID cloud prefix does not match its `data/paths/{cloud}/` directory
+- Clarified `permissions.additional`: besides recon get/list permissions, it holds permissions that only a particular CLI needs (e.g. `gcloud` preflight calls). `permissions.required` is the minimum for the raw API, matching pathfinding-labs' `required`/`helpful` split
+- Documented GCP conventions for `name`, `category`, `services` and IDs
+- **Lab data**: `labs.json` entries gain a `cloud` field (`aws`, `gcp`, `azure`), and `readme.defend.cloudSiem.cloudTrailEvents` is renamed `auditLogEvents`, since it now also holds GCP Cloud Audit Log events. `services` is now derived from GCP and Azure permissions too
 
 #### Version 1.7.1 (2026-10-15)
 - Removed the `supportsOnlineMode` and `onlineEndpoint` **lab data** fields from `labs.json` and `labs/data/*.json`. Path YAML is unchanged.
@@ -64,7 +71,7 @@ Current version: `1.7.1`
 
 ## File Naming Convention
 
-Files should be named using the format: `{service}-{number}.yaml`
+Files should be named using the format: `{id}.yaml` — `{service}-{number}.yaml` for AWS, `{cloud}-{service}-{number}.yaml` for GCP and Azure
 
 Examples:
 - `iam-001.yaml`
@@ -80,7 +87,10 @@ Examples:
   - `iam:PassRole+cloudformation:CreateStack` → `cloudformation-001`
 - **Other service paths**: Use the primary service (e.g., `ssm-001`, `ec2-002`)
 - **Sequential numbering**: IDs are assigned sequentially as paths are added
-- **Cloud prefix**: The conventions above describe AWS path IDs, which stay bare. GCP and Azure path IDs are prefixed with the cloud name (`gcp-iam-001`, `azure-iam-001`) to disambiguate them from AWS IDs of the same service/number, and live under the matching `data/paths/{cloud}/{service}/` directory
+- **Cloud prefix**: The conventions above describe AWS path IDs, which stay bare. GCP and Azure path IDs are prefixed with the cloud name (`gcp-iam-001`, `azure-iam-001`) to disambiguate them from AWS IDs of the same service/number, and live under the matching `data/paths/{cloud}/{service}/` directory. The validator rejects a prefix that doesn't match the directory
+- **GCP actAs combinations**: Like PassRole, `iam.serviceAccounts.actAs` paths are named after the compute service being created or modified: `iam.serviceAccounts.actAs + cloudfunctions.functions.create` → `gcp-cloudfunctions-001`
+- **Product slug vs. permission prefix**: The `{service}` part of an ID and its directory name the product (`gcp-cloudrun-001` in `data/paths/gcp/cloudrun/`), even when the product's permission prefix differs (Cloud Run permissions are `run.*`). The `services` field always lists permission prefixes. `data/paths/aws/ec2-instance-connect/` is the AWS precedent for a directory that differs from the prefix
+- **Paths from pathfinding-labs**: When a lab's `scenario.yaml` declares `pathfinding-cloud-id`, use that ID rather than the next free number. The lab's README already links to it
 
 ## Field Definitions
 
@@ -88,15 +98,15 @@ Examples:
 
 #### `id` (string)
 Unique identifier for the privilege escalation path.
-- Format: `{service}-{number}` (e.g., `iam-001`)
+- Format: `{service}-{number}` for AWS (e.g., `iam-001`), `{cloud}-{service}-{number}` for GCP and Azure (e.g., `gcp-iam-001`)
 - Must be unique across all paths
 
 #### `name` (string)
-Human-readable name using AWS IAM permission syntax.
-- Single permission: `iam:CreatePolicyVersion`
-- Multiple permissions: `iam:PassRole+ec2:RunInstances`
-- Use `+` to separate multiple permissions
-- Use exact AWS permission syntax (service:Action)
+Human-readable name using the cloud's exact IAM permission syntax.
+- AWS (`service:Action`): `iam:CreatePolicyVersion`, `iam:PassRole + ec2:RunInstances`
+- GCP (`service.resource.verb`): `iam.serviceAccounts.getAccessToken`, `iam.serviceAccounts.actAs + cloudfunctions.functions.create + run.routes.invoke`
+- Use ` + ` (with spaces) to separate multiple permissions
+- List the permissions that define the technique. Leave out plumbing the API requires on every call of that kind (e.g. GCP `*.operations.get` to poll a long-running operation, `cloudfunctions.functions.sourceCodeSet` to upload source); those still belong in `permissions.required`
 
 #### `category` (enum)
 The type of privilege escalation.
@@ -108,8 +118,14 @@ Allowed values:
 - `credential-access` - Access to hardcoded credentials, not through IAM
 - `existing-passrole` - Modify resources to gain elevated access
 
+The categories apply to every cloud. For GCP:
+- `iam.serviceAccounts.actAs` + creating a resource that runs as the service account (Cloud Functions, Cloud Run, Compute Engine) → `new-passrole`
+- Modifying an existing resource that already runs as a service account (e.g. `cloudfunctions.functions.update`) → `existing-passrole`, like AWS `lambda-003`, even though GCP still checks `actAs` on the update
+- Minting credentials for another service account (`iam.serviceAccounts.getAccessToken`, `signJwt`, `signBlob`, `iam.serviceAccountKeys.create`) → `principal-access`
+- Changing your own access (`resourcemanager.projects.setIamPolicy`, `iam.roles.update` on a role you hold) → `self-escalation`
+
 #### `services` (array of strings)
-List of all AWS services involved in the escalation path.
+List of all services involved in the escalation path, as permission prefixes: `iam`, `ec2` for AWS; `iam`, `cloudfunctions`, `run` for GCP. Include every prefix that appears in `permissions.required` (a GCP Cloud Functions 2nd gen path lists `run` because invoking the function needs `run.routes.invoke`).
 
 Example:
 ```yaml
@@ -122,8 +138,12 @@ services:
 IAM permissions for the escalation path, organized into required and additional helpful permissions.
 
 The permissions object contains two arrays:
-- `required` (array of objects, required): Minimum permissions needed by the principal exploiting this path
-- `additional` (array of objects, optional): Helpful get/list permissions that aid in exploitation but could come from a separate read-only principal
+- `required` (array of objects, required): Minimum permissions needed by the principal exploiting this path, using the raw API (no CLI)
+- `additional` (array of objects, optional): Permissions that help but are not strictly needed. Two kinds:
+  - Recon get/list permissions that aid in exploitation but could come from a separate read-only principal
+  - Permissions a particular CLI needs on top of the raw API minimum, which the exploiting principal itself must hold to use that CLI. Start their `resourceConstraints` with which command needs them, e.g. "Required only by `gcloud functions deploy`, which calls GetFunction before creating; not needed via the REST API"
+
+This matches pathfinding-labs: a lab's `scenario.yaml` `permissions.required` maps to `required` unchanged (its `resource` becomes `resourceConstraints` prose), and its `permissions.helpful` maps to `additional`. Keep the "only needed by `gcloud`" notes from the lab.
 
 Each permission object contains:
 - `permission` (string, required): The IAM permission (e.g., `iam:CreatePolicyVersion`)
@@ -166,6 +186,11 @@ Supported tools:
 - `gcloud` - Google Cloud CLI
 - `azurecli` - Azure CLI
 - `gcpwn` - GCPwn (NetSPI GCP pentesting framework)
+- `curl` - Raw REST API calls with `curl` (any cloud)
+
+Tool keys must match the path's cloud: `awscli`, `pacu`, `pmapper`, `stratus`, `leonidas`, `nebula` and `pathrunner` are AWS-only; `gcloud` and `gcpwn` are GCP-only; `azurecli` is Azure-only; `curl` is allowed everywhere.
+
+**CLI vs. raw API steps**: The native CLI tab comes first. When a CLI step needs a permission from `permissions.additional` (because the CLI makes extra calls the API doesn't need), say so in that step's description. Add a `curl` tab when the CLI needs more than `permissions.required`. It shows the attack using exactly the `required` set. Write its commands against the cloud's public REST endpoints with a bearer token (e.g. `curl -H "Authorization: Bearer $TOKEN" https://cloudfunctions.googleapis.com/v2/...`).
 
 Each step object contains:
 - `step` (integer, required): Step number (1, 2, 3, etc.)

@@ -26,17 +26,28 @@ You orchestrate the complete creation of attack paths by gathering requirements,
 
 ## Step 1: Gather Requirements (Interactive)
 
-### If user provides pathfinding-labs directory:
+### If user provides pathfinding-labs directory (or a path ID that has a lab):
+
+The local clone is usually at `~/Documents/projects/pathfinding/pathfinding-labs`. AWS scenarios live under `modules/scenarios/single-account/`, GCP under `modules/scenarios/gcp/single-account/`. To find a lab from a path ID, grep `scenario.yaml` files for `pathfinding-cloud-id: "<id>"`.
 
 Read these files to understand the attack:
-- `scenario.yaml` - Structured attack metadata
-- `demo_attack.sh` - Exploitation steps and commands
-- `README.md` - Detailed explanation and context
+- `scenario.yaml` - Structured attack metadata: `pathfinding-cloud-id`, `sub_category`, and the `permissions.required` / `permissions.helpful` split
+- `attack_map.yaml` - The lab's node/edge graph (hand it to the add-vis agent as a starting point)
+- `demo_attack.sh` - Exploitation steps and commands. GCP demos can run either via `gcloud` (the default) or via raw REST API calls with `curl`; read both
+- `solution.md` - The walkthrough, often with the clearest step-by-step explanation
+- `README.md` - Detailed explanation, context, and the Defend section (CSPM and audit log events to monitor, useful for `recommendation`)
 
 **Important**: Pathfinding-labs scenarios are very specific (with exact resource names, scripts, etc.). Transform this into **generic guidance** for pathfinding.cloud per @.claude/CLAUDE.md and @SCHEMA.md:
-- Remove scenario-specific resource names
-- Generalize exploitation steps
+- Remove scenario-specific resource names (`pl-prod-*`, project IDs, flag secrets)
+- Generalize exploitation steps (`TARGET_SA@PROJECT_ID.iam.gserviceaccount.com`, `REGION`, `FUNCTION_NAME`)
 - Keep attack principles, not implementation details
+
+**Map the lab's permissions** (see `permissions` in @SCHEMA.md):
+- Lab `permissions.required` → `permissions.required`, unchanged. These are the raw-API minimum, verified in the lab, so don't drop any (GCP `*.operations.get` and `cloudfunctions.functions.sourceCodeSet` are real requirements). Turn each `resource` into `resourceConstraints` prose ("Must be granted on the target service account", "Project-level")
+- Lab `permissions.helpful` → `permissions.additional`. Entries whose `purpose` says they are only needed by `gcloud` keep that note: start `resourceConstraints` with "Required only by `gcloud <command>` ...; not needed via the REST API". Recon entries keep their purpose
+- `name` lists only the permissions that define the technique (see `name` in @SCHEMA.md); plumbing permissions stay out of `name` but remain in `required`
+
+**Category**: Choose it from the definitions in @SCHEMA.md (which include the GCP mapping), not by copying the lab's `sub_category`. If the two disagree, use the SCHEMA.md category and tell the user about the mismatch so the lab can be fixed.
 
 ### If user describes attack path:
 
@@ -53,14 +64,18 @@ Ask clarifying questions to gather:
 
 ## Step 2: Build Base YAML File
 
-### Determine next available ID:
+### Determine the ID:
+
+**If the lab's `scenario.yaml` declares `pathfinding-cloud-id`, use that ID.** The lab's README already links to `pathfinding.cloud/paths/<id>`, so a different ID would break the cross-link. Check the ID isn't already taken (`ls data/paths/{cloud}/*/`); if it is, stop and ask the user.
+
+Otherwise, take the next available number:
 
 ```bash
 ls data/paths/{cloud}/{service}/ | sort | tail -n 1
 # If lambda-003 exists, create lambda-004
 ```
 
-**ID prefix convention**: AWS path IDs stay bare (`iam-001`, `lambda-004`). GCP and Azure path IDs are prefixed with the cloud name (`gcp-iam-001`, `azure-iam-001`) to disambiguate them from AWS IDs of the same service/number.
+**ID prefix convention**: AWS path IDs stay bare (`iam-001`, `lambda-004`). GCP and Azure path IDs are prefixed with the cloud name (`gcp-iam-001`, `azure-iam-001`) to disambiguate them from AWS IDs of the same service/number. The `{service}` part and the directory use the product slug (`gcp-cloudrun-001` in `data/paths/gcp/cloudrun/`), while `services` lists permission prefixes (`iam`, `run`); see @SCHEMA.md.
 
 ### Create YAML file with structure:
 
@@ -73,7 +88,7 @@ ls data/paths/{cloud}/{service}/ | sort | tail -n 1
 - `recommendation`
 - `limitations` (if applicable - especially for PassRole paths)
 
-**Include placeholders for enrichment:**
+**Include placeholders for enrichment** (the attribution agent replaces both; `discoveryAttribution` is required, so the placeholder keeps the base file valid):
 ```yaml
 discoveryAttribution:
   firstDocumented:
@@ -81,15 +96,18 @@ discoveryAttribution:
 references: []
 ```
 
-**Omit these optional fields** (enrichment agents will add):
-- `discoveryAttribution` (attribution agent will enhance with proper details)
+**Omit these optional fields** (enrichment agents will add them):
 - `attackVisualization` (add-vis agent)
 - `learningEnvironments` (learning-environments agent)
 - `detectionTools` (detection-tools agent)
 
 ### Exploitation tool tabs by cloud
 
-Always include the native CLI tab for the path's cloud (`awscli`, `gcloud`, or `azurecli`). Where an exploitation framework module verifiably covers the path's exact technique, add it as an additional tab (each cloud has its own — do not cross-apply an AWS tool to a GCP/Azure path or vice versa):
+Always include the native CLI tab for the path's cloud (`awscli`, `gcloud`, or `azurecli`) first. If a CLI step needs a permission from `permissions.additional` because the CLI makes extra calls, name it in that step's description (e.g. "`gcloud functions deploy` also calls GetFunction, so it needs `cloudfunctions.functions.get`").
+
+When the CLI needs more than `permissions.required` (common on GCP), add a `curl` tab that performs the attack with exactly the `required` permissions, using the cloud's REST endpoints and a bearer token. For labs, take it from the demo's raw API mode. `curl` is valid on every cloud.
+
+Where an exploitation framework module verifiably covers the path's exact technique, add it as an additional tab (each cloud has its own — do not cross-apply an AWS tool to a GCP/Azure path or vice versa; the validator rejects it):
 
 - **AWS**: `pacu`, `pmapper`, `stratus`, `leonidas`, `nebula`, `pathrunner`
 - **GCP**: `gcpwn` (NetSPI's GCP pentesting framework) — check its module tree at `gcpwn/modules/gcp/{service}/{enumeration,exploit,utilities}/` on https://github.com/NetSPI/GCPwn for a module matching the required permission(s) (e.g. `exploit_generate_access_token` for `iam.serviceAccounts.getAccessToken`, `exploit_service_account_keys` for `iam.serviceAccountKeys.create`). Modules are invoked as `modules run <module_name> [flags]` — see the README's "Exploit Module TLDR" section for real flag examples before writing commands.
@@ -110,7 +128,9 @@ Per @.claude/CLAUDE.md:
 
 **All recommendations MUST use multi-line format with the `|` pipe operator** (never use quoted strings with `\n`).
 
-**For PassRole-style privilege escalation paths** (AWS `iam:PassRole`, GCP `iam.serviceAccounts.actAs`, Azure managed identity/service principal assignment), use this standardized template adapted for the specific service. The template below shows the AWS JSON policy condition syntax — for GCP, restrict via IAM Conditions (CEL) on the `roles/iam.serviceAccountUser` binding; for Azure, restrict via RBAC scope on the role assignment granting use of the service principal or managed identity. Adapt the monitoring/audit bullets to the target cloud's audit log service (CloudTrail / Cloud Audit Logs / Azure Activity Log):
+**For PassRole-style privilege escalation paths** (AWS `iam:PassRole`, GCP `iam.serviceAccounts.actAs`, Azure managed identity/service principal assignment), use the standardized template for the path's cloud, adapted for the specific service. For Azure, adapt the AWS template: restrict via RBAC scope on the role assignment granting use of the service principal or managed identity, and monitor the Azure Activity Log.
+
+**AWS template:**
 
 ```yaml
 recommendation: |
@@ -141,6 +161,36 @@ recommendation: |
   - Regularly audit [SERVICE_RESOURCES] for excessive IAM permissions
   - Regularly audit all IAM roles that trust the [SERVICE] service and down-scope any roles with administrative access
 ```
+
+**GCP template** (for `iam.serviceAccounts.actAs` paths; see `data/paths/gcp/iam/gcp-iam-001.yaml` for a finished GCP recommendation):
+
+```yaml
+recommendation: |
+  High powered service accounts + overly broad `iam.serviceAccounts.actAs` is what makes this privilege escalation path exploitable and impactful.
+
+  - **Avoid privileged service accounts on workloads** - Very rarely does a [SERVICE_RESOURCE] need `roles/editor` or `roles/owner`. Give each [SERVICE_RESOURCE] a dedicated service account with only the roles it needs.
+  - **Grant `iam.serviceAccounts.actAs` on specific service accounts, not the project** - Bind `roles/iam.serviceAccountUser` (or a custom role with `iam.serviceAccounts.actAs`) on the individual service account a deployer needs, never at the project or folder level, where it covers every service account.
+  Use IAM Conditions to narrow the grant further:
+
+  ```json
+  {
+    "role": "roles/iam.serviceAccountUser",
+    "members": ["serviceAccount:deployer@PROJECT_ID.iam.gserviceaccount.com"],
+    "condition": {
+      "title": "deploy-window-only",
+      "expression": "request.time < timestamp(\"2026-12-31T00:00:00Z\")"
+    }
+  }
+  ```
+
+  - Monitor Cloud Audit Logs for `[AUDIT_METHOD]` events that set a service account the caller has not deployed with before
+  - Monitor Cloud Audit Logs for [SERVICE_RESOURCE] creation by principals who do not usually create [resources]
+  - Monitor for `SetIamPolicy` events that grant `iam.serviceAccounts.actAs` (via `roles/iam.serviceAccountUser` or a custom role) at the project level
+  - Regularly audit which service accounts [SERVICE_RESOURCES] run as and down-scope any with `roles/editor` or `roles/owner`
+  - Use IAM Recommender / Policy Analyzer to find unused or overly broad `actAs` grants
+```
+
+GCP placeholders: `[AUDIT_METHOD]` is the audit log method name for the create call (e.g. `google.cloud.functions.v2.FunctionService.CreateFunction`, `google.cloud.run.v2.Services.CreateService`; take it from the lab README's "Cloud Audit Log Events to Monitor" when there is one). The other placeholders match the AWS list below.
 
 **Template placeholders to adapt:**
 - `[SERVICE_RESOURCE]` - The AWS resource type (e.g., "Lambda function", "EC2 instance", "SageMaker notebook")
@@ -216,7 +266,7 @@ After all enrichment agents complete:
 ```bash
 # Final validation
 python3 scripts/validate-schema.py data/paths/{cloud}/{service}/{id}.yaml
-
+```
 
 ### Report to user:
 
@@ -232,12 +282,12 @@ Provide a summary including:
 
 ## Example Interaction Flow
 
-**User**: "Can you create a path for ~/Documents/projects/pathfinding-labs/modules/scenarios/single-account/privesc-one-hop/to-admin/cloudformation-updatestack"
+**User**: "Can you create a path for ~/Documents/projects/pathfinding/pathfinding-labs/modules/scenarios/gcp/single-account/privesc-one-hop/to-admin/gcp-cloudfunctions-001-iam-serviceaccountsactas+cloudfunctions-functionscreate"
 
 **You**:
-1. Read scenario.yaml, demo_attack.sh, README.md
-2. Determine next ID: `cloudformation-002`
-3. Create YAML file with all required fields + placeholders
+1. Read scenario.yaml, attack_map.yaml, demo_attack.sh, solution.md, README.md
+2. Use the lab's `pathfinding-cloud-id`: `gcp-cloudfunctions-001` → `data/paths/gcp/cloudfunctions/gcp-cloudfunctions-001.yaml`
+3. Create YAML file with all required fields + placeholders: lab required → `required`, lab helpful (incl. gcloud-only notes) → `additional`, `gcloud` tab plus a `curl` tab, GCP recommendation template
 4. Validate base file
 5. Task enrichment agents concurrently
 6. Wait for agents to complete
