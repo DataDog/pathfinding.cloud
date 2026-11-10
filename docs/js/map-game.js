@@ -202,7 +202,7 @@ const helicopterSprite = {
 // rocky companion islet. Loaded async; renderers fall back to the procedural
 // shapes if a sprite fails to load or the first frame paints before the load
 // completes. Callers should push onto onLoadCallbacks to redraw once sprites
-// arrive (mirrors the awsIconSprites pattern).
+// arrive (mirrors the cloudIconSprites pattern).
 const islandSprites = {
     images: { principal: null, target: null, resource: null },
     loaded: false,
@@ -307,7 +307,7 @@ function pickIslandSpriteKey(state, nodeIdx) {
     return null;
 }
 
-// Adding a new resource type? Add an entry in BOTH awsIconSprites.iconPaths below
+// Adding a new resource type? Add an entry in BOTH cloudIconSprites.iconPaths below
 // AND SUBTYPE_DISPLAY so the icon renders AND the human-readable label shows up
 // in the objective/guided-challenge pills. Keep the keys identical.
 
@@ -331,10 +331,17 @@ const SUBTYPE_DISPLAY = {
     'apprunner-service':     'App Runner Service',
     'mwaa-environment':      'MWAA Environment',
     'ssm-parameter':         'SSM Parameter',
+    // GCP
+    'service-account':       'Service Account',
+    'secret-manager-secret': 'Secret Manager Secret',
+    'cloud-function':        'Cloud Function',
+    'cloud-run-service':     'Cloud Run Service',
+    'gcs-bucket':            'Cloud Storage Bucket',
 };
 
-// AWS icon sprite loader -- maps node subTypes to official AWS architecture/resource icons
-const awsIconSprites = {
+// Cloud icon sprite loader -- maps node subTypes to official AWS architecture/resource
+// icons and Google Cloud product icons (docs/img/gcp-icons/README.md)
+const cloudIconSprites = {
     cache: {},  // subType -> Image (or null if failed)
     loading: new Set(),
     onLoadCallbacks: [], // callbacks to invoke when any icon finishes loading
@@ -357,6 +364,12 @@ const awsIconSprites = {
         'apprunner-service':     '/img/aws-icons/Architecture-Service-Icons_01302026/Arch_Compute/48/Arch_AWS-App-Runner_48.png',
         'mwaa-environment':      '/img/aws-icons/Architecture-Service-Icons_01302026/Arch_Application-Integration/48/Arch_Amazon-Managed-Workflows-for-Apache-Airflow_48.png',
         'ssm-parameter':         '/img/aws-icons/Resource-Icons_01302026/Res_Management-Governance/Res_AWS-Systems-Manager_Parameter-Store_48.png',
+        // GCP
+        'service-account':       '/img/gcp-icons/service-account_48.png',
+        'secret-manager-secret': '/img/gcp-icons/secret-manager-secret_48.png',
+        'cloud-function':        '/img/gcp-icons/cloud-function_48.png',
+        'cloud-run-service':     '/img/gcp-icons/cloud-run-service_48.png',
+        'gcs-bucket':            '/img/gcp-icons/gcs-bucket_48.png',
     },
     // Get (or start loading) the icon for a given subType. Returns Image if ready, null otherwise.
     get(subType) {
@@ -810,7 +823,7 @@ function drawGameIslandLabels(ctx, w, h, state) {
 
         const resolvedIconStyle = state.effectiveIconStyle || state.iconStyle;
         const blIcon = resolvedIconStyle === 'below-label'
-            ? awsIconSprites.get(node?.subType || '') : null;
+            ? cloudIconSprites.get(node?.subType || '') : null;
 
         const spriteKey = pickIslandSpriteKey(state, i);
         // When a node is toggled to companion-islet appearance, the drawn sprite
@@ -1704,7 +1717,7 @@ function drawCompanionIslet(ctx, pos, companion, isSelected, state, nodeIndex) {
             drawIconCrest(ctx, pos, islandRadius * 1.5, companion, p);
         } else if (ISLAND_MOUNTED_ICON_STYLES.has(_companionStyle)) {
             const companionSubType = companion.subType || '';
-            const companionIcon = awsIconSprites.get(companionSubType);
+            const companionIcon = cloudIconSprites.get(companionSubType);
             if (companionIcon) {
                 const maxIconSize = islandRadius * 0.5; // 50% of companion island radius = 14px
                 const iconSize = Math.min(maxIconSize, companionIcon.width);
@@ -1788,7 +1801,7 @@ function drawCompanionLabel(ctx, x, y, companion, isSelected, state) {
 
     // Check for below-label icon
     const belowIcon = ((state.effectiveIconStyle || state.iconStyle) === 'below-label')
-        ? awsIconSprites.get(companion.subType || '')
+        ? cloudIconSprites.get(companion.subType || '')
         : null;
     const iconSize = 24; // slightly smaller for companions
     const iconRowH = belowIcon ? (iconSize + 4) : 0;
@@ -1836,7 +1849,7 @@ const ISLAND_MOUNTED_ICON_STYLES = new Set(['on-island', 'building', 'banner', '
 // original 'on-island' treatment factored out so the main render loop can
 // dispatch cleanly to one of four on-island variants.
 function drawIconOnIsland(ctx, pos, islandRadius, node) {
-    const iconImg = awsIconSprites.get(node?.subType || '');
+    const iconImg = cloudIconSprites.get(node?.subType || '');
     if (!iconImg) return;
     const maxIconSize = islandRadius * 0.5; // 50% of island radius = 26px at default
     const iconSize = Math.min(maxIconSize, iconImg.width);
@@ -1852,7 +1865,7 @@ function drawIconOnIsland(ctx, pos, islandRadius, node) {
 // logo -- windows continue in a grid above and below that panel so the
 // building still reads as a real tower, but the brand badge is unmistakable.
 function drawIconBuilding(ctx, pos, islandRadius, node, palette) {
-    const iconImg = awsIconSprites.get(node?.subType || '');
+    const iconImg = cloudIconSprites.get(node?.subType || '');
     if (!iconImg) return;
 
     // Vertically rectangular tower. Anchoring the base slightly below
@@ -2016,7 +2029,7 @@ function drawIconBuilding(ctx, pos, islandRadius, node, palette) {
 // island, with the AWS logo centered on the banner face. Reads as a heraldic
 // standard announcing the island's service.
 function drawIconBanner(ctx, pos, islandRadius, node, palette) {
-    const iconImg = awsIconSprites.get(node?.subType || '');
+    const iconImg = cloudIconSprites.get(node?.subType || '');
     if (!iconImg) return;
 
     // Banner and supporting structure scaled ~1.5x the initial pass so the
@@ -2095,7 +2108,7 @@ function drawIconBanner(ctx, pos, islandRadius, node, palette) {
 // with the AWS logo as the shield's charge. RPG-ish and compact vertically
 // so it works well on smaller (5-6 node) islands.
 function drawIconCrest(ctx, pos, islandRadius, node, palette) {
-    const iconImg = awsIconSprites.get(node?.subType || '');
+    const iconImg = cloudIconSprites.get(node?.subType || '');
     if (!iconImg) return;
 
     const shieldW = islandRadius * 0.52;
@@ -6816,8 +6829,8 @@ function initMapGame(mapId, nodes, edges, companions, lab) {
     canvas.style.backgroundColor = getMapPalette().oceanDeep;
 
     // Preload AWS icons for all nodes so they're ready when we draw
-    awsIconSprites.preload(nodes);
-    if (companions) awsIconSprites.preload(companions);
+    cloudIconSprites.preload(nodes);
+    if (companions) cloudIconSprites.preload(companions);
 
     // V5 (capcom top-left) is the default HUD. Clouds sit between y=110 (just
     // below the title text stack) and cloudBandBottom; islands start 20px below.
@@ -7414,7 +7427,7 @@ function initMapGame(mapId, nodes, edges, companions, lab) {
     });
     helicopterSprite.load().then(() => redraw());
     // Redraw when AWS icons finish loading so they appear on islands
-    awsIconSprites.onLoadCallbacks.push(() => redraw());
+    cloudIconSprites.onLoadCallbacks.push(() => redraw());
     redraw();
     updateGamePanel(state);
 
@@ -9681,9 +9694,9 @@ function renderStaticMapPreview(containerEl, lab) {
     }
     containerEl.appendChild(footerEl);
 
-    awsIconSprites.preload(mapNodes);
-    if (mapCompanions) awsIconSprites.preload(mapCompanions);
-    awsIconSprites.onLoadCallbacks.push(() => draw());
+    cloudIconSprites.preload(mapNodes);
+    if (mapCompanions) cloudIconSprites.preload(mapCompanions);
+    cloudIconSprites.onLoadCallbacks.push(() => draw());
     draw();
 
     // Re-draw whenever the theme class toggles so the ocean background updates immediately.

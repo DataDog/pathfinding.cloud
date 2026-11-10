@@ -156,6 +156,23 @@ const awsServiceConfig = {
     'elasticache':    { label: 'ElastiCache',    color: '#2E73B8' },
 };
 
+// GCP service icon config — maps permission prefix to a short display label, in
+// Google blue. Labels stay short so hero footers don't overflow. Prefixes missing
+// here fall back to the uppercased prefix.
+const gcpServiceConfig = {
+    'iam':            { label: 'IAM',            color: '#4285F4' },
+    'cloudfunctions': { label: 'Functions',      color: '#4285F4' },
+    'run':            { label: 'Run',            color: '#4285F4' },
+    'secretmanager':  { label: 'Secret Mgr',     color: '#4285F4' },
+    'storage':        { label: 'Storage',        color: '#4285F4' },
+    'compute':        { label: 'Compute',        color: '#4285F4' },
+    'logging':        { label: 'Logging',        color: '#4285F4' },
+    'resourcemanager': { label: 'Resource Mgr',  color: '#4285F4' },
+};
+
+// Per-cloud service configs; the two clouds share prefixes such as 'iam'.
+const serviceConfigsByCloud = { aws: awsServiceConfig, gcp: gcpServiceConfig };
+
 // ---------------------------------------------------------------------------
 // Compatibility accessors: work with both v2 and v3 data structures
 // ---------------------------------------------------------------------------
@@ -422,11 +439,11 @@ function parseServicesFromPermissions(permissions) {
 }
 
 // Render small service icon chips from a lab's permissions
-// awsServiceConfig colors and labels only apply to AWS labs; other clouds
-// share some prefixes (e.g. 'iam') that would otherwise get AWS styling.
+// Look up a service's label and color in its own cloud's config, so a GCP 'iam'
+// chip doesn't get AWS styling.
 function serviceConfigFor(service, cloud) {
-    const awsConfig = (cloud || 'aws') === 'aws' ? awsServiceConfig[service] : null;
-    return awsConfig || { label: service.toUpperCase(), color: '#6B7280' };
+    const cloudConfig = serviceConfigsByCloud[cloud || 'aws'] || {};
+    return cloudConfig[service] || { label: service.toUpperCase(), color: '#6B7280' };
 }
 
 function renderServiceIcons(permissions, cloud) {
@@ -748,6 +765,12 @@ function populateHopsFilter(labs) {
     buildPillMenu('menu-hops-filter', pillOpts);
 }
 
+// Filter label for a service prefix. The filter spans clouds, so use the AWS
+// label when there is one (AWS and GCP 'iam' both read "IAM"), then GCP's.
+function filterServiceConfig(service) {
+    return awsServiceConfig[service] || gcpServiceConfig[service] || { label: service.toUpperCase() };
+}
+
 // Populate the service filter dropdown from labs data
 function populateServiceFilter(labs) {
     const serviceSet = new Set();
@@ -756,7 +779,7 @@ function populateServiceFilter(labs) {
     });
     const sorted = [...serviceSet].sort();
     sorted.forEach(service => {
-        const cfg = awsServiceConfig[service] || { label: service.toUpperCase() };
+        const cfg = filterServiceConfig(service);
         const opt = document.createElement('option');
         opt.value = service;
         opt.textContent = cfg.label;
@@ -764,7 +787,7 @@ function populateServiceFilter(labs) {
     });
     const pillOpts = [{ value: '', label: 'Any' }];
     sorted.forEach(service => {
-        const cfg = awsServiceConfig[service] || { label: service.toUpperCase() };
+        const cfg = filterServiceConfig(service);
         pillOpts.push({ value: service, label: cfg.label });
     });
     buildPillMenu('menu-service-filter', pillOpts);
@@ -1972,7 +1995,7 @@ function buildPreviewFooterHTML(lab) {
         const prefix = servicePrefixOf(p.permission);
         if (prefix && !seenPrefixes.has(prefix)) {
             // AWS previews only tag services with a configured label; other clouds tag every service.
-            const cfg = (lab.cloud || 'aws') === 'aws' ? awsServiceConfig[prefix] : { label: prefix.toUpperCase() };
+            const cfg = (lab.cloud || 'aws') === 'aws' ? awsServiceConfig[prefix] : serviceConfigFor(prefix, lab.cloud);
             if (!cfg) continue;
             seenPrefixes.add(prefix);
             serviceLabels.push(cfg.label);
