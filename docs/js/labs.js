@@ -47,6 +47,7 @@ const costFilter = document.getElementById('cost-filter');
 const hopsFilter = document.getElementById('hops-filter');
 const startFilter = document.getElementById('start-filter');
 const serviceFilter = document.getElementById('service-filter');
+const cloudFilter = document.getElementById('cloud-filter');
 const onlineFilter = document.getElementById('online-filter');
 const onlineToggle = document.getElementById('online-toggle');
 const resetButton = document.getElementById('reset-filters');
@@ -565,6 +566,7 @@ function setupEventListeners() {
     hopsFilter.addEventListener('change', applyFilters);
     startFilter.addEventListener('change', applyFilters);
     serviceFilter.addEventListener('change', applyFilters);
+    cloudFilter.addEventListener('change', applyFilters);
     onlineFilter.addEventListener('change', applyFilters);
     onlineToggle.addEventListener('click', () => {
         onlineFilter.value = onlineFilter.value === 'yes' ? '' : 'yes';
@@ -651,6 +653,7 @@ function resetPillValues() {
 // Order determines param order in the generated URL.
 const FILTER_PARAM_MAP = [
     { param: 'q',        id: null,                isSearch: true },
+    { param: 'cloud',    id: 'cloud-filter' },
     { param: 'category', id: 'category-filter' },
     { param: 'type',     id: 'path-type-filter' },
     { param: 'target',   id: 'target-filter' },
@@ -771,6 +774,32 @@ function filterServiceConfig(service) {
     return awsServiceConfig[service] || gcpServiceConfig[service] || { label: service.toUpperCase() };
 }
 
+// Cloud a lab belongs to. labs.json entries generated before GCP support have
+// no cloud field, and all of them are AWS.
+function labCloud(lab) {
+    return lab.cloud || 'aws';
+}
+
+// Cloud badge, styled like the paths page's (.cloud-badge / .cloud-{cloud} in style.css)
+function renderCloudBadge(lab) {
+    const cloud = labCloud(lab);
+    return `<span class="cloud-badge cloud-${escapeHtml(cloud)}">${escapeHtml(cloud.toUpperCase())}</span>`;
+}
+
+// Populate the cloud filter dropdown from labs data
+function populateCloudFilter(labs) {
+    const sorted = [...new Set(labs.map(labCloud))].sort();
+    sorted.forEach(cloud => {
+        const opt = document.createElement('option');
+        opt.value = cloud;
+        opt.textContent = cloud.toUpperCase();
+        cloudFilter.appendChild(opt);
+    });
+    const pillOpts = [{ value: '', label: 'Any' }];
+    sorted.forEach(cloud => pillOpts.push({ value: cloud, label: cloud.toUpperCase() }));
+    buildPillMenu('menu-cloud-filter', pillOpts);
+}
+
 // Populate the service filter dropdown from labs data
 function populateServiceFilter(labs) {
     const serviceSet = new Set();
@@ -812,6 +841,7 @@ async function loadLabs() {
 
         populateHopsFilter(labs);
         populateServiceFilter(labs);
+        populateCloudFilter(labs);
         applyURLParams(); // sets filters from URL params before first render (must be after dynamic options are populated)
         updateStats();
         renderLabs();
@@ -931,6 +961,7 @@ function applyFilters() {
     const selectedHops = hopsFilter.value;
     const selectedStart = startFilter.value;
     const selectedService = serviceFilter.value;
+    const selectedCloud = cloudFilter.value;
     const selectedOnline = onlineFilter.value;
 
     filteredLabs = allLabs.filter(lab => {
@@ -949,6 +980,9 @@ function applyFilters() {
 
             if (!searchableText.includes(searchTerm)) return false;
         }
+
+        // Cloud filter
+        if (selectedCloud && labCloud(lab) !== selectedCloud) return false;
 
         // Category filter
         if (selectedCategory && lab.category !== selectedCategory) return false;
@@ -995,6 +1029,7 @@ function resetFilters() {
     hopsFilter.value = '';
     startFilter.value = '';
     serviceFilter.value = '';
+    cloudFilter.value = '';
     onlineFilter.value = '';
     filteredLabs = allLabs;
     resetPillValues();
@@ -1049,6 +1084,7 @@ function getSortedLabs() {
         let aVal, bVal;
         switch (sortColumn) {
             case 'name': aVal = a.displayName || a.name; bVal = b.displayName || b.name; break;
+            case 'cloud': aVal = labCloud(a); bVal = labCloud(b); break;
             case 'category': aVal = a.category; bVal = b.category; break;
             case 'pathType': aVal = a.pathType; bVal = b.pathType; break;
             case 'start': aVal = a.startAccessType; bVal = b.startAccessType; break;
@@ -1087,6 +1123,7 @@ function renderLabTable() {
         <thead>
             <tr>
                 <th class="sortable labs-name-col" data-sort="name">Name${sortIndicator('name')}</th>
+                <th class="sortable" data-sort="cloud">Cloud${sortIndicator('cloud')}</th>
                 <th class="sortable" data-sort="category">Category${sortIndicator('category')}</th>
                 <th class="sortable" data-sort="pathType">Path Type${sortIndicator('pathType')}</th>
                 <th class="sortable" data-sort="start">Start${sortIndicator('start')}</th>
@@ -1113,6 +1150,7 @@ function renderLabTable() {
                     ${plabsId ? `<div class="lab-table-plabs-id" title="Scenario ID used by the plabs CLI"><span class="lab-table-plabs-id-label">plabs id</span><code class="lab-table-plabs-id-value">${escapeHtml(plabsId)}</code></div>` : ''}
                     <div class="lab-table-description">${escapeHtml(truncate(lab.description, 120))}</div>
                 </td>
+                <td>${renderCloudBadge(lab)}</td>
                 <td><span class="lab-badge ${catConfig.cssClass}">${catConfig.label}</span></td>
                 <td><span class="lab-badge ${pathTypeClass}">${pathTypeLabel}</span></td>
                 <td class="lab-table-nowrap">${startLabel ? `<span class="lab-badge lab-badge-start">${escapeHtml(startLabel)}</span>` : ''}</td>
@@ -1240,6 +1278,7 @@ function renderCardA(lab) {
                 ${plabsId || lab.supportsOnlineMode ? `<div class="lab-card-plabs-id-wrap">${plabsId ? `<span class="lab-kv-pill lab-card-plabs-id" title="Scenario ID used by the plabs CLI"><span class="lab-kv-pill-key">plabs id</span><span class="lab-kv-pill-value">${escapeHtml(plabsId)}</span></span>` : ''}${renderOnlineBadge(lab)}</div>` : ''}
                 <div class="lab-card-description">${escapeHtml(truncate(lab.description, 450))}</div>
                 <div class="lab-card-badges">
+                    <span class="lab-card-badge-item"><span class="lab-card-badge-label">Cloud</span> ${renderCloudBadge(lab)}</span>
                     <span class="lab-card-badge-item"><span class="lab-card-badge-label">Principal Hops</span> <span class="lab-badge lab-hops-badge">${hopsLabel}</span></span>
                     ${targetLabel ? `<span class="lab-card-badge-item"><span class="lab-card-badge-label">Target</span> <span class="lab-badge ${targetClass}">${targetLabel}</span></span>` : ''}
                     ${lab.points ? `<span class="lab-card-badge-item"><span class="lab-card-badge-label">Points</span> <span class="lab-badge lab-points-badge">${lab.points}</span></span>` : ''}
@@ -1269,6 +1308,7 @@ function renderCardB(lab) {
                 ${plabsId || lab.supportsOnlineMode ? `<div class="lab-card-plabs-id-wrap">${plabsId ? `<span class="lab-kv-pill lab-card-plabs-id" title="Scenario ID used by the plabs CLI"><span class="lab-kv-pill-key">plabs id</span><span class="lab-kv-pill-value">${escapeHtml(plabsId)}</span></span>` : ''}${renderOnlineBadge(lab)}</div>` : ''}
                 <div class="lab-card-description lab-card-description-full">${escapeHtml(lab.description)}</div>
                 <div class="lab-card-badges">
+                    ${renderCloudBadge(lab)}
                     <span class="lab-badge lab-hops-badge">${hopsLabel}</span>
                     ${targetLabel ? `<span class="lab-badge ${targetClass}">${targetLabel}</span>` : ''}
                     ${lab.points ? `<span class="lab-badge lab-points-badge">${lab.points} pts</span>` : ''}
