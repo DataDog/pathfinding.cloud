@@ -219,7 +219,7 @@ detectionTools:
 **Key points:**
 - Only include if at least one tool detects this path
 - Link to specific line numbers in source code where detection logic is implemented
-- Tool metadata (names, descriptions) stored in `metadata.json`
+- Use the tool's lowercase key (e.g. `pmapper`, `gcp-scanner`); the site shows that key as the tool name, since `metadata.json` holds no tool metadata
 
 ### Learning Environments Field
 
