@@ -1,0 +1,268 @@
+{
+  "displayName": "Implicit Admin Access to Bucket",
+  "name": "test-reverse-blast-radius-implicit-admin-access",
+  "description": "Tool testing scenario validating that reverse blast radius queries (who can read/write this bucket) include administrators whose access comes only from AdministratorAccess, with no S3-specific permissions",
+  "costEstimate": "$0/mo",
+  "pathfindingCloudId": null,
+  "interactiveDemo": false,
+  "category": "Tool Testing",
+  "subCategory": "reverse-blast-radius",
+  "pathType": "one-hop",
+  "target": "to-bucket",
+  "points": 20,
+  "environments": [
+    "prod"
+  ],
+  "attackPath": {
+    "principals": [],
+    "summary": ""
+  },
+  "mitreAttack": {
+    "tactics": [
+      "TA0009 - Collection"
+    ],
+    "techniques": [
+      "T1530 - Data from Cloud Storage Object"
+    ]
+  },
+  "terraform": {
+    "variableName": "enable_tool_testing_test_reverse_blast_radius_implicit_admin_access",
+    "modulePath": "modules/scenarios/tool-testing/test-reverse-blast-radius-implicit-admin-access"
+  },
+  "githubUrl": "https://github.com/DataDog/pathfinding-labs/tree/main/modules/scenarios/tool-testing/test-reverse-blast-radius-implicit-admin-access",
+  "schemaVersion": "4.9.0",
+  "cloud": "aws",
+  "permissions": {
+    "principals": [
+      {
+        "name": "pl-prod-rbr-ia-reader-user",
+        "required": [
+          {
+            "permission": "s3:GetObject",
+            "resource": "arn:aws:s3:::pl-sensitive-data-rbr-ia-*/*",
+            "description": "explicit permission to read objects in the target bucket"
+          },
+          {
+            "permission": "s3:ListBucket",
+            "resource": "arn:aws:s3:::pl-sensitive-data-rbr-ia-*",
+            "description": "explicit permission to list the target bucket"
+          }
+        ],
+        "helpful": [
+          {
+            "permission": "sts:GetCallerIdentity",
+            "purpose": "verify current identity"
+          }
+        ]
+      },
+      {
+        "name": "pl-prod-rbr-ia-writer-user",
+        "required": [
+          {
+            "permission": "s3:PutObject",
+            "resource": "arn:aws:s3:::pl-sensitive-data-rbr-ia-*/*",
+            "description": "explicit permission to write objects to the target bucket"
+          }
+        ],
+        "helpful": []
+      },
+      {
+        "name": "pl-prod-rbr-ia-admin-user",
+        "required": [
+          {
+            "permission": "*",
+            "resource": "*",
+            "description": "AWS managed `AdministratorAccess` policy; no statement mentions S3 or this bucket"
+          }
+        ],
+        "helpful": []
+      },
+      {
+        "name": "pl-prod-rbr-ia-admin-role",
+        "required": [
+          {
+            "permission": "*",
+            "resource": "*",
+            "description": "inline policy with `Action: *` on `Resource: *`; no statement mentions S3 or this bucket. The trust policy trusts only `ec2.amazonaws.com`, so no principal has an assume-role path into this role"
+          }
+        ],
+        "helpful": []
+      }
+    ]
+  },
+  "readme": {
+    "objective": "Your objective is to learn how to validate that a security tool includes implicit administrators in reverse blast radius answers by demonstrating that `pl-prod-rbr-ia-admin-user` and `pl-prod-rbr-ia-admin-role` can read and write the `pl-sensitive-data-rbr-ia-{account_id}-{suffix}` bucket purely through administrator permissions, alongside the explicit principals `pl-prod-rbr-ia-reader-user` and `pl-prod-rbr-ia-writer-user`.\n\n- **Start:** `arn:aws:iam::{account_id}:user/pl-prod-rbr-ia-reader-user`, `arn:aws:iam::{account_id}:user/pl-prod-rbr-ia-writer-user`, `arn:aws:iam::{account_id}:user/pl-prod-rbr-ia-admin-user`, and `arn:aws:iam::{account_id}:role/pl-prod-rbr-ia-admin-role`\n- **Destination resource:** `arn:aws:s3:::pl-sensitive-data-rbr-ia-{account_id}-{suffix}`",
+    "setup": {
+      "prerequisites": "1. Install the `plabs` CLI:\n   ```bash\n   brew install pathfinding-labs/tap/plabs\n   ```\n2. Configure your AWS profiles in `~/.plabs/plabs.yaml` (or run `plabs init` if you haven't already)",
+      "deployNonInteractive": "```bash\nplabs enable test-reverse-blast-radius-implicit-admin-access-to-bucket\nplabs apply\n```",
+      "deployTui": "1. Launch the TUI: `plabs`\n2. Navigate to `test-reverse-blast-radius-implicit-admin-access-to-bucket` in the scenarios list\n3. Press `space` to enable it\n4. Press `a` to apply"
+    },
+    "attack": {
+      "resourcesCreated": "| ARN | Purpose |\n| -- | -- |\n| `arn:aws:iam::{account_id}:user/pl-prod-rbr-ia-reader-user` | Explicit read access: `s3:GetObject` and `s3:ListBucket` on the target bucket (access keys provided) |\n| `arn:aws:iam::{account_id}:user/pl-prod-rbr-ia-writer-user` | Explicit write access: `s3:PutObject` on the target bucket (access keys provided) |\n| `arn:aws:iam::{account_id}:user/pl-prod-rbr-ia-admin-user` | Implicit access: `AdministratorAccess` managed policy, no S3 statements (access keys provided) |\n| `arn:aws:iam::{account_id}:role/pl-prod-rbr-ia-admin-role` | Implicit access: inline `Action: *` on `Resource: *`, trust policy limited to `ec2.amazonaws.com` so nothing can assume it |\n| `arn:aws:iam::{account_id}:user/pl-prod-rbr-ia-no-access-user` | Negative control with no policies; must not appear in any bucket access query (access keys provided) |\n| `arn:aws:s3:::pl-sensitive-data-rbr-ia-{account_id}-{suffix}` | Target bucket containing test data, with no bucket policy |",
+      "demoAttack": {
+        "executing": "The script will:\n1. Retrieve credentials, the region, and the bucket name from Terraform outputs\n2. Confirm the identity of `reader-user`\n3. As `writer-user`, write a probe object (`rbr-ia-demo/writer-probe.txt`) successfully and confirm that reading it back is denied\n4. As `reader-user`, list the `rbr-ia-demo/` prefix and read the probe object successfully, and confirm that writing is denied\n5. As `admin-user`, read the probe object and write `rbr-ia-demo/admin-probe.txt`; both succeed even though the user has no S3-specific permissions\n6. As `no-access-user` (negative control), confirm that list, read, and write are all denied\n7. Run `iam:SimulatePrincipalPolicy` for `admin-role` (which nothing can assume, so it is evaluated with the cleanup admin credentials) to confirm it is allowed `s3:GetObject` and `s3:PutObject` on the bucket objects\n8. Print the observed access matrix and the expected reverse blast radius truth table: `can_read` = reader-user, admin-user, admin-role; `can_write` = writer-user, admin-user, admin-role; `no-access-user` in neither. The script exits non-zero if any observed result differs from the expected ground truth",
+        "resourcesCreated": "- Probe objects written to the target bucket under the `rbr-ia-demo/` prefix: `rbr-ia-demo/writer-probe.txt` and `rbr-ia-demo/admin-probe.txt` (removed by the cleanup script)\n- A temporary local file `/tmp/rbr-ia-probe-body.txt` used as the upload body (removed when the demo exits and again by the cleanup script)",
+        "nonInteractive": "```bash\nplabs demo --list\nplabs demo test-reverse-blast-radius-implicit-admin-access\n```",
+        "tui": "1. Launch the TUI: `plabs`\n2. Navigate to `test-reverse-blast-radius-implicit-admin-access-to-bucket` in the scenarios list\n3. Press `r` to run the demo script"
+      },
+      "cleanup": {
+        "nonInteractive": "```bash\nplabs cleanup --list\nplabs cleanup test-reverse-blast-radius-implicit-admin-access\n```",
+        "tui": "1. Launch the TUI: `plabs`\n2. Navigate to `test-reverse-blast-radius-implicit-admin-access-to-bucket` in the scenarios list\n3. Press `c` to run the cleanup script"
+      }
+    },
+    "teardown": {
+      "nonInteractive": "```bash\nplabs disable test-reverse-blast-radius-implicit-admin-access-to-bucket\nplabs apply\n```",
+      "tui": "1. Launch the TUI: `plabs`\n2. Navigate to `test-reverse-blast-radius-implicit-admin-access-to-bucket` in the scenarios list\n3. Press `space` to disable it\n4. Press `D` to destroy"
+    },
+    "defend": {
+      "cspm": {
+        "whatToDetect": "A security analysis platform or CSPM tool answering a reverse blast radius query on the target bucket should treat administrator status as access to every resource, even when the graph has no explicit edge from an administrator to the bucket. The tool should identify:\n\n1. **Explicit read access**: `pl-prod-rbr-ia-reader-user` via `s3:GetObject` and `s3:ListBucket` statements naming the bucket\n2. **Explicit write access**: `pl-prod-rbr-ia-writer-user` via an `s3:PutObject` statement naming the bucket\n3. **Implicit administrator access (user)**: `pl-prod-rbr-ia-admin-user` via the `AdministratorAccess` managed policy, with no S3-specific statement\n4. **Implicit administrator access (role)**: `pl-prod-rbr-ia-admin-role` via an inline `Action: *` on `Resource: *` policy, with no S3-specific statement and no principal able to assume it\n5. **No false positives**: `pl-prod-rbr-ia-no-access-user` has no permissions and must not appear in either answer\n\n**Expected Query Results:**\n\nQuery: \"Who can read bucket `pl-sensitive-data-rbr-ia-{account_id}-{suffix}`?\"\n\n```\n- arn:aws:iam::{account_id}:user/pl-prod-rbr-ia-reader-user (explicit)\n- arn:aws:iam::{account_id}:user/pl-prod-rbr-ia-admin-user (implicit administrator)\n- arn:aws:iam::{account_id}:role/pl-prod-rbr-ia-admin-role (implicit administrator)\n```\n\nQuery: \"Who can write to bucket `pl-sensitive-data-rbr-ia-{account_id}-{suffix}`?\"\n\n```\n- arn:aws:iam::{account_id}:user/pl-prod-rbr-ia-writer-user (explicit)\n- arn:aws:iam::{account_id}:user/pl-prod-rbr-ia-admin-user (implicit administrator)\n- arn:aws:iam::{account_id}:role/pl-prod-rbr-ia-admin-role (implicit administrator)\n```\n\n**Tool Testing Focus:**\n\nThis scenario specifically tests:\n\n1. **Administrator handling**: Does the tool include administrators in \"who can access X\" answers even though its graph deliberately does not create an edge from every administrator to every resource?\n2. **Policy style coverage**: Does the tool recognize both a managed `AdministratorAccess` attachment and an inline `Action: *` wildcard as administrator-equivalent?\n3. **Role without inbound edges**: Does the tool still report `admin-role` when no principal can assume it?\n4. **Read versus write separation**: Does the tool keep `reader-user` out of the write answer and `writer-user` out of the read answer?\n5. **Negative control**: Does the tool correctly exclude `no-access-user`?\n\n**Expected Tool Behavior:**\n\nPassing tools:\n- Return all three principals for `can_read` and all three for `can_write`\n- Distinguish explicit access from implicit administrator access\n- Exclude `no-access-user` from both answers\n\nFailing tools:\n- Return only `reader-user` for `can_read` and only `writer-user` for `can_write`, omitting administrators\n- Include `admin-user` but miss `admin-role` (or the reverse)\n- Include `no-access-user`, `writer-user` in the read answer, or `reader-user` in the write answer",
+        "prevention": "This is a tool-testing scenario that validates detection capability rather than a real vulnerability. The following practices apply to managing administrator access and sensitive buckets in production:\n\n- Treat every principal with `AdministratorAccess` or `Action: *` on `Resource: *` as having access to all S3 data, and keep that set as small as possible\n- Use IAM Access Analyzer and tools that support reverse blast radius queries to answer \"who can access this bucket?\" including implicit administrators\n- Add S3 bucket policies with explicit denies (for example, deny all except approved principals via `aws:PrincipalArn` conditions) to restrict even administrators on sensitive buckets\n- Use SCPs and permission boundaries to cap what administrator-style principals can do with sensitive data stores\n- Audit roles with wildcard inline policies, which are easier to miss than managed `AdministratorAccess` attachments\n- Alert on `s3:GetObject` and `s3:PutObject` against sensitive buckets from administrator principals"
+      },
+      "cloudSiem": {
+        "auditLogEvents": "- `s3:GetObject` -- object retrieval from the sensitive bucket; monitor for access by administrator principals that have no business need for the data (requires S3 data event logging)\n- `s3:PutObject` -- object written to the sensitive bucket; monitor for writes by unexpected principals (requires S3 data event logging)\n- `s3:ListBucket` -- bucket listing requests; monitor for enumeration of bucket contents\n- `iam:CreateAccessKey` -- new access keys for administrator users such as `pl-prod-rbr-ia-admin-user`",
+        "detonationLogs": "_Detonation log integration (Stratus Red Team / Grimoire) is planned for a future release._"
+      }
+    },
+    "references": "- [T1530 - Data from Cloud Storage Object](https://attack.mitre.org/techniques/T1530/) -- MITRE ATT&CK technique page\n- [AWS managed policy: AdministratorAccess](https://docs.aws.amazon.com/aws-managed-policy/latest/reference/AdministratorAccess.html) -- AWS documentation",
+    "solution": "# Solution: Implicit Admin Access to Bucket\n\nThis scenario tests a quiet but important gap in security tooling. The pathfinding graph backend intentionally does not create an edge from every administrator to every resource in the account. That keeps the graph small, but it means a reverse blast radius query such as \"who can read this bucket?\" or \"who can write to this bucket?\" can leave administrators out of the answer, while principals with explicit S3 statements show up as expected.\n\nThat is a problem in practice. An administrator with `AdministratorAccess` or an inline `Action: *` policy can read and overwrite your most sensitive bucket just as easily as the principal named in the bucket's access policy. A tool that only follows explicit grants understates the real blast radius, and teams that rely on those answers to scope incidents or review access will miss their most powerful principals.\n\nThis lab gives you a fixed truth table to test a tool against. Two principals have explicit S3 statements, two administrators have none, and one user has nothing at all.\n\n## The Challenge\n\nYou have credentials for these principals:\n\n- `pl-prod-rbr-ia-reader-user` -- explicit `s3:GetObject` and `s3:ListBucket` on the bucket\n- `pl-prod-rbr-ia-writer-user` -- explicit `s3:PutObject` on the bucket\n- `pl-prod-rbr-ia-admin-user` -- the `AdministratorAccess` managed policy, no S3 statements\n- `pl-prod-rbr-ia-admin-role` -- an inline policy with `Action: *` on `Resource: *`, no S3 statements. Its trust policy trusts only `ec2.amazonaws.com`, so nobody can assume it\n- `pl-prod-rbr-ia-no-access-user` -- a negative control with no policies\n\nThe target is the `pl-sensitive-data-rbr-ia-{account_id}-{suffix}` bucket, which has no bucket policy. Your goal is to confirm the real access matrix and then check that your security tool reports it correctly.\n\n## Reconnaissance\n\nStart by confirming who you are for each set of credentials:\n\n```bash\naws sts get-caller-identity --query 'Arn' --output text\n# Expected: arn:aws:iam::{account_id}:user/pl-prod-rbr-ia-reader-user\n```\n\nThen look at what each principal actually has. The administrators are the interesting ones:\n\n```bash\naws iam list-attached-user-policies --user-name pl-prod-rbr-ia-admin-user\n# Expected: AdministratorAccess\n\naws iam list-role-policies --role-name pl-prod-rbr-ia-admin-role\naws iam get-role-policy --role-name pl-prod-rbr-ia-admin-role --policy-name pl-prod-rbr-ia-admin-role-policy\n# Expected: Action \"*\" on Resource \"*\", no S3 statement\n```\n\nNeither administrator mentions S3 anywhere. Also check the role's trust policy:\n\n```bash\naws iam get-role --role-name pl-prod-rbr-ia-admin-role --query 'Role.AssumeRolePolicyDocument'\n```\n\nOnly `ec2.amazonaws.com` is trusted. No user can assume this role, so any tool that finds it must do so from its own permissions, not from a path leading into it.\n\n## Exploitation\n\n### Explicit principals\n\nAs `reader-user`, list and read the bucket, then confirm a write is denied:\n\n```bash\naws s3 ls \"s3://pl-sensitive-data-rbr-ia-{account_id}-{suffix}/\"\naws s3 cp \"s3://pl-sensitive-data-rbr-ia-{account_id}-{suffix}/sensitive-data.txt\" -\necho test | aws s3 cp - \"s3://pl-sensitive-data-rbr-ia-{account_id}-{suffix}/rbr-ia-demo/reader-probe.txt\"\n# Expected: AccessDenied on the write\n```\n\nAs `writer-user`, the opposite holds. A write succeeds and a read is denied:\n\n```bash\necho 'rbr-ia write test' | aws s3 cp - \"s3://pl-sensitive-data-rbr-ia-{account_id}-{suffix}/rbr-ia-demo/writer-probe.txt\"\naws s3 cp \"s3://pl-sensitive-data-rbr-ia-{account_id}-{suffix}/sensitive-data.txt\" -\n# Expected: AccessDenied on the read\n```\n\n### Implicit administrator: admin-user\n\nAs `admin-user`, read and write the bucket. Both succeed, even though no policy attached to this user mentions S3:\n\n```bash\naws s3 cp \"s3://pl-sensitive-data-rbr-ia-{account_id}-{suffix}/sensitive-data.txt\" -\necho 'rbr-ia write test' | aws s3 cp - \"s3://pl-sensitive-data-rbr-ia-{account_id}-{suffix}/rbr-ia-demo/admin-probe.txt\"\n```\n\nThis is the edge a tool must infer. It exists only because administrator permissions cover every action on every resource.\n\n### Implicit administrator: admin-role\n\nYou cannot assume `admin-role`, so use policy simulation to see what it is allowed to do:\n\n```bash\naws iam simulate-principal-policy \\\n  --policy-source-arn \"arn:aws:iam::{account_id}:role/pl-prod-rbr-ia-admin-role\" \\\n  --action-names s3:GetObject s3:PutObject \\\n  --resource-arns \"arn:aws:s3:::pl-sensitive-data-rbr-ia-{account_id}-{suffix}/sensitive-data.txt\" \\\n  --query 'EvaluationResults[*].[EvalActionName,EvalDecision]' --output text\n# Expected: both allowed\n```\n\n### The negative control\n\nAs `no-access-user`, every bucket operation is denied:\n\n```bash\naws s3 ls \"s3://pl-sensitive-data-rbr-ia-{account_id}-{suffix}/\"\n# Expected: AccessDenied\n```\n\n## Verification\n\nThe real access matrix is now confirmed with live calls and policy simulation. This is what a correct tool should return.\n\nQuery: \"Who can read `pl-sensitive-data-rbr-ia-{account_id}-{suffix}`?\"\n\n```\n- arn:aws:iam::{account_id}:user/pl-prod-rbr-ia-reader-user\n- arn:aws:iam::{account_id}:user/pl-prod-rbr-ia-admin-user\n- arn:aws:iam::{account_id}:role/pl-prod-rbr-ia-admin-role\n```\n\nQuery: \"Who can write to `pl-sensitive-data-rbr-ia-{account_id}-{suffix}`?\"\n\n```\n- arn:aws:iam::{account_id}:user/pl-prod-rbr-ia-writer-user\n- arn:aws:iam::{account_id}:user/pl-prod-rbr-ia-admin-user\n- arn:aws:iam::{account_id}:role/pl-prod-rbr-ia-admin-role\n```\n\n`pl-prod-rbr-ia-no-access-user` must appear in neither. If your tool returns only reader-user for reads and only writer-user for writes, it is dropping implicit administrators. If it returns admin-user but not admin-role, it handles the managed policy but not the inline wildcard, or it needs an inbound assume-role path to find the role.\n\n## What Happened\n\nYou saw that administrator access is access to everything, but that is not always represented as an edge in a security graph. The explicit principals are easy to find because their policies name the bucket. The administrators are easy to miss because nothing names the bucket at all, and one of them has no inbound path either.\n\nIn real environments this matters most for incident scoping and access reviews. If \"who can read this bucket?\" leaves out every administrator, the answer understates the real exposure. This lab gives you a repeatable truth table to check whether your tooling either includes administrators in reverse blast radius answers or clearly tells you how to account for them.\n"
+  },
+  "attackMap": {
+    "nodes": [
+      {
+        "id": "reader-user",
+        "label": "Reader User",
+        "type": "principal",
+        "subType": "iam-user",
+        "arn": "arn:aws:iam::{account_id}:user/pl-prod-rbr-ia-reader-user",
+        "access": {
+          "type": "assumed-breach-credentials"
+        },
+        "description": "You have gained access to this principal's AWS IAM credentials. These could have been obtained through many real-world vectors: phishing a developer and gaining access to their workstation, compromising a browser session, exploiting a vulnerable workload running in this AWS account, discovering credentials in a public S3 bucket, or finding them hardcoded in source code or a CI/CD pipeline.\nRegardless of how you obtained them, you are now operating as this principal. This IAM user has explicit s3:GetObject and s3:ListBucket permissions on the target bucket, and nothing else.\n"
+      },
+      {
+        "id": "writer-user",
+        "label": "Writer User",
+        "type": "principal",
+        "subType": "iam-user",
+        "arn": "arn:aws:iam::{account_id}:user/pl-prod-rbr-ia-writer-user",
+        "access": {
+          "type": "assumed-breach-credentials"
+        },
+        "description": "You have gained access to this principal's AWS IAM credentials. These could have been obtained through many real-world vectors: phishing a developer and gaining access to their workstation, compromising a browser session, exploiting a vulnerable workload running in this AWS account, discovering credentials in a public S3 bucket, or finding them hardcoded in source code or a CI/CD pipeline.\nRegardless of how you obtained them, you are now operating as this principal. This IAM user has an explicit s3:PutObject permission on the target bucket and cannot read from it.\n"
+      },
+      {
+        "id": "admin-user",
+        "label": "Admin User",
+        "type": "principal",
+        "subType": "iam-user",
+        "isAdmin": true,
+        "arn": "arn:aws:iam::{account_id}:user/pl-prod-rbr-ia-admin-user",
+        "access": {
+          "type": "assumed-breach-credentials"
+        },
+        "description": "You have gained access to this principal's AWS IAM credentials. These could have been obtained through many real-world vectors: phishing a developer and gaining access to their workstation, compromising a browser session, exploiting a vulnerable workload running in this AWS account, discovering credentials in a public S3 bucket, or finding them hardcoded in source code or a CI/CD pipeline.\nRegardless of how you obtained them, you are now operating as this principal. This IAM user has the AWS managed AdministratorAccess policy attached. No policy statement mentions S3 or the target bucket, so its access to the bucket is implicit.\n"
+      },
+      {
+        "id": "admin-role",
+        "label": "Admin Role",
+        "type": "principal",
+        "subType": "iam-role",
+        "isAdmin": true,
+        "arn": "arn:aws:iam::{account_id}:role/pl-prod-rbr-ia-admin-role",
+        "description": "This IAM role has an inline policy allowing every action on every resource, with no S3-specific statement. Its trust policy trusts only the EC2 service principal, so no user or role in the account can assume it and there is no assume-role edge into it. Its access to the bucket is purely implicit administrator access, which is what makes it a useful test of reverse blast radius completeness.\n"
+      },
+      {
+        "id": "target-bucket",
+        "label": "Sensitive S3 Bucket",
+        "type": "resource",
+        "subType": "s3-bucket",
+        "isTarget": true,
+        "arn": "arn:aws:s3:::pl-sensitive-data-rbr-ia-{account_id}-{suffix}",
+        "description": "This is the target sensitive S3 bucket. It has no bucket policy, so all access derives from identity policies. A correct reverse blast radius query for reading returns reader-user, admin-user, and admin-role. A query for writing returns writer-user, admin-user, and admin-role. The negative control pl-prod-rbr-ia-no-access-user has no permissions and must appear in neither.\n"
+      }
+    ],
+    "edges": [
+      {
+        "from": "reader-user",
+        "to": "target-bucket",
+        "label": "s3:GetObject, s3:ListBucket",
+        "description": "The reader has explicit IAM permissions to list and read objects in the target bucket. This is the explicit read edge that most tools detect. The same user is denied when attempting to write.\n",
+        "hints": [
+          "This user holds explicit S3 read permissions on the bucket, so list and download objects directly. A write attempt should be denied."
+        ],
+        "commands": [
+          {
+            "description": "List bucket contents as reader-user",
+            "command": "aws s3 ls s3://pl-sensitive-data-rbr-ia-{account_id}-{suffix}/"
+          },
+          {
+            "description": "Read an object as reader-user",
+            "command": "aws s3 cp s3://pl-sensitive-data-rbr-ia-{account_id}-{suffix}/sensitive-data.txt -"
+          }
+        ]
+      },
+      {
+        "from": "writer-user",
+        "to": "target-bucket",
+        "label": "s3:PutObject",
+        "description": "The writer has an explicit s3:PutObject permission on the objects in the target bucket. This is the explicit write edge. The same user is denied when attempting to read.\n",
+        "hints": [
+          "This user holds an explicit S3 write permission on the bucket, so upload an object directly. A read attempt should be denied."
+        ],
+        "commands": [
+          {
+            "description": "Write an object as writer-user",
+            "command": "echo 'rbr-ia write test' | aws s3 cp - s3://pl-sensitive-data-rbr-ia-{account_id}-{suffix}/rbr-ia-demo/writer-probe.txt"
+          }
+        ]
+      },
+      {
+        "from": "admin-user",
+        "to": "target-bucket",
+        "label": "Implicit administrator access (AdministratorAccess)",
+        "description": "This is the edge a tool must infer. admin-user has no S3-specific statement, but the AdministratorAccess managed policy allows every action on every resource, so it can both read and write the bucket. The pathfinding graph backend does not create an edge from every administrator to every resource, so a reverse blast radius query can omit this principal unless the tool treats administrator status as implicit access.\n",
+        "hints": [
+          "AdministratorAccess needs no S3-specific statement. Read and write the bucket directly and expect both to succeed."
+        ],
+        "commands": [
+          {
+            "description": "Read an object as admin-user",
+            "command": "aws s3 cp s3://pl-sensitive-data-rbr-ia-{account_id}-{suffix}/sensitive-data.txt -"
+          },
+          {
+            "description": "Write an object as admin-user",
+            "command": "echo 'rbr-ia write test' | aws s3 cp - s3://pl-sensitive-data-rbr-ia-{account_id}-{suffix}/rbr-ia-demo/admin-probe.txt"
+          }
+        ]
+      },
+      {
+        "from": "admin-role",
+        "to": "target-bucket",
+        "label": "Implicit administrator access (Action * on Resource *)",
+        "description": "This is the edge a tool must infer. admin-role has an inline wildcard policy and no S3-specific statement, and nothing can assume it, so there is no path into the role either. Its ability to read and write the bucket is shown by policy simulation rather than by assuming the role. A complete reverse blast radius answer still includes this role.\n",
+        "hints": [
+          "No principal can assume this role, so confirm its effective S3 access with policy simulation rather than live calls."
+        ],
+        "commands": [
+          {
+            "description": "Simulate read access for admin-role",
+            "command": "aws iam simulate-principal-policy --policy-source-arn arn:aws:iam::{account_id}:role/pl-prod-rbr-ia-admin-role --action-names s3:GetObject --resource-arns arn:aws:s3:::pl-sensitive-data-rbr-ia-{account_id}-{suffix}/sensitive-data.txt --query 'EvaluationResults[*].[EvalActionName,EvalDecision]' --output text"
+          },
+          {
+            "description": "Simulate write access for admin-role",
+            "command": "aws iam simulate-principal-policy --policy-source-arn arn:aws:iam::{account_id}:role/pl-prod-rbr-ia-admin-role --action-names s3:PutObject --resource-arns arn:aws:s3:::pl-sensitive-data-rbr-ia-{account_id}-{suffix}/sensitive-data.txt --query 'EvaluationResults[*].[EvalActionName,EvalDecision]' --output text"
+          }
+        ]
+      }
+    ]
+  },
+  "hasAttackMap": true,
+  "principalHopCount": 3,
+  "startAccessType": "assumed-breach-credentials",
+  "services": [
+    "s3"
+  ],
+  "slug": "test-reverse-blast-radius-implicit-admin-access",
+  "hasDemoTranscript": false
+}

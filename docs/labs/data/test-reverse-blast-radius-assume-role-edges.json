@@ -1,0 +1,291 @@
+{
+  "displayName": "Reverse Blast Radius Assume-Role Edge Correctness",
+  "name": "test-reverse-blast-radius-assume-role-edges",
+  "description": "Tool testing scenario validating that the can-assume edge is only drawn when BOTH the caller's identity policy and the role trust policy allow the assumption (and that a root-trust role defers to identity policies)",
+  "costEstimate": "$0/mo",
+  "pathfindingCloudId": null,
+  "interactiveDemo": false,
+  "category": "Tool Testing",
+  "subCategory": "edge-case-detection",
+  "pathType": "one-hop",
+  "target": "to-bucket",
+  "points": 30,
+  "environments": [
+    "prod"
+  ],
+  "attackPath": {
+    "principals": [],
+    "summary": ""
+  },
+  "mitreAttack": {
+    "tactics": [
+      "TA0009 - Collection"
+    ],
+    "techniques": [
+      "T1530 - Data from Cloud Storage Object"
+    ]
+  },
+  "terraform": {
+    "variableName": "enable_tool_testing_test_reverse_blast_radius_assume_role_edges",
+    "modulePath": "modules/scenarios/tool-testing/test-reverse-blast-radius-assume-role-edges"
+  },
+  "githubUrl": "https://github.com/DataDog/pathfinding-labs/tree/main/modules/scenarios/tool-testing/test-reverse-blast-radius-assume-role-edges",
+  "schemaVersion": "4.9.0",
+  "cloud": "aws",
+  "permissions": {
+    "principals": [
+      {
+        "name": "pl-prod-rbr-are-both",
+        "required": [
+          {
+            "permission": "sts:AssumeRole",
+            "resource": "arn:aws:iam::{account_id}:role/pl-prod-rbr-are-target-role",
+            "description": "identity permission to assume the bucket-reading role, whose trust policy also names this user (both halves satisfied)"
+          }
+        ],
+        "helpful": []
+      },
+      {
+        "name": "pl-prod-rbr-are-root-with-identity",
+        "required": [
+          {
+            "permission": "sts:AssumeRole",
+            "resource": "arn:aws:iam::{account_id}:role/pl-prod-rbr-are-target-role-root",
+            "description": "identity permission to assume the root-trust bucket-reading role, whose `root` trust defers to this identity permission (both halves satisfied)"
+          }
+        ],
+        "helpful": []
+      },
+      {
+        "name": "pl-prod-rbr-are-identity-only",
+        "required": [
+          {
+            "permission": "sts:AssumeRole",
+            "resource": "arn:aws:iam::{account_id}:role/pl-prod-rbr-are-target-role",
+            "description": "identity permission only; `target-role`'s trust policy does NOT name this user, so the assumption is denied"
+          }
+        ],
+        "helpful": []
+      },
+      {
+        "name": "pl-prod-rbr-are-trust-only",
+        "required": [
+          {
+            "permission": "sts:GetCallerIdentity",
+            "description": "harmless recon only; this user is named in `target-role`'s trust policy but holds no identity `sts:AssumeRole` permission, so the assumption is denied"
+          }
+        ],
+        "helpful": []
+      },
+      {
+        "name": "pl-prod-rbr-are-root-no-identity",
+        "required": [
+          {
+            "permission": "sts:GetCallerIdentity",
+            "description": "harmless recon only; this user is covered by `target-role-root`'s `root` trust but holds no identity `sts:AssumeRole` permission, which the root trust defers to, so the assumption is denied"
+          }
+        ],
+        "helpful": []
+      }
+    ]
+  },
+  "readme": {
+    "objective": "Your objective is to learn how to validate that a security tool draws the `sts:AssumeRole` edge correctly by demonstrating that only `pl-prod-rbr-are-both` and `pl-prod-rbr-are-root-with-identity` can assume one of the bucket-reading roles (`pl-prod-rbr-are-target-role` and `pl-prod-rbr-are-target-role-root`) and reach the `pl-sensitive-data-rbr-are-{account_id}-{suffix}` bucket, while `pl-prod-rbr-are-identity-only`, `pl-prod-rbr-are-trust-only`, and `pl-prod-rbr-are-root-no-identity` each satisfy only half of the same-account assume-role requirement and cannot.\n\n- **Start:** `arn:aws:iam::{account_id}:user/pl-prod-rbr-are-both` (identity + explicit trust) and `arn:aws:iam::{account_id}:user/pl-prod-rbr-are-root-with-identity` (identity + root trust), plus three users that each satisfy only one half of the requirement\n- **Destination resource:** `arn:aws:s3:::pl-sensitive-data-rbr-are-{account_id}-{suffix}`",
+    "setup": {
+      "prerequisites": "1. Install the `plabs` CLI:\n   ```bash\n   brew install pathfinding-labs/tap/plabs\n   ```\n2. Configure your AWS profiles in `~/.plabs/plabs.yaml` (or run `plabs init` if you haven't already)",
+      "deployNonInteractive": "```bash\nplabs enable test-reverse-blast-radius-assume-role-edges-to-bucket\nplabs apply\n```",
+      "deployTui": "1. Launch the TUI: `plabs`\n2. Navigate to `test-reverse-blast-radius-assume-role-edges-to-bucket` in the scenarios list\n3. Press `space` to enable it\n4. Press `a` to apply"
+    },
+    "attack": {
+      "resourcesCreated": "| ARN | Purpose |\n| -- | -- |\n| `arn:aws:iam::{account_id}:user/pl-prod-rbr-are-both` | Satisfies both halves (identity `sts:AssumeRole` + named in `target-role` trust); can assume and read (access keys provided) |\n| `arn:aws:iam::{account_id}:user/pl-prod-rbr-are-identity-only` | Has identity `sts:AssumeRole` on `target-role` but is not named in its trust; cannot assume (access keys provided) |\n| `arn:aws:iam::{account_id}:user/pl-prod-rbr-are-trust-only` | Named in `target-role` trust but has no identity `sts:AssumeRole`; cannot assume (access keys provided) |\n| `arn:aws:iam::{account_id}:user/pl-prod-rbr-are-root-with-identity` | Has identity `sts:AssumeRole` on `target-role-root`, whose `root` trust defers to it; can assume and read (access keys provided) |\n| `arn:aws:iam::{account_id}:user/pl-prod-rbr-are-root-no-identity` | Covered by `target-role-root` `root` trust but has no identity `sts:AssumeRole`; cannot assume (access keys provided) |\n| `arn:aws:iam::{account_id}:role/pl-prod-rbr-are-target-role` | Reads the bucket; trust names exactly `are-both` and `are-trust-only` |\n| `arn:aws:iam::{account_id}:role/pl-prod-rbr-are-target-role-root` | Reads the bucket; trust grants to account `root`, deferring the decision to identity policies |\n| `arn:aws:s3:::pl-sensitive-data-rbr-are-{account_id}-{suffix}` | Target S3 bucket containing `sensitive-data.txt`; no bucket policy |",
+      "demoAttack": {
+        "executing": "The script will:\n1. Retrieve the five users' credentials, the two role ARNs, and the bucket name from Terraform outputs\n2. As `are-both`, assume `target-role` and read the bucket, confirming both halves (identity + explicit trust) succeed\n3. As `are-root-with-identity`, assume `target-role-root` and read the bucket, confirming identity permission plus root trust succeeds\n4. As `are-identity-only`, attempt to assume `target-role` and confirm it is denied (identity permission present, but trust does not name the user)\n5. As `are-trust-only`, attempt to assume `target-role` and confirm it is denied (trust names the user, but no identity permission)\n6. As `are-root-no-identity`, attempt to assume `target-role-root` and confirm it is denied (root trust defers to an identity permission that is absent)\n7. Print the observed assume-role result per user (the script exits non-zero if any observation differs from expectation)\n\nThe crux of this lab is that a same-account `sts:AssumeRole` requires BOTH an identity-based permission on the caller AND a trust policy on the role that allows the caller, and that a trust policy granting to the account `root` defers entirely to identity policies. A tool that reads only identity policies falsely includes `are-identity-only`; a tool that reads only trust policies falsely includes `are-trust-only` and `are-root-no-identity`.",
+        "resourcesCreated": "- Temporary STS session credentials for `target-role` (assumed by `are-both`) and `target-role-root` (assumed by `are-root-with-identity`); these expire on their own\n- Temporary file `/tmp/rbr-are-sensitive.txt` downloaded from the sensitive bucket (removed by the cleanup script)",
+        "nonInteractive": "```bash\nplabs demo --list\nplabs demo test-reverse-blast-radius-assume-role-edges\n```",
+        "tui": "1. Launch the TUI: `plabs`\n2. Navigate to `test-reverse-blast-radius-assume-role-edges-to-bucket` in the scenarios list\n3. Press `r` to run the demo script"
+      },
+      "cleanup": {
+        "nonInteractive": "```bash\nplabs cleanup --list\nplabs cleanup test-reverse-blast-radius-assume-role-edges\n```",
+        "tui": "1. Launch the TUI: `plabs`\n2. Navigate to `test-reverse-blast-radius-assume-role-edges-to-bucket` in the scenarios list\n3. Press `c` to run the cleanup script"
+      }
+    },
+    "teardown": {
+      "nonInteractive": "```bash\nplabs disable test-reverse-blast-radius-assume-role-edges-to-bucket\nplabs apply\n```",
+      "tui": "1. Launch the TUI: `plabs`\n2. Navigate to `test-reverse-blast-radius-assume-role-edges-to-bucket` in the scenarios list\n3. Press `space` to disable it\n4. Press `D` to destroy"
+    },
+    "defend": {
+      "cspm": {
+        "whatToDetect": "A properly configured security analysis platform or CSPM tool performing a reverse blast radius query on the bucket `pl-sensitive-data-rbr-are-{account_id}-{suffix}` should identify:\n\n1. **Direct readers**: `pl-prod-rbr-are-target-role` and `pl-prod-rbr-are-target-role-root` hold `s3:GetObject` and `s3:ListBucket` on the bucket through their own IAM policies\n2. **Both halves required**: a same-account `sts:AssumeRole` edge exists only when the caller's identity policy allows `sts:AssumeRole` on the role AND the role's trust policy allows the caller\n3. **Only two users can assume**: `pl-prod-rbr-are-both` (identity + explicit trust) and `pl-prod-rbr-are-root-with-identity` (identity + root trust) can reach a bucket-reading role\n4. **Root trust defers to identity**: a trust policy that grants to `arn:aws:iam::{account_id}:root` does not by itself grant assumption; the caller still needs an identity `sts:AssumeRole` permission, which is why `pl-prod-rbr-are-root-no-identity` cannot assume\n\n**Expected Query Results (truth table):**\n\n| Query | Expected principals |\n| -- | -- |\n| Direct bucket readers (0 hops) | target-role, target-role-root |\n| Can assume a reader via exactly one hop | are-both, are-root-with-identity |\n| Identity permission but no trust (false positive) | are-identity-only -- must NOT appear |\n| Trust but no identity permission (false positive) | are-trust-only, are-root-no-identity -- must NOT appear |\n\n**Tool Testing Focus:**\n\n1. **Edge Correctness**: Does the tool draw a can_assume edge only when both the identity policy and the trust policy allow the assumption?\n2. **Identity-Only False Positives**: Does the tool avoid drawing an edge for `are-identity-only`, whose identity policy allows assume but whose target role does not trust it?\n3. **Trust-Only False Positives**: Does the tool avoid drawing an edge for `are-trust-only`, which is trusted but has no identity permission?\n4. **Root Trust Semantics**: Does the tool treat a `root` trust as deferring to identity policies, correctly including `are-root-with-identity` but excluding `are-root-no-identity`?\n\n**Expected Tool Behavior:**\n\nPassing tools:\n- Return exactly `target-role` and `target-role-root` as direct bucket readers\n- Return exactly `are-both` and `are-root-with-identity` as the users that can reach the bucket via one assume-role hop\n- Exclude `are-identity-only`, `are-trust-only`, and `are-root-no-identity` from any \"who can read the bucket\" answer\n\nFailing tools:\n- Include `are-identity-only` by reading only identity policies\n- Include `are-trust-only` or `are-root-no-identity` by reading only trust policies\n- Treat a `root` trust as granting assumption to the whole account regardless of identity policies",
+        "prevention": "This is a tool-testing scenario, so the guidance below applies to managing role trust and assume-role access in real environments:\n\n- Scope role trust policies to specific principal ARNs (as `target-role` does) rather than account `root`; a `root` trust silently delegates the decision to every identity policy in the account and is easy to misjudge\n- Pair trust policies with conditions such as `aws:PrincipalOrgID`, `sts:ExternalId`, or MFA where applicable to tighten who can actually assume a role\n- Remember that a same-account assume requires both halves -- an identity `sts:AssumeRole` grant and a matching trust -- so audit both sides when reviewing who can reach a sensitive role\n- Prefer explicit principal ARNs in trust policies so that reverse blast radius reviews can enumerate exactly who is trusted\n- Use IAM Access Analyzer and policy simulation (`aws iam simulate-principal-policy`) to validate effective assume-role access, including the root-trust-defers-to-identity case\n- Alert on broad `sts:AssumeRole` identity grants (wildcard resources) that pair with `root`-trust roles, since together they widen the set of principals that can reach sensitive roles"
+      },
+      "cloudSiem": {
+        "auditLogEvents": "- `sts:AssumeRole` -- role assumption into `pl-prod-rbr-are-target-role` or `pl-prod-rbr-are-target-role-root`; monitor both the successful assumptions by `are-both` and `are-root-with-identity` and the `AccessDenied` attempts by the three users that satisfy only one half\n- `s3:GetObject` -- object retrieval from the sensitive bucket; monitor for access by unexpected assumed-role sessions\n- `s3:ListBucket` -- bucket listing requests; monitor for enumeration of bucket contents from assumed-role sessions",
+        "detonationLogs": "_Detonation log integration (Stratus Red Team / Grimoire) is planned for a future release._"
+      }
+    },
+    "references": "- [T1530 - Data from Cloud Storage Object](https://attack.mitre.org/techniques/T1530/) -- MITRE ATT&CK technique for collecting data from cloud storage\n- [How IAM roles differ from resource-based policies](https://docs.aws.amazon.com/IAM/latest/UserGuide/id_roles_compare-resource-policies.html) -- AWS documentation on how same-account assume-role evaluation combines identity and trust policies",
+    "solution": "# Solution: Reverse Blast Radius Assume-Role Edge Correctness\n\nThis scenario validates the single most load-bearing edge in any reverse blast radius answer: the `sts:AssumeRole` edge. A same-account assume-role is allowed only when BOTH halves line up -- the caller's identity policy must allow `sts:AssumeRole` on the role, and the role's trust policy must allow the caller. Get either side wrong and your graph is wrong. A tool that reads only identity policies draws edges that do not exist; a tool that reads only trust policies does the same in the other direction.\n\nThere is a third subtlety that trips up both tools and humans. A trust policy that grants to the account `root` does not grant assumption to the entire account. It delegates the decision to identity policies. A caller covered by a `root` trust still needs its own `sts:AssumeRole` permission, and a caller that has that identity permission can assume even though it is not named explicitly. This lab builds five users around exactly these cases so you can prove, with real AWS calls, which can reach a bucket and which cannot -- then compare that ground truth to what your security tool reports.\n\n## The Challenge\n\nYou hold credentials for five IAM users, each satisfying a different combination of the two halves of a same-account assume-role:\n\n- `pl-prod-rbr-are-both` -- identity `sts:AssumeRole` on `pl-prod-rbr-are-target-role`, and named in that role's trust (both halves)\n- `pl-prod-rbr-are-identity-only` -- identity `sts:AssumeRole` on `target-role`, but NOT named in its trust (identity only)\n- `pl-prod-rbr-are-trust-only` -- named in `target-role`'s trust, but no identity `sts:AssumeRole` (trust only)\n- `pl-prod-rbr-are-root-with-identity` -- identity `sts:AssumeRole` on `pl-prod-rbr-are-target-role-root`, whose trust grants to `root` (identity + root trust)\n- `pl-prod-rbr-are-root-no-identity` -- covered by `target-role-root`'s `root` trust, but no identity `sts:AssumeRole` (root trust only)\n\nTwo roles complete the graph. `pl-prod-rbr-are-target-role` reads the bucket directly and trusts exactly `are-both` and `are-trust-only`. `pl-prod-rbr-are-target-role-root` reads the bucket directly and trusts the account `root`. The target is `pl-sensitive-data-rbr-are-{account_id}-{suffix}`. Your goal is to prove who can read it and compare that against your tool's reverse blast radius answer.\n\n## Reconnaissance\n\nStart by confirming who you are for each set of credentials:\n\n```bash\nexport AWS_ACCESS_KEY_ID=\"<are_both_access_key_id>\"\nexport AWS_SECRET_ACCESS_KEY=\"<are_both_secret_access_key>\"\nunset AWS_SESSION_TOKEN\n\naws sts get-caller-identity --query 'Arn' --output text\n# Expected: arn:aws:iam::{account_id}:user/pl-prod-rbr-are-both\n```\n\nThe graph is documented, so the work is proving it. Before exploiting anything, note the prediction so you can check it against reality: only `are-both` and `are-root-with-identity` should be able to assume a bucket-reading role. The other three each satisfy only one half of the requirement and should be denied.\n\n| User | Identity allows assume? | Trust allows caller? | Can assume? |\n| -- | -- | -- | -- |\n| are-both | yes (target-role) | yes (named) | YES |\n| are-identity-only | yes (target-role) | no | NO |\n| are-trust-only | no | yes (named) | NO |\n| are-root-with-identity | yes (target-role-root) | yes (root defers to identity) | YES |\n| are-root-no-identity | no | yes (root) | NO |\n\n## Exploitation\n\n### Both halves satisfied (are-both)\n\nAs `are-both`, assume `target-role` and read the bucket:\n\n```bash\nCREDENTIALS=$(aws sts assume-role \\\n    --role-arn \"arn:aws:iam::{account_id}:role/pl-prod-rbr-are-target-role\" \\\n    --role-session-name rbr-are-both \\\n    --query 'Credentials' --output json)\n\nexport AWS_ACCESS_KEY_ID=$(echo \"$CREDENTIALS\" | jq -r '.AccessKeyId')\nexport AWS_SECRET_ACCESS_KEY=$(echo \"$CREDENTIALS\" | jq -r '.SecretAccessKey')\nexport AWS_SESSION_TOKEN=$(echo \"$CREDENTIALS\" | jq -r '.SessionToken')\n\naws s3 ls \"s3://pl-sensitive-data-rbr-are-{account_id}-{suffix}/\"\naws s3 cp \"s3://pl-sensitive-data-rbr-are-{account_id}-{suffix}/sensitive-data.txt\" /tmp/rbr-are-sensitive.txt\n```\n\nThis works because both halves line up: `are-both` has the identity permission and is named in `target-role`'s trust. The assumed session inherits the role's `s3:GetObject` and `s3:ListBucket`.\n\n### Identity + root trust (are-root-with-identity)\n\nSwitch to `are-root-with-identity` and assume `target-role-root`:\n\n```bash\nunset AWS_SESSION_TOKEN\nexport AWS_ACCESS_KEY_ID=\"<are_root_with_identity_access_key_id>\"\nexport AWS_SECRET_ACCESS_KEY=\"<are_root_with_identity_secret_access_key>\"\n\nCREDENTIALS=$(aws sts assume-role \\\n    --role-arn \"arn:aws:iam::{account_id}:role/pl-prod-rbr-are-target-role-root\" \\\n    --role-session-name rbr-are-root-with-identity \\\n    --query 'Credentials' --output json)\n\nexport AWS_ACCESS_KEY_ID=$(echo \"$CREDENTIALS\" | jq -r '.AccessKeyId')\nexport AWS_SECRET_ACCESS_KEY=$(echo \"$CREDENTIALS\" | jq -r '.SecretAccessKey')\nexport AWS_SESSION_TOKEN=$(echo \"$CREDENTIALS\" | jq -r '.SessionToken')\n\naws s3 ls \"s3://pl-sensitive-data-rbr-are-{account_id}-{suffix}/\"\n```\n\nThe role's trust names only the account `root`, which on its own trusts no one in particular -- it defers to identity policies. Because this user holds the identity `sts:AssumeRole` permission on the role, that is enough. The assume succeeds and the session reads the bucket.\n\n### Identity only (are-identity-only)\n\nSwitch to `are-identity-only` and attempt the same assume as `are-both`:\n\n```bash\nunset AWS_SESSION_TOKEN\nexport AWS_ACCESS_KEY_ID=\"<are_identity_only_access_key_id>\"\nexport AWS_SECRET_ACCESS_KEY=\"<are_identity_only_secret_access_key>\"\n\naws sts assume-role \\\n    --role-arn \"arn:aws:iam::{account_id}:role/pl-prod-rbr-are-target-role\" \\\n    --role-session-name rbr-are-identity-only \\\n    --query 'Credentials' --output json\n# Expected: An error occurred (AccessDenied) when calling the AssumeRole operation\n```\n\nThe identity policy allows the call, but `target-role`'s trust policy names only `are-both` and `are-trust-only` -- not this user. One half is missing, so the assume is denied. A tool that reads only identity policies would wrongly report this user as a bucket reader.\n\n### Trust only (are-trust-only)\n\nSwitch to `are-trust-only`, which IS named in `target-role`'s trust but has no identity `sts:AssumeRole`:\n\n```bash\nexport AWS_ACCESS_KEY_ID=\"<are_trust_only_access_key_id>\"\nexport AWS_SECRET_ACCESS_KEY=\"<are_trust_only_secret_access_key>\"\n\naws sts assume-role \\\n    --role-arn \"arn:aws:iam::{account_id}:role/pl-prod-rbr-are-target-role\" \\\n    --role-session-name rbr-are-trust-only \\\n    --query 'Credentials' --output json\n# Expected: An error occurred (AccessDenied) when calling the AssumeRole operation\n```\n\nThe role trusts this user, but the user's own policy grants only `sts:GetCallerIdentity`. Without an identity permission to call `sts:AssumeRole`, the assume is denied. A tool that reads only trust policies would wrongly report this user as a bucket reader.\n\n### Root trust, no identity (are-root-no-identity)\n\nFinally, switch to `are-root-no-identity` and attempt to assume `target-role-root`:\n\n```bash\nexport AWS_ACCESS_KEY_ID=\"<are_root_no_identity_access_key_id>\"\nexport AWS_SECRET_ACCESS_KEY=\"<are_root_no_identity_secret_access_key>\"\n\naws sts assume-role \\\n    --role-arn \"arn:aws:iam::{account_id}:role/pl-prod-rbr-are-target-role-root\" \\\n    --role-session-name rbr-are-root-no-identity \\\n    --query 'Credentials' --output json\n# Expected: An error occurred (AccessDenied) when calling the AssumeRole operation\n```\n\nThe role's `root` trust defers to identity policies, and this user has no identity `sts:AssumeRole` permission. The assume is denied. A tool that treats a `root` trust as granting the entire account would wrongly report this user as a bucket reader.\n\n## Verification\n\nEvery claim is now backed by a real call:\n\n- `are-both` assumed `target-role` and read the bucket (both halves satisfied)\n- `are-root-with-identity` assumed `target-role-root` and read the bucket (identity + root trust)\n- `are-identity-only`, `are-trust-only`, and `are-root-no-identity` were each denied, each missing exactly one half\n\nNow run a reverse blast radius query in your security tool against the bucket and compare:\n\n- Direct readers should be exactly `target-role` and `target-role-root`\n- Users that can reach the bucket by assuming exactly one role should be exactly `are-both` and `are-root-with-identity`\n- `are-identity-only`, `are-trust-only`, and `are-root-no-identity` must NOT appear in any \"who can read the bucket\" answer\n\nIf your tool includes `are-identity-only`, it is reading only identity policies. If it includes `are-trust-only` or `are-root-no-identity`, it is reading only trust policies -- or treating a `root` trust as an account-wide grant. Either way, the can_assume edge is wrong, and every reverse blast radius answer that depends on it is wrong too.\n\n## What Happened\n\nYou exercised the five distinct ways a same-account assume-role can line up or fail to line up, and proved with real STS calls which users can reach a sensitive bucket. Only the two users satisfying both halves of the requirement -- an identity `sts:AssumeRole` grant and a matching role trust -- could assume a bucket-reading role. The three users satisfying only one half were denied, and the `root`-trust role correctly deferred to identity policies.\n\nThis is the foundation of every reverse blast radius answer. In real environments, trust policies and identity policies are maintained by different teams, drift apart over time, and frequently include `root` trusts that look permissive but aren't. A graph tool that gets the can_assume edge wrong will either overstate exposure (false positives that bury real findings in noise) or understate it (false negatives that hide the principals nobody remembers granting access). Use this lab as a repeatable test that your tool models both halves of the assume-role decision correctly before trusting it with anything deeper.\n"
+  },
+  "attackMap": {
+    "nodes": [
+      {
+        "id": "are-both",
+        "label": "Identity + Trust User",
+        "type": "principal",
+        "subType": "iam-user",
+        "arn": "arn:aws:iam::{account_id}:user/pl-prod-rbr-are-both",
+        "access": {
+          "type": "assumed-breach-credentials"
+        },
+        "description": "You have gained access to this principal's AWS IAM credentials. These could have been obtained through many real-world vectors: phishing a developer and gaining access to their workstation, compromising a browser session, exploiting a vulnerable workload running in this AWS account, discovering credentials in a public S3 bucket, or finding them hardcoded in source code or a CI/CD pipeline.\nRegardless of how you obtained them, you are now operating as this principal. This IAM user satisfies both halves of a same-account sts:AssumeRole: its identity policy allows sts:AssumeRole on pl-prod-rbr-are-target-role, and that role's trust policy names this user explicitly. It can therefore assume the role and read the sensitive bucket.\n"
+      },
+      {
+        "id": "are-root-with-identity",
+        "label": "Identity + Root Trust User",
+        "type": "principal",
+        "subType": "iam-user",
+        "arn": "arn:aws:iam::{account_id}:user/pl-prod-rbr-are-root-with-identity",
+        "access": {
+          "type": "assumed-breach-credentials"
+        },
+        "description": "You have gained access to this principal's AWS IAM credentials. These could have been obtained through many real-world vectors: phishing a developer and gaining access to their workstation, compromising a browser session, exploiting a vulnerable workload running in this AWS account, discovering credentials in a public S3 bucket, or finding them hardcoded in source code or a CI/CD pipeline.\nRegardless of how you obtained them, you are now operating as this principal. This IAM user's identity policy allows sts:AssumeRole on pl-prod-rbr-are-target-role-root. That role's trust policy grants to the account root, which defers the decision entirely to identity policies -- and this user has the identity permission, so it can assume the role and read the bucket.\n"
+      },
+      {
+        "id": "are-identity-only",
+        "label": "Identity-Only User",
+        "type": "principal",
+        "subType": "iam-user",
+        "arn": "arn:aws:iam::{account_id}:user/pl-prod-rbr-are-identity-only",
+        "access": {
+          "type": "assumed-breach-credentials"
+        },
+        "description": "You have gained access to this principal's AWS IAM credentials. These could have been obtained through many real-world vectors: phishing a developer and gaining access to their workstation, compromising a browser session, exploiting a vulnerable workload running in this AWS account, discovering credentials in a public S3 bucket, or finding them hardcoded in source code or a CI/CD pipeline.\nRegardless of how you obtained them, you are now operating as this principal. This IAM user's identity policy allows sts:AssumeRole on pl-prod-rbr-are-target-role, but that role's trust policy does NOT name this user. A same-account assume needs both halves, so the attempt is denied -- no can_assume edge should be drawn. A tool that reads only identity policies would report this user as a false positive.\n"
+      },
+      {
+        "id": "are-trust-only",
+        "label": "Trust-Only User",
+        "type": "principal",
+        "subType": "iam-user",
+        "arn": "arn:aws:iam::{account_id}:user/pl-prod-rbr-are-trust-only",
+        "access": {
+          "type": "assumed-breach-credentials"
+        },
+        "description": "You have gained access to this principal's AWS IAM credentials. These could have been obtained through many real-world vectors: phishing a developer and gaining access to their workstation, compromising a browser session, exploiting a vulnerable workload running in this AWS account, discovering credentials in a public S3 bucket, or finding them hardcoded in source code or a CI/CD pipeline.\nRegardless of how you obtained them, you are now operating as this principal. This IAM user is named in pl-prod-rbr-are-target-role's trust policy, but its own identity policy grants only sts:GetCallerIdentity -- no sts:AssumeRole. A same-account assume needs both halves, so the attempt is denied -- no can_assume edge should be drawn. A tool that reads only trust policies would report this user as a false positive.\n"
+      },
+      {
+        "id": "are-root-no-identity",
+        "label": "Root Trust, No Identity User",
+        "type": "principal",
+        "subType": "iam-user",
+        "arn": "arn:aws:iam::{account_id}:user/pl-prod-rbr-are-root-no-identity",
+        "access": {
+          "type": "assumed-breach-credentials"
+        },
+        "description": "You have gained access to this principal's AWS IAM credentials. These could have been obtained through many real-world vectors: phishing a developer and gaining access to their workstation, compromising a browser session, exploiting a vulnerable workload running in this AWS account, discovering credentials in a public S3 bucket, or finding them hardcoded in source code or a CI/CD pipeline.\nRegardless of how you obtained them, you are now operating as this principal. This IAM user is covered by pl-prod-rbr-are-target-role-root's root trust, but its identity policy grants only sts:GetCallerIdentity -- no sts:AssumeRole. Because a root trust defers to identity policies and this user has no identity permission, the attempt is denied -- no can_assume edge should be drawn. A tool that treats a root trust as granting the whole account would report this user as a false positive.\n"
+      },
+      {
+        "id": "target-role",
+        "label": "Bucket-Reading Role",
+        "type": "principal",
+        "subType": "iam-role",
+        "arn": "arn:aws:iam::{account_id}:role/pl-prod-rbr-are-target-role",
+        "description": "This IAM role holds s3:GetObject and s3:ListBucket on the sensitive S3 bucket directly. Its trust policy names exactly pl-prod-rbr-are-both and pl-prod-rbr-are-trust-only. Only a caller that is both trusted here and holds an identity sts:AssumeRole permission can assume it -- which is only are-both.\n"
+      },
+      {
+        "id": "target-role-root",
+        "label": "Root-Trust Bucket-Reading Role",
+        "type": "principal",
+        "subType": "iam-role",
+        "arn": "arn:aws:iam::{account_id}:role/pl-prod-rbr-are-target-role-root",
+        "description": "This IAM role holds s3:GetObject and s3:ListBucket on the sensitive S3 bucket directly. Its trust policy grants to the account root, deferring the assume-role decision entirely to callers' identity policies. Only a caller with an identity sts:AssumeRole permission on this role can assume it -- which is only are-root-with-identity.\n"
+      },
+      {
+        "id": "target-bucket",
+        "label": "Sensitive S3 Bucket",
+        "type": "resource",
+        "subType": "s3-bucket",
+        "isTarget": true,
+        "arn": "arn:aws:s3:::pl-sensitive-data-rbr-are-{account_id}-{suffix}",
+        "description": "This is the target sensitive S3 bucket, with no bucket policy. Two roles can read it directly (target-role and target-role-root). Only the two users that satisfy both halves of a same-account assume-role can reach it: are-both via target-role and are-root-with-identity via target-role-root. The other three users each satisfy only one half and cannot reach it.\n"
+      }
+    ],
+    "edges": [
+      {
+        "from": "target-role",
+        "to": "target-bucket",
+        "label": "s3:GetObject, s3:ListBucket",
+        "description": "target-role holds the S3 read permissions directly. Any session for this role can list and read the sensitive bucket with no further hop.\n",
+        "hints": [
+          "Once you hold target-role session credentials, the bucket permissions apply immediately; export the temporary credentials before calling S3."
+        ],
+        "commands": [
+          {
+            "description": "List bucket contents using target-role credentials",
+            "command": "aws s3 ls s3://pl-sensitive-data-rbr-are-{account_id}-{suffix}/"
+          },
+          {
+            "description": "Read an object from the bucket using target-role credentials",
+            "command": "aws s3 cp s3://pl-sensitive-data-rbr-are-{account_id}-{suffix}/sensitive-data.txt /tmp/rbr-are-sensitive.txt"
+          }
+        ]
+      },
+      {
+        "from": "target-role-root",
+        "to": "target-bucket",
+        "label": "s3:GetObject, s3:ListBucket",
+        "description": "target-role-root holds the S3 read permissions directly. Any session for this role can list and read the sensitive bucket with no further hop.\n",
+        "hints": [
+          "Once you hold target-role-root session credentials, the bucket permissions apply immediately; export the temporary credentials before calling S3."
+        ],
+        "commands": [
+          {
+            "description": "List bucket contents using target-role-root credentials",
+            "command": "aws s3 ls s3://pl-sensitive-data-rbr-are-{account_id}-{suffix}/"
+          },
+          {
+            "description": "Read an object from the bucket using target-role-root credentials",
+            "command": "aws s3 cp s3://pl-sensitive-data-rbr-are-{account_id}-{suffix}/sensitive-data.txt /tmp/rbr-are-sensitive.txt"
+          }
+        ]
+      },
+      {
+        "from": "are-both",
+        "to": "target-role",
+        "label": "sts:AssumeRole",
+        "description": "are-both assumes target-role: its identity policy allows sts:AssumeRole on the role AND the role's trust policy names it, so both halves of the same-account assume are satisfied. Export the returned session credentials to inherit the role's bucket access.\n",
+        "hints": [
+          "Use sts:AssumeRole against target-role with are-both's long-term credentials, then export the returned access key, secret key, and session token before touching S3."
+        ],
+        "commands": [
+          {
+            "description": "Assume target-role as are-both",
+            "command": "aws sts assume-role --role-arn arn:aws:iam::{account_id}:role/pl-prod-rbr-are-target-role --role-session-name rbr-are-both --query 'Credentials' --output json"
+          }
+        ]
+      },
+      {
+        "from": "are-root-with-identity",
+        "to": "target-role-root",
+        "label": "sts:AssumeRole",
+        "description": "are-root-with-identity assumes target-role-root: its identity policy allows sts:AssumeRole on the role, and the role's root trust defers to that identity permission, so the assume succeeds. Export the returned session credentials to inherit the role's bucket access.\n",
+        "hints": [
+          "Use sts:AssumeRole against target-role-root with this user's long-term credentials; the role's root trust means your identity permission alone carries the assume, so export the returned session credentials before touching S3."
+        ],
+        "commands": [
+          {
+            "description": "Assume target-role-root as are-root-with-identity",
+            "command": "aws sts assume-role --role-arn arn:aws:iam::{account_id}:role/pl-prod-rbr-are-target-role-root --role-session-name rbr-are-root-with-identity --query 'Credentials' --output json"
+          }
+        ]
+      }
+    ]
+  },
+  "hasAttackMap": true,
+  "principalHopCount": 6,
+  "startAccessType": "assumed-breach-credentials",
+  "services": [
+    "sts"
+  ],
+  "slug": "test-reverse-blast-radius-assume-role-edges",
+  "hasDemoTranscript": false
+}
