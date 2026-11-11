@@ -36,7 +36,8 @@ Do not load the other two reference files — they're irrelevant to this path an
    - Use WebFetch to check the specific detection files/areas it lists
    - Search for the exact permission names (e.g., "CreateAccessKey", "PassRole", "actAs")
    - For multi-permission paths, search for the combination
-   - Verify the tool explicitly checks for this privilege escalation path
+   - For every GCP path, inspect GCPwn's OpenGraph edge index at https://github.com/NetSPI/gcpwn/blob/main/gcpwn/mappings/og_defined_edges.json before searching its individual modules
+   - Verify the tool explicitly checks for this privilege escalation path, including the same API generation and invocation permission. A Gen1 GCP edge is not exact detection for a Gen2 path with different required permissions
 
 3. **Find the specific source code location**:
    - Get the direct GitHub link to the file/line where detection is implemented

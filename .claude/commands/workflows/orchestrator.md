@@ -113,7 +113,12 @@ When the CLI needs more than `permissions.required` (common on GCP), add a `curl
 Where an exploitation framework module verifiably covers the path's exact technique, add it as an additional tab (each cloud has its own — do not cross-apply an AWS tool to a GCP/Azure path or vice versa; the validator rejects it):
 
 - **AWS**: `pacu`, `pmapper`, `stratus`, `leonidas`, `nebula`, `pathrunner`
-- **GCP**: `gcpwn` (NetSPI's GCP pentesting framework) — check its module tree at `gcpwn/modules/gcp/{service}/{enumeration,exploit,utilities}/` on https://github.com/NetSPI/GCPwn for a module matching the required permission(s) (e.g. `exploit_generate_access_token` for `iam.serviceAccounts.getAccessToken`, `exploit_service_account_keys` for `iam.serviceAccountKeys.create`). Modules are invoked as `modules run <module_name> [flags]` — see the README's "Exploit Module TLDR" section for real flag examples before writing commands.
+- **GCP**: `gcpwn` (Scott Weston / NetSPI's GCP pentesting framework). Check it for every GCP path in this order:
+  1. Inspect the OpenGraph edge index at https://github.com/NetSPI/gcpwn/blob/main/gcpwn/mappings/og_defined_edges.json for the path's permission combination or capability edge.
+  2. Inspect the matching implementation under `gcpwn/modules/gcp/{service}/{enumeration,exploit,utilities}/` and the Exploit Module Reference wiki. Verify the exact module name, flags, API generation, source-staging behavior, and extra permissions before writing a command.
+  3. When a module supports the path, add a `gcpwn` exploitation tab and have the attribution agent include the pinned module source and relevant OpenGraph edge in `references`, crediting Scott Weston / NetSPI. Examples include `exploit_generate_access_token`, `exploit_cloudfunctions_function_as_sa`, and `exploit_cloudrun_service_as_sa`.
+  4. Modules are invoked as `modules run <module_name> [flags]`. Never fabricate syntax. If the module needs a pre-staged payload (`--source-uri`) or optional exfiltration channel, state those requirements and any permissions outside the path's minimum set in the step description.
+  5. Do not treat adjacent coverage as exact detection. For example, GCPwn's current Cloud Functions OpenGraph edges use Gen1 `cloudfunctions.functions.call`; they are useful references, while its exploit module supports Gen2, but those edges are not exact detection for a Gen2 path using `run.routes.invoke`.
 - **Azure**: none established yet
 
 Never fabricate a tool tab or invocation syntax — verify the module/command actually exists (e.g. by browsing the tool's repo) before adding it. If no framework module covers this specific technique, omit the extra tab and use only the native CLI.
