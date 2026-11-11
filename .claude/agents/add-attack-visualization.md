@@ -120,6 +120,7 @@ description: |
 - Examples of correct implementations: SSM-001, SSM-002, SAGEMAKER-003, SAGEMAKER-004
 - Examples of files that were fixed: CODEBUILD-002, CODEBUILD-003, BEDROCK-002, LAMBDA-003
 - **Why**: The role is a distinct principal that the resource assumes, and must be explicitly shown in the attack flow
+- **GCP**: the explicit node is the service account the resource runs as (e.g. the Cloud Function's attached service account, `type: principal`): `start` → `cloud_function` → `function_sa` → `payload` → `outcomes`
 
 **Resource Nodes:**
 - Use descriptive labels that indicate if a new resource is created of if an existing resource is being attacked.

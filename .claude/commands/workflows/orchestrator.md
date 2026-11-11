@@ -45,7 +45,8 @@ Read these files to understand the attack:
 **Map the lab's permissions** (see `permissions` in @SCHEMA.md):
 - Lab `permissions.required` → `permissions.required`, unchanged. These are the raw-API minimum, verified in the lab, so don't drop any (GCP `*.operations.get` and `cloudfunctions.functions.sourceCodeSet` are real requirements). Turn each `resource` into `resourceConstraints` prose ("Must be granted on the target service account", "Project-level")
 - Lab `permissions.helpful` → `permissions.additional`. Entries whose `purpose` says they are only needed by `gcloud` keep that note: start `resourceConstraints` with "Required only by `gcloud <command>` ...; not needed via the REST API". Recon entries keep their purpose
-- `name` lists only the permissions that define the technique (see `name` in @SCHEMA.md); plumbing permissions stay out of `name` but remain in `required`
+- One exception to "unchanged": a lab-required permission whose only role is reading back the exfiltrated credential through a cloud channel moves to `permissions.additional`, because an out-of-band exfiltration needs none. Example: `gcp-cloudrun-001`'s `logging.logEntries.list`, which reads the token the container printed to Cloud Run logs. Start its `resourceConstraints` with "Needed only to read the token back through Cloud Logging". Permissions that trigger the payload or track the deploy (`*.operations.get`, `run.services.get`, `run.routes.invoke` to invoke a Cloud Function) stay in `required`. Tell the user when you apply this, since the path's `required` then differs from the lab's
+- `name` lists only the permissions that define the technique (see `name` in @SCHEMA.md); plumbing permissions stay out of `name` but remain in `required`. On GCP, `iam.serviceAccounts.actAs` is in the name for updates as well as creates (`iam.serviceAccounts.actAs + cloudfunctions.functions.update + run.routes.invoke`)
 
 **Category**: Choose it from the definitions in @SCHEMA.md (which include the GCP mapping), not by copying the lab's `sub_category`. If the two disagree, use the SCHEMA.md category and tell the user about the mismatch so the lab can be fixed.
 
@@ -95,6 +96,8 @@ discoveryAttribution:
     source: Unknown
 references: []
 ```
+
+**Fill in `relatedPaths`** with the IDs of closely related paths: same-cloud siblings (the create and update variants of the same service, other actAs/PassRole paths on similar compute) and, for GCP/Azure, the AWS analog where one exists (`gcp-cloudfunctions-001` → `lambda-001`, `gcp-cloudfunctions-002` → `lambda-003`, `gcp-cloudrun-001` → `apprunner-001`). Only list IDs that exist in `data/paths/`. When you link to an existing path of the same cloud, add the reverse link to that file too.
 
 **Omit these optional fields** (enrichment agents will add them):
 - `attackVisualization` (add-vis agent)
@@ -190,7 +193,7 @@ recommendation: |
   - Use IAM Recommender / Policy Analyzer to find unused or overly broad `actAs` grants
 ```
 
-GCP placeholders: `[AUDIT_METHOD]` is the audit log method name for the create call (e.g. `google.cloud.functions.v2.FunctionService.CreateFunction`, `google.cloud.run.v2.Services.CreateService`; take it from the lab README's "Cloud Audit Log Events to Monitor" when there is one). The other placeholders match the AWS list below.
+GCP placeholders: `[AUDIT_METHOD]` is the audit log method name for the create call, written as the `protoPayload.methodName` value that appears in Cloud Audit Logs (e.g. `google.cloud.functions.v2.FunctionService.CreateFunction`, `google.cloud.functions.v2.FunctionService.UpdateFunction`, `google.cloud.run.v2.Services.CreateService`, `GenerateAccessToken` on `iamcredentials.googleapis.com`). Lab READMEs' "Cloud Audit Log Events to Monitor" sections use a `service.googleapis.com/Method` shorthand (`cloudfunctions.googleapis.com/CreateFunction`); use them to pick which events to monitor, but write the full method name. The other placeholders match the AWS list below.
 
 **Template placeholders to adapt:**
 - `[SERVICE_RESOURCE]` - The AWS resource type (e.g., "Lambda function", "EC2 instance", "SageMaker notebook")

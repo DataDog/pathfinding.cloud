@@ -4,9 +4,13 @@ This document defines the YAML schema used for documenting cloud IAM privilege e
 
 ## Schema Version
 
-Current version: `1.8.0`
+Current version: `1.8.1`
 
 ### Version History
+
+#### Version 1.8.1 (2026-11-10)
+- `permissions.additional` also holds lab-required permissions that only read back an exfiltrated credential through a cloud channel (e.g. `logging.logEntries.list` to read a token printed to Cloud Run logs), since an out-of-band exfiltration needs none of them
+- Added a GCP `existing-passrole` example to `name`: GCP checks `iam.serviceAccounts.actAs` on updates too, so it belongs in the name
 
 #### Version 1.8.0 (2026-11-10)
 - Added the `curl` exploitation tool key for raw REST API steps. It is valid on every cloud; every other tool key is now validated against the path's cloud (no `awscli` tab on a GCP path, no `gcloud` tab on an AWS path)
@@ -104,7 +108,8 @@ Unique identifier for the privilege escalation path.
 #### `name` (string)
 Human-readable name using the cloud's exact IAM permission syntax.
 - AWS (`service:Action`): `iam:CreatePolicyVersion`, `iam:PassRole + ec2:RunInstances`
-- GCP (`service.resource.verb`): `iam.serviceAccounts.getAccessToken`, `iam.serviceAccounts.actAs + cloudfunctions.functions.create + run.routes.invoke`
+- GCP (`service.resource.verb`): `iam.serviceAccounts.getAccessToken`, `iam.serviceAccounts.actAs + cloudfunctions.functions.create + run.routes.invoke`, `iam.serviceAccounts.actAs + cloudfunctions.functions.update + run.routes.invoke`
+- On GCP, `iam.serviceAccounts.actAs` is part of the name for both creating and updating a resource that runs as a service account, because GCP checks it in both cases (unlike AWS `lambda-003`, `lambda:UpdateFunctionCode`, which needs no `iam:PassRole`)
 - Use ` + ` (with spaces) to separate multiple permissions
 - List the permissions that define the technique. Leave out plumbing the API requires on every call of that kind (e.g. GCP `*.operations.get` to poll a long-running operation, `cloudfunctions.functions.sourceCodeSet` to upload source); those still belong in `permissions.required`
 
@@ -139,11 +144,12 @@ IAM permissions for the escalation path, organized into required and additional 
 
 The permissions object contains two arrays:
 - `required` (array of objects, required): Minimum permissions needed by the principal exploiting this path, using the raw API (no CLI)
-- `additional` (array of objects, optional): Permissions that help but are not strictly needed. Two kinds:
+- `additional` (array of objects, optional): Permissions that help but are not strictly needed. Three kinds:
   - Recon get/list permissions that aid in exploitation but could come from a separate read-only principal
   - Permissions a particular CLI needs on top of the raw API minimum, which the exploiting principal itself must hold to use that CLI. Start their `resourceConstraints` with which command needs them, e.g. "Required only by `gcloud functions deploy`, which calls GetFunction before creating; not needed via the REST API"
+  - Permissions whose only role is reading back an exfiltrated credential through a cloud channel, e.g. `logging.logEntries.list` to read a token the payload printed to Cloud Run logs. An out-of-band exfiltration (the payload sends the token to an attacker-controlled endpoint) needs none of them. Start their `resourceConstraints` with "Needed only to read the token back through ..."
 
-This matches pathfinding-labs: a lab's `scenario.yaml` `permissions.required` maps to `required` unchanged (its `resource` becomes `resourceConstraints` prose), and its `permissions.helpful` maps to `additional`. Keep the "only needed by `gcloud`" notes from the lab.
+This matches pathfinding-labs: a lab's `scenario.yaml` `permissions.required` maps to `required` unchanged (its `resource` becomes `resourceConstraints` prose), and its `permissions.helpful` maps to `additional`. Keep the "only needed by `gcloud`" notes from the lab. The one exception is a lab-required exfiltration read-back permission (above), which moves to `additional`. Permissions needed to trigger the payload or to track the deploy (`*.operations.get`, `run.services.get`, `run.routes.invoke` to invoke a Cloud Function) stay in `required`.
 
 Each permission object contains:
 - `permission` (string, required): The IAM permission (e.g., `iam:CreatePolicyVersion`)
