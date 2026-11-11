@@ -21,7 +21,10 @@ Open source security tools to check for GCP IAM privilege escalation detection c
 
 ## 4. GCPwn (NetSPI)
 - **Repository**: https://github.com/NetSPI/GCPwn
-- **What to look for**: This is a GCP pentesting/enumeration tool (built by NetSPI) rather than a pure detector — check its modules for privilege escalation enumeration logic matching this path's required permission(s) (e.g. service account impersonation via `iam.serviceAccounts.getAccessToken`/`generateAccessToken`, or the predefined `roles/iam.serviceAccountTokenCreator` role)
+- **Check first**: https://github.com/NetSPI/gcpwn/blob/main/gcpwn/mappings/og_defined_edges.json — GCPwn's OpenGraph capability and privilege-escalation edge definitions are the fastest authoritative index of permission combinations it detects
+- **Then inspect**: the matching implementation under `gcpwn/modules/gcp/{service}/` to confirm generation-specific permissions and behavior
+- **What to look for**: This is a GCP pentesting/enumeration tool (built by Scott Weston / NetSPI) rather than a pure detector — verify that an OpenGraph edge matches the path's exact required permission model (e.g. service account impersonation via `iam.serviceAccounts.getAccessToken`, or `iam.serviceAccounts.actAs` combined with a compute create/update permission)
+- **Generation caveat**: Do not claim exact detection when the edge models an adjacent API generation with different permissions, such as a Gen1 Cloud Functions edge using `cloudfunctions.functions.call` for a Gen2 path requiring `run.routes.invoke`. In that case, include GCPwn as an attribution/reference or exploitation tool when its module supports the path, but omit it from `detectionTools`
 
 ## 5. Rhino Security Labs GCP-IAM-Privilege-Escalation
 - **Repository**: https://github.com/RhinoSecurityLabs/GCP-IAM-Privilege-Escalation

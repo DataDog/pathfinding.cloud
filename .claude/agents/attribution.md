@@ -34,6 +34,10 @@ Your main jobs are:
    **For GCP paths**, also check:
    - Rhino Security Labs' GCP IAM privilege escalation series by Spencer Gietzen (2020), starting at https://rhinosecuritylabs.com/gcp/privilege-escalation-google-cloud-platform-part-1/, with one exploit script per method in https://github.com/RhinoSecurityLabs/GCP-IAM-Privilege-Escalation — the closest GCP analog to Gietzen's AWS series, and the first documentation of most classic GCP paths (see `data/paths/gcp/iam/gcp-iam-001.yaml`)
    - Dylan Ayrey & Allison Donovan's DEF CON 28 (2020) talk "Lateral Movement & Privilege Escalation in GCP" — a separate source; cite it when it covers a path the Rhino series doesn't, not as the author of the Rhino work
+   - **Always inspect GCPwn's OpenGraph edge definitions** at https://github.com/NetSPI/gcpwn/blob/main/gcpwn/mappings/og_defined_edges.json for a matching permission combination or capability edge. Also inspect the matching module under https://github.com/NetSPI/gcpwn/tree/main/gcpwn/modules/gcp when one exists
+     - If GCPwn models or implements the path, include the specific edge or module source in `references`, even when Rhino or another researcher remains `firstDocumented`
+     - Credit GCPwn to Scott Weston (`@WebbinRoot`) / NetSPI in the reference title or surrounding research notes; do not replace the original discoverer with the later tool author
+     - Distinguish exact coverage from an adjacent generation or permission model. For example, a Gen1 Cloud Functions edge using `cloudfunctions.functions.call` is useful supporting research for the technique but is not exact Gen2 detection for a path requiring `run.routes.invoke`
    - Google's own IAM/security documentation and blog
 
    **For Azure paths**, also check:
@@ -124,9 +128,10 @@ Your main jobs are:
    **References section guidance:**
    - Include PRIMARY sources that document THIS specific attack path
    - Include original research blog posts, not just general documentation
+   - For GCP, include a matching GCPwn edge or exploit-module source when available, after the original research sources
    - Do NOT include generic AWS documentation unless it specifically discusses the attack
    - Do NOT add practice environments here (those go in `learningEnvironments`)
-   - Order: Original research first, then derivative documentation
+   - Order: Original research first, then derivative documentation and relevant tool implementations
 
 7. **Use the Edit tool to add `discoveryAttribution` and `references` sections to the YAML file**
    - Add `discoveryAttribution` with proper structure (firstDocumented, derivativeOf, ultimateOrigin)
