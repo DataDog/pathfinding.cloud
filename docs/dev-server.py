@@ -11,7 +11,8 @@ import os
 import re
 from urllib.parse import urlparse
 
-DEFAULT_PORT = 8888
+DEFAULT_PORT = 8890
+RESERVED_PORT = 8888
 
 class SPAHTTPRequestHandler(http.server.SimpleHTTPRequestHandler):
     """HTTP request handler with SPA support."""
@@ -197,6 +198,12 @@ def main():
                         help=f"Port to listen on (default: {DEFAULT_PORT})")
     args = parser.parse_args()
     port = args.port_flag if args.port_flag is not None else args.port
+    if port == RESERVED_PORT:
+        parser.error(
+            f"Port {RESERVED_PORT} is reserved by another local service and must not "
+            f"be used for pathfinding.cloud. Use the default port {DEFAULT_PORT} or "
+            "choose another port."
+        )
 
     # Change to the website directory (where index.html is)
     os.chdir(os.path.dirname(os.path.abspath(__file__)))

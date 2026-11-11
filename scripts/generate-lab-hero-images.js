@@ -18,7 +18,7 @@
  *   node scripts/generate-lab-hero-images.js --plan           # list labs to render; render nothing
  *   node scripts/generate-lab-hero-images.js --force          # regenerate all
  *   node scripts/generate-lab-hero-images.js --slug iam-002   # single lab
- *   node scripts/generate-lab-hero-images.js --port 8889      # alternate dev-server port
+ *   node scripts/generate-lab-hero-images.js --port 8891      # alternate dev-server port (8888 is reserved)
  *
  * Requires: `npm install` (Playwright) and `npx playwright install chromium`,
  * except for --plan, which never loads Playwright.
@@ -37,6 +37,7 @@ const REPO_ROOT = path.resolve(__dirname, '..');
 const DOCS_DIR = path.join(REPO_ROOT, 'docs');
 const LABS_DATA_DIR = path.join(DOCS_DIR, 'labs', 'data');
 const LABS_OUTPUT_DIR = path.join(DOCS_DIR, 'labs');
+const RESERVED_DEV_SERVER_PORT = 8888;
 
 // Per-lab hero image lives next to that lab's stub: docs/labs/{slug}/hero.png
 function heroPathFor(slug) {
@@ -74,6 +75,11 @@ function parseArgs(argv) {
             console.error(`Unknown arg: ${a}`);
             process.exit(2);
         }
+    }
+    if (args.port === RESERVED_DEV_SERVER_PORT) {
+        console.error(`Port ${RESERVED_DEV_SERVER_PORT} is reserved by another local service and must not be used for pathfinding.cloud.`);
+        console.error('Use the script default or choose another port, such as 8890.');
+        process.exit(2);
     }
     return args;
 }
@@ -186,31 +192,11 @@ async function startDevServer(port) {
         return null; // not owned by us
     }
     console.log(`→ Starting dev server on port ${port}...`);
-    // dev-server.py hard-codes port 8888. Start a generic Python http.server
-    // from docs/ on the requested port, then SPA-fallback by serving files
-    // directly. For our purposes this works because Playwright navigates to
-    // /labs/index.html and we use pushState to set the lab URL inside JS, OR
-    // it visits /labs/{slug}/ and once stubs exist they serve directly.
-    //
-    // Simpler: just exec the existing dev-server.py with PORT overridden via
-    // a tiny env-aware wrapper. We instead set PYTHONUNBUFFERED and pass the
-    // port by patching dev-server.py at runtime is overkill -- spawn a
-    // one-line Python runner that imports the handler and binds to `port`.
-    const runner = `
-import sys, os, socketserver
-sys.path.insert(0, ${JSON.stringify(DOCS_DIR)})
-os.chdir(${JSON.stringify(DOCS_DIR)})
-import importlib.util
-spec = importlib.util.spec_from_file_location('dev_server', ${JSON.stringify(path.join(DOCS_DIR, 'dev-server.py'))})
-mod = importlib.util.module_from_spec(spec)
-spec.loader.exec_module(mod)
-socketserver.TCPServer.allow_reuse_address = True
-with socketserver.TCPServer(("", ${port}), mod.SPAHTTPRequestHandler) as httpd:
-    print("dev-server up on ${port}", flush=True)
-    httpd.serve_forever()
-`;
-    const proc = spawn('python3', ['-c', runner], {
+    // Use the project's server entry point so its default-port and reserved-port
+    // policy applies consistently here as well as during manual development.
+    const proc = spawn('python3', [path.join(DOCS_DIR, 'dev-server.py'), '--port', String(port)], {
         cwd: REPO_ROOT,
+        env: { ...process.env, PYTHONUNBUFFERED: '1' },
         stdio: ['ignore', 'inherit', 'inherit'],
     });
     const ready = await waitForPort(port, 10000);
