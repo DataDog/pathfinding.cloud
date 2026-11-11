@@ -1,0 +1,304 @@
+{
+  "displayName": "Reverse Blast Radius by Hop Depth to Bucket",
+  "name": "test-reverse-blast-radius-hop-depth",
+  "description": "Tool testing scenario validating that reverse blast radius queries return principals at every hop depth (direct, 1 hop, 2 hops) and showing that a query limited to N hops omits shallower and deeper principals",
+  "costEstimate": "$0/mo",
+  "pathfindingCloudId": null,
+  "interactiveDemo": false,
+  "category": "Tool Testing",
+  "subCategory": "reverse-blast-radius",
+  "pathType": "multi-hop",
+  "target": "to-bucket",
+  "points": 30,
+  "environments": [
+    "prod"
+  ],
+  "attackPath": {
+    "principals": [],
+    "summary": ""
+  },
+  "mitreAttack": {
+    "tactics": [
+      "TA0009 - Collection",
+      "TA0004 - Privilege Escalation"
+    ],
+    "techniques": [
+      "T1530 - Data from Cloud Storage Object",
+      "T1078.004 - Valid Accounts: Cloud Accounts"
+    ]
+  },
+  "terraform": {
+    "variableName": "enable_tool_testing_test_reverse_blast_radius_hop_depth",
+    "modulePath": "modules/scenarios/tool-testing/test-reverse-blast-radius-hop-depth"
+  },
+  "githubUrl": "https://github.com/DataDog/pathfinding-labs/tree/main/modules/scenarios/tool-testing/test-reverse-blast-radius-hop-depth",
+  "schemaVersion": "4.9.0",
+  "cloud": "aws",
+  "permissions": {
+    "principals": [
+      {
+        "name": "pl-prod-rbr-hd-user-a",
+        "required": [
+          {
+            "permission": "s3:GetObject",
+            "resource": "arn:aws:s3:::pl-sensitive-data-rbr-hd-*/*",
+            "description": "direct permission to read objects from the target bucket (depth 0)"
+          },
+          {
+            "permission": "s3:ListBucket",
+            "resource": "arn:aws:s3:::pl-sensitive-data-rbr-hd-*",
+            "description": "direct permission to list the target bucket (depth 0)"
+          }
+        ],
+        "helpful": [
+          {
+            "permission": "sts:GetCallerIdentity",
+            "purpose": "verify current identity"
+          }
+        ]
+      },
+      {
+        "name": "pl-prod-rbr-hd-role-r1",
+        "required": [
+          {
+            "permission": "s3:GetObject",
+            "resource": "arn:aws:s3:::pl-sensitive-data-rbr-hd-*/*",
+            "description": "direct permission to read objects from the target bucket (depth 0; inherited by every principal that can assume this role)"
+          },
+          {
+            "permission": "s3:ListBucket",
+            "resource": "arn:aws:s3:::pl-sensitive-data-rbr-hd-*",
+            "description": "direct permission to list the target bucket (depth 0)"
+          }
+        ],
+        "helpful": []
+      },
+      {
+        "name": "pl-prod-rbr-hd-user-b",
+        "required": [
+          {
+            "permission": "sts:AssumeRole",
+            "resource": "arn:aws:iam::{account_id}:role/pl-prod-rbr-hd-role-r1",
+            "description": "one hop to the bucket-reading role (depth 1)"
+          }
+        ],
+        "helpful": []
+      },
+      {
+        "name": "pl-prod-rbr-hd-role-r2",
+        "required": [
+          {
+            "permission": "sts:AssumeRole",
+            "resource": "arn:aws:iam::{account_id}:role/pl-prod-rbr-hd-role-r1",
+            "description": "one hop to the bucket-reading role (depth 1)"
+          }
+        ],
+        "helpful": []
+      },
+      {
+        "name": "pl-prod-rbr-hd-user-c",
+        "required": [
+          {
+            "permission": "sts:AssumeRole",
+            "resource": "arn:aws:iam::{account_id}:role/pl-prod-rbr-hd-role-r2",
+            "description": "first of two hops to the bucket-reading role (depth 2)"
+          }
+        ],
+        "helpful": []
+      }
+    ]
+  },
+  "readme": {
+    "objective": "Your objective is to learn how to validate that a security tool answers \"who can read this bucket\" correctly at every hop depth by demonstrating that `pl-prod-rbr-hd-user-a` and `pl-prod-rbr-hd-role-r1` can read the `pl-sensitive-data-rbr-hd-{account_id}-{suffix}` bucket directly, while `pl-prod-rbr-hd-user-b`, `pl-prod-rbr-hd-role-r2`, and `pl-prod-rbr-hd-user-c` can only reach it through one or two `sts:AssumeRole` hops into `pl-prod-rbr-hd-role-r1`.\n\n- **Start:** `arn:aws:iam::{account_id}:user/pl-prod-rbr-hd-user-a` (depth 0), `arn:aws:iam::{account_id}:user/pl-prod-rbr-hd-user-b` (depth 1), and `arn:aws:iam::{account_id}:user/pl-prod-rbr-hd-user-c` (depth 2)\n- **Destination resource:** `arn:aws:s3:::pl-sensitive-data-rbr-hd-{account_id}-{suffix}`",
+    "setup": {
+      "prerequisites": "1. Install the `plabs` CLI:\n   ```bash\n   brew install pathfinding-labs/tap/plabs\n   ```\n2. Configure your AWS profiles in `~/.plabs/plabs.yaml` (or run `plabs init` if you haven't already)",
+      "deployNonInteractive": "```bash\nplabs enable test-reverse-blast-radius-hop-depth-to-bucket\nplabs apply\n```",
+      "deployTui": "1. Launch the TUI: `plabs`\n2. Navigate to `test-reverse-blast-radius-hop-depth-to-bucket` in the scenarios list\n3. Press `space` to enable it\n4. Press `a` to apply"
+    },
+    "attack": {
+      "resourcesCreated": "| ARN | Purpose |\n| -- | -- |\n| `arn:aws:iam::{account_id}:user/pl-prod-rbr-hd-user-a` | Depth 0 user with direct S3 read permissions on the bucket (access keys provided) |\n| `arn:aws:iam::{account_id}:role/pl-prod-rbr-hd-role-r1` | Depth 0 role with direct S3 read permissions; trusts only user-b and role-r2 |\n| `arn:aws:iam::{account_id}:user/pl-prod-rbr-hd-user-b` | Depth 1 user with only `sts:AssumeRole` on role-r1 (access keys provided) |\n| `arn:aws:iam::{account_id}:role/pl-prod-rbr-hd-role-r2` | Depth 1 role with only `sts:AssumeRole` on role-r1; trusts only user-c |\n| `arn:aws:iam::{account_id}:user/pl-prod-rbr-hd-user-c` | Depth 2 user with only `sts:AssumeRole` on role-r2 (access keys provided) |\n| `arn:aws:s3:::pl-sensitive-data-rbr-hd-{account_id}-{suffix}` | Target S3 bucket containing `sensitive-data.txt`; no bucket policy |",
+      "demoAttack": {
+        "executing": "The script will:\n1. Retrieve credentials and the bucket name from Terraform outputs\n2. As user-a (depth 0), list and read the bucket directly\n3. As user-b, confirm that direct bucket access is denied, then assume role-r1 (1 hop) and read the bucket; the role-r1 session also proves role-r1 reads the bucket with no further hop (depth 0)\n4. As user-c, confirm that direct bucket access is denied, then assume role-r2 (hop 1), confirm role-r2 itself is denied, chain into role-r1 (hop 2) and read the bucket; this proves role-r2 is depth 1 and user-c is depth 2\n5. Print the observed hop depth per principal (the script exits non-zero if any observation differs from expectation)\n6. Print the expected reverse blast radius results per depth: exactly 0 hops = user-a, role-r1; exactly 1 hop = user-b, role-r2; exactly 2 hops = user-c; cumulative <= 1 hop = user-a, role-r1, user-b, role-r2; cumulative <= 2 hops = all five principals\n\nThe \"exactly N hops\" and \"up to N hops\" distinction is the crux of this lab. A query for exactly 0 hops returns only the direct principals. A query for exactly 1 hop returns the principals one assume-role away but not the direct ones. Deeper chains need another query. A complete answer needs one query per depth, or a single cumulative \"up to 2 hops\" query.",
+        "resourcesCreated": "- Temporary STS session credentials for role-r1 (assumed by user-b and by the role-r2 session) and role-r2 (assumed by user-c); these expire on their own\n- Temporary file `/tmp/rbr-hd-sensitive.txt` downloaded from the sensitive bucket (removed by the cleanup script)",
+        "nonInteractive": "```bash\nplabs demo --list\nplabs demo test-reverse-blast-radius-hop-depth\n```",
+        "tui": "1. Launch the TUI: `plabs`\n2. Navigate to `test-reverse-blast-radius-hop-depth-to-bucket` in the scenarios list\n3. Press `r` to run the demo script"
+      },
+      "cleanup": {
+        "nonInteractive": "```bash\nplabs cleanup --list\nplabs cleanup test-reverse-blast-radius-hop-depth\n```",
+        "tui": "1. Launch the TUI: `plabs`\n2. Navigate to `test-reverse-blast-radius-hop-depth-to-bucket` in the scenarios list\n3. Press `c` to run the cleanup script"
+      }
+    },
+    "teardown": {
+      "nonInteractive": "```bash\nplabs disable test-reverse-blast-radius-hop-depth-to-bucket\nplabs apply\n```",
+      "tui": "1. Launch the TUI: `plabs`\n2. Navigate to `test-reverse-blast-radius-hop-depth-to-bucket` in the scenarios list\n3. Press `space` to disable it\n4. Press `D` to destroy"
+    },
+    "defend": {
+      "cspm": {
+        "whatToDetect": "A properly configured security analysis platform or CSPM tool performing a reverse blast radius query on the bucket `pl-sensitive-data-rbr-hd-{account_id}-{suffix}` should identify:\n\n1. **Depth 0 (direct)**: `pl-prod-rbr-hd-user-a` and `pl-prod-rbr-hd-role-r1` hold `s3:GetObject` and `s3:ListBucket` on the bucket through their own IAM policies\n2. **Depth 1**: `pl-prod-rbr-hd-user-b` (user-b -> role-r1) and `pl-prod-rbr-hd-role-r2` (role-r2 -> role-r1) reach the bucket through one `sts:AssumeRole` hop\n3. **Depth 2**: `pl-prod-rbr-hd-user-c` (user-c -> role-r2 -> role-r1) reaches the bucket through two chained `sts:AssumeRole` hops\n4. **Both sides of each hop**: the identity policy on the caller allows `sts:AssumeRole` and the role trust policy names the caller\n\n**Expected Query Results (truth table):**\n\n| Query | Expected principals |\n| -- | -- |\n| Exactly 0 hops | user-a, role-r1 |\n| Exactly 1 hop | user-b, role-r2 |\n| Exactly 2 hops | user-c |\n| Up to 1 hop (cumulative) | user-a, role-r1, user-b, role-r2 |\n| Up to 2 hops (cumulative) | user-a, role-r1, user-b, role-r2, user-c |\n\n**Exactly N vs. up to N:** a tool that treats the hop count as an exact depth returns a disjoint set per query. A 0-hop query returns only the direct principals. A 1-hop query returns user-b and role-r2 but NOT user-a and role-r1, because those need zero hops. A 2-hop query returns only user-c. Anyone who runs a single query at one depth gets a partial answer. The complete answer is the union of every depth, which is what a cumulative \"up to N hops\" query returns. Tools and analysts need to know which semantics a query uses, and must pick N at least as large as the deepest chain in the environment (2 here).\n\n**Tool Testing Focus:**\n\n1. **Depth Semantics**: Does the tool document and implement hop limits as \"exactly N\" or \"up to N\", and does the result match?\n2. **Multi-Hop Traversal**: Does the tool follow role chaining (user-c -> role-r2 -> role-r1) rather than stopping after one assume-role edge?\n3. **Direct Principals at Depth 0**: Does a 0-hop query still return the roles and users that hold the permission themselves?\n4. **Completeness**: Does a cumulative query with enough hops return all five principals?\n\n**Expected Tool Behavior:**\n\nPassing tools:\n- Return exactly user-a and role-r1 for 0 hops, user-b and role-r2 for 1 hop, and user-c for 2 hops (or the cumulative equivalents)\n- Return all five principals when the hop limit is 2 or more\n- Make clear which hop depth each principal was found at\n\nFailing tools:\n- Return only direct principals regardless of the hop setting\n- Return user-b and role-r2 but silently drop user-c at 2 hops\n- Mix depths so that a 1-hop query includes direct principals without saying so\n- Cap traversal at one assume-role edge",
+        "prevention": "This is a tool-testing scenario, so the guidance below applies to managing access to sensitive buckets in real environments:\n\n- Treat any role that holds sensitive S3 permissions as reachable by everything that can assume it, directly or transitively, and review its trust policy accordingly\n- Restrict role trust policies to specific principal ARNs (as this lab does) rather than account root, and add conditions such as `aws:PrincipalOrgID`, `sts:ExternalId`, or MFA where applicable\n- Avoid role chains deeper than necessary; every extra assume-role hop widens the set of principals that can reach the bucket and is easy to miss during review\n- Use IAM Access Analyzer and policy simulation to validate who can reach critical buckets, including through role chaining\n- Run reverse blast radius queries for sensitive resources with a hop limit at least as deep as your longest role chain, and confirm whether your tool uses \"exactly N\" or \"up to N\" semantics\n- Use SCPs or permission boundaries to cap which roles can be assumed from which principals"
+      },
+      "cloudSiem": {
+        "auditLogEvents": "- `sts:AssumeRole` -- role assumption into `pl-prod-rbr-hd-role-r1` by user-b or by a role-r2 session, and into `pl-prod-rbr-hd-role-r2` by user-c; monitor for chained assumptions where the caller is itself an assumed-role session\n- `s3:GetObject` -- object retrieval from the sensitive bucket; monitor for access by unexpected principals or assumed-role sessions\n- `s3:ListBucket` -- bucket listing requests; monitor for enumeration of bucket contents from direct principals and assumed-role sessions",
+        "detonationLogs": "_Detonation log integration (Stratus Red Team / Grimoire) is planned for a future release._"
+      }
+    },
+    "references": "- [T1530 - Data from Cloud Storage Object](https://attack.mitre.org/techniques/T1530/) -- MITRE ATT&CK technique for collecting data from cloud storage\n- [T1078.004 - Valid Accounts: Cloud Accounts](https://attack.mitre.org/techniques/T1078/004/) -- MITRE ATT&CK technique for abusing valid cloud credentials",
+    "solution": "# Solution: Reverse Blast Radius by Hop Depth to Bucket\n\nThis scenario validates that a security tool can answer \"who can read this bucket\" correctly when the answer depends on how many `sts:AssumeRole` hops you are willing to follow. Reverse blast radius queries usually take a hop limit. If that limit is treated as an exact depth, a query for 0 hops returns only the principals that hold the permission directly. A query for 1 hop returns the principals one assume-role away, but not the direct ones. Deeper chains need yet another query.\n\nA complete answer therefore needs one query per depth, or a single cumulative \"up to N hops\" query with N at least as deep as your longest role chain. That is easy to get wrong. An analyst who runs one query and sees a short list can easily conclude the bucket is better protected than it really is. In real environments, deployment pipelines, break-glass roles, and service roles routinely chain two or three assumptions deep, and the principals at the far end are the ones nobody remembers granting access.\n\n## The Challenge\n\nYou have credentials for three IAM users and need to understand who can reach a single bucket:\n\n- `pl-prod-rbr-hd-user-a` -- direct `s3:GetObject` and `s3:ListBucket` on the bucket (depth 0)\n- `pl-prod-rbr-hd-user-b` -- only `sts:AssumeRole` on `pl-prod-rbr-hd-role-r1` (depth 1)\n- `pl-prod-rbr-hd-user-c` -- only `sts:AssumeRole` on `pl-prod-rbr-hd-role-r2`, which can assume `role-r1` (depth 2)\n\nTwo roles complete the graph. `pl-prod-rbr-hd-role-r1` holds the S3 permissions directly and trusts only user-b and role-r2. `pl-prod-rbr-hd-role-r2` has no S3 permissions, only `sts:AssumeRole` on role-r1, and trusts only user-c. The target is `pl-sensitive-data-rbr-hd-{account_id}-{suffix}`. Your goal is to prove with real calls who can read it and at what depth, then compare that to what your security tool reports.\n\n## Reconnaissance\n\nStart by confirming who you are for each set of credentials:\n\n```bash\nexport AWS_ACCESS_KEY_ID=\"<user_a_access_key_id>\"\nexport AWS_SECRET_ACCESS_KEY=\"<user_a_secret_access_key>\"\nunset AWS_SESSION_TOKEN\n\naws sts get-caller-identity --query 'Arn' --output text\n# Expected: arn:aws:iam::{account_id}:user/pl-prod-rbr-hd-user-a\n```\n\n`sts:GetCallerIdentity` is the only reconnaissance permission the lab grants. The graph is documented, so the rest of the work is proving it. Before exploiting anything, note the predicted truth table so you can check it against reality:\n\n| Query | Expected principals |\n| -- | -- |\n| Exactly 0 hops | user-a, role-r1 |\n| Exactly 1 hop | user-b, role-r2 |\n| Exactly 2 hops | user-c |\n| Up to 1 hop | user-a, role-r1, user-b, role-r2 |\n| Up to 2 hops | user-a, role-r1, user-b, role-r2, user-c |\n\n## Exploitation\n\n### Hop 0: Direct access (user-a and role-r1)\n\nAs user-a, read the bucket with no role assumption:\n\n```bash\naws s3 ls \"s3://pl-sensitive-data-rbr-hd-{account_id}-{suffix}/\"\naws s3 cp \"s3://pl-sensitive-data-rbr-hd-{account_id}-{suffix}/sensitive-data.txt\" /tmp/rbr-hd-sensitive.txt\n```\n\nThis works because user-a's own policy grants the S3 actions. Role-r1 holds the same permissions, so any session for it can do the same. You will see that when the later hops land on it. Both user-a and role-r1 are depth 0.\n\n### Hop 1: One assume-role away (user-b and role-r2)\n\nSwitch to user-b. First confirm it cannot read the bucket directly:\n\n```bash\naws s3 ls \"s3://pl-sensitive-data-rbr-hd-{account_id}-{suffix}/\"\n# Expected: An error occurred (AccessDenied)\n```\n\nUser-b has no S3 permissions, but it can assume role-r1, whose trust policy names it explicitly:\n\n```bash\nCREDENTIALS=$(aws sts assume-role \\\n    --role-arn \"arn:aws:iam::{account_id}:role/pl-prod-rbr-hd-role-r1\" \\\n    --role-session-name rbr-hd-user-b \\\n    --query 'Credentials' --output json)\n\nexport AWS_ACCESS_KEY_ID=$(echo \"$CREDENTIALS\" | jq -r '.AccessKeyId')\nexport AWS_SECRET_ACCESS_KEY=$(echo \"$CREDENTIALS\" | jq -r '.SecretAccessKey')\nexport AWS_SESSION_TOKEN=$(echo \"$CREDENTIALS\" | jq -r '.SessionToken')\n\naws s3 ls \"s3://pl-sensitive-data-rbr-hd-{account_id}-{suffix}/\"\n```\n\nThe listing now succeeds, so user-b is a depth 1 principal. Role-r2 follows the same pattern: a role-r2 session calls `sts:AssumeRole` on role-r1 and gains the same access. That makes role-r2 depth 1 too.\n\n### Hop 2: Two assume-roles away (user-c)\n\nSwitch to user-c and confirm direct access is denied. User-c cannot reach role-r1 in one step, because role-r1's trust policy does not name it. It can only assume role-r2:\n\n```bash\nunset AWS_SESSION_TOKEN\nexport AWS_ACCESS_KEY_ID=\"<user_c_access_key_id>\"\nexport AWS_SECRET_ACCESS_KEY=\"<user_c_secret_access_key>\"\n\nR2_CREDENTIALS=$(aws sts assume-role \\\n    --role-arn \"arn:aws:iam::{account_id}:role/pl-prod-rbr-hd-role-r2\" \\\n    --role-session-name rbr-hd-user-c \\\n    --query 'Credentials' --output json)\n\nexport AWS_ACCESS_KEY_ID=$(echo \"$R2_CREDENTIALS\" | jq -r '.AccessKeyId')\nexport AWS_SECRET_ACCESS_KEY=$(echo \"$R2_CREDENTIALS\" | jq -r '.SecretAccessKey')\nexport AWS_SESSION_TOKEN=$(echo \"$R2_CREDENTIALS\" | jq -r '.SessionToken')\n```\n\nThe role-r2 session still cannot read the bucket. It can, however, chain into role-r1, since role-r1 trusts role-r2:\n\n```bash\nR1_CREDENTIALS=$(aws sts assume-role \\\n    --role-arn \"arn:aws:iam::{account_id}:role/pl-prod-rbr-hd-role-r1\" \\\n    --role-session-name rbr-hd-user-c-chain \\\n    --query 'Credentials' --output json)\n\nexport AWS_ACCESS_KEY_ID=$(echo \"$R1_CREDENTIALS\" | jq -r '.AccessKeyId')\nexport AWS_SECRET_ACCESS_KEY=$(echo \"$R1_CREDENTIALS\" | jq -r '.SecretAccessKey')\nexport AWS_SESSION_TOKEN=$(echo \"$R1_CREDENTIALS\" | jq -r '.SessionToken')\n\naws s3 ls \"s3://pl-sensitive-data-rbr-hd-{account_id}-{suffix}/\"\n```\n\nTwo hops later, the listing succeeds. User-c is a depth 2 principal.\n\n## Verification\n\nEvery claim in the truth table is now backed by a real call:\n\n- user-a and role-r1 read the bucket with zero assume-role hops\n- user-b and role-r2 read the bucket after one hop into role-r1\n- user-c read the bucket only after two chained hops (role-r2, then role-r1)\n\nNow run reverse blast radius queries in your security tool against the bucket and compare:\n\n- **Exactly 0 hops** should return user-a and role-r1, and nothing else\n- **Exactly 1 hop** should return user-b and role-r2, and NOT user-a or role-r1. That is correct \"exactly N\" behavior, not a bug, but it means this query alone is an incomplete answer\n- **Exactly 2 hops** should return only user-c\n- **Up to 1 hop** should return user-a, role-r1, user-b, and role-r2, and no user-c\n- **Up to 2 hops** should return all five principals\n\nIf your tool silently stops at one assume-role edge, it will omit user-c. If it labels a 1-hop query as returning \"everyone who can read the bucket\", it has hidden the depth 0 principals. You should know which semantics your tool uses before trusting a short result list.\n\n## What Happened\n\nYou walked a three-depth IAM graph and showed that the set of principals who can read one bucket changes with the question you ask. Five principals can read it: two directly, two after one hop, and one after two hops. Any single fixed-depth query shows at most two of them. The crux is the difference between \"exactly N hops\" and \"up to N hops\". The first gives a disjoint slice per depth, and only the second accumulates toward the real blast radius.\n\nIn real environments, the same pattern hides in plain sight: a pipeline role assumes a deployment role, which assumes a data-access role, and the principal at the start of the chain never shows up in a direct-permission review. When you evaluate a CSPM or graph tool for reverse blast radius, check the depth semantics, test with a hop limit at least as deep as your longest role chain, and use this lab as a repeatable test that the answer is complete.\n"
+  },
+  "attackMap": {
+    "nodes": [
+      {
+        "id": "user-a",
+        "label": "Depth 0 User",
+        "type": "principal",
+        "subType": "iam-user",
+        "arn": "arn:aws:iam::{account_id}:user/pl-prod-rbr-hd-user-a",
+        "access": {
+          "type": "assumed-breach-credentials"
+        },
+        "description": "You have gained access to this principal's AWS IAM credentials. These could have been obtained through many real-world vectors: phishing a developer and gaining access to their workstation, compromising a browser session, exploiting a vulnerable workload running in this AWS account, discovering credentials in a public S3 bucket, or finding them hardcoded in source code or a CI/CD pipeline.\nRegardless of how you obtained them, you are now operating as this principal. This IAM user has direct s3:GetObject and s3:ListBucket permissions on the sensitive S3 bucket -- no role assumption required. It is found by a reverse blast radius query at exactly 0 hops.\n"
+      },
+      {
+        "id": "user-b",
+        "label": "Depth 1 User",
+        "type": "principal",
+        "subType": "iam-user",
+        "arn": "arn:aws:iam::{account_id}:user/pl-prod-rbr-hd-user-b",
+        "access": {
+          "type": "assumed-breach-credentials"
+        },
+        "description": "You have gained access to this principal's AWS IAM credentials. These could have been obtained through many real-world vectors: phishing a developer and gaining access to their workstation, compromising a browser session, exploiting a vulnerable workload running in this AWS account, discovering credentials in a public S3 bucket, or finding them hardcoded in source code or a CI/CD pipeline.\nRegardless of how you obtained them, you are now operating as this principal. This IAM user has no S3 permissions, only sts:AssumeRole on pl-prod-rbr-hd-role-r1. It is found by a reverse blast radius query at exactly 1 hop.\n"
+      },
+      {
+        "id": "user-c",
+        "label": "Depth 2 User",
+        "type": "principal",
+        "subType": "iam-user",
+        "arn": "arn:aws:iam::{account_id}:user/pl-prod-rbr-hd-user-c",
+        "access": {
+          "type": "assumed-breach-credentials"
+        },
+        "description": "You have gained access to this principal's AWS IAM credentials. These could have been obtained through many real-world vectors: phishing a developer and gaining access to their workstation, compromising a browser session, exploiting a vulnerable workload running in this AWS account, discovering credentials in a public S3 bucket, or finding them hardcoded in source code or a CI/CD pipeline.\nRegardless of how you obtained them, you are now operating as this principal. This IAM user has no S3 permissions, only sts:AssumeRole on pl-prod-rbr-hd-role-r2, which in turn can assume pl-prod-rbr-hd-role-r1. It is found by a reverse blast radius query at exactly 2 hops.\n"
+      },
+      {
+        "id": "role-r2",
+        "label": "Depth 1 Role",
+        "type": "principal",
+        "subType": "iam-role",
+        "arn": "arn:aws:iam::{account_id}:role/pl-prod-rbr-hd-role-r2",
+        "description": "This IAM role has no S3 permissions of its own. Its trust policy allows only pl-prod-rbr-hd-user-c to assume it, and its permission policy allows sts:AssumeRole on pl-prod-rbr-hd-role-r1. It is found by a reverse blast radius query at exactly 1 hop.\n"
+      },
+      {
+        "id": "role-r1",
+        "label": "Depth 0 Role",
+        "type": "principal",
+        "subType": "iam-role",
+        "arn": "arn:aws:iam::{account_id}:role/pl-prod-rbr-hd-role-r1",
+        "description": "This IAM role has direct s3:GetObject and s3:ListBucket permissions on the sensitive S3 bucket. Its trust policy allows only pl-prod-rbr-hd-user-b and pl-prod-rbr-hd-role-r2 to assume it. Every principal that can reach this role, directly or through a chain, inherits its bucket access. The role itself is found by a reverse blast radius query at exactly 0 hops.\n"
+      },
+      {
+        "id": "target-bucket",
+        "label": "Sensitive S3 Bucket",
+        "type": "resource",
+        "subType": "s3-bucket",
+        "isTarget": true,
+        "arn": "arn:aws:s3:::pl-sensitive-data-rbr-hd-{account_id}-{suffix}",
+        "description": "This is the target sensitive S3 bucket, with no bucket policy. Two principals can read it directly (user-a and role-r1), two can reach it with one sts:AssumeRole hop (user-b and role-r2), and one needs two hops (user-c). A complete reverse blast radius query must return all five, which requires a cumulative query with a hop limit of at least 2 or one query per depth.\n"
+      }
+    ],
+    "edges": [
+      {
+        "from": "user-a",
+        "to": "target-bucket",
+        "label": "s3:GetObject, s3:ListBucket",
+        "description": "User-a has direct IAM permissions to list and read objects from the sensitive S3 bucket. No role assumption is required (depth 0).\n",
+        "hints": [
+          "Use s3:ListBucket and s3:GetObject directly -- this user has explicit IAM permissions on the bucket and does not need to assume any role."
+        ],
+        "commands": [
+          {
+            "description": "List bucket contents as user-a",
+            "command": "aws s3 ls s3://pl-sensitive-data-rbr-hd-{account_id}-{suffix}/"
+          },
+          {
+            "description": "Read an object from the bucket as user-a",
+            "command": "aws s3 cp s3://pl-sensitive-data-rbr-hd-{account_id}-{suffix}/sensitive-data.txt /tmp/rbr-hd-sensitive.txt"
+          }
+        ]
+      },
+      {
+        "from": "role-r1",
+        "to": "target-bucket",
+        "label": "s3:GetObject, s3:ListBucket",
+        "description": "Role-r1 holds the S3 permissions directly. Any session for this role, however it was obtained, can list and read the bucket (depth 0 for the role itself).\n",
+        "hints": [
+          "Once you hold role-r1 session credentials, the bucket permissions apply immediately; export the temporary credentials before calling S3."
+        ],
+        "commands": [
+          {
+            "description": "List bucket contents using role-r1 credentials",
+            "command": "aws s3 ls s3://pl-sensitive-data-rbr-hd-{account_id}-{suffix}/"
+          },
+          {
+            "description": "Read an object from the bucket using role-r1 credentials",
+            "command": "aws s3 cp s3://pl-sensitive-data-rbr-hd-{account_id}-{suffix}/sensitive-data.txt /tmp/rbr-hd-sensitive.txt"
+          }
+        ]
+      },
+      {
+        "from": "user-b",
+        "to": "role-r1",
+        "label": "sts:AssumeRole",
+        "description": "User-b assumes role-r1 directly. This is the single hop that puts user-b at depth 1 in a reverse blast radius query.\n",
+        "hints": [
+          "Use sts:AssumeRole against role-r1 with user-b's long-term credentials, then export the returned access key, secret key, and session token before touching S3."
+        ],
+        "commands": [
+          {
+            "description": "Assume role-r1 as user-b",
+            "command": "aws sts assume-role --role-arn arn:aws:iam::{account_id}:role/pl-prod-rbr-hd-role-r1 --role-session-name rbr-hd-user-b --query 'Credentials' --output json"
+          }
+        ]
+      },
+      {
+        "from": "role-r2",
+        "to": "role-r1",
+        "label": "sts:AssumeRole",
+        "description": "A role-r2 session assumes role-r1. This is the single hop that puts role-r2 at depth 1 in a reverse blast radius query. In this lab the role-r2 session is reached from user-c, giving the second hop of the depth-2 chain.\n",
+        "hints": [
+          "From a role-r2 session, call sts:AssumeRole on role-r1 using the role-r2 temporary credentials. Role chaining like this works but limits the new session to a one-hour maximum."
+        ],
+        "commands": [
+          {
+            "description": "Assume role-r1 using role-r2 session credentials",
+            "command": "aws sts assume-role --role-arn arn:aws:iam::{account_id}:role/pl-prod-rbr-hd-role-r1 --role-session-name rbr-hd-user-c-chain --query 'Credentials' --output json"
+          }
+        ]
+      },
+      {
+        "from": "user-c",
+        "to": "role-r2",
+        "label": "sts:AssumeRole",
+        "description": "User-c assumes role-r2, which has no S3 permissions itself but can assume role-r1. Together with the role-r2 to role-r1 edge, this makes user-c a depth 2 principal.\n",
+        "hints": [
+          "Assume role-r2 with user-c's long-term credentials and export the temporary credentials; you then need a second assume-role call from that session to reach the role that actually holds the S3 permissions."
+        ],
+        "commands": [
+          {
+            "description": "Assume role-r2 as user-c",
+            "command": "aws sts assume-role --role-arn arn:aws:iam::{account_id}:role/pl-prod-rbr-hd-role-r2 --role-session-name rbr-hd-user-c --query 'Credentials' --output json"
+          }
+        ]
+      }
+    ]
+  },
+  "hasAttackMap": true,
+  "principalHopCount": 4,
+  "startAccessType": "assumed-breach-credentials",
+  "services": [
+    "s3",
+    "sts"
+  ],
+  "slug": "test-reverse-blast-radius-hop-depth",
+  "hasDemoTranscript": false
+}

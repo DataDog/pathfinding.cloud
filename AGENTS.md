@@ -64,7 +64,7 @@ python scripts/generate-json.py
 
 # Test website locally (with SPA routing support)
 cd docs && python3 dev-server.py
-# Then visit http://localhost:8888
+# Then visit http://localhost:8890 (port 8888 is reserved; do not use it)
 ```
 
 ### Per-Lab Social Sharing (OG/Twitter unfurls)
@@ -263,9 +263,9 @@ Common issues:
 
 1. Generate JSON: `python scripts/generate-json.py`
 2. Start dev server: `cd docs && python3 dev-server.py`
-3. Visit `http://localhost:8888` in browser
+3. Visit `http://localhost:8890` in browser (port `8888` is reserved; do not use it)
 4. Test search, filters, path detail pages, and navigation
-5. Test direct URLs like `http://localhost:8888/paths/iam-001`
+5. Test direct URLs like `http://localhost:8890/paths/iam-001`
 6. Test browser back/forward buttons
 7. Check browser console for JavaScript errors
 

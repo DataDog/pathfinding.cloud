@@ -45,7 +45,8 @@ Read these files to understand the attack:
 **Map the lab's permissions** (see `permissions` in @SCHEMA.md):
 - Lab `permissions.required` → `permissions.required`, unchanged. These are the raw-API minimum, verified in the lab, so don't drop any (GCP `*.operations.get` and `cloudfunctions.functions.sourceCodeSet` are real requirements). Turn each `resource` into `resourceConstraints` prose ("Must be granted on the target service account", "Project-level")
 - Lab `permissions.helpful` → `permissions.additional`. Entries whose `purpose` says they are only needed by `gcloud` keep that note: start `resourceConstraints` with "Required only by `gcloud <command>` ...; not needed via the REST API". Recon entries keep their purpose
-- `name` lists only the permissions that define the technique (see `name` in @SCHEMA.md); plumbing permissions stay out of `name` but remain in `required`
+- One exception to "unchanged": a lab-required permission whose only role is reading back the exfiltrated credential through a cloud channel moves to `permissions.additional`, because an out-of-band exfiltration needs none. Example: `gcp-cloudrun-001`'s `logging.logEntries.list`, which reads the token the container printed to Cloud Run logs. Start its `resourceConstraints` with "Needed only to read the token back through Cloud Logging". Permissions that trigger the payload or track the deploy (`*.operations.get`, `run.services.get`, `run.routes.invoke` to invoke a Cloud Function) stay in `required`. Tell the user when you apply this, since the path's `required` then differs from the lab's
+- `name` lists only the permissions that define the technique (see `name` in @SCHEMA.md); plumbing permissions stay out of `name` but remain in `required`. On GCP, `iam.serviceAccounts.actAs` is in the name for updates as well as creates (`iam.serviceAccounts.actAs + cloudfunctions.functions.update + run.routes.invoke`)
 
 **Category**: Choose it from the definitions in @SCHEMA.md (which include the GCP mapping), not by copying the lab's `sub_category`. If the two disagree, use the SCHEMA.md category and tell the user about the mismatch so the lab can be fixed.
 
@@ -96,6 +97,8 @@ discoveryAttribution:
 references: []
 ```
 
+**Fill in `relatedPaths`** with the IDs of closely related paths: same-cloud siblings (the create and update variants of the same service, other actAs/PassRole paths on similar compute) and, for GCP/Azure, the AWS analog where one exists (`gcp-cloudfunctions-001` → `lambda-001`, `gcp-cloudfunctions-002` → `lambda-003`, `gcp-cloudrun-001` → `apprunner-001`). Only list IDs that exist in `data/paths/`. When you link to an existing path of the same cloud, add the reverse link to that file too.
+
 **Omit these optional fields** (enrichment agents will add them):
 - `attackVisualization` (add-vis agent)
 - `learningEnvironments` (learning-environments agent)
@@ -110,7 +113,12 @@ When the CLI needs more than `permissions.required` (common on GCP), add a `curl
 Where an exploitation framework module verifiably covers the path's exact technique, add it as an additional tab (each cloud has its own — do not cross-apply an AWS tool to a GCP/Azure path or vice versa; the validator rejects it):
 
 - **AWS**: `pacu`, `pmapper`, `stratus`, `leonidas`, `nebula`, `pathrunner`
-- **GCP**: `gcpwn` (NetSPI's GCP pentesting framework) — check its module tree at `gcpwn/modules/gcp/{service}/{enumeration,exploit,utilities}/` on https://github.com/NetSPI/GCPwn for a module matching the required permission(s) (e.g. `exploit_generate_access_token` for `iam.serviceAccounts.getAccessToken`, `exploit_service_account_keys` for `iam.serviceAccountKeys.create`). Modules are invoked as `modules run <module_name> [flags]` — see the README's "Exploit Module TLDR" section for real flag examples before writing commands.
+- **GCP**: `gcpwn` (Scott Weston / NetSPI's GCP pentesting framework). Check it for every GCP path in this order:
+  1. Inspect the OpenGraph edge index at https://github.com/NetSPI/gcpwn/blob/main/gcpwn/mappings/og_defined_edges.json for the path's permission combination or capability edge.
+  2. Inspect the matching implementation under `gcpwn/modules/gcp/{service}/{enumeration,exploit,utilities}/` and the Exploit Module Reference wiki. Verify the exact module name, flags, API generation, source-staging behavior, and extra permissions before writing a command.
+  3. When a module supports the path, add a `gcpwn` exploitation tab and have the attribution agent include the pinned module source and relevant OpenGraph edge in `references`, crediting Scott Weston / NetSPI. Examples include `exploit_generate_access_token`, `exploit_cloudfunctions_function_as_sa`, and `exploit_cloudrun_service_as_sa`.
+  4. Modules are invoked as `modules run <module_name> [flags]`. Never fabricate syntax. If the module needs a pre-staged payload (`--source-uri`) or optional exfiltration channel, state those requirements and any permissions outside the path's minimum set in the step description.
+  5. Do not treat adjacent coverage as exact detection. For example, GCPwn's current Cloud Functions OpenGraph edges use Gen1 `cloudfunctions.functions.call`; they are useful references, while its exploit module supports Gen2, but those edges are not exact detection for a Gen2 path using `run.routes.invoke`.
 - **Azure**: none established yet
 
 Never fabricate a tool tab or invocation syntax — verify the module/command actually exists (e.g. by browsing the tool's repo) before adding it. If no framework module covers this specific technique, omit the extra tab and use only the native CLI.
@@ -190,7 +198,7 @@ recommendation: |
   - Use IAM Recommender / Policy Analyzer to find unused or overly broad `actAs` grants
 ```
 
-GCP placeholders: `[AUDIT_METHOD]` is the audit log method name for the create call (e.g. `google.cloud.functions.v2.FunctionService.CreateFunction`, `google.cloud.run.v2.Services.CreateService`; take it from the lab README's "Cloud Audit Log Events to Monitor" when there is one). The other placeholders match the AWS list below.
+GCP placeholders: `[AUDIT_METHOD]` is the audit log method name for the create call, written as the `protoPayload.methodName` value that appears in Cloud Audit Logs (e.g. `google.cloud.functions.v2.FunctionService.CreateFunction`, `google.cloud.functions.v2.FunctionService.UpdateFunction`, `google.cloud.run.v2.Services.CreateService`, `GenerateAccessToken` on `iamcredentials.googleapis.com`). Lab READMEs' "Cloud Audit Log Events to Monitor" sections use a `service.googleapis.com/Method` shorthand (`cloudfunctions.googleapis.com/CreateFunction`); use them to pick which events to monitor, but write the full method name. The other placeholders match the AWS list below.
 
 **Template placeholders to adapt:**
 - `[SERVICE_RESOURCE]` - The AWS resource type (e.g., "Lambda function", "EC2 instance", "SageMaker notebook")

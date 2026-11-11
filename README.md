@@ -132,7 +132,7 @@ python scripts/generate-json.py
 # Start local development server (required for SPA routing)
 cd docs && python3 dev-server.py
 
-# Visit http://localhost:8888 in your browser
+# Visit http://localhost:8890 in your browser (port 8888 is reserved; do not use it)
 ```
 
 **Note:** The website uses client-side routing (SPA). Always use `docs/dev-server.py` for local testing rather than opening `index.html` directly, as direct file access won't support routing features.
