@@ -1764,7 +1764,7 @@ function renderDetectionTools(detectionTools) {
     `;
 }
 
-// Render related techniques (parent and children)
+// Render related techniques (parent, variants, and explicit relatedPaths)
 function renderRelatedPaths(path, allPaths) {
     // Handle both legacy (string) and new (object) parent formats
     const parentId = path.parent ? (typeof path.parent === 'string' ? path.parent : path.parent.id) : null;
@@ -1779,8 +1779,16 @@ function renderRelatedPaths(path, allPaths) {
         return childParentId === path.id;
     });
 
-    // If no parent and no children, don't render the section
-    if (!parent && children.length === 0) {
+    const hierarchicalIds = new Set([
+        ...(parent ? [parent.id] : []),
+        ...children.map(child => child.id)
+    ]);
+    const related = (path.relatedPaths || [])
+        .map(relatedId => allPaths.find(candidate => candidate.id === relatedId))
+        .filter(relatedPath => relatedPath && !hierarchicalIds.has(relatedPath.id));
+
+    // If no relationships exist, don't render the section
+    if (!parent && children.length === 0 && related.length === 0) {
         return '';
     }
 
@@ -1811,6 +1819,19 @@ function renderRelatedPaths(path, allPaths) {
                 <td class="attr-type attr-type-narrow"><span class="badge badge-primary">Parent Of</span></td>
                 <td class="attr-author">${pathLink}</td>
                 <td class="attr-context">${notes}</td>
+            </tr>
+        `);
+    });
+
+    // Add explicitly related paths, including cross-cloud analogs
+    related.forEach(relatedPath => {
+        const pathLink = `<a href="/paths/${escapeHtml(relatedPath.cloud || 'aws')}/${escapeHtml(relatedPath.id)}" onclick="event.preventDefault(); navigateToPath('${escapeHtml(relatedPath.id)}');" class="path-link-full">${escapeHtml(relatedPath.id.toUpperCase())} — ${escapeHtml(relatedPath.name)}</a>`;
+
+        rows.push(`
+            <tr>
+                <td class="attr-type attr-type-narrow"><span class="badge">Related</span></td>
+                <td class="attr-author">${pathLink}</td>
+                <td class="attr-context">Closely related technique</td>
             </tr>
         `);
     });
