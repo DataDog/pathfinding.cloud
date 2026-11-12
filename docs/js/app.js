@@ -191,6 +191,23 @@ function resetPillValues() {
     });
 }
 
+function syncPillFromSelect(filterId) {
+    const wrapper = document.querySelector(`.filter-pill[data-filter="${filterId}"]`)?.closest('.filter-pill-wrapper');
+    if (!wrapper) return;
+    const pill = wrapper.querySelector('.filter-pill');
+    const menu = document.getElementById(`menu-${filterId}`);
+    const select = document.getElementById(filterId);
+    if (!pill || !menu || !select) return;
+    const valueEl = pill.querySelector('.filter-pill-value');
+    const targetValue = select.value;
+    menu.querySelectorAll('.filter-pill-item').forEach(item => {
+        const isMatch = item.dataset.value === targetValue;
+        item.classList.toggle('selected', isMatch);
+        if (isMatch && valueEl) valueEl.textContent = item.textContent;
+    });
+    pill.classList.toggle('is-filtered', targetValue !== '');
+}
+
 function buildPillMenu(menuId, options) {
     const menu = document.getElementById(menuId);
     if (!menu) return;
@@ -442,15 +459,19 @@ function showListView() {
 
     if (cloudParam) {
         cloudFilter.value = cloudParam;
+        syncPillFromSelect('cloud-filter');
     }
     if (serviceParam) {
         serviceFilter.value = serviceParam;
+        syncPillFromSelect('service-filter');
     }
     if (categoryParam) {
         categoryFilter.value = categoryParam;
+        syncPillFromSelect('category-filter');
     }
     if (detectionParam) {
         detectionFilter.value = detectionParam;
+        syncPillFromSelect('detection-filter');
     }
 
     // Apply filters if parameters were set
@@ -462,7 +483,7 @@ function showListView() {
     document.title = 'pathfinding.cloud - Cloud IAM Privilege Escalation Paths';
 
     // Update meta description
-    updateMetaTag('description', 'Comprehensive library of AWS and GCP IAM privilege escalation paths, techniques, and mitigations');
+    updateMetaTag('description', 'Comprehensive library of cloud IAM privilege escalation paths, techniques, and mitigations');
 }
 
 function trackPageView(path, title) {

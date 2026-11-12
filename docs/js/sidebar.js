@@ -85,14 +85,28 @@
     }
 
     function markActive() {
-        const path = window.location.pathname;
-        let best = null;
-        let bestLen = 0;
+        var path = window.location.pathname;
+        var search = window.location.search;
+        var fullHref = path + search;
+        var best = null;
+        var bestLen = 0;
 
         document.querySelectorAll('.sidebar-item[href]').forEach(function (link) {
-            const href = link.getAttribute('href');
-            // Home only matches exact root
-            const matches = href === '/' ? path === '/' : path.startsWith(href);
+            var href = link.getAttribute('href');
+            var hrefHasQuery = href.indexOf('?') !== -1;
+            var matches;
+
+            if (hrefHasQuery) {
+                // Links with query params must match pathname + search exactly
+                matches = fullHref === href;
+            } else if (href === '/') {
+                matches = path === '/';
+            } else {
+                // Plain pathname links match by prefix, but NOT when the
+                // current URL has query params that a sibling link matches.
+                matches = path.startsWith(href);
+            }
+
             if (matches && href.length > bestLen) {
                 best = link;
                 bestLen = href.length;
@@ -101,7 +115,7 @@
 
         if (best) {
             best.classList.add('active');
-            const group = best.closest('.sidebar-group');
+            var group = best.closest('.sidebar-group');
             if (group) {
                 group.querySelector('.sidebar-group-toggle')?.classList.add('active');
             }
