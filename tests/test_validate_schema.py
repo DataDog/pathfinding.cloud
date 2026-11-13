@@ -115,5 +115,112 @@ class ValidateFileCloudConsistencyTests(unittest.TestCase):
         )
 
 
+def retired_entry(**overrides) -> dict:
+    """Build a valid retired-paths registry entry, with optional field overrides."""
+    entry = {
+        "id": "ec2-099",
+        "cloud": "aws",
+        "retiredOn": "2026-11-13",
+        "reason": "Duplicate",
+        "replacedBy": "ec2-001",
+    }
+    entry.update(overrides)
+    return {field: value for field, value in entry.items() if value is not None}
+
+
+class LoadRetiredPathsTests(unittest.TestCase):
+    def setUp(self):
+        self.temp_dir = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, self.temp_dir)
+
+    def load(self, entries: list, valid_ids: set = frozenset({"ec2-001"})) -> dict:
+        registry_file = self.temp_dir / "retired-paths.yaml"
+        registry_file.write_text(yaml.safe_dump({"retiredPaths": entries}))
+        return validate_schema.load_retired_paths(set(valid_ids), registry_file)
+
+    def test_repo_registry_is_valid(self):
+        # The committed registry must load against the committed corpus.
+        corpus_ids = {
+            yaml.safe_load(path_file.read_text())["id"]
+            for path_file in (REPO_ROOT / "data" / "paths").rglob("*.yaml")
+        }
+        retired_paths_by_id = validate_schema.load_retired_paths(corpus_ids)
+        self.assertIn("ec2-004", retired_paths_by_id)
+        self.assertNotIn("ec2-004", corpus_ids)
+
+    def test_missing_registry_file_means_nothing_retired(self):
+        self.assertEqual(
+            validate_schema.load_retired_paths(set(), self.temp_dir / "does-not-exist.yaml"), {}
+        )
+
+    def test_valid_entry_is_keyed_by_id(self):
+        self.assertEqual(list(self.load([retired_entry()]).keys()), ["ec2-099"])
+
+    def test_replacement_is_optional(self):
+        self.assertIn("ec2-099", self.load([retired_entry(replacedBy=None)]))
+
+    def test_missing_required_field_fails(self):
+        with self.assertRaisesRegex(validate_schema.ValidationError, "missing reason"):
+            self.load([retired_entry(reason=None)])
+
+    def test_unexpected_field_fails(self):
+        with self.assertRaisesRegex(validate_schema.ValidationError, "unexpected fields"):
+            self.load([retired_entry(note="hi")])
+
+    def test_cloud_must_match_id(self):
+        with self.assertRaisesRegex(validate_schema.ValidationError, "belongs to 'aws'"):
+            self.load([retired_entry(cloud="gcp")])
+
+    def test_duplicate_entry_fails(self):
+        with self.assertRaisesRegex(validate_schema.ValidationError, "more than once"):
+            self.load([retired_entry(), retired_entry()])
+
+    def test_replacement_must_exist(self):
+        with self.assertRaisesRegex(validate_schema.ValidationError, "does not exist"):
+            self.load([retired_entry(replacedBy="ec2-123")])
+
+    def test_replacement_must_not_be_retired(self):
+        with self.assertRaisesRegex(validate_schema.ValidationError, "itself retired"):
+            self.load(
+                [retired_entry(), retired_entry(id="ec2-098", replacedBy="ec2-099")],
+                valid_ids={"ec2-001", "ec2-099"},
+            )
+
+
+class FindRetiredIdUsagesTests(unittest.TestCase):
+    retired_paths_by_id = {"ec2-099": retired_entry()}
+
+    def usages(self, path_data: dict) -> list:
+        return validate_schema.find_retired_id_usages(path_data, self.retired_paths_by_id)
+
+    def test_clean_path_has_no_usages(self):
+        self.assertEqual(self.usages({"id": "ec2-001", "relatedPaths": ["ec2-002"]}), [])
+
+    def test_reusing_retired_id_fails(self):
+        (error_text,) = self.usages({"id": "ec2-099"})
+        self.assertIn("must not be reused", error_text)
+
+    def test_related_path_reference_names_replacement(self):
+        (error_text,) = self.usages({"id": "ec2-001", "relatedPaths": ["ec2-099"]})
+        self.assertIn("relatedPaths", error_text)
+        self.assertIn("use 'ec2-001'", error_text)
+
+    def test_parent_reference_fails_in_both_formats(self):
+        self.assertEqual(len(self.usages({"id": "ec2-002", "parent": "ec2-099"})), 1)
+        self.assertEqual(
+            len(self.usages({"id": "ec2-002", "parent": {"id": "ec2-099", "modification": "x"}})), 1
+        )
+
+    def test_discovery_attribution_references_fail(self):
+        path_data = {
+            "id": "ec2-002",
+            "discoveryAttribution": {
+                "derivativeOf": {"pathId": "ec2-099"},
+                "ultimateOrigin": {"pathId": "ec2-099"},
+            },
+        }
+        self.assertEqual(len(self.usages(path_data)), 2)
+
+
 if __name__ == "__main__":
     unittest.main()

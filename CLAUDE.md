@@ -149,7 +149,9 @@ All privilege escalation paths are stored as individual YAML files in `data/path
   - `iam:PassRole+ec2:RunInstances` → `ec2-001` (not iam-###)
   - `iam:PassRole+lambda:CreateFunction` → `lambda-001`
 - **Other services**: `ssm-001`, `ec2-002`, etc.
-- **Sequential numbering**: IDs are assigned sequentially within each service
+- **Sequential numbering**: IDs are assigned sequentially within each service. Never reuse a number, even a retired one: take the next number after the highest ID ever used for that service, counting the ones in `data/retired-paths.yaml`.
+- **IDs are permanent**: once published, an ID is a shared key for pathfinding-labs scenarios (`pathfinding-cloud-id`), pathrunner modules (`modules.Register`), Cybr lab slugs (`pathfinding-{id}`) and external links. Never renumber a path, and never move one to another service under a different ID unless every one of those repos is updated in the same change. `ec2-003` was once SendSSHPublicKey; when it moved to `ec2instanceconnect-003` the number was reused here for a different technique while labs and pathrunner kept the old meaning, and the two drifted apart.
+- **Retiring a path**: delete the YAML file and add an entry to `data/retired-paths.yaml` (`id`, `cloud`, `retiredOn`, `reason`, optional `replacedBy`). `validate-schema.py` then rejects any path that reuses the ID or references it (`relatedPaths`, `parent`, `discoveryAttribution`), and the site redirects `/paths/{cloud}/{id}` to `replacedBy`.
 - **Cloud prefix**: The above conventions describe AWS path IDs, which stay bare. GCP and Azure path IDs are prefixed with the cloud name to disambiguate them from AWS IDs of the same service/number — `gcp-iam-001`, `azure-iam-001`. Data files live under the matching `data/paths/{cloud}/{service}/` directory (`data/paths/gcp/iam/gcp-iam-001.yaml`, `data/paths/azure/iam/azure-iam-001.yaml`).
 
 ### Website Architecture (SPA with Client-Side Routing)
