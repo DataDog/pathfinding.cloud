@@ -1,5 +1,7 @@
 // Stats page JavaScript
 let allPaths = [];
+let filteredPaths = [];
+let activeCloud = 'aws';
 let toolMetadata = {};
 
 // Color schemes for charts
@@ -33,7 +35,7 @@ function toggleTheme() {
     updateThemeText();
 
     // Reload charts with new theme
-    if (allPaths.length > 0) {
+    if (filteredPaths.length > 0) {
         createVisualizations();
     }
 }
@@ -117,8 +119,8 @@ async function loadData() {
         allPaths = await pathsResponse.json();
         toolMetadata = await metadataResponse.json();
 
-        processData();
-        createVisualizations();
+        filterByCloud(activeCloud);
+        initCloudToggle();
 
         document.getElementById('loading').style.display = 'none';
         document.getElementById('stats-content').style.display = 'block';
@@ -128,27 +130,45 @@ async function loadData() {
     }
 }
 
+function initCloudToggle() {
+    document.querySelectorAll('.cloud-toggle-btn').forEach(btn => {
+        btn.addEventListener('click', () => {
+            document.querySelectorAll('.cloud-toggle-btn').forEach(b => b.classList.remove('active'));
+            btn.classList.add('active');
+            filterByCloud(btn.dataset.cloud);
+        });
+    });
+}
+
+function filterByCloud(cloud) {
+    activeCloud = cloud;
+    filteredPaths = allPaths.filter(p => (p.cloud || 'aws') === cloud);
+    window.relationshipNetworkCreated = false;
+    processData();
+    createVisualizations();
+}
+
 // Process data and calculate statistics
 function processData() {
-    const totalPaths = allPaths.length;
+    const totalPaths = filteredPaths.length;
 
     // Count services
     const services = new Set();
-    allPaths.forEach(path => {
+    filteredPaths.forEach(path => {
         if (path.services) {
             path.services.forEach(service => services.add(service));
         }
     });
 
     // Calculate detection coverage
-    const pathsWithDetection = allPaths.filter(path =>
+    const pathsWithDetection = filteredPaths.filter(path =>
         path.detectionTools && Object.keys(path.detectionTools).length > 0
     ).length;
-    const detectionPercentage = Math.round((pathsWithDetection / totalPaths) * 100);
+    const detectionPercentage = totalPaths > 0 ? Math.round((pathsWithDetection / totalPaths) * 100) : 0;
 
     // Count primary paths vs variants
-    const primaryPaths = allPaths.filter(path => !path.parent).length;
-    const variantPaths = allPaths.filter(path => path.parent).length;
+    const primaryPaths = filteredPaths.filter(path => !path.parent).length;
+    const variantPaths = filteredPaths.filter(path => path.parent).length;
 
     // Update summary cards
     document.getElementById('total-paths').textContent = totalPaths;
@@ -181,7 +201,7 @@ function createServiceChartOption1() {
     // Count paths per service
     // Exclude new-passrole paths from IAM count
     const serviceCounts = {};
-    allPaths.forEach(path => {
+    filteredPaths.forEach(path => {
         if (path.services) {
             path.services.forEach(service => {
                 // Skip counting IAM for new-passrole paths
@@ -257,7 +277,7 @@ function createServiceChartOption2() {
     }
 
     const serviceCounts = {};
-    allPaths.forEach(path => {
+    filteredPaths.forEach(path => {
         if (path.services) {
             path.services.forEach(service => {
                 if (service === 'iam' && path.category === 'new-passrole') {
@@ -339,7 +359,7 @@ function createServiceChartOption3() {
     }
 
     const serviceCounts = {};
-    allPaths.forEach(path => {
+    filteredPaths.forEach(path => {
         if (path.services) {
             path.services.forEach(service => {
                 if (service === 'iam' && path.category === 'new-passrole') {
@@ -392,7 +412,7 @@ function createServiceChartOption4() {
     }
 
     const serviceCounts = {};
-    allPaths.forEach(path => {
+    filteredPaths.forEach(path => {
         if (path.services) {
             path.services.forEach(service => {
                 if (service === 'iam' && path.category === 'new-passrole') {
@@ -600,7 +620,7 @@ function createServiceTreemap() {
         }
 
         const serviceCounts = {};
-        allPaths.forEach(path => {
+        filteredPaths.forEach(path => {
             if (path.services) {
                 path.services.forEach(service => {
                     if (service === 'iam' && path.category === 'new-passrole') {
@@ -739,7 +759,7 @@ function createCategoryChart() {
 
     // Count paths per category
     const categoryCounts = {};
-    allPaths.forEach(path => {
+    filteredPaths.forEach(path => {
         const category = path.category;
         categoryCounts[category] = (categoryCounts[category] || 0) + 1;
     });
@@ -789,7 +809,7 @@ function createCategoryChart() {
                         label: function(context) {
                             const label = context.label || '';
                             const value = context.parsed;
-                            const percentage = Math.round((value / allPaths.length) * 100);
+                            const percentage = Math.round((value / filteredPaths.length) * 100);
                             return `${label}: ${value} paths (${percentage}%) - Click to view paths`;
                         }
                     }
@@ -805,7 +825,7 @@ function createCategoryChart() {
                 meta.data.forEach((arc, index) => {
                     const label = chart.data.labels[index];
                     const value = chart.data.datasets[0].data[index];
-                    const percentage = Math.round((value / allPaths.length) * 100);
+                    const percentage = Math.round((value / filteredPaths.length) * 100);
 
                     // Calculate position for label (middle of arc)
                     const angle = (arc.startAngle + arc.endAngle) / 2;
@@ -854,12 +874,12 @@ function createDetectionCoverageRing() {
     }
 
     // Calculate coverage
-    const pathsWithDetection = allPaths.filter(path =>
+    const pathsWithDetection = filteredPaths.filter(path =>
         path.detectionTools && Object.keys(path.detectionTools).length > 0
     ).length;
-    const pathsWithoutDetection = allPaths.length - pathsWithDetection;
+    const pathsWithoutDetection = filteredPaths.length - pathsWithDetection;
 
-    const coveragePercentage = Math.round((pathsWithDetection / allPaths.length) * 100);
+    const coveragePercentage = Math.round((pathsWithDetection / filteredPaths.length) * 100);
     const noCoveragePercentage = 100 - coveragePercentage;
 
     canvas.chart = new Chart(ctx, {
@@ -893,7 +913,7 @@ function createDetectionCoverageRing() {
                         label: function(context) {
                             const label = context.label || '';
                             const value = context.parsed;
-                            const percentage = Math.round((value / allPaths.length) * 100);
+                            const percentage = Math.round((value / filteredPaths.length) * 100);
                             return `${label}: ${value} paths (${percentage}%) - Click to view paths`;
                         }
                     }
@@ -909,7 +929,7 @@ function createDetectionCoverageRing() {
                 meta.data.forEach((arc, index) => {
                     const label = chart.data.labels[index];
                     const value = chart.data.datasets[0].data[index];
-                    const percentage = Math.round((value / allPaths.length) * 100);
+                    const percentage = Math.round((value / filteredPaths.length) * 100);
 
                     // Calculate position for label (middle of arc)
                     const angle = (arc.startAngle + arc.endAngle) / 2;
@@ -950,7 +970,7 @@ function createDetectionToolsChart() {
 
     // Count paths detected by each tool
     const toolCounts = {};
-    allPaths.forEach(path => {
+    filteredPaths.forEach(path => {
         if (path.detectionTools) {
             Object.keys(path.detectionTools).forEach(tool => {
                 toolCounts[tool] = (toolCounts[tool] || 0) + 1;
@@ -1010,7 +1030,7 @@ function createDetectionToolsChart() {
                 tooltip: {
                     callbacks: {
                         label: function(context) {
-                            const percentage = Math.round((context.parsed.x / allPaths.length) * 100);
+                            const percentage = Math.round((context.parsed.x / filteredPaths.length) * 100);
                             return `${context.parsed.x} paths (${percentage}%) - Click to view paths`;
                         }
                     }
@@ -1038,7 +1058,7 @@ function createDetectionToolsChart() {
                         stepSize: 5,
                         callback: function(value) {
                             // Convert count to percentage
-                            return Math.round((value / allPaths.length) * 100) + '%';
+                            return Math.round((value / filteredPaths.length) * 100) + '%';
                         }
                     },
                     grid: {
@@ -1124,7 +1144,7 @@ function createRelationshipDisplay() {
     // Build parent-child map
     const parentChildMap = {};
 
-    allPaths.forEach(path => {
+    filteredPaths.forEach(path => {
         if (path.parent && path.parent.id) {
             const parentId = path.parent.id;
             if (!parentChildMap[parentId]) {
@@ -1149,7 +1169,7 @@ function createRelationshipDisplay() {
 
     let html = '';
     sortedParents.forEach(parentId => {
-        const parentPath = allPaths.find(p => p.id === parentId);
+        const parentPath = filteredPaths.find(p => p.id === parentId);
         const parentName = parentPath ? parentPath.name : parentId;
         const children = parentChildMap[parentId];
 
@@ -1190,7 +1210,7 @@ function createRelationshipNetwork() {
 
     // Build parent-child map
     const parentChildMap = {};
-    allPaths.forEach(path => {
+    filteredPaths.forEach(path => {
         if (path.parent && path.parent.id) {
             const parentId = path.parent.id;
             if (!parentChildMap[parentId]) {
@@ -1208,7 +1228,7 @@ function createRelationshipNetwork() {
     Object.keys(parentChildMap).forEach(parentId => {
         // Add parent node if not already added
         if (!addedNodes.has(parentId)) {
-            const parentPath = allPaths.find(p => p.id === parentId);
+            const parentPath = filteredPaths.find(p => p.id === parentId);
             nodes.push({
                 id: parentId,
                 label: parentId,
@@ -1338,7 +1358,7 @@ function createRelationshipTree() {
 
     // Build parent-child map
     const parentChildMap = {};
-    allPaths.forEach(path => {
+    filteredPaths.forEach(path => {
         if (path.parent && path.parent.id) {
             const parentId = path.parent.id;
             if (!parentChildMap[parentId]) {
@@ -1415,7 +1435,7 @@ function createRelationshipSunburst() {
 
     // Build parent-child map
     const parentChildMap = {};
-    allPaths.forEach(path => {
+    filteredPaths.forEach(path => {
         if (path.parent && path.parent.id) {
             const parentId = path.parent.id;
             if (!parentChildMap[parentId]) {
