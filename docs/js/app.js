@@ -3,6 +3,7 @@ let allPaths = [];
 let filteredPaths = [];
 let toolMetadata = {}; // Detection tool metadata from metadata.json
 let labsData = []; // Labs data for cross-linking
+let retiredPaths = {}; // Retired path ID -> { cloud, replacedBy }, from metadata.json
 // Default to cards on mobile (<=768px), table on desktop
 let currentView = window.innerWidth <= 768 ? 'cards' : 'table';
 let sortColumn = null;
@@ -251,6 +252,7 @@ async function loadPaths() {
         allPaths = paths;
         filteredPaths = paths;
         toolMetadata = metadata.detectionTools || {};
+        retiredPaths = metadata.retiredPaths || {};
         labsData = labs;
 
         populateCloudFilter();
@@ -342,8 +344,15 @@ function routeFromURL() {
             }
             currentRoute = { view: 'detail', pathId };
             showPathDetails(path);
+        } else if (retiredPaths[pathId]?.replacedBy) {
+            // Retired path (see data/retired-paths.yaml): send old links to the
+            // path that now covers the technique
+            const replacementId = retiredPaths[pathId].replacedBy;
+            const replacement = allPaths.find(p => p.id === replacementId);
+            history.replaceState(null, '', `/paths/${replacement?.cloud || cloud}/${replacementId}`);
+            return routeFromURL();
         } else {
-            // Invalid path ID, redirect to list
+            // Invalid or retired-without-replacement path ID, redirect to list
             navigateToList();
         }
     } else if (pathname === '/paths' || pathname === '/paths/') {

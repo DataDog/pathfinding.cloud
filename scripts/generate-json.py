@@ -19,6 +19,17 @@ def load_yaml_file(file_path):
     with open(file_path, 'r') as f:
         return yaml.safe_load(f)
 
+def load_retired_paths(retired_paths_file):
+    """Return {retired_id: {cloud, replacedBy}} from data/retired-paths.yaml (empty if absent)."""
+    retired_paths_file = Path(retired_paths_file)
+    if not retired_paths_file.exists():
+        return {}
+    registry = load_yaml_file(retired_paths_file) or {}
+    return {
+        entry['id']: {'cloud': entry['cloud'], 'replacedBy': entry.get('replacedBy')}
+        for entry in registry.get('retiredPaths', [])
+    }
+
 def get_git_metadata_from_github(file_path, github_token=None):
     """Extract git metadata using GitHub API."""
     try:
@@ -347,7 +358,10 @@ def convert_yaml_to_json(input_dir='data/paths', output_file='docs/paths.json'):
             for path in paths
             if path.get('category')
         ])),
-        'lastUpdated': None  # Could add timestamp here
+        'lastUpdated': None,  # Could add timestamp here
+        # Retired IDs let the site redirect old /paths/{cloud}/{id} links;
+        # validate-schema.py has already checked the registry is well-formed.
+        'retiredPaths': load_retired_paths(Path(input_dir).parent / 'retired-paths.yaml'),
     }
 
     metadata_file = output_path.parent / 'metadata.json'

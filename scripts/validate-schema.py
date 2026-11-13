@@ -135,6 +135,109 @@ class ValidationError(Exception):
     pass
 
 
+# Registry of path IDs that were published and then removed. Retired IDs must
+# never be reused or referenced; see the header of the file for why.
+RETIRED_PATHS_FILE = Path(__file__).resolve().parent.parent / 'data' / 'retired-paths.yaml'
+RETIRED_PATH_REQUIRED_FIELDS = ['id', 'cloud', 'retiredOn', 'reason']
+RETIRED_PATH_ALLOWED_FIELDS = set(RETIRED_PATH_REQUIRED_FIELDS) | {'replacedBy'}
+
+
+def load_retired_paths(valid_ids: set, retired_paths_file: Path = RETIRED_PATHS_FILE) -> Dict[str, Dict]:
+    """Load and validate the retired-paths registry, keyed by retired path ID.
+
+    Raises ValidationError if the registry is malformed, so a bad registry fails
+    the whole run rather than silently disabling the retired-ID checks.
+    """
+    if not retired_paths_file.exists():
+        return {}
+
+    with open(retired_paths_file, 'r') as f:
+        registry = yaml.safe_load(f) or {}
+
+    retired_entries = registry.get('retiredPaths', [])
+    if not isinstance(retired_entries, list):
+        raise ValidationError(f"{retired_paths_file}: 'retiredPaths' must be a list")
+
+    retired_paths_by_id = {}
+    for entry in retired_entries:
+        if not isinstance(entry, dict):
+            raise ValidationError(f"{retired_paths_file}: each retiredPaths entry must be a dictionary")
+
+        missing_fields = [field for field in RETIRED_PATH_REQUIRED_FIELDS if field not in entry]
+        if missing_fields:
+            raise ValidationError(
+                f"{retired_paths_file}: entry {entry.get('id', '<no id>')} is missing {', '.join(missing_fields)}"
+            )
+        unexpected_fields = set(entry.keys()) - RETIRED_PATH_ALLOWED_FIELDS
+        if unexpected_fields:
+            raise ValidationError(
+                f"{retired_paths_file}: entry {entry['id']} has unexpected fields: {', '.join(sorted(unexpected_fields))}"
+            )
+
+        retired_id = entry['id']
+        validate_id(retired_id)
+        if entry['cloud'] != cloud_from_id(retired_id):
+            raise ValidationError(
+                f"{retired_paths_file}: entry {retired_id} has cloud '{entry['cloud']}' "
+                f"but its ID belongs to '{cloud_from_id(retired_id)}'"
+            )
+        if retired_id in retired_paths_by_id:
+            raise ValidationError(f"{retired_paths_file}: {retired_id} is listed more than once")
+        retired_paths_by_id[retired_id] = entry
+
+    # A replacement has to be a live path; pointing at another retired ID (or a
+    # typo) would redirect visitors to nothing.
+    for retired_id, entry in retired_paths_by_id.items():
+        replacement_id = entry.get('replacedBy')
+        if replacement_id is None:
+            continue
+        if replacement_id in retired_paths_by_id:
+            raise ValidationError(
+                f"{retired_paths_file}: {retired_id} is replacedBy {replacement_id}, which is itself retired"
+            )
+        if replacement_id not in valid_ids:
+            raise ValidationError(
+                f"{retired_paths_file}: {retired_id} is replacedBy {replacement_id}, which does not exist"
+            )
+
+    return retired_paths_by_id
+
+
+def find_retired_id_usages(data: Dict, retired_paths_by_id: Dict[str, Dict]) -> List[str]:
+    """Return an error for every place a path file uses or references a retired ID."""
+    if not retired_paths_by_id or not isinstance(data, dict):
+        return []
+
+    def describe_retired(retired_id: str) -> str:
+        replacement_id = retired_paths_by_id[retired_id].get('replacedBy')
+        return f"'{retired_id}' is retired" + (f" (use '{replacement_id}')" if replacement_id else "")
+
+    errors = []
+
+    if data.get('id') in retired_paths_by_id:
+        errors.append(f"Path ID {describe_retired(data['id'])} and must not be reused; pick a new ID")
+
+    for related_id in data.get('relatedPaths') or []:
+        if related_id in retired_paths_by_id:
+            errors.append(f"relatedPaths: {describe_retired(related_id)}")
+
+    parent = data.get('parent')
+    parent_id = parent.get('id') if isinstance(parent, dict) else parent
+    if parent_id in retired_paths_by_id:
+        errors.append(f"parent: {describe_retired(parent_id)}")
+
+    discovery_attribution = data.get('discoveryAttribution')
+    if isinstance(discovery_attribution, dict):
+        for attribution_key in ('derivativeOf', 'ultimateOrigin'):
+            attribution = discovery_attribution.get(attribution_key)
+            if isinstance(attribution, dict) and attribution.get('pathId') in retired_paths_by_id:
+                errors.append(
+                    f"discoveryAttribution.{attribution_key}.pathId: {describe_retired(attribution['pathId'])}"
+                )
+
+    return errors
+
+
 def cloud_from_id(id_value: str) -> str:
     """Return the cloud a path ID belongs to: its prefix for GCP/Azure, 'aws' for bare IDs."""
     id_prefix = id_value.split('-', 1)[0]
@@ -1090,6 +1193,12 @@ def main():
             # Ignore errors in first pass, they'll be caught in validation pass
             pass
 
+    try:
+        retired_paths_by_id = load_retired_paths(valid_ids)
+    except (ValidationError, yaml.YAMLError) as e:
+        print(f"✗ Invalid retired-paths registry: {e}")
+        sys.exit(1)
+
     # Second pass: validate all files with parent ID checking
     total_files = len(yaml_files)
     passed = 0
@@ -1098,6 +1207,17 @@ def main():
 
     for file_path in yaml_files:
         success, errors = validate_file(file_path, valid_ids, allow_draft)
+
+        # Retired-ID checks run on top of the schema checks so a file that
+        # reuses or links to a retired ID fails even if it is otherwise valid.
+        try:
+            with open(file_path, 'r') as f:
+                retired_id_errors = find_retired_id_usages(yaml.safe_load(f), retired_paths_by_id)
+        except yaml.YAMLError:
+            retired_id_errors = []  # Already reported by validate_file
+        if retired_id_errors:
+            success = False
+            errors = errors + retired_id_errors
 
         if success:
             # Check if it's a draft for reporting
