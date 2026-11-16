@@ -2820,11 +2820,31 @@ function renderGuidedV2CTFChallenge(attackMap, slug) {
     orderedEdges.forEach((edge, i) => {
         const edgeId = `gv2-ctf-edge-${slug}-${i}`;
         const toNode = nodeById.get(edge.to);
-        const hints = edge.hints || [];
-        const commands = edge.commands || [];
+
+        // If this edge leads to a resource node and the next edge leads onward to a
+        // principal, there may be direct shortcut edges (starting-principal →
+        // destination-principal) that bypass the resource. Their commands and hints
+        // belong to this same hop — merge them in.
+        let hints = edge.hints || [];
+        let commands = edge.commands || [];
+        let edgeLabel = edge.label || 'Action';
+        if (toNode?.type === 'resource' && i + 1 < orderedEdges.length) {
+            const nextDestId = orderedEdges[i + 1].to;
+            const shortcutEdges = attackMap.edges.filter(
+                e => e.from === edge.from && e.to === nextDestId
+            );
+            if (shortcutEdges.length > 0) {
+                const shortcutLabels = shortcutEdges.map(e => e.label).filter(Boolean);
+                if (shortcutLabels.length > 0) {
+                    edgeLabel = [edgeLabel, ...shortcutLabels].join(' + ');
+                }
+                hints = hints.concat(shortcutEdges.flatMap(e => e.hints || []));
+                commands = commands.concat(shortcutEdges.flatMap(e => e.commands || []));
+            }
+        }
 
         // Hop section
-        const hopPill = labKvPill('Action(s)', 'lab-kv-pill-hop', edge.label || 'Action',
+        const hopPill = labKvPill('Action(s)', 'lab-kv-pill-hop', edgeLabel,
             `attackMap.edges[${i}].label`);
         const hopDescHtml = edge.description
             ? `<div class="lab-gv2-ctf-desc">${escapeHtml(edge.description)}${debugTag(`attackMap.edges[${i}].description`)}</div>`
