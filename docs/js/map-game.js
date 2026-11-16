@@ -5075,17 +5075,32 @@ function parseAttackMapToGameNodes(attackMap) {
                         // Add destination principal
                         orderedNodes.push(makeGameNode(nextNextNextEntry.nodeData));
 
-                        // Merge all edges into one compound edge
+                        // Merge all edges into one compound edge.
+                        // Also pick up any direct shortcut edges from the starting principal
+                        // straight to the destination (bypassing the resource companions) —
+                        // their commands and hints belong to this same hop.
                         const edge1 = outEdge;
                         const edge2 = nextEntry.outEdge;
                         const edge3 = nextNextEntry.outEdge;
+                        const shortcutEdges2r = attackMap.edges.filter(
+                            e => e.from === nodeData.id && e.to === nextNextNextEntry.nodeData.id
+                        );
+                        const shortcutLabels2r = shortcutEdges2r.map(e => e.label).filter(Boolean);
                         gameEdges.push({
                             fromIdx: orderedNodes.length - 2,
                             toIdx: orderedNodes.length - 1,
-                            label: edge1?.label || '',
+                            label: [edge1?.label, ...shortcutLabels2r].filter(Boolean).join(' + ') || '',
                             description: (edge1?.description || '').trim(),
-                            commands: (edge1?.commands || []).concat(edge2?.commands || [], edge3?.commands || []),
-                            hints: (edge1?.hints || []).concat(edge2?.hints || [], edge3?.hints || []),
+                            commands: (edge1?.commands || []).concat(
+                                shortcutEdges2r.flatMap(e => e.commands || []),
+                                edge2?.commands || [],
+                                edge3?.commands || []
+                            ),
+                            hints: (edge1?.hints || []).concat(
+                                shortcutEdges2r.flatMap(e => e.hints || []),
+                                edge2?.hints || [],
+                                edge3?.hints || []
+                            ),
                             implicit: false,
                             companionIndices,
                         });
@@ -5108,16 +5123,29 @@ function parseAttackMapToGameNodes(attackMap) {
                     // Add destination principal
                     orderedNodes.push(makeGameNode(nextNextEntry.nodeData));
 
-                    // Merge the two edges into one compound edge
+                    // Merge the two edges into one compound edge.
+                    // Also pick up any direct shortcut edges from the starting principal
+                    // straight to the destination (bypassing the resource companion) —
+                    // their commands and hints belong to this same hop.
                     const edge1 = outEdge;
                     const edge2 = nextEntry.outEdge;
+                    const shortcutEdges1r = attackMap.edges.filter(
+                        e => e.from === nodeData.id && e.to === nextNextEntry.nodeData.id
+                    );
+                    const shortcutLabels1r = shortcutEdges1r.map(e => e.label).filter(Boolean);
                     gameEdges.push({
                         fromIdx: orderedNodes.length - 2,
                         toIdx: orderedNodes.length - 1,
-                        label: edge1?.label || '',
+                        label: [edge1?.label, ...shortcutLabels1r].filter(Boolean).join(' + ') || '',
                         description: (edge1?.description || '').trim(),
-                        commands: (edge1?.commands || []).concat(edge2?.commands || []),
-                        hints: (edge1?.hints || []).concat(edge2?.hints || []),
+                        commands: (edge1?.commands || []).concat(
+                            shortcutEdges1r.flatMap(e => e.commands || []),
+                            edge2?.commands || []
+                        ),
+                        hints: (edge1?.hints || []).concat(
+                            shortcutEdges1r.flatMap(e => e.hints || []),
+                            edge2?.hints || []
+                        ),
                         implicit: false,
                         companionIndices,
                     });
