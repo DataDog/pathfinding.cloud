@@ -1,0 +1,137 @@
+id: iam-022
+name: iam:DeleteUserPermissionsBoundary
+category: self-escalation
+services:
+- iam
+description: |
+  If a user's effective permissions are constrained by a permissions boundary, and the user (or an attacker with access to their credentials) has `iam:DeleteUserPermissionsBoundary`, they can remove the boundary and regain their full unconstrained permissions. Permissions boundaries limit the maximum permissions a principal can have — removing the boundary removes that ceiling, potentially exposing administrative permissions that were always attached but previously blocked by the boundary.
+prerequisites:
+  admin:
+  - Target user must have IAM policies attached that grant more permissions than the boundary allows
+  - The permissions boundary must be the only constraint limiting the user's effective permissions
+  - Target user (or attacker with their creds) must have `iam:DeleteUserPermissionsBoundary` on their own user ARN
+  lateral:
+  - Must have iam:DeleteUserPermissionsBoundary permission on the target user
+  - Must know the target user's name or ARN
+permissions:
+  required:
+  - permission: iam:DeleteUserPermissionsBoundary
+    resourceConstraints: Must have permission to delete the permissions boundary from the target user ARN
+  additional:
+  - permission: iam:GetUser
+    resourceConstraints: Helpful for viewing the current permissions boundary attached to the user
+  - permission: iam:ListAttachedUserPolicies
+    resourceConstraints: Useful for discovering what policies are attached (and thus what permissions will be unlocked)
+exploitationSteps:
+  awscli:
+  - step: 1
+    command: aws iam get-user --user-name TARGET_USER
+    description: View the user's current configuration including the permissions boundary ARN
+  - step: 2
+    command: aws iam list-attached-user-policies --user-name TARGET_USER
+    description: List attached policies to understand what permissions will be unlocked after boundary removal
+  - step: 3
+    command: |
+      aws iam delete-user-permissions-boundary \
+        --user-name TARGET_USER
+    description: Delete the permissions boundary from the user, removing the constraint on their effective permissions
+  - step: 4
+    command: aws sts get-caller-identity
+    description: Verify current identity
+  - step: 5
+    command: aws iam list-users --max-items 3
+    description: Verify that previously-blocked permissions are now accessible
+recommendation: |
+  Use SCPs to deny `iam:DeleteUserPermissionsBoundary` actions. Never grant boundary deletion to the principal the boundary constrains.
+
+  SCP to prevent boundary removal:
+  ```json
+  {
+    "Version": "2012-10-17",
+    "Statement": [
+      {
+        "Effect": "Deny",
+        "Action": [
+          "iam:DeleteUserPermissionsBoundary",
+          "iam:DeleteRolePermissionsBoundary"
+        ],
+        "Resource": "*",
+        "Condition": {
+          "StringNotLike": {
+            "aws:PrincipalARN": "arn:aws:iam::*:role/BoundaryAdmin"
+          }
+        }
+      }
+    ]
+  }
+  ```
+
+  Additional controls:
+  - **SCPs over identity policies** — Use Service Control Policies to enforce boundary protection since SCPs cannot be removed by the constrained principal
+  - **Separate boundary management** — Only allow dedicated automation roles to manage permissions boundaries
+  - **Monitor CloudTrail** — Alert on all `DeleteUserPermissionsBoundary` events
+  - **Deny self-modification** — Ensure users cannot delete their own boundaries via identity policies
+  - **Regular audits** — Verify that boundary-protected principals do not have boundary deletion permissions
+limitations: |
+  This path only works if the underlying IAM policies grant more permissions than the boundary allows. If the boundary and the policies are equivalent in scope, removing the boundary has no effect. The attacker regains whatever permissions the attached policies grant minus the boundary constraint.
+discoveryAttribution:
+  firstDocumented:
+    author: Paramanand Mallik
+    date: "2026"
+    link: https://github.com/DataDog/pathfinding.cloud/pull/XX
+references:
+- title: AWS Documentation - Permissions Boundaries
+  url: https://docs.aws.amazon.com/IAM/latest/UserGuide/access_policies_boundaries.html
+- title: HackTricks - AWS IAM Privesc - Permissions Boundary
+  url: https://cloud.hacktricks.wiki/en/pentesting-cloud/aws-security/aws-privilege-escalation/aws-iam-privesc/index.html
+relatedPaths:
+- iam-023
+- iam-024
+attackVisualization:
+  nodes:
+  - id: attacker
+    label: Constrained User
+    type: principal
+    description: |
+      An IAM user whose effective permissions are limited by a permissions boundary. The user has policies attached that grant broader permissions than the boundary allows.
+  - id: boundary
+    label: Permissions Boundary
+    type: resource
+    description: |
+      The IAM permissions boundary policy attached to the user. This boundary limits the maximum effective permissions — only permissions granted by BOTH the identity policies AND the boundary take effect.
+  - id: admin_outcome
+    label: Effective Administrator
+    type: outcome
+    description: |
+      After removing the boundary, the user's full attached policies take effect. If those policies include AdministratorAccess, the user gains full admin.
+  - id: partial_outcome
+    label: Expanded permissions
+    type: outcome
+    color: '#ffeb99'
+    description: |
+      After removing the boundary, the user gains additional permissions that were previously blocked, but not full admin.
+  edges:
+  - from: attacker
+    to: boundary
+    label: iam:DeleteUserPermissionsBoundary
+    description: |
+      The attacker calls `iam:DeleteUserPermissionsBoundary` to remove the boundary that constrains their effective permissions.
+
+      Command:
+      ```bash
+      aws iam delete-user-permissions-boundary --user-name TARGET_USER
+      ```
+  - from: boundary
+    to: admin_outcome
+    label: If underlying policies grant admin
+    branch: A
+    condition: admin
+    description: |
+      The underlying IAM policies grant AdministratorAccess or equivalent. With the boundary removed, these permissions become effective.
+  - from: boundary
+    to: partial_outcome
+    label: If underlying policies grant partial access
+    branch: B
+    condition: some_permissions
+    description: |
+      The underlying policies grant elevated but non-admin permissions. The boundary was blocking some of these, and now they become effective.

