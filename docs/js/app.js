@@ -1325,7 +1325,8 @@ function getToolInitials(toolName) {
         'pmapper': 'PM',
         'cloudsplaining': 'CS',
         'pacu': 'PA',
-        'prowler': 'PR'    
+        'prowler': 'PR',    
+        'pathbreak-audit': 'PB'
     };
     return toolMap[toolName.toLowerCase()] || toolName.substring(0, 2).toUpperCase();
 }
