@@ -6,10 +6,11 @@ services:
 permissions:
   required:
     - permission: iam.serviceAccounts.setIamPolicy
+      resourceType: service-account
       resourceConstraints: Must be granted on the target service account, either via a custom role scoped to this permission or the predefined `roles/iam.serviceAccountAdmin` role
   additional:
     - permission: iam.serviceAccounts.getIamPolicy
-      resourceConstraints: "Required only by `gcloud iam service-accounts add-iam-policy-binding`, which reads the target service account's existing IAM policy before merging and writing it back; not needed via the raw `setIamPolicy` REST API, which accepts a full policy body constructed from scratch"
+      resourceConstraints: "Required only by `gcloud iam service-accounts add-iam-policy-binding`, which reads the target service account's existing IAM policy before merging and writing it back; not needed via the raw `setIamPolicy` REST API, which accepts a full policy body constructed from scratch -- but without a prior `getIamPolicy` read you build that body blind, so it overwrites the service account's entire IAM policy and removes any existing bindings, potentially locking out other principals who previously had access"
     - permission: iam.serviceAccounts.list
       resourceConstraints: Helpful for enumerating service accounts in the project to identify setIamPolicy targets
 description: A principal holding `iam.serviceAccounts.setIamPolicy` on a service account can overwrite that account's IAM policy to add a `roles/iam.serviceAccountTokenCreator` binding for itself, then call `generateAccessToken` to mint a short-lived OAuth token that authenticates as the target. If the target service account holds a privileged project role such as `roles/editor`, the attacker inherits all of its permissions through chained impersonation -- without ever needing a long-lived key or executing code on a workload. Writing a service account's IAM policy is functionally equivalent to holding that account's credentials.
@@ -109,14 +110,14 @@ discoveryAttribution:
     date: 2020
     link: https://rhinosecuritylabs.com/gcp/privilege-escalation-google-cloud-platform-part-2/
 references:
-- title: Privilege Escalation in Google Cloud Platform - Part 2 (SetIamPolicy) - Rhino Security Labs
+- title: Privilege Escalation in Google Cloud Platform - Part 2 (Non-IAM) - Rhino Security Labs (lists iam.serviceAccounts.setIamPolicy under "Miscellaneous setIamPolicy API Calls")
   url: https://rhinosecuritylabs.com/gcp/privilege-escalation-google-cloud-platform-part-2/
 - title: GCP - IAM Privesc - HackTricks Cloud
   url: https://cloud.hacktricks.wiki/en/pentesting-cloud/gcp-security/gcp-privilege-escalation/gcp-iam-privesc.html
 - title: GCPwn CAN_MODIFY_SA_IAM OpenGraph edge - Scott Weston / NetSPI
   url: https://github.com/NetSPI/gcpwn/blob/acabc59d87fdc5dca86d919aa72faf7a628e2e9a/gcpwn/mappings/og_defined_edges.json#L127-L135
 detectionTools:
-  gcpwn: https://github.com/NetSPI/gcpwn/blob/main/gcpwn/mappings/og_defined_edges.json#L135
+  gcpwn: https://github.com/NetSPI/gcpwn/blob/acabc59d87fdc5dca86d919aa72faf7a628e2e9a/gcpwn/mappings/og_defined_edges.json#L127-L135
   rhino-gcp-privesc: https://github.com/RhinoSecurityLabs/GCP-IAM-Privilege-Escalation/blob/master/PrivEscScanner/check_for_privesc.py#L238
   purplepanda: https://github.com/carlospolop/PurplePanda/blob/master/intel/google/info/privesc.yaml#L51
 relatedPaths:
@@ -175,7 +176,7 @@ attackVisualization:
         --impersonate-service-account=TARGET_SA@PROJECT_ID.iam.gserviceaccount.com
       ```
 
-      The `gcloud add-iam-policy-binding` wrapper performs a read-modify-write and requires the additional `iam.serviceAccounts.getIamPolicy` permission. The raw `setIamPolicy` REST API accepts a full policy body constructed from scratch, proving `iam.serviceAccounts.setIamPolicy` is the only required permission.
+      The `gcloud add-iam-policy-binding` wrapper performs a read-modify-write and requires the additional `iam.serviceAccounts.getIamPolicy` permission. The raw `setIamPolicy` REST API accepts a full policy body constructed from scratch, proving `iam.serviceAccounts.setIamPolicy` is the only required permission -- though without `getIamPolicy` to read the current policy first, that from-scratch body overwrites all existing bindings on the service account and can remove other principals' access.
   - from: target_sa
     to: admin
     label: If target holds roles/editor or roles/owner

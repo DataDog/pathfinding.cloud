@@ -1,4 +1,4 @@
-id: gcp-cloudrun-001
+id: gcp-cloudrunserviceimages-001
 name: iam.serviceAccounts.actAs + run.services.create
 category: new-passrole
 services:
@@ -7,27 +7,34 @@ services:
 permissions:
   required:
   - permission: iam.serviceAccounts.actAs
+    resourceType: service-account
     resourceConstraints: Must be granted on the privileged target service account that will be attached to the new Cloud Run service
   - permission: run.services.create
+    resourceType: project
     resourceConstraints: Must be granted at the project level for the location where the attacker creates the service
-  - permission: run.services.get
-    resourceConstraints: Required to retrieve the newly created service and its URL; also used by `gcloud run deploy` for readiness tracking
-  - permission: run.operations.get
-    resourceConstraints: Required to poll the asynchronous service-creation operation until deployment completes
   additional:
+  - permission: run.services.get
+    resourceType: cloudrunservice
+    resourceConstraints: Only a gcloud/tooling readiness mechanic -- `gcloud run deploy` polls GetService to track rollout. Not needed via the raw Cloud Run v2 REST API when exfil is in a container startup thread, because the token is sent out of band before the service is confirmed Ready. Only required to programmatically confirm the service reached Ready state
+  - permission: run.operations.get
+    resourceType: project
+    resourceConstraints: Only needed by clients that wait on the long-running create operation (e.g. the gcpwn GAPIC client calls `op.result()`). Not required via the raw REST API with startup-thread exfil -- the container runs and exfiltrates before any operation poll. gcloud does not use it (it polls GetService instead)
   - permission: logging.logEntries.list
     resourceConstraints: Needed only to read the token back through Cloud Logging when the payload prints it to the service's logs; an out-of-band exfiltration endpoint does not require this permission
   - permission: run.routes.invoke
-    resourceConstraints: Helpful for invoking a private service to trigger a fresh execution of the payload; the initial deployment and readiness instance can execute the payload without it
+    resourceConstraints: Not required. Cloud Run's default startup probe is TCP-only and the payload exfils from a startup background thread 2-3 seconds after the TCP probe succeeds, so no HTTP invocation is ever needed. Only helpful to trigger a fresh execution of the payload on an already-deployed service
+  - permission: artifactregistry.repositories.downloadArtifacts
+    resourceType: project
+    resourceConstraints: Required only when the container image lives in an Artifact Registry repo inside the TARGET project -- the Cloud Run v2 API validates the caller can pull the image at deploy time. Not needed when the image is in an attacker-controlled external repo (grant yourself access there) or is a public/anonymous image. The target project's Cloud Run service agent (service-PROJECTNUM@serverless-robot-prod.iam.gserviceaccount.com) must also be able to pull the image at runtime; for an external private repo, grant that service agent `roles/artifactregistry.reader` there as an attacker-side setup step
   - permission: run.services.update
-    resourceConstraints: Required only by `gcloud run deploy` when reusing an existing service name and taking the update path; not needed via the REST API for a fresh service
+    resourceConstraints: Required only by `gcloud run deploy` when reusing an existing service name and taking the update path (see `gcp-cloudrunserviceimages-002`); not needed via the REST API for a fresh service
   - permission: iam.serviceAccounts.list
     resourceConstraints: Helpful for enumerating service accounts in the project to identify privileged targets
   - permission: iam.serviceAccounts.getIamPolicy
     resourceConstraints: Useful for inspecting service account IAM policies to identify targets on which the attacker holds `iam.serviceAccounts.actAs`
   - permission: run.services.list
     resourceConstraints: Helpful for enumerating existing Cloud Run services and understanding normal deployment patterns
-description: A principal with `iam.serviceAccounts.actAs` on a privileged service account and `run.services.create` can deploy a new Cloud Run service that executes attacker-controlled container code as that service account. The container can retrieve its attached identity's OAuth access token from the metadata server and send it to an attacker-controlled endpoint, granting the attacker every permission held by the target service account without requiring Artifact Registry access or making the service public.
+description: A principal with `iam.serviceAccounts.actAs` on a privileged service account and `run.services.create` can deploy a new Cloud Run service directly from an attacker-controlled container image, running attacker code as that service account. Unlike the Cloud Run Functions paths (`gcp-cloudrunservicefunctions-001/002`), this image path involves no Cloud Build and therefore needs no build service account -- a single `iam.serviceAccounts.actAs` on the runtime service account is the only actAs required. Cloud Run always starts one container instance during deployment for its startup probe, and the default probe is TCP-only, so a startup background thread retrieves the attached identity's OAuth token from the metadata server and sends it to an attacker-controlled endpoint 2-3 seconds after the probe succeeds -- no `run.routes.invoke` or HTTP request is ever needed. Using an attacker-controlled external or public image avoids any Artifact Registry permission in the target project. The attacker then inherits every permission held by the target service account.
 prerequisites:
   admin:
   - A target service account must exist on which the attacker holds `iam.serviceAccounts.actAs`
@@ -183,22 +190,23 @@ references:
   url: https://github.com/RhinoSecurityLabs/GCP-IAM-Privilege-Escalation/blob/2c1031ff4bb019abe5f12bf8e85ed1a3be79b710/ExploitScripts/run.services.create.py
 - title: GCPwn Cloud Run service account exploitation module - Scott Weston / NetSPI
   url: https://github.com/NetSPI/gcpwn/blob/acabc59d87fdc5dca86d919aa72faf7a628e2e9a/gcpwn/modules/gcp/cloudrun/exploit/exploit_cloudrun_service_as_sa.py
-- title: GCPwn CREATE_CLOUDRUN_SERVICE_AS_SA OpenGraph edge - Scott Weston / NetSPI
-  url: https://github.com/NetSPI/gcpwn/blob/acabc59d87fdc5dca86d919aa72faf7a628e2e9a/gcpwn/mappings/og_defined_edges.json#L446-L466
+- title: GCPwn CREATE_CLOUDRUN_SERVICE_IMAGE_AS_SA OpenGraph edge - Scott Weston / NetSPI
+  url: https://github.com/NetSPI/gcpwn/blob/933a3e239474498eb447a234530965357ebc45b5/gcpwn/mappings/og_defined_edges.json#L511-L559
 - title: Configure Cloud Run service identity - Google Cloud
   url: https://cloud.google.com/run/docs/configuring/services/service-identity
 relatedPaths:
-- gcp-cloudfunctions-001
-- gcp-cloudfunctions-002
+- gcp-cloudrunserviceimages-002
+- gcp-cloudrunservicefunctions-001
+- gcp-cloudfunctionsv1-001
 - apprunner-001
 detectionTools:
-  gcpwn: https://github.com/NetSPI/GCPwn/blob/acabc59d87fdc5dca86d919aa72faf7a628e2e9a/gcpwn/mappings/og_defined_edges.json#L445-L466
+  gcpwn: https://github.com/NetSPI/GCPwn/blob/933a3e239474498eb447a234530965357ebc45b5/gcpwn/mappings/og_defined_edges.json#L511-L559
 learningEnvironments:
   pathfinding-labs:
     type: open-source
     githubLink: https://github.com/DataDog/pathfinding-labs
-    scenario: modules/scenarios/gcp/single-account/privesc-one-hop/to-admin/gcp-cloudrun-001-iam-serviceaccountsactas+run-servicescreate
-    description: "Deploy Terraform into your own GCP project to practice creating a new Cloud Run service with `run.services.create`, attaching a privileged target service account via `iam.serviceAccounts.actAs`, and exfiltrating its OAuth token from the metadata server to inherit its project permissions."
+    scenario: modules/scenarios/gcp/single-account/privesc-one-hop/to-admin/gcp-cloudrunserviceimages-001-iam-serviceaccountsactas+run-servicescreate
+    description: "Deploy Terraform into your own GCP project to practice creating a new Cloud Run service from an attacker-controlled container image with `run.services.create`, attaching a privileged target service account via `iam.serviceAccounts.actAs`, and exfiltrating its OAuth token from the metadata server to inherit its project permissions."
 attackVisualization:
   nodes:
   - id: start

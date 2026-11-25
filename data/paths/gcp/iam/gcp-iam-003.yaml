@@ -6,7 +6,11 @@ services:
 permissions:
   required:
     - permission: iam.roles.update
-      resourceConstraints: Must be granted on a project custom role that the attacker's principal is also a member of, enabling the principal to edit the role it holds
+      resourceType: project
+      resourceConstraints: Granted on a PROJECT custom role (`projects/{project}/roles/{role_id}`) that the attacker's principal is also bound to, letting it edit the role it holds. This is one of two alternative scopes for this technique -- use this entry when the editable custom role is project-scoped (adding `resourcemanager.projects.setIamPolicy` then yields project owner)
+    - permission: iam.roles.update
+      resourceType: org
+      resourceConstraints: Alternatively granted on an ORGANIZATION custom role (`organizations/{org_id}/roles/{role_id}`) the principal is bound to -- the identical technique at organization scope, edited via `organizations.roles.patch`. Only ONE of the two `iam.roles.update` scopes is needed, whichever level the principal's custom-role binding is at; the org-scoped variant is higher impact because adding `resourcemanager.organizations.setIamPolicy` and self-binding `roles/organizationAdmin` yields organization-wide administrator
   additional:
     - permission: iam.roles.get
       resourceConstraints: "Required only by `gcloud iam roles update --add-permissions`, which reads the role's current `includedPermissions` before writing the appended list; not needed via the raw `roles.patch` REST API, which replaces `includedPermissions` wholesale"
@@ -16,10 +20,11 @@ permissions:
       resourceConstraints: Helpful for confirming the current project context and the lack of direct admin roles
     - permission: resourcemanager.projects.getIamPolicy
       resourceConstraints: "Required only by `gcloud projects add-iam-policy-binding`, which reads the project IAM policy before writing it back; not needed via the raw `setIamPolicy` REST API"
-description: "A principal bound to a project custom role that also grants `iam.roles.update` on that role can edit the role's `includedPermissions` to add any permission -- most critically `resourcemanager.projects.setIamPolicy`. Because the principal is a member of the role, it instantly inherits the newly-added permission after IAM propagation. It then uses `resourcemanager.projects.setIamPolicy` to self-bind `roles/owner` on the project, achieving full project administrator access. The key vulnerability is the self-reference: the principal holds the role and can update the role, turning a least-privilege custom role into an open-ended permission vending machine."
+description: "A principal bound to a custom role that also grants `iam.roles.update` on that role can edit the role's `includedPermissions` to add any permission -- most critically `resourcemanager.projects.setIamPolicy`. Because the principal is a member of the role, it instantly inherits the newly-added permission after IAM propagation. It then uses `resourcemanager.projects.setIamPolicy` to self-bind `roles/owner` on the project, achieving full project administrator access. Custom roles exist at two scopes and the technique works at either: a PROJECT custom role (`projects/{project}/roles/...`) escalates to project owner, while an ORGANIZATION custom role (`organizations/{org}/roles/...`) is the higher-impact variant -- editing the org role to add `resourcemanager.organizations.setIamPolicy` lets the principal self-bind `roles/organizationAdmin` and reach organization-wide administrator. The key vulnerability is the self-reference: the principal holds the role and can update the role, turning a least-privilege custom role into an open-ended permission vending machine."
 prerequisites:
-  - A project custom role must exist that includes `iam.roles.update` on itself
+  - A custom role must exist that includes `iam.roles.update` on itself, scoped at EITHER the project (`projects/{project}/roles/...`) or the organization (`organizations/{org}/roles/...`) level
   - The attacker's principal must be a member of (bound to) that same custom role
+  - For the organization-scoped variant, reaching organization administrator additionally requires the org custom role (once edited) to grant `resourcemanager.organizations.setIamPolicy`, and the principal must be able to self-bind an org-level admin role such as `roles/organizationAdmin`
 exploitationSteps:
   gcloud:
     - step: 1
@@ -37,7 +42,7 @@ exploitationSteps:
         gcloud iam roles update CUSTOM_ROLE_ID \
           --project=PROJECT_ID \
           --add-permissions=resourcemanager.projects.setIamPolicy
-      description: "Add `resourcemanager.projects.setIamPolicy` to the custom role. Because the attacker is a member of this role, they instantly inherit the newly-added permission after IAM propagation (~15 seconds). `gcloud iam roles update --add-permissions` reads the role first (`iam.roles.get`), so it requires that additional permission."
+      description: "Add `resourcemanager.projects.setIamPolicy` to the custom role. Because the attacker is a member of this role, they instantly inherit the newly-added permission after IAM propagation (~15 seconds). `gcloud iam roles update --add-permissions` reads the role first (`iam.roles.get`), so it requires that additional permission. For the organization-scoped variant, swap `--project=PROJECT_ID` for `--organization=ORG_ID` (targeting `organizations/{org_id}/roles/{role_id}`) and add `resourcemanager.organizations.setIamPolicy` instead, then self-bind `roles/organizationAdmin` at the org in the next step for organization-wide administrator."
     - step: 4
       command: |
         gcloud projects add-iam-policy-binding PROJECT_ID \
@@ -115,6 +120,8 @@ limitations: |
   `resourcemanager.projects.setIamPolicy` is not a starting permission -- it is manufactured mid-attack by editing the custom role. Detection based solely on starting permissions would miss this path; effective detection must model the permissions an identity can grant itself.
 
   After self-binding `roles/owner`, the attacker has full project administrator access. `roles/owner` includes `secretmanager.versions.access`, so unlike `roles/editor`, no additional `secretAccessor` grant is needed to read Secret Manager payloads.
+
+  Scope determines blast radius. When the editable custom role is project-scoped, the ceiling is project owner. When it is organization-scoped, the same technique reaches organization administrator (`roles/organizationAdmin`), which cascades to every folder and project under the org -- a materially higher-impact outcome. Only one scope is exercised per attack, whichever level the principal's custom-role binding is at.
 discoveryAttribution:
   firstDocumented:
     author: Spencer Gietzen
@@ -131,7 +138,7 @@ references:
 - title: GCPwn UPDATE_CUSTOM_ROLE_ADD_PERMISSIONS OpenGraph edge - Scott Weston / NetSPI
   url: https://github.com/NetSPI/gcpwn/blob/acabc59d87fdc5dca86d919aa72faf7a628e2e9a/gcpwn/mappings/og_defined_edges.json#L68-L87
 detectionTools:
-  gcpwn: https://github.com/NetSPI/gcpwn/blob/main/gcpwn/mappings/og_defined_edges.json#L81
+  gcpwn: https://github.com/NetSPI/gcpwn/blob/acabc59d87fdc5dca86d919aa72faf7a628e2e9a/gcpwn/mappings/og_defined_edges.json#L68-L87
   rhino-gcp-privesc: https://github.com/RhinoSecurityLabs/GCP-IAM-Privilege-Escalation/blob/master/PrivEscScanner/check_for_privesc.py#L8
 relatedPaths:
   - gcp-iam-001
@@ -154,13 +161,19 @@ attackVisualization:
       label: Editable Custom Role
       type: resource
       description: |
-        A project custom role (e.g., `gcp_iam_003_editable`) that the starting service account is bound to. The role initially grants only `iam.roles.update` (scoped to itself), but because the SA can edit its `includedPermissions`, the role becomes a permission vending machine. The attacker adds `resourcemanager.projects.setIamPolicy` to the role, and the SA instantly inherits it after IAM propagation (~15 seconds).
+        A custom role (e.g., `gcp_iam_003_editable`) that the starting service account is bound to, scoped at EITHER the project (`projects/{project}/roles/...`) or the organization (`organizations/{org}/roles/...`) level. The role initially grants only `iam.roles.update` (scoped to itself), but because the SA can edit its `includedPermissions`, the role becomes a permission vending machine. The attacker adds `resourcemanager.projects.setIamPolicy` (project-scoped role) or `resourcemanager.organizations.setIamPolicy` (org-scoped role) to the role, and the SA instantly inherits it after IAM propagation (~15 seconds).
 
     - id: admin
-      label: Effective Administrator
+      label: Project Administrator
       type: outcome
       description: |
-        The starting service account has self-bound `roles/owner` on the project using the `resourcemanager.projects.setIamPolicy` permission it manufactured by editing its own custom role. It now has full project administrator access, including `secretmanager.versions.access` (unlike `roles/editor`, which excludes it). The entire escalation is performed by a single principal with no lateral movement.
+        The project-scoped variant. The starting service account manufactured `resourcemanager.projects.setIamPolicy` by editing its own project custom role, then used it to self-bind `roles/owner` on the project -- full project administrator access, including `secretmanager.versions.access` (unlike `roles/editor`). The entire escalation is performed by a single principal with no lateral movement.
+
+    - id: org_admin
+      label: Organization Administrator
+      type: outcome
+      description: |
+        The organization-scoped variant (higher impact). When the editable custom role is defined at the organization (`organizations/{org}/roles/...`), the starting service account manufactures `resourcemanager.organizations.setIamPolicy` the same way, then self-binds `roles/organizationAdmin` at the org. This grants organization-wide administrator, cascading to every folder and project under the org. Only one of the two outcomes is reached per attack, determined by the scope of the custom role the principal holds.
 
   edges:
     - from: start
@@ -182,13 +195,15 @@ attackVisualization:
       to: start
       label: Inherits new permissions
       description: |
-        Because the starting service account is a member of the custom role, it instantly inherits `resourcemanager.projects.setIamPolicy` after IAM propagation (~15 seconds). No additional API call is needed -- the permission is granted automatically through the existing role binding. The SA now holds a permission it was never explicitly granted; it manufactured it by editing its own role.
+        Because the starting service account is a member of the custom role, it instantly inherits the manufactured setIamPolicy permission -- `resourcemanager.projects.setIamPolicy` for a project-scoped role or `resourcemanager.organizations.setIamPolicy` for an org-scoped role -- after IAM propagation (~15 seconds). No additional API call is needed; the permission is granted automatically through the existing role binding. The SA now holds a permission it was never explicitly granted; it manufactured it by editing its own role.
 
     - from: start
       to: admin
       label: resourcemanager.projects.setIamPolicy
+      branch: A
+      condition: project_scoped_role
       description: |
-        The starting service account uses the newly-inherited `resourcemanager.projects.setIamPolicy` permission to self-bind `roles/owner` on the project. This is a single API call that adds the SA to the project IAM policy with the `roles/owner` role.
+        Project-scoped variant. The starting service account uses the newly-inherited `resourcemanager.projects.setIamPolicy` permission to self-bind `roles/owner` on the project -- a single API call that adds the SA to the project IAM policy with the `roles/owner` role.
 
         Command:
         ```bash
@@ -198,3 +213,20 @@ attackVisualization:
         ```
 
         After IAM propagation, the SA has full project administrator access. `roles/owner` includes `secretmanager.versions.access`, so no additional grant is needed to read Secret Manager payloads.
+
+    - from: start
+      to: org_admin
+      label: resourcemanager.organizations.setIamPolicy
+      branch: B
+      condition: org_scoped_role
+      description: |
+        Organization-scoped variant (reached instead of the project branch when the editable custom role is defined at the org). The starting service account manufactured `resourcemanager.organizations.setIamPolicy` by editing its org custom role, then uses it to self-bind an org-level admin role.
+
+        Command:
+        ```bash
+        gcloud organizations add-iam-policy-binding ORG_ID \
+          --member=serviceAccount:ATTACKER_SA@PROJECT_ID.iam.gserviceaccount.com \
+          --role=roles/organizationAdmin
+        ```
+
+        After IAM propagation, the SA holds organization-wide administrator access, which cascades by inheritance to every folder and project under the organization.
