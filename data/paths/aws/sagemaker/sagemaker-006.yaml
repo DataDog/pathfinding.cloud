@@ -1,0 +1,97 @@
+id: sagemaker-006
+name: sagemaker:UpdateNotebookInstanceLifecycleConfig
+category: existing-passrole
+services:
+  - sagemaker
+permissions:
+  required:
+    - permission: sagemaker:UpdateNotebookInstanceLifecycleConfig
+      resourceConstraints: Must cover a lifecycle configuration already attached to a notebook instance with a more privileged execution role
+  additional:
+    - permission: sagemaker:DescribeNotebookInstance
+      resourceConstraints: Helpful for identifying the notebook's attached lifecycle configuration and execution role
+    - permission: sagemaker:DescribeNotebookInstanceLifecycleConfig
+      resourceConstraints: Helpful for inspecting the existing OnStart script before changing it
+    - permission: sagemaker:StopNotebookInstance
+      resourceConstraints: Needed only if the attacker must stop a running notebook to trigger a restart
+    - permission: sagemaker:StartNotebookInstance
+      resourceConstraints: Needed only if the attacker must trigger the next start rather than wait for a normal restart
+description: A principal with `sagemaker:UpdateNotebookInstanceLifecycleConfig` can replace the OnStart script in a lifecycle configuration already attached to a SageMaker notebook instance. On the notebook's next start, SageMaker executes the attacker-controlled script with the notebook's execution role privileges. The attacker does not need `iam:PassRole` because the notebook already has its role; the access gained depends on that role's permissions.
+prerequisites:
+  - A notebook instance already uses the lifecycle configuration that the attacker can update.
+  - The notebook's execution role grants more access than the attacker has.
+  - The notebook is started after the configuration update, either by its normal operator or by a principal allowed to start it.
+exploitationSteps:
+  awscli:
+    - step: 1
+      command: |
+        cat > on-start.sh <<'SCRIPT'
+        #!/bin/bash
+        aws sts get-caller-identity
+        SCRIPT
+        CONTENT=$(base64 < on-start.sh | tr -d '\n')
+        aws sagemaker update-notebook-instance-lifecycle-config \
+          --notebook-instance-lifecycle-config-name TARGET_CONFIG \
+          --on-start Content="$CONTENT"
+      description: Replace the OnStart hook in the configuration already attached to the target notebook; the harmless STS call demonstrates which role runs the hook.
+    - step: 2
+      command: |
+        aws sagemaker stop-notebook-instance --notebook-instance-name TARGET_NOTEBOOK
+        aws sagemaker wait notebook-instance-stopped --notebook-instance-name TARGET_NOTEBOOK
+        aws sagemaker start-notebook-instance --notebook-instance-name TARGET_NOTEBOOK
+      description: Optional trigger if the attacker also has stop and start permissions; otherwise the modified hook runs on the notebook's next ordinary start.
+recommendation: |
+  Restrict `sagemaker:UpdateNotebookInstanceLifecycleConfig` to trusted administrators and scope it to specific lifecycle configuration ARNs. Keep notebook execution roles limited to the data and actions each notebook needs. Monitor CloudTrail `UpdateNotebookInstanceLifecycleConfig` events, especially changes to configurations attached to privileged notebooks, and correlate them with subsequent `StartNotebookInstance` events. Review lifecycle script changes before restarting affected notebooks.
+limitations: |
+  Updating the lifecycle configuration does not execute the script immediately. It affects all notebook instances using that configuration on their next start. Administrative access is possible only when an affected notebook's execution role has administrative permissions; otherwise the result is bounded by that role.
+discoveryAttribution:
+  firstDocumented:
+    author: Daniel Grzelak
+    organization: Plerion
+    date: 2026
+references:
+  - title: AWS UpdateNotebookInstanceLifecycleConfig API
+    url: https://docs.aws.amazon.com/sagemaker/latest/APIReference/API_UpdateNotebookInstanceLifecycleConfig.html
+  - title: Plerion research on related notebook lifecycle escalation
+    url: https://www.plerion.com/blog/privilege-escalation-with-sagemaker-and-execution-roles
+relatedPaths:
+  - sagemaker-005
+attackVisualization:
+  nodes:
+    - id: attacker
+      label: Starting principal
+      type: principal
+      description: Can update an existing SageMaker notebook lifecycle configuration.
+    - id: lifecycle_config
+      label: Attached lifecycle configuration
+      type: resource
+      description: Contains the OnStart script used by an existing notebook.
+    - id: notebook
+      label: Existing notebook instance
+      type: resource
+      description: Runs the modified OnStart script at its next start.
+    - id: execution_role
+      label: Notebook execution role
+      type: principal
+      description: Supplies AWS privileges to code running on the notebook.
+    - id: outcome
+      label: Execution role access
+      type: outcome
+      description: The script can take actions allowed by the notebook's execution role.
+  edges:
+    - from: attacker
+      to: lifecycle_config
+      label: sagemaker:UpdateNotebookInstanceLifecycleConfig
+      description: Replace the OnStart script without passing or changing the notebook's role.
+    - from: lifecycle_config
+      to: notebook
+      label: Next notebook start
+      description: The updated hook executes when an affected notebook starts.
+    - from: notebook
+      to: execution_role
+      label: Existing execution role
+      description: SageMaker runs the lifecycle script with the notebook's existing role privileges.
+    - from: execution_role
+      to: outcome
+      label: Role permissions
+      description: The resulting access is limited to the execution role's permissions.
