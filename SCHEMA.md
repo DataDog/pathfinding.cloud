@@ -4,9 +4,12 @@ This document defines the YAML schema used for documenting cloud IAM privilege e
 
 ## Schema Version
 
-Current version: `1.8.1`
+Current version: `1.9.0`
 
 ### Version History
+
+#### Version 1.9.0 (2026-11-25)
+- Added the optional per-permission `resourceType` field to `permissions.required[]` and `permissions.additional[]`: a single lowercase token naming the type of resource the permission is held on, validated against the canonical per-cloud token set in [`data/resource-types.yaml`](data/resource-types.yaml). The GCP token set mirrors the node-type registry used by graph/attack-path tooling (e.g. gcpwn's OpenGraph), so a path's per-permission scoping round-trips with those tools. The field is optional and AWS/Azure tokens are placeholders until those clouds adopt it
 
 #### Version 1.8.1 (2026-11-10)
 - `permissions.additional` also holds lab-required permissions that only read back an exfiltrated credential through a cloud channel (e.g. `logging.logEntries.list` to read a token printed to Cloud Run logs), since an out-of-band exfiltration needs none of them
@@ -153,9 +156,10 @@ This matches pathfinding-labs: a lab's `scenario.yaml` `permissions.required` ma
 
 Each permission object contains:
 - `permission` (string, required): The IAM permission (e.g., `iam:CreatePolicyVersion`)
+- `resourceType` (string, optional): A single lowercase token naming the type of resource this permission is held on — the resource that `resourceConstraints` describes in prose. It must be one of the canonical per-cloud tokens listed in [`data/resource-types.yaml`](data/resource-types.yaml); the validator rejects any token not in that file's set for the path's cloud. Each permission in a combination path carries its own `resourceType` (e.g. `iam.serviceAccounts.actAs` → `service-account`, `run.services.create` → `project`), so `actAs`/`PassRole` is not special-cased. The GCP token set mirrors the node-type registry used by graph and attack-path tooling (e.g. gcpwn's OpenGraph `RESOURCE_TOKEN_TO_NODE_TYPE`), so a path's per-permission scoping round-trips with those tools without translation. Omit the field when no canonical token applies (AWS and Azure tokens are placeholders until those clouds adopt it).
 - `resourceConstraints` (string, optional): Any resource-level constraints or requirements
 
-Example:
+Example (AWS — `resourceType` omitted):
 ```yaml
 permissions:
   required:
@@ -168,6 +172,22 @@ permissions:
       resourceConstraints: "Helpful for discovering available roles to pass"
     - permission: "iam:GetRole"
       resourceConstraints: "Useful for viewing role trust policies and permissions"
+```
+
+Example (GCP — each permission scoped with `resourceType`):
+```yaml
+permissions:
+  required:
+    - permission: "iam.serviceAccounts.actAs"
+      resourceType: service-account
+      resourceConstraints: "Must be granted on the privileged runtime service account the new resource will run as"
+    - permission: "run.services.create"
+      resourceType: project
+      resourceConstraints: "Must be granted at the project level for the deployment location"
+  additional:
+    - permission: "run.operations.get"
+      resourceType: project
+      resourceConstraints: "Only needed by clients that wait on the long-running create operation; not required via the raw REST API with startup-thread exfil"
 ```
 
 #### `description` (string)

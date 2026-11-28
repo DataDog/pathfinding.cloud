@@ -82,6 +82,8 @@ ALLOWED_CATEGORIES = [
     'new-passrole',
     'credential-access',
     'existing-passrole',
+    'new-actas',
+    'existing-actas',
 ]
 
 ALLOWED_PREREQUISITE_TYPES = [
@@ -140,6 +142,30 @@ class ValidationError(Exception):
 RETIRED_PATHS_FILE = Path(__file__).resolve().parent.parent / 'data' / 'retired-paths.yaml'
 RETIRED_PATH_REQUIRED_FIELDS = ['id', 'cloud', 'retiredOn', 'reason']
 RETIRED_PATH_ALLOWED_FIELDS = set(RETIRED_PATH_REQUIRED_FIELDS) | {'replacedBy'}
+
+
+# Canonical per-permission `resourceType` tokens, keyed by cloud
+# (data/resource-types.yaml). A permission's optional `resourceType` must be one
+# of its cloud's tokens. Clouds with an empty token list (AWS, Azure until they
+# adopt the field) are intentionally left unenforced.
+RESOURCE_TYPES_FILE = Path(__file__).resolve().parent.parent / 'data' / 'resource-types.yaml'
+
+
+def load_resource_types(resource_types_file: Path = RESOURCE_TYPES_FILE) -> Dict[str, set]:
+    """Load the per-cloud canonical resourceType token sets.
+
+    A missing file yields an empty registry (no enforcement) so the validator
+    still runs in a checkout that lacks it.
+    """
+    try:
+        with open(resource_types_file) as f:
+            raw = yaml.safe_load(f) or {}
+    except FileNotFoundError:
+        return {}
+    return {cloud: set(tokens or []) for cloud, tokens in raw.items()}
+
+
+RESOURCE_TYPES_BY_CLOUD = load_resource_types()
 
 
 def load_retired_paths(valid_ids: set, retired_paths_file: Path = RETIRED_PATHS_FILE) -> Dict[str, Dict]:
@@ -312,7 +338,7 @@ def validate_services(services: List[str]) -> None:
             raise ValidationError(f"Service '{service}' must be a string")
 
 
-def validate_permissions(permissions: Dict) -> None:
+def validate_permissions(permissions: Dict, cloud: str = None) -> None:
     """Validate the permissions field (new format with required/additional)."""
     if not isinstance(permissions, dict):
         raise ValidationError("Permissions must be a dictionary")
@@ -328,7 +354,7 @@ def validate_permissions(permissions: Dict) -> None:
         raise ValidationError("Permissions 'required' list cannot be empty")
 
     for perm in permissions['required']:
-        validate_permission_object(perm, "required")
+        validate_permission_object(perm, "required", cloud)
 
     # Validate additional permissions if present
     if 'additional' in permissions:
@@ -336,10 +362,10 @@ def validate_permissions(permissions: Dict) -> None:
             raise ValidationError("Permissions 'additional' must be a list")
 
         for perm in permissions['additional']:
-            validate_permission_object(perm, "additional")
+            validate_permission_object(perm, "additional", cloud)
 
 
-def validate_permission_object(perm: Dict, perm_type: str) -> None:
+def validate_permission_object(perm: Dict, perm_type: str, cloud: str = None) -> None:
     """Validate a single permission object."""
     if not isinstance(perm, dict):
         raise ValidationError(f"Each {perm_type} permission must be a dictionary")
@@ -357,6 +383,24 @@ def validate_permission_object(perm: Dict, perm_type: str) -> None:
             f"Permission '{perm['permission']}' in {perm_type} must be in format 'service:Action' "
             f"(AWS), 'service.resource.action' (GCP), or 'Provider/resourceType/action' (Azure)"
         )
+
+    # Optional `resourceType`: a single token naming the resource the permission
+    # is held on. When present it must be a string, and for a cloud with a
+    # defined token set (data/resource-types.yaml) it must be one of them.
+    # Clouds with no tokens yet (AWS, Azure) accept any value.
+    if 'resourceType' in perm:
+        resource_type = perm['resourceType']
+        if not isinstance(resource_type, str):
+            raise ValidationError(
+                f"resourceType in {perm_type} permission '{perm.get('permission')}' must be a string"
+            )
+        allowed = RESOURCE_TYPES_BY_CLOUD.get(cloud) if cloud else None
+        if allowed and resource_type not in allowed:
+            raise ValidationError(
+                f"resourceType '{resource_type}' in {perm_type} permission "
+                f"'{perm.get('permission')}' is not a valid {cloud} resource type. "
+                f"See data/resource-types.yaml for the allowed tokens."
+            )
 
 
 def validate_required_permissions(permissions: List[Dict]) -> None:
@@ -1024,7 +1068,7 @@ def validate_file(file_path: str, valid_ids: set = None, allow_draft: bool = Tru
         # Validate permissions (new format) or requiredPermissions (legacy format)
         if 'permissions' in data:
             try:
-                validate_permissions(data['permissions'])
+                validate_permissions(data['permissions'], path_cloud)
             except ValidationError as e:
                 errors.append(str(e))
         elif 'requiredPermissions' in data:
