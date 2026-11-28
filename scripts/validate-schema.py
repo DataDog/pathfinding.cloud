@@ -82,6 +82,8 @@ ALLOWED_CATEGORIES = [
     'new-passrole',
     'credential-access',
     'existing-passrole',
+    'new-actas',
+    'existing-actas',
 ]
 
 ALLOWED_PREREQUISITE_TYPES = [
